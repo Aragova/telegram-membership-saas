@@ -1,6 +1,8 @@
+from telegram_membership_saas.modules.access import EffectiveAccess
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.outbox import OutboxEvent
+from telegram_membership_saas.modules.owner_service import OwnerServiceAccount
 from telegram_membership_saas.modules.payments import (
     Payment,
     PaymentMethod,
@@ -15,8 +17,10 @@ from telegram_membership_saas.modules.subscriptions import Subscription
 
 __all__ = [
     "CurrencyAsset",
+    "EffectiveAccess",
     "EntitlementGrant",
     "OutboxEvent",
+    "OwnerServiceAccount",
     "Payment",
     "PaymentMethod",
     "PaymentMethodCurrency",
