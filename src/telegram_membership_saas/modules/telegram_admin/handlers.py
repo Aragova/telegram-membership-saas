@@ -358,27 +358,42 @@ def create_telegram_admin_router(
                         text="Сначала выберите и запустите собственного бота.",
                     )
             elif action == "reviews":
-                await load_admin_project(
+                snapshot = await load_admin_project(
                     session_factory, project_id=project_id, actor_telegram_user_id=user_id
                 )
-                async with system_project_session_scope(session_factory, project_id) as session:
-                    pending = await list_pending_reviews_for_actor(
-                        session,
-                        project_id=project_id,
-                        actor_telegram_user_id=user_id,
-                        actor_username=callback.from_user.username,
-                        actor_first_name=callback.from_user.first_name,
-                    )
-                if not pending:
-                    await bot.send_message(
-                        chat_id=user_id, text="🧾 Заявок на проверку сейчас нет."
-                    )
-                for item in pending:
-                    await bot.send_message(
-                        chat_id=user_id,
-                        text=_review_text(item),
-                        reply_markup=_review_keyboard(item.request_id),
-                    )
+                if not get_settings().telegram_central_access_enabled:
+                    if len(snapshot.bots) == 1:
+                        target = escape(snapshot.bots[0].name)
+                        info = (
+                            "🧾 Заявки теперь обрабатываются в вашем боте "
+                            f"{target}. Откройте его и отправьте /payments.\n\n"
+                            "Старые кнопки подтверждения в ViMi Pay больше не работают."
+                        )
+                    else:
+                        info = (
+                            "🧾 Для обработки заявок откройте своего "
+                            "подключённого бота и отправьте /payments."
+                        )
+                    await bot.send_message(chat_id=user_id, text=info)
+                else:
+                    async with system_project_session_scope(session_factory, project_id) as session:
+                        pending = await list_pending_reviews_for_actor(
+                            session,
+                            project_id=project_id,
+                            actor_telegram_user_id=user_id,
+                            actor_username=callback.from_user.username,
+                            actor_first_name=callback.from_user.first_name,
+                        )
+                    if not pending:
+                        await bot.send_message(
+                            chat_id=user_id, text="🧾 Заявок на проверку сейчас нет."
+                        )
+                    for item in pending:
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=_review_text(item),
+                            reply_markup=_review_keyboard(item.request_id),
+                        )
             else:
                 await callback.answer("Неизвестное действие", show_alert=True)
                 return
