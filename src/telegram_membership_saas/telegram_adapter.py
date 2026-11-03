@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
+from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_commerce import create_telegram_commerce_router
 
 
@@ -17,6 +18,12 @@ def create_dispatcher(
     if session_factory is not None:
         dispatcher.include_router(create_telegram_access_router(session_factory))
         if project_id is not None:
+            dispatcher.include_router(
+                create_telegram_admin_router(
+                    session_factory,
+                    project_id=project_id,
+                )
+            )
             dispatcher.include_router(
                 create_telegram_commerce_router(
                     session_factory,
