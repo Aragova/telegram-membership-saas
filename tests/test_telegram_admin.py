@@ -106,7 +106,7 @@ async def test_owner_sees_project_and_can_open_settings(monkeypatch):
     assert "ViMi Pay" in bot.send_message.await_args.kwargs["text"]
     callback = _callback("settings")
     await _handler(_router(), "admin_navigation_handler", callback=True)(callback, bot)
-    assert "Часовой пояс" in bot.edit_message_text.await_args.kwargs["text"]
+    assert "Текущий часовой пояс" in bot.edit_message_text.await_args.kwargs["text"]
     callback.answer.assert_awaited_once()
 
 
