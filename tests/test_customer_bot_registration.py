@@ -4,13 +4,11 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr
 
-from telegram_membership_saas.modules.bots import BotInstance
-from telegram_membership_saas.modules.bots import service as bots
+from telegram_membership_saas.modules.bots import BotInstance, service as bots
 from telegram_membership_saas.modules.telegram_admin import handlers as admin
-
 
 TEST_TOKEN = "123456:" + "A" * 35
 
@@ -63,7 +61,7 @@ def test_fernet_roundtrip_and_wrong_key_rejected():
     encrypted = bots.encrypt_token(TEST_TOKEN, key=key)
     assert TEST_TOKEN not in encrypted
     assert bots.decrypt_token(encrypted, key=key) == TEST_TOKEN
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidToken):
         bots.decrypt_token(encrypted, key=_key())
 
 
