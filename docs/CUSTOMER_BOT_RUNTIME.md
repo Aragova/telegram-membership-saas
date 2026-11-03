@@ -26,8 +26,12 @@ When the customer bot is deployed, central management continues in a separate
 This disables **both** customer commerce and the old central access worker
 and join-request listener, preventing two bots competing for the same
 project's access queue. The owner management screens remain available. The
-legacy combined central bot remains the default until staging explicitly
-performs the cutover.
+central `Заявки` button and old `/payments` command now direct the owner
+to the customer bot's `/payments`; old central approve/reject inline
+buttons display an explicit redirect instead of silently failing or sending
+customer notifications through the wrong bot. No payment is changed by
+these old buttons. The legacy combined central bot remains the default
+until staging explicitly performs the cutover.
 
 ## Important limitations
 
