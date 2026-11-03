@@ -1,6 +1,6 @@
 # Telegram owner/admin interface — implementation progress
 
-The product scope is defined by [CONCEPT.md](CONCEPT.md) v1.4, sections 2 and 4.
+The product scope is defined by [CONCEPT.md](CONCEPT.md) v1.5, sections 2 and 4.
 The owner must eventually configure projects, bots, channels/groups, timezone,
 plans, currency/price pairs and payment methods **without database/SSH commands**.
 Do not replace that acceptance criterion with API-only or manually seeded staging.
