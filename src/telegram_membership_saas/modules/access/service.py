@@ -29,9 +29,10 @@ async def recalculate_effective_access(
     resource_id: UUID,
     calculated_at: datetime | None = None,
 ) -> EffectiveAccess:
-    moment = calculated_at or utcnow()
-    require_aware(moment)
+    if calculated_at is not None:
+        require_aware(calculated_at)
 
+    provisional_moment = calculated_at or utcnow()
     await session.execute(
         insert(EffectiveAccess)
         .values(
@@ -41,7 +42,7 @@ async def recalculate_effective_access(
             has_access=False,
             active_grant_count=0,
             revision=0,
-            computed_at=moment,
+            computed_at=provisional_moment,
         )
         .on_conflict_do_nothing(
             index_elements=["project_id", "customer_id", "resource_id"]
@@ -60,6 +61,15 @@ async def recalculate_effective_access(
     )
     if effective is None:
         raise RuntimeError("Effective access row could not be resolved")
+
+    moment = calculated_at or utcnow()
+    require_aware(moment)
+    if (
+        calculated_at is not None
+        and effective.revision > 0
+        and calculated_at < effective.computed_at
+    ):
+        raise ValueError("calculated_at cannot precede existing computed_at")
 
     grant_windows = (
         await session.execute(
