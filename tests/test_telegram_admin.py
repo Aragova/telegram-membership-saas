@@ -73,6 +73,7 @@ def test_admin_menu_has_no_dead_buttons_and_escapes_project_name():
         "adm:resources",
         "adm:methods",
         "adm:settings",
+        "adm:bots",
         "adm:reviews",
         "adm:client",
     ]
