@@ -26,7 +26,9 @@ def _normalize_name(name: str) -> str:
 
 
 def _normalize_currency_codes(currency_codes: Iterable[str]) -> tuple[str, ...]:
-    normalized = tuple(dict.fromkeys(code.strip().upper() for code in currency_codes if code.strip()))
+    normalized = tuple(
+        dict.fromkeys(code.strip().upper() for code in currency_codes if code.strip())
+    )
     if not normalized:
         raise ValueError("Payment method must support at least one currency")
     return normalized
