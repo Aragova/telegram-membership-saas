@@ -51,6 +51,13 @@ class Settings(BaseSettings):
             raise ValueError(f"Unknown IANA timezone: {value}") from exc
         return value
 
+    @field_validator("customer_telegram_bot_id", mode="before")
+    @classmethod
+    def normalize_empty_customer_bot_id(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("customer_telegram_bot_id")
     @classmethod
     def validate_customer_bot_id(cls, value: int | None) -> int | None:
