@@ -156,7 +156,11 @@ async def run_customer_bot(settings: Settings | None = None) -> None:
         )
         # The token remains confined to this process. It is never printed,
         # returned to Telegram UI or passed to external project contexts.
-        bot = Bot(token=config.token)
+        try:
+            bot = Bot(token=config.token)
+        except Exception:
+            # Token validation exceptions may contain credential material.
+            raise RuntimeError("Customer bot credential is invalid") from None
         await check_customer_bot_identity(bot, config.telegram_bot_id)
         await verify_resource_permissions(
             session_factory,
