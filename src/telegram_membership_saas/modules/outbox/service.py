@@ -56,6 +56,7 @@ async def claim_next_outbox_event(
                 )
             ),
         )
+        .execution_options(populate_existing=True)
         .order_by(OutboxEvent.available_at, OutboxEvent.created_at)
         .with_for_update(skip_locked=True)
         .limit(1)
