@@ -7,12 +7,12 @@ from uuid import uuid4
 
 import pytest
 
+from telegram_membership_saas.modules.telegram_access import handlers as access_handlers
 from telegram_membership_saas.modules.telegram_commerce import handlers
 from telegram_membership_saas.modules.telegram_commerce.service import (
     ReviewItem,
     ReviewResult,
 )
-from telegram_membership_saas.modules.telegram_access import handlers as access_handlers
 
 
 def _review_result(*, changed=True, period_end=None, username="buyer") -> ReviewResult:
