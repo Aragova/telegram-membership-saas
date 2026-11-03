@@ -22,9 +22,13 @@ changing PaymentRequest, Payment, Subscription, EntitlementGrant or AccessState.
 4. A `PaymentRequest` is created through the existing domain service, freezing price and
    duration snapshots.
 5. The bot renders the configured manual payment instruction.
-6. The customer presses **Я оплатил**.
-7. The request moves to `waiting_review`; no receipt image is requested or stored.
-8. Project owner/admin/payment managers receive approve/reject controls.
+6. The customer presses **Я оплатил** and receives a ForceReply prompt linked to that request.
+7. The customer **must reply to that prompt** with a Telegram photo or a PDF/JPG/PNG/WEBP document.
+   Plain text, missing proof or a reply to someone else's message never submits the request.
+8. On accepted proof, the request moves to `waiting_review`. The bot copies the media
+   directly from buyer chat to owner/admin/payment managers inside Telegram, followed by
+   approve/reject controls. Media bytes and Telegram file IDs are **not stored** in our DB,
+   object storage or logs. The admin checks actual funds, not the image's authenticity.
 9. Approval uses the existing atomic approval service:
    `Payment → Subscription → EntitlementGrant → ACCESS_RECALCULATE`.
 10. The project runtime consumes outbox/access work and the Telegram access layer sends a
@@ -34,8 +38,11 @@ Rejecting a request creates no Payment and no Subscription.
 
 ## Admin flow
 
-Authorized reviewers receive payment-review messages automatically. `/payments` lists pending
-requests again if a notification was missed.
+Authorized reviewers receive payment-review messages automatically, together with the proof
+copied through Telegram. `/payments` lists pending requests again if a notification was missed,
+but the bot does not retain receipt media for later replay. If Telegram delivery fails, the
+buyer is informed to reply with the same photo/document again. A review without the attachment
+should not be approved until the admin independently verifies actual funds.
 
 Permissions are enforced by the domain permission model, not by trusting callback data. A buyer
 cannot approve their own request merely by forging an inline callback.
