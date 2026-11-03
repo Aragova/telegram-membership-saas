@@ -12,6 +12,7 @@ dependencies = [
   "aiogram>=3.13,<4",
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
+  "cryptography>=43,<48",
   "fastapi>=0.115,<1",
   "pydantic-settings>=2.6,<3",
   "sqlalchemy[asyncio]>=2.0.36,<3",
