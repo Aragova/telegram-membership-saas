@@ -29,11 +29,11 @@ from telegram_membership_saas.modules.projects import (
 )
 
 
-def _utcnow() -> datetime:
+def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-def _require_aware(moment: datetime) -> None:
+def require_aware_timestamp(moment: datetime) -> None:
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise ValueError("Payment request timestamps must be timezone-aware")
 
@@ -96,22 +96,24 @@ async def create_payment_request(
     if customer_exists is None:
         raise ValueError("Customer is not accessible in the current project scope")
 
+    plan = await session.scalar(
+        select(Plan).where(
+            Plan.id == plan_id,
+            Plan.project_id == project_id,
+            Plan.status == PlanStatus.ACTIVE.value,
+        )
+    )
+    if plan is None:
+        raise ValueError("Selected plan is not currently purchasable")
+
     price = await session.scalar(
         select(PlanPrice)
-        .join(
-            Plan,
-            and_(
-                Plan.id == PlanPrice.plan_id,
-                Plan.project_id == PlanPrice.project_id,
-            ),
-        )
         .join(CurrencyAsset, CurrencyAsset.code == PlanPrice.currency_code)
         .where(
             PlanPrice.id == plan_price_id,
             PlanPrice.project_id == project_id,
             PlanPrice.plan_id == plan_id,
             PlanPrice.status == PlanPriceStatus.ACTIVE.value,
-            Plan.status == PlanStatus.ACTIVE.value,
             CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
         )
     )
@@ -148,6 +150,8 @@ async def create_payment_request(
         discount_amount=0,
         final_amount=price.amount,
         promotion_id=None,
+        duration_value=plan.duration_value,
+        duration_unit=plan.duration_unit,
         status=PaymentRequestStatus.WAITING_CONFIRMATION.value,
     )
     session.add(request)
@@ -155,7 +159,7 @@ async def create_payment_request(
     return request
 
 
-async def _load_request_for_update(
+async def load_payment_request_for_update(
     session: AsyncSession,
     *,
     project_id: UUID,
@@ -182,7 +186,7 @@ async def mark_payment_request_submitted(
     request_id: UUID,
     submitted_at: datetime | None = None,
 ) -> PaymentRequest:
-    request = await _load_request_for_update(
+    request = await load_payment_request_for_update(
         session,
         project_id=project_id,
         request_id=request_id,
@@ -192,8 +196,8 @@ async def mark_payment_request_submitted(
     if request.status != PaymentRequestStatus.WAITING_CONFIRMATION.value:
         raise ValueError("Payment request cannot be submitted from its current state")
 
-    moment = submitted_at or _utcnow()
-    _require_aware(moment)
+    moment = submitted_at or utcnow()
+    require_aware_timestamp(moment)
     if moment < request.created_at:
         raise ValueError("submitted_at cannot precede request creation")
 
@@ -203,13 +207,13 @@ async def mark_payment_request_submitted(
     return request
 
 
-async def _require_payment_permission(
+async def require_payment_permission(
     session: AsyncSession,
     *,
     project_id: UUID,
     actor_user_id: UUID,
     permission: Permission,
-) -> None:
+) -> Project:
     project = await session.scalar(select(Project).where(Project.id == project_id))
     if project is None:
         raise ValueError("Project is not accessible in the current tenant scope")
@@ -226,6 +230,7 @@ async def _require_payment_permission(
     role = ProjectMemberRole(role_value) if role_value is not None else None
     if not has_permission(role, permission, is_owner=is_owner):
         raise PermissionError(f"Missing required permission: {permission.value}")
+    return project
 
 
 async def reject_payment_request(
@@ -236,13 +241,13 @@ async def reject_payment_request(
     reviewer_user_id: UUID,
     reviewed_at: datetime | None = None,
 ) -> PaymentRequest:
-    await _require_payment_permission(
+    await require_payment_permission(
         session,
         project_id=project_id,
         actor_user_id=reviewer_user_id,
         permission=Permission.PAYMENT_REJECT,
     )
-    request = await _load_request_for_update(
+    request = await load_payment_request_for_update(
         session,
         project_id=project_id,
         request_id=request_id,
@@ -252,8 +257,8 @@ async def reject_payment_request(
     if request.status != PaymentRequestStatus.WAITING_REVIEW.value:
         raise ValueError("Only a request waiting for review can be rejected")
 
-    moment = reviewed_at or _utcnow()
-    _require_aware(moment)
+    moment = reviewed_at or utcnow()
+    require_aware_timestamp(moment)
     if request.submitted_at is None or moment < request.submitted_at:
         raise ValueError("reviewed_at cannot precede submission")
 
@@ -271,7 +276,7 @@ async def cancel_payment_request(
     request_id: UUID,
     customer_id: UUID,
 ) -> PaymentRequest:
-    request = await _load_request_for_update(
+    request = await load_payment_request_for_update(
         session,
         project_id=project_id,
         request_id=request_id,
@@ -294,7 +299,7 @@ async def expire_payment_request(
     project_id: UUID,
     request_id: UUID,
 ) -> PaymentRequest:
-    request = await _load_request_for_update(
+    request = await load_payment_request_for_update(
         session,
         project_id=project_id,
         request_id=request_id,

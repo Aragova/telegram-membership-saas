@@ -47,6 +47,7 @@ def test_payment_request_database_checks_exist() -> None:
         "ck_payment_requests_discount_nonnegative",
         "ck_payment_requests_final_positive",
         "ck_payment_requests_amount_math",
+        "ck_payment_requests_duration",
         "ck_payment_requests_status",
         "ck_payment_requests_state_timestamps",
     } <= checks

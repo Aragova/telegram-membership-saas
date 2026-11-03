@@ -131,11 +131,20 @@ class PaymentRequest(Base):
             name="fk_payment_requests_method_project",
         ),
         CheckConstraint("regular_amount > 0", name="ck_payment_requests_regular_positive"),
-        CheckConstraint("discount_amount >= 0", name="ck_payment_requests_discount_nonnegative"),
+        CheckConstraint(
+            "discount_amount >= 0",
+            name="ck_payment_requests_discount_nonnegative",
+        ),
         CheckConstraint("final_amount > 0", name="ck_payment_requests_final_positive"),
         CheckConstraint(
             "final_amount = regular_amount - discount_amount",
             name="ck_payment_requests_amount_math",
+        ),
+        CheckConstraint(
+            "(duration_unit = 'lifetime' AND duration_value IS NULL) OR "
+            "(duration_unit IN ('day', 'week', 'month', 'year') "
+            "AND duration_value IS NOT NULL AND duration_value > 0)",
+            name="ck_payment_requests_duration",
         ),
         CheckConstraint(
             "status IN ('waiting_confirmation', 'waiting_review', 'approved', 'rejected', "
@@ -175,6 +184,8 @@ class PaymentRequest(Base):
     )
     final_amount: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
     promotion_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    duration_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_unit: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(
         String(32),
         default=PaymentRequestStatus.WAITING_CONFIRMATION.value,
@@ -192,4 +203,92 @@ class PaymentRequest(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+    __table_args__ = (
+        UniqueConstraint("id", "project_id", name="uq_payments_id_project"),
+        UniqueConstraint("payment_request_id", name="uq_payments_payment_request"),
+        ForeignKeyConstraint(
+            ["payment_request_id", "project_id"],
+            ["payment_requests.id", "payment_requests.project_id"],
+            ondelete="RESTRICT",
+            name="fk_payments_request_project",
+        ),
+        ForeignKeyConstraint(
+            ["customer_id", "project_id"],
+            ["project_customers.id", "project_customers.project_id"],
+            ondelete="RESTRICT",
+            name="fk_payments_customer_project",
+        ),
+        ForeignKeyConstraint(
+            ["plan_id", "project_id"],
+            ["plans.id", "plans.project_id"],
+            ondelete="RESTRICT",
+            name="fk_payments_plan_project",
+        ),
+        ForeignKeyConstraint(
+            ["plan_price_id", "project_id", "plan_id", "currency_code"],
+            [
+                "plan_prices.id",
+                "plan_prices.project_id",
+                "plan_prices.plan_id",
+                "plan_prices.currency_code",
+            ],
+            ondelete="RESTRICT",
+            name="fk_payments_price_snapshot",
+        ),
+        ForeignKeyConstraint(
+            ["payment_method_id", "project_id"],
+            ["payment_methods.id", "payment_methods.project_id"],
+            ondelete="RESTRICT",
+            name="fk_payments_method_project",
+        ),
+        CheckConstraint(
+            "provider IN ('manual_settlement')",
+            name="ck_payments_provider",
+        ),
+        CheckConstraint("regular_amount > 0", name="ck_payments_regular_positive"),
+        CheckConstraint("discount_amount >= 0", name="ck_payments_discount_nonnegative"),
+        CheckConstraint("final_amount > 0", name="ck_payments_final_positive"),
+        CheckConstraint(
+            "final_amount = regular_amount - discount_amount",
+            name="ck_payments_amount_math",
+        ),
+        CheckConstraint(
+            "(duration_unit = 'lifetime' AND duration_value IS NULL) OR "
+            "(duration_unit IN ('day', 'week', 'month', 'year') "
+            "AND duration_value IS NOT NULL AND duration_value > 0)",
+            name="ck_payments_duration",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    payment_request_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
+    customer_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    plan_price_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    payment_method_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    currency_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    regular_amount: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    final_amount: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    promotion_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    duration_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approved_by: Mapped[UUID] = mapped_column(
+        ForeignKey("telegram_users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

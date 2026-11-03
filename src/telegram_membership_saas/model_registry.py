@@ -1,5 +1,8 @@
+from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
+from telegram_membership_saas.modules.outbox import OutboxEvent
 from telegram_membership_saas.modules.payments import (
+    Payment,
     PaymentMethod,
     PaymentMethodCurrency,
     PaymentRequest,
@@ -8,9 +11,13 @@ from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import CurrencyAsset, PlanPrice
 from telegram_membership_saas.modules.projects import Project, ProjectMember
 from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.subscriptions import Subscription
 
 __all__ = [
     "CurrencyAsset",
+    "EntitlementGrant",
+    "OutboxEvent",
+    "Payment",
     "PaymentMethod",
     "PaymentMethodCurrency",
     "PaymentRequest",
@@ -21,5 +28,6 @@ __all__ = [
     "ProjectCustomer",
     "ProjectMember",
     "Resource",
+    "Subscription",
     "TelegramUser",
 ]
