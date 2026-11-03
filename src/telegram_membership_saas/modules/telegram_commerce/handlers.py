@@ -5,7 +5,13 @@ from uuid import UUID
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
