@@ -26,21 +26,35 @@ async def claim_next_outbox_event(
     *,
     project_id: UUID,
     claimed_at: datetime | None = None,
+    lease_timeout: timedelta | None = None,
 ) -> OutboxEvent | None:
     moment = claimed_at or utcnow()
     require_aware(moment)
+    lease = lease_timeout or timedelta(minutes=5)
+    if lease.total_seconds() <= 0:
+        raise ValueError("lease_timeout must be positive")
+    stale_before = moment - lease
 
     event = await session.scalar(
         select(OutboxEvent)
         .where(
             OutboxEvent.project_id == project_id,
-            OutboxEvent.status.in_(
+            (
                 (
-                    OutboxEventStatus.PENDING.value,
-                    OutboxEventStatus.FAILED_RETRYABLE.value,
+                    OutboxEvent.status.in_(
+                        (
+                            OutboxEventStatus.PENDING.value,
+                            OutboxEventStatus.FAILED_RETRYABLE.value,
+                        )
+                    )
+                    & (OutboxEvent.available_at <= moment)
+                )
+                | (
+                    (OutboxEvent.status == OutboxEventStatus.PROCESSING.value)
+                    & (OutboxEvent.locked_at.is_not(None))
+                    & (OutboxEvent.locked_at <= stale_before)
                 )
             ),
-            OutboxEvent.available_at <= moment,
         )
         .order_by(OutboxEvent.available_at, OutboxEvent.created_at)
         .with_for_update(skip_locked=True)
@@ -51,6 +65,7 @@ async def claim_next_outbox_event(
 
     event.status = OutboxEventStatus.PROCESSING.value
     event.locked_at = moment
+    event.processed_at = None
     event.attempt_count += 1
     await session.flush()
     return event
@@ -60,38 +75,54 @@ async def process_claimed_access_recalculate_event(
     session: AsyncSession,
     *,
     event: OutboxEvent,
+    claim_attempt: int,
     processed_at: datetime | None = None,
 ) -> OutboxEvent:
     moment = processed_at or utcnow()
     require_aware(moment)
+    if claim_attempt <= 0:
+        raise ValueError("claim_attempt must be positive")
 
-    if event.status == OutboxEventStatus.SUCCEEDED.value:
-        return event
-    if event.status != OutboxEventStatus.PROCESSING.value:
+    current_event = await session.scalar(
+        select(OutboxEvent)
+        .where(
+            OutboxEvent.id == event.id,
+            OutboxEvent.project_id == event.project_id,
+        )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if current_event is None:
+        raise ValueError("Outbox event is not accessible in the current project scope")
+    if current_event.attempt_count != claim_attempt:
+        raise ValueError("Outbox event lease is no longer current")
+    if current_event.status == OutboxEventStatus.SUCCEEDED.value:
+        return current_event
+    if current_event.status != OutboxEventStatus.PROCESSING.value:
         raise ValueError("Only a processing outbox event can be handled")
-    if event.event_type != OutboxEventType.ACCESS_RECALCULATE.value:
+    if current_event.event_type != OutboxEventType.ACCESS_RECALCULATE.value:
         raise ValueError("Unsupported outbox event type")
 
     try:
-        customer_id = UUID(event.payload["customer_id"])
-        resource_id = UUID(event.payload["resource_id"])
+        customer_id = UUID(current_event.payload["customer_id"])
+        resource_id = UUID(current_event.payload["resource_id"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("ACCESS_RECALCULATE payload is invalid") from exc
 
     await recalculate_effective_access(
         session,
-        project_id=event.project_id,
+        project_id=current_event.project_id,
         customer_id=customer_id,
         resource_id=resource_id,
         calculated_at=moment,
     )
 
-    event.status = OutboxEventStatus.SUCCEEDED.value
-    event.processed_at = moment
-    event.locked_at = None
-    event.last_error = None
+    current_event.status = OutboxEventStatus.SUCCEEDED.value
+    current_event.processed_at = moment
+    current_event.locked_at = None
+    current_event.last_error = None
     await session.flush()
-    return event
+    return current_event
 
 
 async def mark_outbox_event_failed(
@@ -99,6 +130,7 @@ async def mark_outbox_event_failed(
     *,
     project_id: UUID,
     event_id: UUID,
+    claim_attempt: int,
     error: str,
     failed_at: datetime | None = None,
     permanent: bool = False,
@@ -106,6 +138,8 @@ async def mark_outbox_event_failed(
 ) -> OutboxEvent:
     moment = failed_at or utcnow()
     require_aware(moment)
+    if claim_attempt <= 0:
+        raise ValueError("claim_attempt must be positive")
     if not error.strip():
         raise ValueError("Outbox failure must include an error")
     delay = retry_delay or timedelta(seconds=30)
@@ -123,6 +157,8 @@ async def mark_outbox_event_failed(
     )
     if event is None:
         raise ValueError("Outbox event is not accessible in the current project scope")
+    if event.attempt_count != claim_attempt:
+        raise ValueError("Outbox event lease is no longer current")
     if event.status != OutboxEventStatus.PROCESSING.value:
         raise ValueError("Only a processing outbox event can fail")
 
@@ -136,6 +172,7 @@ async def mark_outbox_event_failed(
     if permanent:
         event.processed_at = moment
     else:
+        event.processed_at = None
         event.available_at = moment + delay
 
     await session.flush()
