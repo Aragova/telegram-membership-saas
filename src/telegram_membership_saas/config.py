@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://membership:membership@localhost:5432/membership"
     migration_database_url: str | None = None
     telegram_bot_token: SecretStr | None = None
+    bot_token_encryption_key: SecretStr | None = None
     telegram_project_id: UUID | None = None
     telegram_worker_poll_seconds: float = 1.0
     default_project_timezone: str = "Europe/Moscow"
