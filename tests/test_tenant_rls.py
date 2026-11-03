@@ -11,8 +11,8 @@ from telegram_membership_saas.modules.projects import Project, ProjectMember, Pr
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
-    not os.getenv("DATABASE_URL"),
-    reason="DATABASE_URL is required for PostgreSQL RLS integration tests",
+    not os.getenv("TMS_DATABASE_URL"),
+    reason="TMS_DATABASE_URL is required for PostgreSQL RLS integration tests",
 )
 
 
@@ -43,7 +43,7 @@ async def _create_project(session_factory, user_id: UUID, name: str) -> UUID:
 
 
 async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
-    settings = Settings(database_url=os.environ["DATABASE_URL"])
+    settings = Settings()
     engine = build_engine(settings)
     session_factory = build_session_factory(engine)
 
