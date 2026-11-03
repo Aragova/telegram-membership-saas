@@ -27,5 +27,21 @@ services:
     ports:
       - "8000:8000"
 
+  bot:
+    profiles: ["telegram"]
+    build: .
+    command: ["tms-bot"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TMS_ENVIRONMENT: development
+      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
+      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://membership:membership@postgres:5432/membership
+      TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
+      TMS_TELEGRAM_BOT_TOKEN: ${TMS_TELEGRAM_BOT_TOKEN:-}
+      TMS_TELEGRAM_PROJECT_ID: ${TMS_TELEGRAM_PROJECT_ID:-}
+      TMS_TELEGRAM_WORKER_POLL_SECONDS: ${TMS_TELEGRAM_WORKER_POLL_SECONDS:-1}
+
 volumes:
   postgres_data:

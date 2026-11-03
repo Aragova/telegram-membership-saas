@@ -18,6 +18,9 @@ dependencies = [
   "uvicorn[standard]>=0.32,<1",
 ]
 
+[project.scripts]
+tms-bot = "telegram_membership_saas.bot_main:main"
+
 [project.optional-dependencies]
 dev = [
   "httpx>=0.27,<1",
