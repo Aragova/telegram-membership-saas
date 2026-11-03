@@ -148,6 +148,7 @@ def _subscription_end_text(ends_at: datetime | None, timezone: str) -> str:
 
 def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
     item = result.item
+    expiration = escape(_subscription_end_text(result.subscription_period_end, result.project_timezone))
     username = f"@{item.customer_username}" if item.customer_username else str(
         item.customer_telegram_user_id
     )
@@ -161,7 +162,7 @@ def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
         details += (
             "🟢 Статус подписки: активна\n"
             f"📅 Действует до: "
-            f"{escape(_subscription_end_text(result.subscription_period_end, result.project_timezone))}\n\n"
+            f"{expiration}\n\n"
             "Бот автоматически предоставит доступ покупателю."
         )
     else:
@@ -170,12 +171,13 @@ def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
 
 
 def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
+    expiration = escape(_subscription_end_text(result.subscription_period_end, result.project_timezone))
     if approve:
         return (
             "✅ <b>Подписка активирована</b>\n\n"
             f"📦 {escape(result.item.plan_name)}\n"
             f"📅 До: "
-            f"{escape(_subscription_end_text(result.subscription_period_end, result.project_timezone))}\n\n"
+            f"{expiration}\n\n"
             "🔐 Готовим доступ к каналу. Кнопка вступления появится в следующем сообщении."
         )
     return (
@@ -275,12 +277,13 @@ def create_telegram_commerce_router(
             checkout.request.final_amount,
             checkout.option.currency_precision,
         )
+        period = escape(format_period(checkout.option.duration_value, checkout.option.duration_unit))
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=(
                 "💎 <b>Оформление подписки</b>\n\n"
                 f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
-                f"⏳ {escape(format_period(checkout.option.duration_value, checkout.option.duration_unit))}\n"
+                f"⏳ {period}\n"
                 f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
                 f"Способ: {escape(checkout.option.payment_method_name)}\n\n"
                 f"{escape(checkout.instruction)}\n\n"
