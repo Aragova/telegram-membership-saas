@@ -48,6 +48,10 @@ one-bot / one-project Telegram runtime:
   **Never send bot tokens or encryption keys in chat with developers or commit
   them to git.** Store keys in restricted environment/secret management and
   preserve them in operational backups. Rotation needs a separate tested plan.
+  The staging Docker bot service receives this variable from the VM environment;
+  do not share `docker compose config` output after provisioning it because
+  that output may include secrets. Production should migrate to Docker/KMS
+  secrets with restricted access.
 - Telegram private chats are **not end-to-end encrypted**. Deletion reduces
   exposure, but does not guarantee erasure from every client or Telegram
   infrastructure. If a bot token may be exposed, rotate it in BotFather.
