@@ -5,6 +5,7 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from telegram_membership_saas import model_registry  # noqa: F401
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db_base import Base
 
