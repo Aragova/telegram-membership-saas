@@ -88,7 +88,13 @@ async def test_grant_creates_short_join_request_link_for_exact_project() -> None
 
     message_call = next(kwargs for name, kwargs in bot.calls if name == "send_message")
     assert message_call["chat_id"] == command.telegram_user_id
-    assert result.invite_link in str(message_call["text"])
+    assert "Доступ к каналу готов" in str(message_call["text"])
+    assert result.invite_link not in str(message_call["text"])
+    assert message_call["parse_mode"] == "HTML"
+    button = message_call["reply_markup"].inline_keyboard[0][0]
+    assert button.text == "Вступить в канал"
+    assert button.url == result.invite_link
+    assert button.style == "success"
 
 
 async def test_grant_does_not_create_invite_for_existing_member() -> None:
