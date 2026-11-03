@@ -320,7 +320,8 @@ async def claim_next_access_action(
             statement = statement.where(AccessAction.id.notin_(examined_ids))
 
         action = await session.scalar(
-            statement.order_by(AccessAction.available_at, AccessAction.created_at)
+            statement.execution_options(populate_existing=True)
+            .order_by(AccessAction.available_at, AccessAction.created_at)
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -335,6 +336,7 @@ async def claim_next_access_action(
                 AccessState.customer_id == action.customer_id,
                 AccessState.resource_id == action.resource_id,
             )
+            .execution_options(populate_existing=True)
             .with_for_update()
         )
         if state is None:
@@ -486,6 +488,7 @@ async def mark_access_action_failed(
             AccessState.customer_id == action.customer_id,
             AccessState.resource_id == action.resource_id,
         )
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     if state is None:
