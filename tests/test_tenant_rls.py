@@ -38,7 +38,27 @@ async def _create_project(session_factory, user_id: UUID, name: str) -> UUID:
         return project.id
 
 
-async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
+async def _add_member(
+    session_factory,
+    *,
+    owner_user_id: UUID,
+    project_id: UUID,
+    member_user_id: UUID,
+) -> None:
+    async with tenant_session_scope(
+        session_factory,
+        TenantContext(user_id=owner_user_id, project_id=project_id),
+    ) as session:
+        session.add(
+            ProjectMember(
+                project_id=project_id,
+                user_id=member_user_id,
+                role=ProjectMemberRole.VIEWER.value,
+            )
+        )
+
+
+async def test_rls_blocks_cross_project_access_and_narrows_active_scope() -> None:
     settings = Settings()
     engine = build_engine(settings)
     session_factory = build_session_factory(engine)
@@ -47,6 +67,7 @@ async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
         user_a_id, user_b_id = await _create_global_users(session_factory)
         project_a_id = await _create_project(session_factory, user_a_id, "Project A")
         project_b_id = await _create_project(session_factory, user_b_id, "Project B")
+        project_c_id = await _create_project(session_factory, user_b_id, "Project C")
 
         async with tenant_session_scope(
             session_factory,
@@ -55,6 +76,7 @@ async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
             visible = set((await session.scalars(select(Project.id))).all())
             assert project_a_id in visible
             assert project_b_id not in visible
+            assert project_c_id not in visible
 
         with pytest.raises(TenantAccessDenied):
             async with tenant_session_scope(
@@ -63,33 +85,45 @@ async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
             ):
                 pass
 
-        async with tenant_session_scope(
+        await _add_member(
             session_factory,
-            TenantContext(user_id=user_b_id, project_id=project_b_id),
-        ) as session:
-            session.add(
-                ProjectMember(
-                    project_id=project_b_id,
-                    user_id=user_a_id,
-                    role=ProjectMemberRole.VIEWER.value,
-                )
-            )
+            owner_user_id=user_b_id,
+            project_id=project_b_id,
+            member_user_id=user_a_id,
+        )
+        await _add_member(
+            session_factory,
+            owner_user_id=user_b_id,
+            project_id=project_c_id,
+            member_user_id=user_a_id,
+        )
 
+        # Discovery mode can see every project the user owns or belongs to.
         async with tenant_session_scope(
             session_factory,
             TenantContext(user_id=user_a_id),
         ) as session:
             visible = set((await session.scalars(select(Project.id))).all())
-            assert project_a_id in visible
-            assert project_b_id in visible
+            assert {project_a_id, project_b_id, project_c_id}.issubset(visible)
 
+            membership_projects = set(
+                (await session.scalars(select(ProjectMember.project_id))).all()
+            )
+            assert project_b_id in membership_projects
+            assert project_c_id in membership_projects
+
+        # Once project B is activated, both project and membership reads must be
+        # narrowed to B; A's own project and the separate C membership must not leak.
         async with tenant_session_scope(
             session_factory,
             TenantContext(user_id=user_a_id, project_id=project_b_id),
         ) as session:
-            visible_members = set(
-                (await session.scalars(select(ProjectMember.user_id))).all()
+            scoped_projects = set((await session.scalars(select(Project.id))).all())
+            assert scoped_projects == {project_b_id}
+
+            scoped_memberships = set(
+                (await session.scalars(select(ProjectMember.project_id))).all()
             )
-            assert user_a_id in visible_members
+            assert scoped_memberships == {project_b_id}
     finally:
         await engine.dispose()

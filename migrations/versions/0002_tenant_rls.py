@@ -24,12 +24,18 @@ def upgrade() -> None:
     op.execute("ALTER TABLE project_members ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE project_members FORCE ROW LEVEL SECURITY")
 
+    # Without a selected project, expose only the current user's own membership rows so
+    # project discovery can determine which projects they belong to. Once a project is
+    # activated, narrow membership visibility strictly to that project.
     op.execute(
         f"""
         CREATE POLICY project_members_select_policy ON project_members
         FOR SELECT
         USING (
-            user_id = {CURRENT_USER}
+            (
+                {CURRENT_PROJECT} IS NULL
+                AND user_id = {CURRENT_USER}
+            )
             OR (
                 {CURRENT_PROJECT} IS NOT NULL
                 AND project_id = {CURRENT_PROJECT}
@@ -82,11 +88,20 @@ def upgrade() -> None:
         )
     """
 
+    # User-only context is the project picker/discovery mode. A selected project must
+    # narrow project reads to exactly that project, even when the same user owns or
+    # belongs to other projects.
     op.execute(
         f"""
         CREATE POLICY projects_select_policy ON projects
         FOR SELECT
-        USING ({project_access})
+        USING (
+            ({project_access})
+            AND (
+                {CURRENT_PROJECT} IS NULL
+                OR id = {CURRENT_PROJECT}
+            )
+        )
         """
     )
     op.execute(
