@@ -26,12 +26,15 @@ def create_dispatcher(
                     project_id=project_id,
                 )
             )
-            dispatcher.include_router(
-                create_telegram_commerce_router(
-                    session_factory,
-                    project_id=project_id,
+            # After traffic is moved to the branded customer bot,
+            # the central management bot must not accept new purchases.
+            if enable_access:
+                dispatcher.include_router(
+                    create_telegram_commerce_router(
+                        session_factory,
+                        project_id=project_id,
+                    )
                 )
-            )
     return dispatcher
 
 
