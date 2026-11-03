@@ -7,7 +7,8 @@ import pytest
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr
 
-from telegram_membership_saas.modules.bots import BotInstance, service as bots
+from telegram_membership_saas.modules.bots import BotInstance
+from telegram_membership_saas.modules.bots import service as bots
 from telegram_membership_saas.modules.telegram_admin import handlers as admin
 
 TEST_TOKEN = "123456:" + "A" * 35
