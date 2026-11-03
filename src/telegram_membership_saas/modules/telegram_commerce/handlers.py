@@ -4,8 +4,15 @@ from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
-from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.filters import BaseFilter, Command
+from aiogram.types import (
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyParameters,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
@@ -20,9 +27,49 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     format_period,
     list_checkout_options,
     list_pending_reviews_for_actor,
+    require_awaiting_receipt_for_telegram_user,
     review_payment_request_from_telegram,
     submit_checkout_for_telegram_user,
 )
+
+RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
+ALLOWED_RECEIPT_MIME_TYPES = frozenset(
+    {"application/pdf", "image/jpeg", "image/png", "image/webp"}
+)
+
+
+def _receipt_request_id(message: Message, *, bot_id: int) -> UUID | None:
+    """Derive the request ID from the bot's original ForceReply prompt, never user text."""
+    if message.chat.type != "private":
+        return None
+    prompt = message.reply_to_message
+    if prompt is None or prompt.from_user is None or prompt.from_user.id != bot_id:
+        return None
+    header = (prompt.text or "").split("\n", 1)[0]
+    if not header.startswith(RECEIPT_REPLY_PREFIX):
+        return None
+    try:
+        return UUID(header[len(RECEIPT_REPLY_PREFIX) :])
+    except ValueError:
+        return None
+
+
+class ReceiptReplyFilter(BaseFilter):
+    """Handle only replies to our receipt prompt, leaving commands and other replies alone."""
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if message.text and message.text.startswith("/"):
+            return False
+        return _receipt_request_id(message, bot_id=bot.id) is not None
+
+
+def _acceptable_receipt(message: Message) -> bool:
+    if message.photo:
+        return True
+    return bool(
+        message.document is not None
+        and message.document.mime_type in ALLOWED_RECEIPT_MIME_TYPES
+    )
 
 
 def _option_label(option: CheckoutOption) -> str:
@@ -179,8 +226,8 @@ def create_telegram_commerce_router(
                 f"Сумма: {amount} {checkout.request.currency_code}\n"
                 f"Способ: {checkout.option.payment_method_name}\n\n"
                 f"{checkout.instruction}\n\n"
-                "После перевода нажмите «Я оплатил». "
-                "Подтверждение выполняется администратором после проверки поступления."
+                "После перевода нажмите «Я оплатил» и приложите скриншот или чек. "
+                "Администратор отдельно проверит поступление денег."
             ),
             reply_markup=_checkout_keyboard(checkout.request.id),
         )
@@ -192,7 +239,7 @@ def create_telegram_commerce_router(
         try:
             request_id = decode_uuid(callback.data.split(":", 1)[1])
             async with system_project_session_scope(session_factory, project_id) as session:
-                submission = await submit_checkout_for_telegram_user(
+                await require_awaiting_receipt_for_telegram_user(
                     session,
                     project_id=project_id,
                     request_id=request_id,
@@ -202,20 +249,85 @@ def create_telegram_commerce_router(
             await callback.answer(str(exc), show_alert=True)
             return
 
-        await callback.answer("Заявка отправлена")
+        await callback.answer()
         await bot.send_message(
             chat_id=callback.from_user.id,
-            text="Заявка отправлена администратору на проверку оплаты.",
+            text=(
+                f"{RECEIPT_REPLY_PREFIX}{request_id}\n"
+                "Ответьте на ЭТО сообщение фотографией чека или документом "
+                "(PDF/JPG/PNG/WEBP). До получения вложения заявка не будет "
+                "отправлена администратору."
+            ),
+            reply_markup=ForceReply(
+                selective=True,
+                input_field_placeholder="Прикрепите чек или скриншот",
+            ),
         )
-        if submission.newly_submitted:
-            text = _review_text(submission.item)
-            for reviewer_id in submission.reviewer_telegram_ids:
-                await _safe_send_message(
-                    bot,
-                    reviewer_id,
-                    text,
-                    reply_markup=_review_keyboard(submission.request.id),
+
+    @router.message(ReceiptReplyFilter())
+    async def receipt_handler(message: Message, bot: Bot) -> None:
+        if message.from_user is None:
+            return
+        request_id = _receipt_request_id(message, bot_id=bot.id)
+        if request_id is None:
+            return
+        if not _acceptable_receipt(message):
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text=(
+                    "Нужен файл: фото или документ PDF/JPG/PNG/WEBP. "
+                    "Ответьте вложением на сообщение с номером заявки."
+                ),
+            )
+            return
+
+        try:
+            async with system_project_session_scope(session_factory, project_id) as session:
+                submission = await submit_checkout_for_telegram_user(
+                    session,
+                    project_id=project_id,
+                    request_id=request_id,
+                    telegram_user_id=message.from_user.id,
                 )
+        except (ValueError, PermissionError) as exc:
+            await bot.send_message(chat_id=message.chat.id, text=str(exc))
+            return
+
+        delivered = 0
+        for reviewer_id in submission.reviewer_telegram_ids:
+            try:
+                # Telegram-to-Telegram copy: no file bytes/file IDs are persisted by our app.
+                copied = await bot.copy_message(
+                    chat_id=reviewer_id,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                )
+                # Reply to this exact receipt so concurrent submissions cannot be mixed up.
+                await bot.send_message(
+                    chat_id=reviewer_id,
+                    text=_review_text(submission.item),
+                    reply_markup=_review_keyboard(submission.request.id),
+                    reply_parameters=ReplyParameters(message_id=copied.message_id),
+                )
+                delivered += 1
+            except AiogramError:
+                # The buyer can reply with the same proof again. /payments recovers
+                # review controls without pretending an attachment was delivered.
+                continue
+
+        if delivered:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Заявка и подтверждающий документ отправлены администратору.",
+            )
+        else:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text=(
+                    "Заявка зарегистрирована, но доставить документ администратору "
+                    "не удалось. Повторите отправку вложения ответом на запрос выше."
+                ),
+            )
 
     @router.callback_query(F.data.startswith("cancel:"))
     async def cancel_handler(callback: CallbackQuery, bot: Bot) -> None:
