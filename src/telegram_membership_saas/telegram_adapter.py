@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
+from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
 from telegram_membership_saas.modules.telegram_commerce import create_telegram_commerce_router
 
 
@@ -13,10 +14,12 @@ def create_dispatcher(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     *,
     project_id: UUID | None = None,
+    enable_access: bool = True,
 ) -> Dispatcher:
     dispatcher = Dispatcher()
     if session_factory is not None:
-        dispatcher.include_router(create_telegram_access_router(session_factory))
+        if enable_access:
+            dispatcher.include_router(create_telegram_access_router(session_factory))
         if project_id is not None:
             dispatcher.include_router(
                 create_telegram_admin_router(
@@ -24,12 +27,33 @@ def create_dispatcher(
                     project_id=project_id,
                 )
             )
-            dispatcher.include_router(
-                create_telegram_commerce_router(
-                    session_factory,
-                    project_id=project_id,
+            # After traffic is moved to the branded customer bot,
+            # the central management bot must not accept new purchases.
+            if enable_access:
+                dispatcher.include_router(
+                    create_telegram_commerce_router(
+                        session_factory,
+                        project_id=project_id,
+                    )
                 )
-            )
+            else:
+                dispatcher.include_router(create_central_cutover_router())
+    return dispatcher
+
+
+def create_customer_dispatcher(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    project_id: UUID,
+) -> Dispatcher:
+    """Buyer-only handlers for a specific verified BotInstance's project."""
+    dispatcher = Dispatcher()
+    dispatcher.include_router(
+        create_telegram_access_router(session_factory, expected_project_id=project_id)
+    )
+    dispatcher.include_router(
+        create_telegram_commerce_router(session_factory, project_id=project_id)
+    )
     return dispatcher
 
 

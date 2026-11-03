@@ -32,12 +32,15 @@ async def process_chat_join_request(
     request: ChatJoinRequest,
     *,
     requested_at: datetime | None = None,
+    expected_project_id: UUID | None = None,
 ) -> bool:
     moment = requested_at or utcnow()
     invite = request.invite_link
     project_id = project_id_from_invite_name(invite.name if invite is not None else None)
 
-    if invite is None or project_id is None:
+    if invite is None or project_id is None or (
+        expected_project_id is not None and project_id != expected_project_id
+    ):
         await bot.decline_chat_join_request(
             chat_id=request.chat.id,
             user_id=request.from_user.id,
@@ -98,11 +101,15 @@ async def process_chat_join_request(
 
 def create_telegram_access_router(
     session_factory: async_sessionmaker[AsyncSession],
+    *,
+    expected_project_id: UUID | None = None,
 ) -> Router:
     router = Router(name="telegram-access")
 
     @router.chat_join_request()
     async def join_request_handler(request: ChatJoinRequest, bot: Bot) -> None:
-        await process_chat_join_request(session_factory, bot, request)
+        await process_chat_join_request(
+            session_factory, bot, request, expected_project_id=expected_project_id
+        )
 
     return router

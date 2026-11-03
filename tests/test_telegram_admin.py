@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -260,3 +261,28 @@ async def test_tenant_scope_denial_is_not_leaked(monkeypatch):
         await service.load_admin_project(
             None, project_id=uuid4(), actor_telegram_user_id=111
         )
+
+
+async def test_central_review_menu_redirects_to_customer_bot_after_cutover(monkeypatch):
+    snapshot = replace(
+        _snapshot(),
+        bots=(service.AdminEntry(name="@rus_chan_prem_bot", status="registered"),),
+    )
+    monkeypatch.setattr(
+        handlers, "load_admin_project", AsyncMock(return_value=snapshot)
+    )
+    monkeypatch.setattr(
+        handlers, "get_settings",
+        lambda: SimpleNamespace(telegram_central_access_enabled=False),
+    )
+    pending = AsyncMock()
+    monkeypatch.setattr(handlers, "list_pending_reviews_for_actor", pending)
+    bot = _bot()
+    callback = _callback("reviews")
+    await _handler(_router(), "admin_navigation_handler", callback=True)(callback, bot)
+    sent = bot.send_message.await_args.kwargs
+    assert "@rus_chan_prem_bot" in sent["text"]
+    assert "/payments" in sent["text"]
+    assert sent.get("reply_markup") is None
+    pending.assert_not_awaited()
+    callback.answer.assert_awaited_once()
