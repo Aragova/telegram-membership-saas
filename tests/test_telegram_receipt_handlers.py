@@ -25,7 +25,7 @@ def _bot():
     bot = MagicMock()
     bot.id = 123456
     bot.send_message = AsyncMock()
-    bot.copy_message = AsyncMock()
+    bot.copy_message = AsyncMock(return_value=SimpleNamespace(message_id=991))
     return bot
 
 
@@ -49,6 +49,7 @@ def _message(request_id, *, user_id=100, mime_type=None, photo=False, bot_id=123
         chat=SimpleNamespace(type="private", id=user_id),
         reply_to_message=prompt,
         message_id=37,
+        text=None,
         photo=[object()] if photo else None,
         document=document,
     )
@@ -84,6 +85,35 @@ async def test_paid_button_does_not_submit_without_receipt(monkeypatch):
     assert isinstance(markup, ForceReply)
     assert str(request_id) in bot.send_message.await_args.kwargs["text"]
     callback.answer.assert_awaited_once()
+    assert "Реальные деньги в тесте" not in bot.send_message.await_args.kwargs["text"]
+
+
+async def test_receipt_reply_filter_keeps_regular_replies_and_commands_available():
+    bot = _bot()
+    request_id = uuid4()
+    matcher = receipt_handlers.ReceiptReplyFilter()
+    router = receipt_handlers.create_telegram_commerce_router(None, project_id=uuid4())
+    receipt_handler = next(
+        item for item in router.message.handlers if item.callback.__name__ == "receipt_handler"
+    )
+    assert any(
+        isinstance(item.callback, receipt_handlers.ReceiptReplyFilter)
+        for item in receipt_handler.filters
+    )
+
+    valid = _message(request_id, photo=True)
+    assert await matcher(valid, bot) is True
+
+    command = _message(request_id)
+    command.text = "/payments"
+    assert await matcher(command, bot) is False
+
+    unrelated = _message(request_id, photo=True, bot_id=654321)
+    assert await matcher(unrelated, bot) is False
+
+    group = _message(request_id, photo=True)
+    group.chat.type = "group"
+    assert await matcher(group, bot) is False
 
 
 async def test_foreign_receipt_prompt_is_rejected(monkeypatch):
@@ -179,6 +209,8 @@ async def test_receipt_is_copied_to_reviewer_without_persisting_file_data(
     )
     assert bot.send_message.await_count == 2
     assert bot.send_message.await_args_list[0].kwargs["chat_id"] == reviewer_id
+    reply = bot.send_message.await_args_list[0].kwargs["reply_parameters"]
+    assert reply.message_id == 991
     assert "документ отправлены" in bot.send_message.await_args_list[1].kwargs["text"]
 
 
