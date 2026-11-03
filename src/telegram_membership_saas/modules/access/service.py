@@ -333,7 +333,6 @@ async def claim_next_access_action(
                 AccessAction.resource_id == action.resource_id,
                 AccessAction.status == AccessActionStatus.PROCESSING.value,
                 AccessAction.id != action.id,
-                AccessAction.locked_at > stale_before,
             )
         )
         if other_processing is not None:
