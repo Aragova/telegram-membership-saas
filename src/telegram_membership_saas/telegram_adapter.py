@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
+from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
 from telegram_membership_saas.modules.telegram_commerce import create_telegram_commerce_router
 
 
@@ -35,6 +36,8 @@ def create_dispatcher(
                         project_id=project_id,
                     )
                 )
+            else:
+                dispatcher.include_router(create_central_cutover_router())
     return dispatcher
 
 
