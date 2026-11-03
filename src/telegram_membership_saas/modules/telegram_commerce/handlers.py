@@ -182,7 +182,7 @@ def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
             f"📦 {escape(result.item.plan_name)}\n"
             f"📅 До: "
             f"{expiration}\n\n"
-            "🔐 Готовим доступ к каналу. Кнопка вступления появится в следующем сообщении."
+            "🔐 Если вы ещё не в канале, бот пришлёт кнопку для вступления."
         )
     return (
         "❌ <b>Оплата отклонена</b>\n\n"
