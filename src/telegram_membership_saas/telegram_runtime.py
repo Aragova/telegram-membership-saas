@@ -185,21 +185,23 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
     dispatcher = create_dispatcher(
         session_factory,
         project_id=current.telegram_project_id,
+        enable_access=current.telegram_central_access_enabled,
     )
-    adapter = TelegramAccessAdapter(bot)
-
-    runtime_task = asyncio.create_task(
-        run_project_runtime_loop(
-            session_factory,
-            project_id=current.telegram_project_id,
-            adapter=adapter,
-            poll_seconds=current.telegram_worker_poll_seconds,
+    runtime_task: asyncio.Task[None] | None = None
+    if current.telegram_central_access_enabled:
+        runtime_task = asyncio.create_task(
+            run_project_runtime_loop(
+                session_factory,
+                project_id=current.telegram_project_id,
+                adapter=TelegramAccessAdapter(bot),
+                poll_seconds=current.telegram_worker_poll_seconds,
+            )
         )
-    )
     try:
         await dispatcher.start_polling(bot)
     finally:
-        runtime_task.cancel()
-        await asyncio.gather(runtime_task, return_exceptions=True)
+        if runtime_task is not None:
+            runtime_task.cancel()
+            await asyncio.gather(runtime_task, return_exceptions=True)
         await bot.session.close()
         await engine.dispose()
