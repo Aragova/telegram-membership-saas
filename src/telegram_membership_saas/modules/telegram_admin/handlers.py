@@ -11,13 +11,21 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.telegram_admin.service import (
     AdminEntry,
     AdminProjectSnapshot,
     change_project_timezone,
     load_admin_project,
 )
-from telegram_membership_saas.modules.telegram_commerce.handlers import _send_catalog
+from telegram_membership_saas.modules.telegram_commerce.handlers import (
+    _review_keyboard,
+    _review_text,
+    _send_catalog,
+)
+from telegram_membership_saas.modules.telegram_commerce.service import (
+    list_pending_reviews_for_actor,
+)
 
 TIMEZONE_CHOICES = (
     "Europe/Moscow",
@@ -240,10 +248,24 @@ def create_telegram_admin_router(
                 await load_admin_project(
                     session_factory, project_id=project_id, actor_telegram_user_id=user_id
                 )
-                await bot.send_message(
-                    chat_id=user_id,
-                    text="🧾 Для просмотра заявок отправьте команду /payments.",
-                )
+                async with system_project_session_scope(session_factory, project_id) as session:
+                    pending = await list_pending_reviews_for_actor(
+                        session,
+                        project_id=project_id,
+                        actor_telegram_user_id=user_id,
+                        actor_username=callback.from_user.username,
+                        actor_first_name=callback.from_user.first_name,
+                    )
+                if not pending:
+                    await bot.send_message(
+                        chat_id=user_id, text="🧾 Заявок на проверку сейчас нет."
+                    )
+                for item in pending:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=_review_text(item),
+                        reply_markup=_review_keyboard(item.request_id),
+                    )
             else:
                 await callback.answer("Неизвестное действие", show_alert=True)
                 return
