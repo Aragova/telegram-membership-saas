@@ -101,8 +101,8 @@ class PlanPrice(Base):
     project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
     plan_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
     currency_code: Mapped[str] = mapped_column(
-        ForeignKey("currency_assets.code", ondelete="RESTRICT"),
         String(16),
+        ForeignKey("currency_assets.code", ondelete="RESTRICT"),
         nullable=False,
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
