@@ -1,4 +1,4 @@
-# Product Concept v1.4
+# Product Concept v1.5
 
 ## 1. Назначение
 
@@ -8,21 +8,30 @@ SaaS-сервис для монетизации закрытых Telegram-кан
 
 ## 2. Основной сценарий владельца
 
-1. Создать Project.
-2. Подключить Telegram Channel/Group.
-3. Создать Plan.
-4. Задать Duration.
+1. Открыть управляющий ViMi Pay и создать Project.
+2. Подключить собственного Telegram-бота через токен от BotFather.
+3. Подключить Telegram Channel/Group.
+4. Создать Plan и Duration.
 5. Добавить Currency + Price пары.
 6. Создать ManualSettlement payment method.
-7. Опубликовать тариф.
+7. Опубликовать тариф через собственного бота.
 8. Получать Payment Requests.
 9. Проверять реальное поступление денег в своём банке.
 10. Approve/Reject.
 11. Система сама управляет дальнейшим доступом.
 
+## 2.1. Управляющий бот и боты владельцев
+
+- Центральный ViMi Pay используется владельцем для регистрации, подключения и управления проектами.
+- Покупатель получает ссылку на отдельного бота владельца, а не на центральный ViMi Pay.
+- BotInstance привязан к Project; его Telegram ID уникален глобально.
+- Владелец передаёт токен своего бота через защищённую процедуру; система проверяет его в Telegram и хранит только зашифрованный секрет.
+- Регистрация бота и готовность принимать покупателей — разные состояния. До запуска runtime и проверки E2E ссылку покупателям не выдаём.
+- Один владелец может управлять несколькими проектами; существующий коммерческий core остаётся общим и tenant-safe.
+
 ## 3. Основной сценарий покупателя
 
-1. Открыть bot.
+1. Открыть собственного бота выбранного владельца канала.
 2. Выбрать Plan.
 3. Выбрать Currency.
 4. Выбрать совместимый Payment Method.
@@ -301,7 +310,7 @@ Default нового проекта: `Europe/Moscow`.
 - recurring subscriptions;
 - web dashboard;
 - REST API;
-- white-label bots;
+- расширенный white-label брендинг и кастомные интерфейсы сверх обычного бота владельца;
 - Managed Bots;
 - multi-resource bundles;
 - Discord/web access;
@@ -314,7 +323,7 @@ Default нового проекта: `Europe/Moscow`.
 
 MVP считается успешным, когда стабильно работает end-to-end цепочка:
 
-Create Project -> Connect Resource -> Create Plan -> Add Currencies/Prices -> Create ManualSettlement -> Customer selects/buys -> Sends confirmation -> Admin verifies bank -> Approves -> Payment -> Subscription -> Grants -> Access -> Renewal -> Expiration -> Effective access recalculation -> Revoke when no grants remain.
+Create Project -> Connect Owner Bot -> Connect Resource -> Create Plan -> Add Currencies/Prices -> Create ManualSettlement -> Customer selects/buys -> Sends confirmation -> Admin verifies bank -> Approves -> Payment -> Subscription -> Grants -> Access -> Renewal -> Expiration -> Effective access recalculation -> Revoke when no grants remain.
 
 Отдельный acceptance для владельца сети:
 
