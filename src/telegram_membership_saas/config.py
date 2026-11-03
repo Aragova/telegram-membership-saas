@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     telegram_bot_token: SecretStr | None = None
     bot_token_encryption_key: SecretStr | None = None
     telegram_project_id: UUID | None = None
+    customer_telegram_bot_id: int | None = None
+    telegram_central_access_enabled: bool = True
     telegram_worker_poll_seconds: float = 1.0
     default_project_timezone: str = "Europe/Moscow"
 
@@ -47,6 +49,13 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except ZoneInfoNotFoundError as exc:
             raise ValueError(f"Unknown IANA timezone: {value}") from exc
+        return value
+
+    @field_validator("customer_telegram_bot_id")
+    @classmethod
+    def validate_customer_bot_id(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("customer Telegram bot ID must be positive")
         return value
 
     @field_validator("telegram_worker_poll_seconds")
