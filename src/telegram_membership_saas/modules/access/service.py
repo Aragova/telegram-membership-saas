@@ -402,17 +402,12 @@ async def mark_access_action_succeeded(
     if claim_attempt > action.attempt_count:
         raise ValueError("claim_attempt cannot exceed the current action generation")
 
-    state = await session.scalar(
-        select(AccessState)
-        .where(
-            AccessState.project_id == project_id,
-            AccessState.customer_id == action.customer_id,
-            AccessState.resource_id == action.resource_id,
-        )
-        .with_for_update()
+    _, state = await _load_target_for_update(
+        session,
+        project_id=project_id,
+        customer_id=action.customer_id,
+        resource_id=action.resource_id,
     )
-    if state is None:
-        raise RuntimeError("Access state disappeared before action completion")
 
     state.actual_state = (
         ActualAccessState.GRANTED.value
