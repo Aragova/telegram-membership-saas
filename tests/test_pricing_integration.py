@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -106,6 +107,25 @@ async def test_seeded_registry_and_versioned_peer_prices_are_tenant_safe() -> No
             )
             assert usd_v2.version == 2
             assert rub_v1.version == 1
+
+            with pytest.raises(ValueError, match="cannot precede"):
+                await replace_active_plan_price(
+                    session,
+                    project_id=project_a,
+                    plan_id=plan_a,
+                    currency_code="USD",
+                    amount="13",
+                    changed_at=usd_v2.active_from - timedelta(seconds=1),
+                )
+
+            with pytest.raises(ValueError, match="cannot precede"):
+                await retire_active_plan_price(
+                    session,
+                    project_id=project_a,
+                    plan_id=plan_a,
+                    currency_code="RUB",
+                    retired_at=rub_v1.active_from - timedelta(seconds=1),
+                )
 
         async with tenant_session_scope(
             session_factory,
