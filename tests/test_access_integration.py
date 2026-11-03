@@ -163,6 +163,7 @@ async def test_effective_access_boundaries_actions_and_rls() -> None:
                 session,
                 project_id=project_a,
                 action_id=grant_action.id,
+                claim_attempt=grant_action.attempt_count,
                 processed_at=base,
             )
 
@@ -248,6 +249,7 @@ async def test_effective_access_boundaries_actions_and_rls() -> None:
                 session,
                 project_id=project_a,
                 action_id=revoke_action.id,
+                claim_attempt=revoke_action.attempt_count,
                 error="temporary adapter outage",
                 failed_at=base + timedelta(hours=2),
                 retry_at=retry_at,
@@ -272,6 +274,7 @@ async def test_effective_access_boundaries_actions_and_rls() -> None:
                 session,
                 project_id=project_a,
                 action_id=retry_action.id,
+                claim_attempt=retry_action.attempt_count,
                 processed_at=retry_at,
             )
 
