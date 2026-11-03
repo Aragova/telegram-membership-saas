@@ -172,6 +172,26 @@ async def _find_existing_action(
     )
 
 
+async def _has_opposite_processing_action(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    customer_id: UUID,
+    resource_id: UUID,
+    desired_action: AccessActionType,
+) -> bool:
+    action_id = await session.scalar(
+        select(AccessAction.id).where(
+            AccessAction.project_id == project_id,
+            AccessAction.customer_id == customer_id,
+            AccessAction.resource_id == resource_id,
+            AccessAction.status == AccessActionStatus.PROCESSING.value,
+            AccessAction.action_type != desired_action.value,
+        )
+    )
+    return action_id is not None
+
+
 async def recalculate_effective_access(
     session: AsyncSession,
     *,
@@ -214,21 +234,28 @@ async def recalculate_effective_access(
 
     state.desired_access = has_access
 
+    desired_action = AccessActionType.GRANT if has_access else AccessActionType.REVOKE
     actual_matches = (
         state.actual_state == ActualAccessState.GRANTED.value
         if has_access
         else state.actual_state == ActualAccessState.REVOKED.value
     )
+    opposite_processing = await _has_opposite_processing_action(
+        session,
+        project_id=project_id,
+        customer_id=customer_id,
+        resource_id=resource_id,
+        desired_action=desired_action,
+    )
     queued_action = None
 
-    if not actual_matches:
-        action_type = AccessActionType.GRANT if has_access else AccessActionType.REVOKE
+    if not actual_matches or opposite_processing:
         queued_action = await _find_existing_action(
             session,
             project_id=project_id,
             customer_id=customer_id,
             resource_id=resource_id,
-            action_type=action_type,
+            action_type=desired_action,
         )
         if queued_action is None:
             queued_action = AccessAction(
@@ -236,10 +263,10 @@ async def recalculate_effective_access(
                 customer_id=customer_id,
                 resource_id=resource_id,
                 projection_revision=effective.revision,
-                action_type=action_type.value,
+                action_type=desired_action.value,
                 dedupe_key=(
                     f"access:{customer_id}:{resource_id}:"
-                    f"r{effective.revision}:{action_type.value}"
+                    f"r{effective.revision}:{desired_action.value}"
                 ),
                 status=AccessActionStatus.PENDING.value,
                 available_at=moment,
@@ -353,10 +380,13 @@ async def mark_access_action_succeeded(
     *,
     project_id: UUID,
     action_id: UUID,
+    claim_attempt: int,
     processed_at: datetime | None = None,
 ) -> AccessAction:
     moment = processed_at or utcnow()
     require_aware(moment)
+    if claim_attempt <= 0:
+        raise ValueError("claim_attempt must be positive")
 
     action = await session.scalar(
         select(AccessAction)
@@ -369,6 +399,8 @@ async def mark_access_action_succeeded(
     )
     if action is None:
         raise ValueError("Access action is not accessible in the current project scope")
+    if action.attempt_count != claim_attempt:
+        raise ValueError("Access action lease is no longer current")
     if action.status == AccessActionStatus.SUCCEEDED.value:
         return action
     if action.status != AccessActionStatus.PROCESSING.value:
@@ -408,6 +440,7 @@ async def mark_access_action_failed(
     *,
     project_id: UUID,
     action_id: UUID,
+    claim_attempt: int,
     error: str,
     failed_at: datetime | None = None,
     retry_at: datetime | None = None,
@@ -415,6 +448,8 @@ async def mark_access_action_failed(
 ) -> AccessAction:
     moment = failed_at or utcnow()
     require_aware(moment)
+    if claim_attempt <= 0:
+        raise ValueError("claim_attempt must be positive")
     if not error.strip():
         raise ValueError("Access action failure must include an error")
     if not permanent:
@@ -435,6 +470,8 @@ async def mark_access_action_failed(
     )
     if action is None:
         raise ValueError("Access action is not accessible in the current project scope")
+    if action.attempt_count != claim_attempt:
+        raise ValueError("Access action lease is no longer current")
     if action.status != AccessActionStatus.PROCESSING.value:
         raise ValueError("Only a processing access action can fail")
 
