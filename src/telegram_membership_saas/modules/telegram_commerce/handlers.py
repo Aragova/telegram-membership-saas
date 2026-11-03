@@ -148,7 +148,9 @@ def _subscription_end_text(ends_at: datetime | None, timezone: str) -> str:
 
 def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
     item = result.item
-    expiration = escape(_subscription_end_text(result.subscription_period_end, result.project_timezone))
+    expiration = escape(
+        _subscription_end_text(result.subscription_period_end, result.project_timezone)
+    )
     username = f"@{item.customer_username}" if item.customer_username else str(
         item.customer_telegram_user_id
     )
@@ -171,7 +173,9 @@ def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
 
 
 def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
-    expiration = escape(_subscription_end_text(result.subscription_period_end, result.project_timezone))
+    expiration = escape(
+        _subscription_end_text(result.subscription_period_end, result.project_timezone)
+    )
     if approve:
         return (
             "✅ <b>Подписка активирована</b>\n\n"
@@ -277,7 +281,9 @@ def create_telegram_commerce_router(
             checkout.request.final_amount,
             checkout.option.currency_precision,
         )
-        period = escape(format_period(checkout.option.duration_value, checkout.option.duration_unit))
+        period = escape(
+            format_period(checkout.option.duration_value, checkout.option.duration_unit)
+        )
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=(
