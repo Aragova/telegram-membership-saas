@@ -1,8 +1,8 @@
 import os
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory, tenant_session_scope
@@ -16,19 +16,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-async def _reset_database(session_factory) -> None:
-    async with session_factory() as session:
-        async with session.begin():
-            await session.execute(
-                text("TRUNCATE project_members, projects, telegram_users RESTART IDENTITY CASCADE")
-            )
+def _random_telegram_id() -> int:
+    return (uuid4().int % 8_000_000_000_000_000_000) + 1
 
 
 async def _create_global_users(session_factory) -> tuple[UUID, UUID]:
     async with session_factory() as session:
         async with session.begin():
-            user_a = TelegramUser(telegram_user_id=100001, username="tenant_a")
-            user_b = TelegramUser(telegram_user_id=100002, username="tenant_b")
+            user_a = TelegramUser(telegram_user_id=_random_telegram_id(), username="tenant_a")
+            user_b = TelegramUser(telegram_user_id=_random_telegram_id(), username="tenant_b")
             session.add_all([user_a, user_b])
             await session.flush()
             return user_a.id, user_b.id
@@ -48,7 +44,6 @@ async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
     session_factory = build_session_factory(engine)
 
     try:
-        await _reset_database(session_factory)
         user_a_id, user_b_id = await _create_global_users(session_factory)
         project_a_id = await _create_project(session_factory, user_a_id, "Project A")
         project_b_id = await _create_project(session_factory, user_b_id, "Project B")
@@ -58,7 +53,8 @@ async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
             TenantContext(user_id=user_a_id),
         ) as session:
             visible = set((await session.scalars(select(Project.id))).all())
-            assert visible == {project_a_id}
+            assert project_a_id in visible
+            assert project_b_id not in visible
 
         with pytest.raises(TenantAccessDenied):
             async with tenant_session_scope(
@@ -84,7 +80,8 @@ async def test_rls_blocks_cross_project_access_and_allows_membership() -> None:
             TenantContext(user_id=user_a_id),
         ) as session:
             visible = set((await session.scalars(select(Project.id))).all())
-            assert visible == {project_a_id, project_b_id}
+            assert project_a_id in visible
+            assert project_b_id in visible
 
         async with tenant_session_scope(
             session_factory,

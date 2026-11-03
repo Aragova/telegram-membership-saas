@@ -12,6 +12,7 @@ services:
       retries: 10
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-runtime.sql:/docker-entrypoint-initdb.d/10-runtime.sql:ro
 
   app:
     build: .
@@ -20,7 +21,8 @@ services:
         condition: service_healthy
     environment:
       TMS_ENVIRONMENT: development
-      TMS_DATABASE_URL: postgresql+asyncpg://membership:membership@postgres:5432/membership
+      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
+      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://membership:membership@postgres:5432/membership
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
     ports:
       - "8000:8000"
