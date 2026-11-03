@@ -1,4 +1,4 @@
-from telegram_membership_saas.modules.access import AccessState, EffectiveAccess
+from telegram_membership_saas.modules.access import AccessAction, AccessState, EffectiveAccess
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.outbox import OutboxEvent
@@ -15,6 +15,7 @@ from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.subscriptions import Subscription
 
 __all__ = [
+    "AccessAction",
     "AccessState",
     "CurrencyAsset",
     "EffectiveAccess",
