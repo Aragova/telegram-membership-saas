@@ -4,13 +4,14 @@ from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
-from aiogram.filters import Command
+from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
     ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    ReplyParameters,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -51,6 +52,15 @@ def _receipt_request_id(message: Message, *, bot_id: int) -> UUID | None:
         return UUID(header[len(RECEIPT_REPLY_PREFIX) :])
     except ValueError:
         return None
+
+
+class ReceiptReplyFilter(BaseFilter):
+    """Handle only replies to our receipt prompt, leaving commands and other replies alone."""
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if message.text and message.text.startswith("/"):
+            return False
+        return _receipt_request_id(message, bot_id=bot.id) is not None
 
 
 def _acceptable_receipt(message: Message) -> bool:
@@ -246,7 +256,7 @@ def create_telegram_commerce_router(
                 f"{RECEIPT_REPLY_PREFIX}{request_id}\n"
                 "Ответьте на ЭТО сообщение фотографией чека или документом "
                 "(PDF/JPG/PNG/WEBP). До получения вложения заявка не будет "
-                "отправлена администратору. Реальные деньги в тесте не переводите."
+                "отправлена администратору."
             ),
             reply_markup=ForceReply(
                 selective=True,
@@ -254,7 +264,7 @@ def create_telegram_commerce_router(
             ),
         )
 
-    @router.message(F.reply_to_message)
+    @router.message(ReceiptReplyFilter())
     async def receipt_handler(message: Message, bot: Bot) -> None:
         if message.from_user is None:
             return
@@ -287,15 +297,17 @@ def create_telegram_commerce_router(
         for reviewer_id in submission.reviewer_telegram_ids:
             try:
                 # Telegram-to-Telegram copy: no file bytes/file IDs are persisted by our app.
-                await bot.copy_message(
+                copied = await bot.copy_message(
                     chat_id=reviewer_id,
                     from_chat_id=message.chat.id,
                     message_id=message.message_id,
                 )
+                # Reply to this exact receipt so concurrent submissions cannot be mixed up.
                 await bot.send_message(
                     chat_id=reviewer_id,
                     text=_review_text(submission.item),
                     reply_markup=_review_keyboard(submission.request.id),
+                    reply_parameters=ReplyParameters(message_id=copied.message_id),
                 )
                 delivered += 1
             except AiogramError:
