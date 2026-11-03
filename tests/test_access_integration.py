@@ -194,6 +194,7 @@ async def test_effective_access_boundaries_actions_and_rls() -> None:
             await process_claimed_access_recalculate_event(
                 session,
                 event=boundary_event,
+                claim_attempt=boundary_event.attempt_count,
                 processed_at=base + timedelta(hours=1),
             )
             assert boundary_event.status == OutboxEventStatus.SUCCEEDED.value
@@ -233,6 +234,7 @@ async def test_effective_access_boundaries_actions_and_rls() -> None:
             await process_claimed_access_recalculate_event(
                 session,
                 event=expiry_event,
+                claim_attempt=expiry_event.attempt_count,
                 processed_at=base + timedelta(hours=2),
             )
 
