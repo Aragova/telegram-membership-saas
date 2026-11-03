@@ -80,6 +80,19 @@ async def process_chat_join_request(
             ticket_id=decision.ticket_id,
             approved_at=moment,
         )
+
+    try:
+        await bot.send_message(
+            chat_id=request.from_user.id,
+            text=(
+                "✅ <b>Вы в канале!</b>\n\n"
+                "Ваша заявка на вступление одобрена. Приятного просмотра!"
+            ),
+            parse_mode="HTML",
+        )
+    except AiogramError:
+        # Membership was already granted; a notification failure must not roll it back.
+        pass
     return True
 
 

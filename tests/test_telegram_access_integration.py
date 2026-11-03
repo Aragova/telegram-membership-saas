@@ -130,6 +130,10 @@ class FakeJoinBot:
         self.approved: list[tuple[int, int]] = []
         self.declined: list[tuple[int, int]] = []
         self.revoked: list[tuple[int, str]] = []
+        self.notifications: list[tuple[int, str]] = []
+
+    async def send_message(self, *, chat_id: int, text: str, parse_mode: str) -> None:
+        self.notifications.append((chat_id, text))
 
     async def approve_chat_join_request(self, *, chat_id: int, user_id: int) -> None:
         self.approved.append((chat_id, user_id))
@@ -279,6 +283,8 @@ async def test_owner_service_worker_join_request_and_rls() -> None:
             is True
         )
         assert bot.approved == [(chat_id, owner_telegram_id)]
+        assert bot.notifications and bot.notifications[0][0] == owner_telegram_id
+        assert "Вы в канале!" in bot.notifications[0][1]
 
         async with system_project_session_scope(session_factory, project_a) as session:
             ticket = await session.get(TelegramJoinTicket, execution.ticket_id)

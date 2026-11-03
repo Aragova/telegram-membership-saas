@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, localcontext
 from uuid import UUID
 
@@ -85,6 +86,8 @@ class ReviewItem:
 class ReviewResult:
     item: ReviewItem
     changed: bool
+    subscription_period_end: datetime | None = None
+    project_timezone: str = "Europe/Moscow"
 
 
 def encode_uuid(value: UUID) -> str:
@@ -626,15 +629,17 @@ async def review_payment_request_from_telegram(
     if locked_request is None:
         raise ValueError("Payment request is not accessible in the current project scope")
     before = locked_request.status
+    subscription_period_end: datetime | None = None
 
     if approve:
-        result = await approve_payment_request(
+        approval = await approve_payment_request(
             session,
             project_id=project_id,
             request_id=request_id,
             reviewer_user_id=actor.id,
         )
-        request = result.request
+        request = approval.request
+        subscription_period_end = approval.subscription.current_period_end
         changed = before != PaymentRequestStatus.APPROVED.value
     else:
         request = await reject_payment_request(
@@ -650,4 +655,12 @@ async def review_payment_request_from_telegram(
         project_id=project_id,
         request_id=request.id,
     )
-    return ReviewResult(item=item, changed=changed)
+    project_timezone = await session.scalar(
+        select(Project.timezone).where(Project.id == project_id)
+    )
+    return ReviewResult(
+        item=item,
+        changed=changed,
+        subscription_period_end=subscription_period_end,
+        project_timezone=project_timezone or "Europe/Moscow",
+    )

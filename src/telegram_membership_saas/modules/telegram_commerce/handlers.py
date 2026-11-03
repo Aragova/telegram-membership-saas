@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
+from html import escape
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
@@ -19,6 +22,7 @@ from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
+    ReviewResult,
     cancel_checkout_for_telegram_user,
     create_checkout_for_telegram_user,
     decode_uuid,
@@ -87,12 +91,14 @@ def _checkout_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="✅ Я оплатил",
+                    style="success",
                     callback_data=f"paid:{token}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="❌ Отменить",
+                    text="Отменить",
+                    style="danger",
                     callback_data=f"cancel:{token}",
                 )
             ],
@@ -107,10 +113,12 @@ def _review_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="✅ Подтвердить",
+                    style="success",
                     callback_data=f"approve:{token}",
                 ),
                 InlineKeyboardButton(
-                    text="❌ Отклонить",
+                    text="Отклонить",
+                    style="danger",
                     callback_data=f"reject:{token}",
                 ),
             ]
@@ -122,12 +130,64 @@ def _review_text(item: ReviewItem) -> str:
     username = f"@{item.customer_username}" if item.customer_username else "без username"
     amount = format_amount(item.amount, 18)
     return (
-        "Новая заявка на оплату\n"
-        f"Покупатель: {username} · Telegram ID {item.customer_telegram_user_id}\n"
-        f"Тариф: {item.plan_name}\n"
-        f"Сумма: {amount} {item.currency_code}\n"
+        "🧾 Заявка на подтверждение\n\n"
+        f"👤 Покупатель: {username}\n"
+        f"📦 Тариф: {item.plan_name}\n"
+        f"💳 Оплата: {amount} {item.currency_code}\n"
         f"Способ: {item.payment_method_name}\n"
-        f"Заявка: {item.request_id}"
+        f"🔖 Заявка: {item.request_id}\n\n"
+        "Проверьте поступление средств в банке, затем примите решение."
+    )
+
+
+def _subscription_end_text(ends_at: datetime | None, timezone: str) -> str:
+    if ends_at is None:
+        return "Бессрочно"
+    return f"{ends_at.astimezone(ZoneInfo(timezone)):%d.%m.%Y %H:%M} ({timezone})"
+
+
+def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
+    item = result.item
+    expiration = escape(
+        _subscription_end_text(result.subscription_period_end, result.project_timezone)
+    )
+    username = f"@{item.customer_username}" if item.customer_username else str(
+        item.customer_telegram_user_id
+    )
+    headline = "✅ <b>Оплата подтверждена</b>" if approve else "❌ <b>Оплата отклонена</b>"
+    details = (
+        f"👤 Покупатель: {escape(username)}\n"
+        f"📦 Тариф: {escape(item.plan_name)}\n"
+        f"💳 Сумма: {format_amount(item.amount, 18)} {escape(item.currency_code)}\n"
+    )
+    if approve:
+        details += (
+            "🟢 Статус подписки: активна\n"
+            f"📅 Действует до: "
+            f"{expiration}\n\n"
+            "Бот автоматически предоставит доступ покупателю."
+        )
+    else:
+        details += "\nЗаявка закрыта. Подписка не активирована."
+    return f"{headline}\n\n{details}"
+
+
+def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
+    expiration = escape(
+        _subscription_end_text(result.subscription_period_end, result.project_timezone)
+    )
+    if approve:
+        return (
+            "✅ <b>Подписка активирована</b>\n\n"
+            f"📦 {escape(result.item.plan_name)}\n"
+            f"📅 До: "
+            f"{expiration}\n\n"
+            "🔐 Если вы ещё не в канале, бот пришлёт кнопку для вступления."
+        )
+    return (
+        "❌ <b>Оплата отклонена</b>\n\n"
+        f"Тариф: {escape(result.item.plan_name)}\n"
+        "Если произошла ошибка, свяжитесь с администратором канала."
     )
 
 
@@ -159,6 +219,7 @@ async def _send_catalog(
         [
             InlineKeyboardButton(
                 text=_option_label(option),
+                style="primary",
                 callback_data=(
                     f"buy:{encode_uuid(option.plan_price_id)}:"
                     f"{encode_uuid(option.payment_method_id)}"
@@ -169,7 +230,8 @@ async def _send_catalog(
     ]
     await bot.send_message(
         chat_id=chat_id,
-        text="Выберите тариф, валюту и способ оплаты:",
+        text="✨ <b>ViMi Pay · Подписки</b>\n\nВыберите подходящий тариф:",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
     )
 
@@ -219,17 +281,23 @@ def create_telegram_commerce_router(
             checkout.request.final_amount,
             checkout.option.currency_precision,
         )
+        period = escape(
+            format_period(checkout.option.duration_value, checkout.option.duration_unit)
+        )
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=(
-                f"Тариф: {checkout.option.plan_name}\n"
-                f"Сумма: {amount} {checkout.request.currency_code}\n"
-                f"Способ: {checkout.option.payment_method_name}\n\n"
-                f"{checkout.instruction}\n\n"
-                "После перевода нажмите «Я оплатил» и приложите скриншот или чек. "
-                "Администратор отдельно проверит поступление денег."
+                "💎 <b>Оформление подписки</b>\n\n"
+                f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
+                f"⏳ {period}\n"
+                f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
+                f"Способ: {escape(checkout.option.payment_method_name)}\n\n"
+                f"{escape(checkout.instruction)}\n\n"
+                "После оплаты нажмите <b>«Я оплатил»</b> и прикрепите чек. "
+                "Поступление проверит администратор."
             ),
             reply_markup=_checkout_keyboard(checkout.request.id),
+            parse_mode="HTML",
         )
 
     @router.callback_query(F.data.startswith("paid:"))
@@ -254,7 +322,7 @@ def create_telegram_commerce_router(
             chat_id=callback.from_user.id,
             text=(
                 f"{RECEIPT_REPLY_PREFIX}{request_id}\n"
-                "Ответьте на ЭТО сообщение фотографией чека или документом "
+                "Ответьте на это сообщение фотографией чека или документом "
                 "(PDF/JPG/PNG/WEBP). До получения вложения заявка не будет "
                 "отправлена администратору."
             ),
@@ -318,7 +386,11 @@ def create_telegram_commerce_router(
         if delivered:
             await bot.send_message(
                 chat_id=message.chat.id,
-                text="Заявка и подтверждающий документ отправлены администратору.",
+                text=(
+                    "📨 <b>Подтверждение отправлено</b>\n\n"
+                    "Администратор проверит поступление средств и сообщит результат."
+                ),
+                parse_mode="HTML",
             )
         else:
             await bot.send_message(
@@ -378,26 +450,33 @@ def create_telegram_commerce_router(
             await callback.answer(str(exc), show_alert=True)
             return
 
-        status_text = "Оплата подтверждена" if approve else "Оплата отклонена"
-        await callback.answer(status_text)
         if not result.changed:
+            await callback.answer("Эта заявка уже обработана", show_alert=True)
             return
 
-        if approve:
-            customer_text = (
-                "Оплата подтверждена ✅\n"
-                "Доступ готовится автоматически. Если требуется вступление, "
-                "бот пришлёт защищённую ссылку."
-            )
-        else:
-            customer_text = (
-                "Оплата отклонена ❌\n"
-                "Если это ошибка, свяжитесь с администратором проекта."
-            )
+        await callback.answer("Оплата подтверждена" if approve else "Оплата отклонена")
+        if callback.message is not None:
+            try:
+                await bot.edit_message_reply_markup(
+                    chat_id=callback.message.chat.id,
+                    message_id=callback.message.message_id,
+                    reply_markup=None,
+                )
+            except AiogramError:
+                # The decision is committed, so a stale keyboard must not undo it.
+                pass
+
+        await _safe_send_message(
+            bot,
+            callback.from_user.id,
+            _admin_review_result_text(result, approve=approve),
+            parse_mode="HTML",
+        )
         await _safe_send_message(
             bot,
             result.item.customer_telegram_user_id,
-            customer_text,
+            _customer_review_result_text(result, approve=approve),
+            parse_mode="HTML",
         )
 
     @router.callback_query(F.data.startswith("approve:"))

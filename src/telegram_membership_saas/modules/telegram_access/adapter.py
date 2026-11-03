@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram_membership_saas.modules.access import AccessActionType, AccessCommand
 
@@ -101,8 +102,22 @@ class TelegramAccessAdapter:
         await self._bot.send_message(
             chat_id=command.telegram_user_id,
             text=(
-                "Доступ к закрытому ресурсу готов. "
-                f"Откройте ссылку и отправьте запрос на вступление: {result.invite_link}"
+                "🔐 <b>Доступ к каналу готов</b>\n\n"
+                "Нажмите зелёную кнопку ниже и отправьте запрос на вступление. "
+                "ViMi Pay подтвердит его автоматически.\n\n"
+                "⏳ Приглашение временное."
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="Вступить в канал",
+                            url=result.invite_link,
+                            style="success",
+                        )
+                    ]
+                ]
             ),
         )
 

@@ -211,7 +211,7 @@ async def test_receipt_is_copied_to_reviewer_without_persisting_file_data(
     assert bot.send_message.await_args_list[0].kwargs["chat_id"] == reviewer_id
     reply = bot.send_message.await_args_list[0].kwargs["reply_parameters"]
     assert reply.message_id == 991
-    assert "документ отправлены" in bot.send_message.await_args_list[1].kwargs["text"]
+    assert "Подтверждение отправлено" in bot.send_message.await_args_list[1].kwargs["text"]
 
 
 async def test_payment_request_requires_buyer_and_waiting_confirmation(monkeypatch):
