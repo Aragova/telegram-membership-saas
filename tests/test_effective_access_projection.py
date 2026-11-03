@@ -207,3 +207,81 @@ async def test_projection_rejects_naive_timestamp() -> None:
                 )
     finally:
         await engine.dispose()
+
+
+async def test_projection_rejects_stale_explicit_recalculation() -> None:
+    settings = Settings()
+    engine = build_engine(settings)
+    session_factory = build_session_factory(engine)
+    stale_at = datetime(2026, 11, 3, 12, 0, tzinfo=UTC)
+    fresh_at = stale_at + timedelta(hours=2)
+
+    try:
+        owner_id = await _create_user(session_factory, f"stale_owner_{uuid4().hex[:8]}")
+        buyer_id = await _create_user(session_factory, f"stale_buyer_{uuid4().hex[:8]}")
+        project_id = await _create_project(session_factory, owner_id, "Stale guard")
+
+        async with tenant_session_scope(
+            session_factory,
+            TenantContext(user_id=owner_id, project_id=project_id),
+        ) as session:
+            customer = await get_or_create_project_customer(
+                session,
+                project_id=project_id,
+                user_id=buyer_id,
+            )
+            resource = Resource(
+                project_id=project_id,
+                resource_type=ResourceType.TELEGRAM_CHANNEL.value,
+                external_id=f"-100{uuid4().int % 10_000_000_000}",
+                name="Stale guard channel",
+            )
+            session.add(resource)
+            await session.flush()
+            session.add(
+                EntitlementGrant(
+                    project_id=project_id,
+                    customer_id=customer.id,
+                    resource_id=resource.id,
+                    source=EntitlementSource.MANUAL.value,
+                    source_id=uuid4(),
+                    status=EntitlementGrantStatus.ACTIVE.value,
+                    valid_from=stale_at - timedelta(hours=1),
+                    valid_until=stale_at + timedelta(hours=1),
+                )
+            )
+            await session.flush()
+
+            fresh = await recalculate_effective_access(
+                session,
+                project_id=project_id,
+                customer_id=customer.id,
+                resource_id=resource.id,
+                calculated_at=fresh_at,
+            )
+            assert fresh.has_access is False
+            assert fresh.computed_at == fresh_at
+            assert fresh.revision == 1
+
+            with pytest.raises(ValueError, match="cannot precede existing computed_at"):
+                await recalculate_effective_access(
+                    session,
+                    project_id=project_id,
+                    customer_id=customer.id,
+                    resource_id=resource.id,
+                    calculated_at=stale_at,
+                )
+
+            projection = await session.scalar(
+                select(EffectiveAccess).where(
+                    EffectiveAccess.project_id == project_id,
+                    EffectiveAccess.customer_id == customer.id,
+                    EffectiveAccess.resource_id == resource.id,
+                )
+            )
+            assert projection is not None
+            assert projection.has_access is False
+            assert projection.computed_at == fresh_at
+            assert projection.revision == 1
+    finally:
+        await engine.dispose()
