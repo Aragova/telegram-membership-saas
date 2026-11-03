@@ -66,6 +66,13 @@ class PlanPrice(Base):
     __table_args__ = (
         UniqueConstraint("id", "project_id", name="uq_plan_prices_id_project"),
         UniqueConstraint(
+            "id",
+            "project_id",
+            "plan_id",
+            "currency_code",
+            name="uq_plan_prices_request_identity",
+        ),
+        UniqueConstraint(
             "plan_id",
             "currency_code",
             "version",
