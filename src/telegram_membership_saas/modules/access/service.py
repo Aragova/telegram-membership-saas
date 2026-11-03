@@ -399,12 +399,8 @@ async def mark_access_action_succeeded(
     )
     if action is None:
         raise ValueError("Access action is not accessible in the current project scope")
-    if action.attempt_count != claim_attempt:
-        raise ValueError("Access action lease is no longer current")
-    if action.status == AccessActionStatus.SUCCEEDED.value:
-        return action
-    if action.status != AccessActionStatus.PROCESSING.value:
-        raise ValueError("Only a processing access action can succeed")
+    if claim_attempt > action.attempt_count:
+        raise ValueError("claim_attempt cannot exceed the current action generation")
 
     state = await session.scalar(
         select(AccessState)
@@ -418,11 +414,6 @@ async def mark_access_action_succeeded(
     if state is None:
         raise RuntimeError("Access state disappeared before action completion")
 
-    action.status = AccessActionStatus.SUCCEEDED.value
-    action.processed_at = moment
-    action.locked_at = None
-    action.last_error = None
-
     state.actual_state = (
         ActualAccessState.GRANTED.value
         if action.action_type == AccessActionType.GRANT.value
@@ -431,6 +422,24 @@ async def mark_access_action_succeeded(
     state.last_synced_at = moment
     state.last_error = None
 
+    is_current_claim = (
+        action.status == AccessActionStatus.PROCESSING.value
+        and action.attempt_count == claim_attempt
+    )
+    if is_current_claim:
+        action.status = AccessActionStatus.SUCCEEDED.value
+        action.processed_at = moment
+        action.locked_at = None
+        action.last_error = None
+
+    await session.flush()
+    await recalculate_effective_access(
+        session,
+        project_id=project_id,
+        customer_id=action.customer_id,
+        resource_id=action.resource_id,
+        calculated_at=moment,
+    )
     await session.flush()
     return action
 
