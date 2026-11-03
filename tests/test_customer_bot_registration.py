@@ -90,6 +90,20 @@ async def test_verify_get_me_and_always_close_session(monkeypatch):
     candidate.session.close.assert_awaited_once()
 
 
+async def test_telegram_transport_exception_cannot_leak_token(monkeypatch):
+    candidate = MagicMock()
+    candidate.get_me = AsyncMock(
+        side_effect=RuntimeError(f"Telegram URL /bot{TEST_TOKEN}/getMe")
+    )
+    candidate.session.close = AsyncMock()
+    monkeypatch.setattr(bots, "Bot", MagicMock(return_value=candidate))
+    with pytest.raises(ValueError, match="Telegram не подтвердил токен") as error:
+        await bots.verify_telegram_bot(TEST_TOKEN)
+    assert TEST_TOKEN not in str(error.value)
+    assert error.value.__cause__ is None
+    candidate.session.close.assert_awaited_once()
+
+
 async def test_invalid_token_does_not_make_telegram_call(monkeypatch):
     factory = MagicMock()
     monkeypatch.setattr(bots, "Bot", factory)
