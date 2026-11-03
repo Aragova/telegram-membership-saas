@@ -29,9 +29,11 @@ are part of product acceptance, not optional polish.
 4. Submitted: concise persistent acknowledgment; status remains pending review.
 5. Approved: persistent **Подписка активирована** message showing plan and actual
    subscription period end in the project's timezone; does not claim that chat
-   membership is complete yet.
-6. Access worker: persistent invitation message with **Вступить в канал** green URL
-   button. No raw link in body. Customer submits join request.
+   membership is complete yet. Invitation text must be conditional: a renewal
+   can already have Telegram membership and should not promise a new join button.
+6. Access worker: if membership is not yet active, send a persistent invitation
+   message with **Вступить в канал** green URL button. No raw link in body.
+   Customer submits join request.
 7. Join approved: separate **Вы в канале!** confirmation, after DB finalization.
 8. Rejected: explicit rejection and direction to contact admin.
 
