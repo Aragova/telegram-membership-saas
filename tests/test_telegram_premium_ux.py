@@ -87,6 +87,8 @@ def test_payment_notifications_show_project_local_expiration_and_escaped_names()
     assert "03.12.2026 20:30" in buyer
     assert "seller&lt;x&gt;" in admin
     assert "Premium &lt;Gold&gt;" in buyer
+    assert "Если вы ещё не в канале" in buyer
+    assert "в следующем сообщении" not in buyer
     assert "<x>" not in admin
     assert "активна" in admin
 
