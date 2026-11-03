@@ -13,6 +13,7 @@ from telegram_membership_saas.modules.pricing import CurrencyAsset, PlanPrice
 from telegram_membership_saas.modules.projects import Project, ProjectMember
 from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.subscriptions import Subscription
+from telegram_membership_saas.modules.telegram_access import TelegramJoinTicket
 
 __all__ = [
     "AccessAction",
@@ -33,5 +34,6 @@ __all__ = [
     "ProjectMember",
     "Resource",
     "Subscription",
+    "TelegramJoinTicket",
     "TelegramUser",
 ]
