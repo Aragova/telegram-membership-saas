@@ -392,7 +392,28 @@ Append-only audit trail for important administrative/domain changes:
 
 Bot tokens and future provider secrets are secret material.
 
-Database should store a credential reference or encrypted secret mechanism, never expose secret values in logs or git.
+MVP bring-your-own-bot architecture:
+
+- The central ViMi Pay bot manages project owners and their settings; individual
+  customer-facing Telegram bots belong to a specific tenant Project.
+- `BotInstance` contains globally unique Telegram bot ID, project ID, username,
+  display metadata, `registered/disabled` state and Fernet-encrypted token.
+- The first registration slice performs bot `getMe`, owner authorization and
+  encrypted persistence, but does not start a dispatcher; registered is not running.
+- Bot credentials must be encrypted using a separately provisioned secret,
+  never echoed into chats or logs, and never committed. Incoming BotFather token
+  messages are deleted before validation or database writes; Telegram private
+  chats still are not end-to-end encrypted.
+- The future multi-bot runtime must resolve an incoming bot identity to the
+  exact Project before handling buyers, and must enforce tenant context for
+  every request, callback, access event and worker job. A project may have
+  multiple resources; bot/runtime routing may not rely on a global fixed
+  `TMS_TELEGRAM_PROJECT_ID` once onboarding is enabled.
+- Do not expose the buyer link until registered bots have a working dispatcher
+  and a tested Telegram end-to-end flow. Plan credentials rotation and recovery.
+
+Database stores a credential reference or encrypted secret mechanism, never
+exposes secret values in logs or git.
 
 ## 26. Localization
 
