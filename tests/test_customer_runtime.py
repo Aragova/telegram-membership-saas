@@ -179,8 +179,6 @@ async def test_valid_telegram_identity_without_webhook_passes():
 
 
 async def test_resource_admin_rights_required_before_customer_sales(monkeypatch):
-    from telegram_membership_saas import customer_runtime as runtime
-
     _sf(monkeypatch, bots=[SimpleNamespace(external_id="-1001")])
     bot = MagicMock()
     bot.id = 123456
