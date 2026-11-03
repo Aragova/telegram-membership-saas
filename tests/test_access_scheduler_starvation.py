@@ -7,7 +7,10 @@ from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory, tenant_session_scope
-from telegram_membership_saas.modules.access import EffectiveAccess, enqueue_due_access_recalculations
+from telegram_membership_saas.modules.access import (
+    EffectiveAccess,
+    enqueue_due_access_recalculations,
+)
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
