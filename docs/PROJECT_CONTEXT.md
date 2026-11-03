@@ -16,6 +16,7 @@
 
 - Один Owner может иметь несколько Projects.
 - Project содержит BotInstance, Resources, Plans, Prices, Payment Methods, Customers, Subscriptions и Settings.
+- BotInstance credentials are encrypted at rest using a dedicated server secret; bot identity is globally unique, linked to one Project. Registration and runtime readiness are distinct states. The central ViMi Pay bot manages owners while connected customer bots will expose their own branded catalog. The multi-bot runtime is still pending after credential registration.
 - Resource в MVP: `TELEGRAM_CHANNEL` или `TELEGRAM_GROUP`; модель должна быть расширяемой.
 - У Plan нет основной валюты и основной цены.
 - Все созданные пары `currency + price` равноправны.

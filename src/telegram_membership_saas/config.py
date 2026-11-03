@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://membership:membership@localhost:5432/membership"
     migration_database_url: str | None = None
     telegram_bot_token: SecretStr | None = None
+    bot_token_encryption_key: SecretStr | None = None
     telegram_project_id: UUID | None = None
     telegram_worker_poll_seconds: float = 1.0
     default_project_timezone: str = "Europe/Moscow"
@@ -24,6 +25,13 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    @field_validator("bot_token_encryption_key", mode="before")
+    @classmethod
+    def normalize_empty_encryption_key(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("telegram_project_id", mode="before")
     @classmethod

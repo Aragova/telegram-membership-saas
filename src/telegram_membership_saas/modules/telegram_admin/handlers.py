@@ -7,11 +7,23 @@ from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
-from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.filters import BaseFilter, Command
+from aiogram.types import (
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.modules.bots.service import (
+    TOKEN_PATTERN,
+    register_customer_bot,
+    require_bot_owner,
+)
 from telegram_membership_saas.modules.telegram_admin.service import (
     AdminEntry,
     AdminProjectSnapshot,
@@ -35,12 +47,15 @@ TIMEZONE_CHOICES = (
     "Asia/Dubai",
     "America/New_York",
 )
-SCREENS = frozenset({"main", "resources", "plans", "methods", "settings", "timezone"})
+SCREENS = frozenset({"main", "resources", "plans", "methods", "settings", "timezone", "bots"})
+CONNECT_PROMPT_PREFIX = "Подключение собственного бота: "
 STATUS_LABELS = {
     "active": "🟢 Активно",
     "disabled": "⚪ Отключено",
     "archived": "📦 Архив",
     "draft": "📝 Черновик",
+    "registered": "⏳ Зарегистрирован",
+
 }
 
 
@@ -59,8 +74,14 @@ def _keyboard(screen: str, snapshot: AdminProjectSnapshot) -> InlineKeyboardMark
                 _button("💳 Оплата", "adm:methods"),
                 _button("⚙️ Настройки", "adm:settings"),
             ],
+            [_button("🤖 Мои боты", "adm:bots")],
             [_button("🧾 Заявки", "adm:reviews")],
             [_button("👁 Посмотреть как клиент", "adm:client")],
+        ]
+    elif screen == "bots":
+        rows = [
+            [_button("➕ Подключить своего бота", "adm:connect", style="success")],
+            [_button("⬅️ Главное меню", "adm:main")],
         ]
     elif screen == "settings":
         rows = [
@@ -105,8 +126,15 @@ def _screen_text(screen: str, snapshot: AdminProjectSnapshot) -> str:
             f"🌍 Часовой пояс: <b>{escape(snapshot.timezone)}</b>\n\n"
             f"Каналов и групп: {len(snapshot.resources)}\n"
             f"Тарифов: {len(snapshot.plans)}\n"
-            f"Способов оплаты: {len(snapshot.payment_methods)}\n\n"
+            f"Способов оплаты: {len(snapshot.payment_methods)}\n"
+            f"Подключённых ботов: {len(snapshot.bots)}\n\n"
             "Выберите раздел управления."
+        )
+    if screen == "bots":
+        return (
+            _render_entries("🤖 Мои боты", snapshot.bots)
+            + "\n\nЗарегистрированные боты ещё не принимают покупателей. "
+            "Запуск и маршрутизация будут подключены следующим этапом."
         )
     if screen == "resources":
         return _render_entries("📢 Каналы / группы", snapshot.resources)
@@ -135,6 +163,27 @@ def _screen_text(screen: str, snapshot: AdminProjectSnapshot) -> str:
 
 def _private_chat(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
+
+
+class BotTokenReplyFilter(BaseFilter):
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if not _private_chat(message) or message.reply_to_message is None:
+            return False
+        prompt = message.reply_to_message
+        return bool(
+            prompt.from_user is not None
+            and prompt.from_user.id == bot.id
+            and (prompt.text or "").startswith(CONNECT_PROMPT_PREFIX)
+        )
+
+
+class StrayBotTokenFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        return bool(
+            _private_chat(message)
+            and message.text is not None
+            and TOKEN_PATTERN.fullmatch(message.text.strip())
+        )
 
 
 def create_telegram_admin_router(
@@ -222,6 +271,36 @@ def create_telegram_admin_router(
         message_id = callback.message.message_id
 
         try:
+            if action == "connect":
+                await require_bot_owner(
+                    session_factory,
+                    project_id=project_id,
+                    actor_telegram_user_id=user_id,
+                )
+                if get_settings().bot_token_encryption_key is None:
+                    await callback.answer(
+                        "На сервере ещё не настроено шифрование токенов",
+                        show_alert=True,
+                    )
+                    return
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"{CONNECT_PROMPT_PREFIX}{project_id}\n\n"
+                        "1. Создайте бота через @BotFather.\n"
+                        "2. Ответьте на ЭТО сообщение полученным токеном.\n"
+                        "3. ViMi Pay проверит бота и удалит сообщение с токеном.\n\n"
+                        "Важно: бот будет зарегистрирован, но запустится "
+                        "для покупателей только после подключения runtime."
+                    ),
+                    reply_markup=ForceReply(
+                        selective=True,
+                        input_field_placeholder="Токен BotFather",
+                    ),
+                )
+                await callback.answer()
+                return
+
             if action.startswith("tz:"):
                 await change_project_timezone(
                     session_factory,
@@ -277,5 +356,65 @@ def create_telegram_admin_router(
             return
 
         await callback.answer()
+
+    @router.message(BotTokenReplyFilter())
+    async def connect_bot_token_handler(message: Message, bot: Bot) -> None:
+        if message.from_user is None:
+            return
+        token = message.text or ""
+        # Telegram private messages are not end-to-end encrypted. Delete first,
+        # fail closed if Telegram does not confirm deletion; never echo the token.
+        try:
+            deleted = await bot.delete_message(
+                chat_id=message.chat.id, message_id=message.message_id
+            )
+        except AiogramError:
+            deleted = False
+        if not deleted:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Не удалось удалить сообщение с токеном. Подключение отменено.",
+            )
+            return
+
+        try:
+            result = await register_customer_bot(
+                session_factory,
+                project_id=project_id,
+                actor_telegram_user_id=message.from_user.id,
+                token=token.strip(),
+                encryption_key=get_settings().bot_token_encryption_key,
+                central_bot_id=bot.id,
+            )
+        except (PermissionError, ValueError, RuntimeError) as exc:
+            await bot.send_message(chat_id=message.chat.id, text=str(exc))
+            return
+
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text=(
+                f"✅ Бот <b>@{escape(result.username)}</b> зарегистрирован.\n\n"
+                "Токен зашифрован. Запуск продаж в собственном боте "
+                "будет доступен после подключения runtime.\n"
+                "Откройте /admin → Мои боты для просмотра."
+            ),
+            parse_mode="HTML",
+        )
+
+    @router.message(StrayBotTokenFilter())
+    async def stray_bot_token_handler(message: Message, bot: Bot) -> None:
+        # A token sent outside the expected ForceReply is never accepted.
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except AiogramError:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text="Удалите сообщение с токеном вручную и смените токен в BotFather.",
+            )
+            return
+        await bot.send_message(
+            chat_id=message.chat.id,
+            text="Для подключения используйте /admin → Мои боты → Подключить.",
+        )
 
     return router
