@@ -2,7 +2,16 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, UniqueConstraint, Uuid, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from telegram_membership_saas.db_base import Base
@@ -21,6 +30,11 @@ class OwnerServiceAccount(Base):
     __tablename__ = "owner_service_accounts"
     __table_args__ = (
         UniqueConstraint("id", "owner_user_id", name="uq_owner_service_accounts_id_owner"),
+        UniqueConstraint(
+            "owner_user_id",
+            "service_user_id",
+            name="uq_owner_service_accounts_owner_service_user",
+        ),
         CheckConstraint(
             "scope_type IN ('all_owner_projects')",
             name="ck_owner_service_accounts_scope",
