@@ -6,8 +6,8 @@ from uuid import uuid4
 import pytest
 
 from telegram_membership_saas.modules.telegram_admin import handlers, service
-from telegram_membership_saas.tenant_context import TenantAccessDenied
 from telegram_membership_saas.telegram_adapter import create_dispatcher
+from telegram_membership_saas.tenant_context import TenantAccessDenied
 
 
 def _snapshot():
