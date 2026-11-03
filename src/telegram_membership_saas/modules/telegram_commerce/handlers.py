@@ -31,7 +31,6 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     submit_checkout_for_telegram_user,
 )
 
-
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
 ALLOWED_RECEIPT_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
