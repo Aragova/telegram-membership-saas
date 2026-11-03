@@ -6,6 +6,8 @@ from telegram_membership_saas.modules.projects.models import ProjectMemberRole
 class Permission(StrEnum):
     PROJECT_VIEW = "project.view"
     PROJECT_MANAGE = "project.manage"
+    RESOURCE_VIEW = "resource.view"
+    RESOURCE_MANAGE = "resource.manage"
     PLAN_VIEW = "plan.view"
     PLAN_EDIT = "plan.edit"
     PAYMENT_VIEW = "payment.view"
@@ -25,6 +27,8 @@ _ROLE_PERMISSIONS: dict[ProjectMemberRole, frozenset[Permission]] = {
         {
             Permission.PROJECT_VIEW,
             Permission.PROJECT_MANAGE,
+            Permission.RESOURCE_VIEW,
+            Permission.RESOURCE_MANAGE,
             Permission.PLAN_VIEW,
             Permission.PLAN_EDIT,
             Permission.PAYMENT_VIEW,
@@ -54,6 +58,7 @@ _ROLE_PERMISSIONS: dict[ProjectMemberRole, frozenset[Permission]] = {
     ProjectMemberRole.VIEWER: frozenset(
         {
             Permission.PROJECT_VIEW,
+            Permission.RESOURCE_VIEW,
             Permission.PLAN_VIEW,
             Permission.PAYMENT_VIEW,
             Permission.SUBSCRIBER_VIEW,
