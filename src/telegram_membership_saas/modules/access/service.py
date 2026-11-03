@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -527,47 +527,68 @@ async def enqueue_due_access_recalculations(
     if limit <= 0:
         raise ValueError("limit must be positive")
 
-    due = tuple(
-        (
-            await session.scalars(
-                select(EffectiveAccess)
-                .where(
-                    EffectiveAccess.project_id == project_id,
-                    EffectiveAccess.next_change_at.is_not(None),
-                    EffectiveAccess.next_change_at <= moment,
-                )
-                .order_by(EffectiveAccess.next_change_at, EffectiveAccess.id)
-                .limit(limit)
-                .with_for_update(skip_locked=True)
-            )
-        ).all()
-    )
-
     created = 0
-    for effective in due:
-        boundary = effective.next_change_at
-        if boundary is None:
-            continue
-        result = await session.execute(
-            insert(OutboxEvent)
-            .values(
-                project_id=project_id,
-                event_type=OutboxEventType.ACCESS_RECALCULATE.value,
-                aggregate_type="effective_access",
-                aggregate_id=effective.id,
-                dedupe_key=f"effective_access:{effective.id}:boundary:{boundary.isoformat()}",
-                payload={
-                    "customer_id": str(effective.customer_id),
-                    "resource_id": str(effective.resource_id),
-                },
-                status=OutboxEventStatus.PENDING.value,
-                available_at=moment,
-            )
-            .on_conflict_do_nothing(index_elements=["project_id", "dedupe_key"])
-            .returning(OutboxEvent.id)
+    cursor_change: datetime | None = None
+    cursor_id: UUID | None = None
+    batch_size = max(limit, 100)
+
+    while created < limit:
+        statement = select(EffectiveAccess).where(
+            EffectiveAccess.project_id == project_id,
+            EffectiveAccess.next_change_at.is_not(None),
+            EffectiveAccess.next_change_at <= moment,
         )
-        if result.scalar_one_or_none() is not None:
-            created += 1
+        if cursor_change is not None and cursor_id is not None:
+            statement = statement.where(
+                or_(
+                    EffectiveAccess.next_change_at > cursor_change,
+                    and_(
+                        EffectiveAccess.next_change_at == cursor_change,
+                        EffectiveAccess.id > cursor_id,
+                    ),
+                )
+            )
+
+        due = tuple(
+            (
+                await session.scalars(
+                    statement.order_by(EffectiveAccess.next_change_at, EffectiveAccess.id).limit(
+                        batch_size
+                    )
+                )
+            ).all()
+        )
+        if not due:
+            break
+
+        for effective in due:
+            boundary = effective.next_change_at
+            if boundary is None:
+                continue
+            cursor_change = boundary
+            cursor_id = effective.id
+            result = await session.execute(
+                insert(OutboxEvent)
+                .values(
+                    project_id=project_id,
+                    event_type=OutboxEventType.ACCESS_RECALCULATE.value,
+                    aggregate_type="effective_access",
+                    aggregate_id=effective.id,
+                    dedupe_key=f"effective_access:{effective.id}:boundary:{boundary.isoformat()}",
+                    payload={
+                        "customer_id": str(effective.customer_id),
+                        "resource_id": str(effective.resource_id),
+                    },
+                    status=OutboxEventStatus.PENDING.value,
+                    available_at=moment,
+                )
+                .on_conflict_do_nothing(index_elements=["project_id", "dedupe_key"])
+                .returning(OutboxEvent.id)
+            )
+            if result.scalar_one_or_none() is not None:
+                created += 1
+                if created >= limit:
+                    break
 
     await session.flush()
     return created
