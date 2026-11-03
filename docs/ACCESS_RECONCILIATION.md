@@ -69,17 +69,26 @@ Matching `actual_state` is not enough to skip reconciliation when an opposite-di
 `PROCESSING`. For example, desired access may return to `false` while a previously claimed `GRANT` is
 still executing. In that case a corrective `REVOKE` is queued even though the currently recorded actual
 state is still `REVOKED`. The corrective action remains blocked until the in-flight action leaves
-`PROCESSING`, then restores the external state if the stale operation succeeds late.
+`PROCESSING`.
+
+Lease expiration cannot cancel an external Telegram request that may still be running. If an expired or
+superseded worker later reports a successful external operation, that success is recorded as a fresh
+observation of `actual_state` but it is not allowed to complete the newer lease. The system immediately
+recalculates current entitlement truth and queues another corrective action when the late effect moved the
+external state away from the current desired state.
 
 ### Lease fencing
 
-Every claim increments `attempt_count`; that value is the claim generation. Completion and failure APIs
-must receive the exact generation returned by the claim. If another worker reclaims the action after its
-lease expires, the generation increases and callbacks from the expired worker are rejected.
+Every claim increments `attempt_count`; that value is the claim generation. Failure/completion of the
+currently owned lease must use the exact generation returned by claim.
 
-This prevents an old worker from clearing or completing the lease currently owned by a newer attempt.
+A newer claim fences an older worker from changing the current action lifecycle. A late successful
+external callback is treated only as an observation of what actually happened outside the database and
+triggers reconciliation; it never clears or completes a newer worker's lease. Stale failure callbacks are
+rejected.
+
 A target also cannot start a newer pending action while any other action for that target is still marked
-`PROCESSING`; a stale processing action must be reclaimed first.
+`PROCESSING`; a stale processing action must be reclaimed or superseded first.
 
 ## Adapter boundary
 
@@ -97,6 +106,11 @@ event recalculates current grant truth and enqueues an external action only when
 
 The event can be retried safely because the projection is recomputed from current grants rather than
 applying an incremental `+1/-1` mutation.
+
+Outbox claims also use a lease and `attempt_count` generation. A `PROCESSING` event whose worker crashed
+can be reclaimed after the lease timeout. Processing/failure APIs accept only the current generation, so a
+stale worker cannot finish or fail the reclaimed event. This prevents an expiry/reconciliation event from
+remaining stranded forever after a crash.
 
 ## Expiry and future starts
 
@@ -124,6 +138,7 @@ External failures update only the AccessAction/AccessState operational layer.
 
 - retryable failure -> `FAILED_RETRYABLE` with a future `available_at`;
 - permanent failure -> `FAILED_PERMANENT`;
-- success -> action `SUCCEEDED` and `actual_state` updated.
+- current-lease success -> action `SUCCEEDED` and `actual_state` updated;
+- stale/superseded success -> observed `actual_state` updated + fresh reconciliation, without completing a newer lease.
 
 Payment and entitlement history remains intact regardless of adapter availability.
