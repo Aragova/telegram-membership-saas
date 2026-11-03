@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -42,7 +42,7 @@ async def replace_active_plan_price(
     """
 
     normalized_amount = _normalize_amount(amount)
-    timestamp = changed_at or datetime.now(timezone.utc)
+    timestamp = changed_at or datetime.now(UTC)
     code = currency_code.upper()
 
     await _lock_plan(session, project_id=project_id, plan_id=plan_id)
@@ -95,7 +95,7 @@ async def retire_active_plan_price(
 ) -> PlanPrice | None:
     """Remove a currency from the current Plan offer without deleting its history."""
 
-    timestamp = retired_at or datetime.now(timezone.utc)
+    timestamp = retired_at or datetime.now(UTC)
     code = currency_code.upper()
 
     await _lock_plan(session, project_id=project_id, plan_id=plan_id)

@@ -28,7 +28,11 @@ def test_plan_price_versions_are_unique() -> None:
 
 
 def test_only_one_active_price_per_plan_currency_is_indexed() -> None:
-    indexes = {index.name: index for index in PlanPrice.__table__.indexes if isinstance(index, Index)}
+    indexes = {
+        index.name: index
+        for index in PlanPrice.__table__.indexes
+        if isinstance(index, Index)
+    }
     index = indexes["uq_plan_prices_active_pair"]
     assert index.unique is True
     assert "status = 'active'" in str(index.dialect_options["postgresql"]["where"])
