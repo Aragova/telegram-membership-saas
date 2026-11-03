@@ -1,10 +1,17 @@
 from aiogram import Bot, Dispatcher
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
+from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 
 
-def create_dispatcher() -> Dispatcher:
-    return Dispatcher()
+def create_dispatcher(
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> Dispatcher:
+    dispatcher = Dispatcher()
+    if session_factory is not None:
+        dispatcher.include_router(create_telegram_access_router(session_factory))
+    return dispatcher
 
 
 def create_bot(settings: Settings | None = None) -> Bot:

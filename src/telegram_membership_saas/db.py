@@ -66,6 +66,12 @@ async def apply_tenant_context(
     return current
 
 
+async def apply_system_project_context(session: AsyncSession, project_id: UUID) -> None:
+    """Bind trusted background work to one project without impersonating an app user."""
+    await _set_local_setting(session, "app.current_user_id", "")
+    await _set_local_setting(session, "app.current_project_id", str(project_id))
+
+
 @asynccontextmanager
 async def tenant_session_scope(
     session_factory: async_sessionmaker[AsyncSession],
@@ -75,4 +81,16 @@ async def tenant_session_scope(
     async with session_factory() as session:
         async with session.begin():
             await apply_tenant_context(session, context)
+            yield session
+
+
+@asynccontextmanager
+async def system_project_session_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+    project_id: UUID,
+) -> AsyncIterator[AsyncSession]:
+    """Trusted worker/Telegram ingress scope; keeps RLS narrowed to exactly one project."""
+    async with session_factory() as session:
+        async with session.begin():
+            await apply_system_project_context(session, project_id)
             yield session
