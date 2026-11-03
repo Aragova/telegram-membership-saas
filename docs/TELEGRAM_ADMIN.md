@@ -28,6 +28,34 @@ one-bot / one-project Telegram runtime:
 - Admin navigation is private-chat only and does not change customer `/start`.
 - No new schema, credentials, bot token storage or banking integrations.
 
+## Customer bot registration — next slice (PR #19)
+
+- Owner selects **Мои боты → Подключить** from the existing admin menu.
+- BotFather token is accepted only as a private reply to a prompt from this bot.
+  The incoming token message must be successfully deleted by Telegram **before**
+  any credential verification or storage. A stray token is deleted, not processed.
+- Telegram `getMe` verifies the token and resolves the immutable Telegram bot ID.
+- `BotInstance` stores identity, project, display metadata, state
+  `registered` and **Fernet-encrypted** credentials. No plaintext tokens, token
+  hashes, URLs or file copies are stored. One Telegram bot ID may belong to
+  only one project globally. Reconnection inside the same project rotates
+  the encrypted token. Other projects cannot silently take over.
+- Only the project owner may connect or replace a bot (ordinary admins cannot
+  manage powerful bot credentials). Tenant-scoped transactions and PostgreSQL
+  RLS remain mandatory; permissions are rechecked before and after `getMe`.
+- A server-side encryption key `TMS_BOT_TOKEN_ENCRYPTION_KEY` is mandatory
+  for registration; the key must be provisioned separately from the public repo.
+  **Never send bot tokens or encryption keys in chat with developers or commit
+  them to git.** Store keys in restricted environment/secret management and
+  preserve them in operational backups. Rotation needs a separate tested plan.
+- Telegram private chats are **not end-to-end encrypted**. Deletion reduces
+  exposure, but does not guarantee erasure from every client or Telegram
+  infrastructure. If a bot token may be exposed, rotate it in BotFather.
+  A secure HTTPS onboarding form can be added before production.
+- `registered` explicitly **does not mean running**. This PR has no customer
+  bot dispatcher/webhook; that is the next mandatory slice. Never show a
+  customer-facing buy link until routing and Telegram E2E pass.
+
 ## Not implemented by this first slice
 
 The **read-only** channel, plan, and payment-method panels are not complete
