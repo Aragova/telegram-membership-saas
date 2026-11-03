@@ -11,6 +11,7 @@ from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramU
 from telegram_membership_saas.modules.payments import (
     PaymentRequest,
     PaymentRequestStatus,
+    cancel_payment_request,
     create_manual_payment_method,
     create_payment_request,
     get_or_create_project_customer,
@@ -160,6 +161,16 @@ async def test_payment_request_snapshots_price_and_is_tenant_safe() -> None:
             assert rejected.reviewed_by == owner_id
             assert rejected.reviewed_at is not None
 
+            race_request = await create_payment_request(
+                session,
+                project_id=project_a,
+                customer_id=customer.id,
+                plan_id=plan.id,
+                plan_price_id=price_v2.id,
+                payment_method_id=method.id,
+            )
+            race_request_id = race_request.id
+
         async with tenant_session_scope(
             session_factory,
             TenantContext(user_id=owner_id, project_id=project_a),
@@ -171,6 +182,36 @@ async def test_payment_request_snapshots_price_and_is_tenant_safe() -> None:
             assert stored.regular_amount == Decimal("10.000000000000000000")
             assert stored.final_amount == Decimal("10.000000000000000000")
             assert stored.status == PaymentRequestStatus.REJECTED.value
+
+        async with tenant_session_scope(
+            session_factory,
+            TenantContext(user_id=owner_id, project_id=project_a),
+        ) as stale_session:
+            stale = await stale_session.scalar(
+                select(PaymentRequest).where(PaymentRequest.id == race_request_id)
+            )
+            assert stale is not None
+            assert stale.status == PaymentRequestStatus.WAITING_CONFIRMATION.value
+
+            async with tenant_session_scope(
+                session_factory,
+                TenantContext(user_id=owner_id, project_id=project_a),
+            ) as cancelling_session:
+                cancelled = await cancel_payment_request(
+                    cancelling_session,
+                    project_id=project_a,
+                    request_id=race_request_id,
+                    customer_id=customer_id,
+                )
+                assert cancelled.status == PaymentRequestStatus.CANCELLED.value
+
+            with pytest.raises(ValueError, match="cannot be submitted"):
+                await mark_payment_request_submitted(
+                    stale_session,
+                    project_id=project_a,
+                    request_id=race_request_id,
+                )
+            assert stale.status == PaymentRequestStatus.CANCELLED.value
 
         async with tenant_session_scope(
             session_factory,

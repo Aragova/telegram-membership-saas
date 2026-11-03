@@ -167,6 +167,7 @@ async def _load_request_for_update(
             PaymentRequest.id == request_id,
             PaymentRequest.project_id == project_id,
         )
+        .execution_options(populate_existing=True)
         .with_for_update()
     )
     if request is None:
