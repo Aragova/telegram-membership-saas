@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.payments import PaymentMethod
 from telegram_membership_saas.modules.plans import Plan
@@ -39,6 +40,7 @@ class AdminProjectSnapshot:
     resources: tuple[AdminEntry, ...]
     plans: tuple[AdminEntry, ...]
     payment_methods: tuple[AdminEntry, ...]
+    bots: tuple[AdminEntry, ...] = ()
 
 
 async def _actor_id(
@@ -118,6 +120,13 @@ async def load_admin_project(
                     .order_by(PaymentMethod.sort_order, PaymentMethod.id)
                 )
             ).all()
+            bot_instances = (
+                await session.scalars(
+                    select(BotInstance)
+                    .where(BotInstance.project_id == project_id)
+                    .order_by(BotInstance.created_at, BotInstance.id)
+                )
+            ).all()
             return AdminProjectSnapshot(
                 project_name=project.name,
                 timezone=project.timezone,
@@ -137,6 +146,14 @@ async def load_admin_project(
                 payment_methods=tuple(
                     AdminEntry(name=item.name, status=item.status)
                     for item in payment_methods
+                ),
+                bots=tuple(
+                    AdminEntry(
+                        name=f"@{item.username}",
+                        status=item.status,
+                        details="ожидает запуска" if item.status == "registered" else "",
+                    )
+                    for item in bot_instances
                 ),
             )
     except TenantAccessDenied as exc:
