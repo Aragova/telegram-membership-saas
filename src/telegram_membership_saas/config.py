@@ -26,6 +26,13 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    @field_validator("bot_token_encryption_key", mode="before")
+    @classmethod
+    def normalize_empty_encryption_key(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("telegram_project_id", mode="before")
     @classmethod
     def normalize_empty_telegram_project_id(cls, value: object) -> object:
