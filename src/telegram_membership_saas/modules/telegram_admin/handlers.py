@@ -330,16 +330,33 @@ def create_telegram_admin_router(
             if action in SCREENS:
                 await show_screen(bot, user_id, action, edit_message_id=message_id)
             elif action == "client":
-                # Check manager authorization before showing a buyer's catalog.
-                await load_admin_project(
+                # During staged migration the central bot is either the old
+                # combined runtime or management-only. Do not sell through
+                # the central bot once customer traffic is separated.
+                snapshot = await load_admin_project(
                     session_factory, project_id=project_id, actor_telegram_user_id=user_id
                 )
-                await _send_catalog(
-                    bot,
-                    chat_id=user_id,
-                    session_factory=session_factory,
-                    project_id=project_id,
-                )
+                if get_settings().telegram_central_access_enabled:
+                    await _send_catalog(
+                        bot,
+                        chat_id=user_id,
+                        session_factory=session_factory,
+                        project_id=project_id,
+                    )
+                elif len(snapshot.bots) == 1:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            "👁 Покупательский каталог открыт в вашем боте:\n"
+                            f"@{escape(snapshot.bots[0].name.lstrip('@'))}\n\n"
+                            "Откройте его через Telegram и отправьте /start."
+                        ),
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text="Сначала выберите и запустите собственного бота.",
+                    )
             elif action == "reviews":
                 await load_admin_project(
                     session_factory, project_id=project_id, actor_telegram_user_id=user_id
