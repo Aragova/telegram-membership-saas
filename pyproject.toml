@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 tms-bot = "telegram_membership_saas.bot_main:main"
+tms-customer-bot = "telegram_membership_saas.customer_bot_main:main"
 
 [project.optional-dependencies]
 dev = [
