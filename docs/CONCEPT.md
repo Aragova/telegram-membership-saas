@@ -1,4 +1,4 @@
-# Product Concept v1.3
+# Product Concept v1.4
 
 ## 1. Назначение
 
@@ -210,6 +210,7 @@ Subscription — коммерческий lifecycle тарифа пользов�
 
 - PAYMENT;
 - MANUAL;
+- OWNER_SERVICE;
 - PROMOCODE;
 - TRIAL;
 - REFERRAL;
@@ -218,38 +219,65 @@ Subscription — коммерческий lifecycle тарифа пользов�
 
 Истечение одного grant не означает revoke, пока существует другой active grant.
 
-## 18. Effective Access
+## 18. Owner / Service Access
+
+Владелец сети ботов не должен покупать собственные тарифы или подтверждать себе оплату по каждому каналу.
+
+Платформа должна поддерживать служебные Telegram-аккаунты владельца:
+
+- можно привязать один или несколько owner/service accounts;
+- service account может автоматически получать доступ ко всем существующим проектам владельца;
+- можно включить автоматическое применение ко всем будущим проектам;
+- постоянный доступ создаётся напрямую как `EntitlementGrant(source=OWNER_SERVICE, valid_until=NULL)`;
+- для него не создаются PaymentRequest, Payment и Subscription;
+- он не учитывается как платная продажа, revenue, conversion или paid subscriber;
+- service access можно отозвать отдельно, не затрагивая management role;
+- управление проектом и доступ к контенту — независимые права.
+
+Для обычных пользователей Manual grant также может быть временным или постоянным, но относится только к выбранному scope, а не автоматически ко всей сети владельца.
+
+Это не отдельный коммерческий Plan и не «бесплатный тариф».
+
+## 19. Effective Access
 
 Effective Access вычисляется из всех активных grants на resource.
 
 - есть хотя бы один активный grant -> desired_access = true;
 - нет активных grants -> desired_access = false.
 
-## 19. Access lifecycle
+`valid_until = NULL` означает бессрочный grant до явного revoke.
+
+## 20. Access lifecycle
 
 После approve:
 
 Payment -> Subscription -> Entitlement Grants -> Effective Access -> Outbox -> Worker -> Telegram Adapter.
 
+Для OWNER_SERVICE:
+
+Owner Service Assignment -> Entitlement Grants -> Effective Access -> Outbox -> Worker -> Telegram Adapter.
+
 После истечения subscription:
 
 Expire соответствующий grant -> Recalculate Effective Access -> Revoke только если активных grants больше нет.
 
-## 20. Safe join
+## 21. Safe join
 
 Предпочтительно использовать временные invite links / join requests и сверять Telegram user ID перед approve join request.
 
-## 21. Reconciliation
+## 22. Reconciliation
 
 Периодически сравнивать desired access в БД с фактическим Telegram state.
 
 Расхождения должны восстанавливаться через retry/reconciliation.
 
-## 22. Subscribers
+## 23. Subscribers
 
 Админ должен видеть Active / Expiring Soon / Expired, поиск пользователя, историю покупок и возможность manual grant/revoke.
 
-## 23. TimeZone
+Служебные owner/service accounts должны отображаться отдельно от платных подписчиков.
+
+## 24. TimeZone
 
 Default нового проекта: `Europe/Moscow`.
 
@@ -257,11 +285,11 @@ Default нового проекта: `Europe/Moscow`.
 
 Все timestamps в БД — UTC. UI, promotions, calendar duration, reminders, daily statistics — в timezone проекта.
 
-## 24. Localization
+## 25. Localization
 
 Строки должны быть отделены от handlers через keys. MVP может быть RU-only, но архитектура должна допускать project default language, supported languages и user language.
 
-## 25. Future expansion
+## 26. Future expansion
 
 Архитектура должна позволять добавить без перестройки core:
 
@@ -282,8 +310,12 @@ Default нового проекта: `Europe/Moscow`.
 - referrals;
 - analytics.
 
-## 26. MVP success criterion
+## 27. MVP success criterion
 
 MVP считается успешным, когда стабильно работает end-to-end цепочка:
 
 Create Project -> Connect Resource -> Create Plan -> Add Currencies/Prices -> Create ManualSettlement -> Customer selects/buys -> Sends confirmation -> Admin verifies bank -> Approves -> Payment -> Subscription -> Grants -> Access -> Renewal -> Expiration -> Effective access recalculation -> Revoke when no grants remain.
+
+Отдельный acceptance для владельца сети:
+
+Link owner/service Telegram account -> mark `ALL_OWNER_PROJECTS` -> create future project/resource -> owner service grant appears without payment/subscription -> access is granted automatically -> commercial statistics remain unchanged.

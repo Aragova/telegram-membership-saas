@@ -1,5 +1,8 @@
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from uuid import UUID
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -8,6 +11,12 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from telegram_membership_saas.config import Settings, get_settings
+from telegram_membership_saas.modules.projects import Project
+from telegram_membership_saas.tenant_context import (
+    TenantAccessDenied,
+    TenantContext,
+    get_tenant_context,
+)
 
 
 def build_engine(settings: Settings | None = None) -> AsyncEngine:
@@ -22,5 +31,48 @@ def build_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessio
 async def session_scope(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> AsyncIterator[AsyncSession]:
+    """Unscoped session for global tables, migrations, and maintenance code only."""
     async with session_factory() as session:
         yield session
+
+
+async def _set_local_setting(session: AsyncSession, key: str, value: str) -> None:
+    await session.execute(
+        text("SELECT set_config(:key, :value, true)"),
+        {"key": key, "value": value},
+    )
+
+
+async def _bind_user_context(session: AsyncSession, user_id: UUID) -> None:
+    await _set_local_setting(session, "app.current_user_id", str(user_id))
+    await _set_local_setting(session, "app.current_project_id", "")
+
+
+async def _activate_project_scope(session: AsyncSession, project_id: UUID) -> None:
+    accessible_project = await session.scalar(select(Project.id).where(Project.id == project_id))
+    if accessible_project is None:
+        raise TenantAccessDenied(f"Project {project_id} is not accessible to the current user")
+    await _set_local_setting(session, "app.current_project_id", str(project_id))
+
+
+async def apply_tenant_context(
+    session: AsyncSession,
+    context: TenantContext | None = None,
+) -> TenantContext:
+    current = context or get_tenant_context()
+    await _bind_user_context(session, current.user_id)
+    if current.project_id is not None:
+        await _activate_project_scope(session, current.project_id)
+    return current
+
+
+@asynccontextmanager
+async def tenant_session_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: TenantContext | None = None,
+) -> AsyncIterator[AsyncSession]:
+    """Open one transaction with PostgreSQL RLS context bound for its full lifetime."""
+    async with session_factory() as session:
+        async with session.begin():
+            await apply_tenant_context(session, context)
+            yield session

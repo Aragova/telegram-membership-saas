@@ -1,0 +1,16 @@
+CREATE ROLE membership_runtime
+    LOGIN
+    PASSWORD 'membership_runtime'
+    NOSUPERUSER
+    NOCREATEDB
+    NOCREATEROLE
+    NOBYPASSRLS;
+
+GRANT CONNECT ON DATABASE membership TO membership_runtime;
+GRANT USAGE ON SCHEMA public TO membership_runtime;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO membership_runtime;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE, SELECT ON SEQUENCES TO membership_runtime;

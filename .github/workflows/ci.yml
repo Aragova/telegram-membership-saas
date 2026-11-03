@@ -16,6 +16,24 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@localhost:5432/app
+      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/app
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -35,14 +53,50 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Alembic heads
+        run: alembic heads
+
+      - name: Apply migrations as database owner
+        run: alembic upgrade head
+
+      - name: Create non-bypass runtime role
+        run: |
+          python - <<'PY'
+          import asyncio
+          import asyncpg
+
+          async def main() -> None:
+              connection = await asyncpg.connect(
+                  user="postgres",
+                  password="postgres",
+                  database="app",
+                  host="localhost",
+              )
+              try:
+                  await connection.execute(
+                      "CREATE ROLE membership_runtime LOGIN PASSWORD 'membership_runtime'"
+                  )
+                  await connection.execute("GRANT CONNECT ON DATABASE app TO membership_runtime")
+                  await connection.execute("GRANT USAGE ON SCHEMA public TO membership_runtime")
+                  await connection.execute(
+                      "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public "
+                      "TO membership_runtime"
+                  )
+                  await connection.execute(
+                      "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public "
+                      "TO membership_runtime"
+                  )
+              finally:
+                  await connection.close()
+
+          asyncio.run(main())
+          PY
+
       - name: Test
         run: pytest
 
       - name: Compile imports
         run: python -m compileall -q src
-
-      - name: Alembic metadata smoke check
-        run: alembic heads
 
       - name: Validate compose
         run: docker compose config

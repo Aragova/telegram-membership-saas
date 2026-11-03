@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "staging", "production"] = "development"
     log_level: str = "INFO"
     database_url: str = "postgresql+asyncpg://membership:membership@localhost:5432/membership"
+    migration_database_url: str | None = None
     telegram_bot_token: SecretStr | None = None
     default_project_timezone: str = "Europe/Moscow"
 
