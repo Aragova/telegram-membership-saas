@@ -5,7 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from telegram_membership_saas.modules.access.models import EffectiveAccess
+from telegram_membership_saas.modules.access.models import (
+    AccessState,
+    ActualAccessState,
+    EffectiveAccess,
+)
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -99,3 +103,59 @@ async def recalculate_effective_access(
     effective.revision += 1
     await session.flush()
     return effective
+
+
+async def sync_access_state_from_projection(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    customer_id: UUID,
+    resource_id: UUID,
+) -> AccessState:
+    effective = await session.scalar(
+        select(EffectiveAccess)
+        .where(
+            EffectiveAccess.project_id == project_id,
+            EffectiveAccess.customer_id == customer_id,
+            EffectiveAccess.resource_id == resource_id,
+        )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if effective is None:
+        raise RuntimeError("Effective access projection must exist before access state")
+
+    await session.execute(
+        insert(AccessState)
+        .values(
+            project_id=project_id,
+            customer_id=customer_id,
+            resource_id=resource_id,
+            desired_access=effective.has_access,
+            desired_revision=effective.revision,
+            actual_state=ActualAccessState.UNKNOWN.value,
+        )
+        .on_conflict_do_nothing(
+            index_elements=["project_id", "customer_id", "resource_id"]
+        )
+    )
+
+    state = await session.scalar(
+        select(AccessState)
+        .where(
+            AccessState.project_id == project_id,
+            AccessState.customer_id == customer_id,
+            AccessState.resource_id == resource_id,
+        )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if state is None:
+        raise RuntimeError("Access state row could not be resolved")
+    if state.desired_revision > effective.revision:
+        raise RuntimeError("Access state revision cannot exceed projection revision")
+
+    state.desired_access = effective.has_access
+    state.desired_revision = effective.revision
+    await session.flush()
+    return state
