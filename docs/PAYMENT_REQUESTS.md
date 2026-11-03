@@ -6,22 +6,22 @@ This document defines the checkout request boundary before a real Payment exists
 
 Creating a checkout request does not mean money was received.
 
-The lifecycle starts as:
+The lifecycle is:
 
 ```text
 WAITING_CONFIRMATION
   -> WAITING_REVIEW
-  -> REJECTED
+  -> APPROVED
+  -> Payment + Subscription + EntitlementGrant(s) + OutboxEvent(s)
 ```
 
-The schema already reserves `APPROVED`, but this PR intentionally does not expose an approve command.
-Approval will be implemented only together with one atomic transaction that creates exactly one Payment,
-creates or renews exactly one Subscription, creates the intended Entitlement Grants, and enqueues the
-outbox event. This prevents a premature `APPROVED` state that has no matching business effects.
+A request may also finish as `REJECTED`, `CANCELLED` or `EXPIRED`.
 
-`CANCELLED` and `EXPIRED` are terminal states for requests that were never submitted for review.
+`APPROVED` is reachable only through the atomic approval service. The same transaction creates the
+Payment, creates or renews the Subscription, creates the intended Entitlement Grants and writes the
+outbox events. A request cannot be committed as approved without those business effects.
 
-## Price snapshot
+## Commercial snapshot
 
 A PaymentRequest stores the selected commercial snapshot:
 
@@ -32,10 +32,17 @@ A PaymentRequest stores the selected commercial snapshot:
 - `discount_amount`;
 - `final_amount`;
 - nullable `promotion_id` reserved for the future promotions module;
-- `payment_method_id`.
+- `payment_method_id`;
+- `duration_value`;
+- `duration_unit`.
 
-Changing a PlanPrice after request creation must never rewrite the request amounts. The request has a
-composite FK to the exact PlanPrice identity so a mismatched Plan/currency cannot be attached by UUID.
+Changing a PlanPrice after request creation never rewrites the request amounts.
+
+Changing the Plan duration after request creation also does not change what the request buys. MONTH and
+YEAR are later applied as calendar units in the Project timezone, not as fixed day counts.
+
+The request has a composite FK to the exact PlanPrice identity so a mismatched Plan/currency cannot be
+attached by UUID.
 
 For the current MVP slice `discount_amount = 0` and `final_amount = regular_amount`. Promotion logic is
 not implemented yet.
@@ -56,16 +63,17 @@ Request creation validates that:
 - the PaymentMethod is active;
 - the PaymentMethod currently supports the selected currency.
 
-After the request is created, later PlanPrice changes do not change the snapshot.
+After the request is created, later PlanPrice or Plan-duration changes do not change its frozen
+commercial terms.
 
 ## No receipt/proof subsystem
 
 PaymentRequest has no receipt, screenshot, document, file ID, URL, hash, OCR metadata, bank metadata or
 fraud-analysis fields.
 
-The future Telegram adapter will copy/forward the buyer's proof message directly to the project admin and
-then move the request to `WAITING_REVIEW`. The admin checks the real bank/wallet balance and chooses
-approve or reject.
+The Telegram adapter will copy/forward the buyer's proof message directly to the project admin and then
+move the request to `WAITING_REVIEW`. The admin checks the real bank/wallet balance and chooses approve
+or reject.
 
 ## RLS and buyer-facing adapters
 
@@ -73,13 +81,15 @@ approve or reject.
 
 Domain functions require a project-scoped session. A future Telegram buyer adapter must derive the
 Project from trusted bot/resource routing (for example BotInstance -> Project), never from an arbitrary
-project ID supplied by the buyer. The adapter/session boundary for customer traffic is intentionally kept
-outside the domain model.
+project ID supplied by the buyer.
 
 ## Concurrency
 
-State-changing functions lock the PaymentRequest row with `FOR UPDATE`.
+State-changing functions lock the PaymentRequest row with `FOR UPDATE` and refresh an already-cached ORM
+identity before evaluating state.
 
-Duplicate submit and duplicate reject calls are idempotent for the already-achieved state. Invalid
-transitions are rejected. Approval idempotency is deferred to the atomic settlement PR because that is
-where duplicate callbacks could otherwise create duplicate money/subscription effects.
+Duplicate submit/reject calls are idempotent for the already-achieved state. Duplicate approval is also
+idempotent: exactly one Payment exists per PaymentRequest and the Subscription is extended only once.
+
+Approval additionally serializes commercial period changes through the ProjectCustomer row so concurrent
+approvals affecting the same customer do not lose a renewal period.
