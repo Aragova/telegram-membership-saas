@@ -111,6 +111,49 @@ async def test_owner_sees_project_and_can_open_settings(monkeypatch):
     callback.answer.assert_awaited_once()
 
 
+async def test_central_start_shows_owner_bots_without_admin_command(monkeypatch):
+    loader = AsyncMock(return_value=_snapshot())
+    monkeypatch.setattr(handlers, "load_admin_project", loader)
+    bot = _bot()
+    await _handler(_router(), "admin_home_handler")(
+        _message(text="/start"), bot
+    )
+    sent = bot.send_message.await_args.kwargs
+    assert "Мои боты" in sent["text"]
+    assert "Подключить своего бота" in (
+        sent["reply_markup"].inline_keyboard[0][0].text
+    )
+    assert sent["chat_id"] == 12
+    loader.assert_awaited_once()
+
+
+async def test_central_menu_command_opens_overview(monkeypatch):
+    monkeypatch.setattr(
+        handlers, "load_admin_project", AsyncMock(return_value=_snapshot())
+    )
+    bot = _bot()
+    await _handler(_router(), "admin_home_handler")(
+        _message(text="/menu"), bot
+    )
+    assert "ViMi Pay · Управление" in bot.send_message.await_args.kwargs["text"]
+
+
+async def test_unregistered_start_does_not_show_buyer_catalog(monkeypatch):
+    loader = AsyncMock(side_effect=PermissionError("denied"))
+    catalog = AsyncMock()
+    monkeypatch.setattr(handlers, "load_admin_project", loader)
+    monkeypatch.setattr(handlers, "_send_catalog", catalog)
+    bot = _bot()
+    await _handler(_router(), "admin_home_handler")(
+        _message(user_id=999, text="/start"), bot
+    )
+    text = bot.send_message.await_args.kwargs["text"]
+    assert "центральный бот" in text
+    assert "не бот покупки подписок" in text
+    assert "нет доступа" in text
+    catalog.assert_not_awaited()
+
+
 async def test_owner_changes_timezone_by_button_and_command(monkeypatch):
     loader = AsyncMock(return_value=_snapshot())
     change = AsyncMock(return_value="Europe/Amsterdam")

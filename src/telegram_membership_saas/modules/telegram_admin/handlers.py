@@ -226,15 +226,32 @@ def create_telegram_admin_router(
             reply_markup=keyboard,
         )
 
-    @router.message(Command("admin"))
+    @router.message(Command("start", "menu", "admin"))
     async def admin_home_handler(message: Message, bot: Bot) -> None:
+        # This is the central owner-management bot, not a buyer storefront.
+        # Keep /admin as a backwards-compatible alias, but don't require it.
         if not _private_chat(message):
             return
+        command = (message.text or "").split(maxsplit=1)[0].split("@", 1)[0]
+        screen = "bots" if command == "/start" else "main"
         try:
-            await show_screen(bot, message.from_user.id, "main")
+            await show_screen(bot, message.from_user.id, screen)
         except PermissionError:
+            if command == "/admin":
+                text = "⛔ Нет доступа к управлению проектом."
+            else:
+                text = (
+                    "👋 <b>ViMi Pay · Управление ботами</b>\n\n"
+                    "Это центральный бот для владельцев каналов, "
+                    "а не бот покупки подписок.\n\n"
+                    "У вас пока нет доступа к текущему проекту. "
+                    "Самостоятельное создание новых проектов "
+                    "будет добавлено в следующем этапе."
+                )
             await bot.send_message(
-                chat_id=message.from_user.id, text="⛔ Нет доступа к управлению проектом."
+                chat_id=message.from_user.id,
+                text=text,
+                parse_mode="HTML",
             )
 
     @router.message(Command("timezone"))
@@ -396,7 +413,7 @@ def create_telegram_admin_router(
                 f"✅ Бот <b>@{escape(result.username)}</b> зарегистрирован.\n\n"
                 "Токен зашифрован. Запуск продаж в собственном боте "
                 "будет доступен после подключения runtime.\n"
-                "Откройте /admin → Мои боты для просмотра."
+                "Откройте /start для просмотра своих ботов."
             ),
             parse_mode="HTML",
         )
@@ -414,7 +431,7 @@ def create_telegram_admin_router(
             return
         await bot.send_message(
             chat_id=message.chat.id,
-            text="Для подключения используйте /admin → Мои боты → Подключить.",
+            text="Для подключения используйте /start → Подключить своего бота.",
         )
 
     return router
