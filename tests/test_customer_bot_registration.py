@@ -7,6 +7,7 @@ import pytest
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import SecretStr
 
+from telegram_membership_saas.config import Settings
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots import service as bots
 from telegram_membership_saas.modules.telegram_admin import handlers as admin
@@ -64,6 +65,10 @@ def test_fernet_roundtrip_and_wrong_key_rejected():
     assert bots.decrypt_token(encrypted, key=key) == TEST_TOKEN
     with pytest.raises(InvalidToken):
         bots.decrypt_token(encrypted, key=_key())
+
+
+def test_blank_encryption_key_means_not_configured():
+    assert Settings(bot_token_encryption_key="").bot_token_encryption_key is None
 
 
 def test_encryption_requires_configured_key():
