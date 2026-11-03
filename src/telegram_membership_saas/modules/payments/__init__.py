@@ -1,4 +1,9 @@
+from telegram_membership_saas.modules.payments.approval_service import (
+    ApprovalResult,
+    approve_payment_request,
+)
 from telegram_membership_saas.modules.payments.models import (
+    Payment,
     PaymentMethod,
     PaymentMethodCurrency,
     PaymentMethodStatus,
@@ -21,12 +26,15 @@ from telegram_membership_saas.modules.payments.service import (
 )
 
 __all__ = [
+    "ApprovalResult",
+    "Payment",
     "PaymentMethod",
     "PaymentMethodCurrency",
     "PaymentMethodStatus",
     "PaymentProvider",
     "PaymentRequest",
     "PaymentRequestStatus",
+    "approve_payment_request",
     "cancel_payment_request",
     "create_manual_payment_method",
     "create_payment_request",
