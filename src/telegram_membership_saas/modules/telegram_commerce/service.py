@@ -394,6 +394,34 @@ async def _reviewer_telegram_ids(
     return tuple(dict.fromkeys(ordered))
 
 
+async def require_awaiting_receipt_for_telegram_user(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    request_id: UUID,
+    telegram_user_id: int,
+) -> None:
+    """Verify a receipt prompt belongs to the buyer without submitting the request."""
+    await _require_active_project(session, project_id)
+    customer = await _customer_for_telegram_user(
+        session,
+        project_id=project_id,
+        telegram_user_id=telegram_user_id,
+    )
+    if customer is None:
+        raise PermissionError("Payment request does not belong to this Telegram user")
+    request = await session.scalar(
+        select(PaymentRequest).where(
+            PaymentRequest.id == request_id,
+            PaymentRequest.project_id == project_id,
+        )
+    )
+    if request is None or request.customer_id != customer.id:
+        raise PermissionError("Payment request does not belong to this Telegram user")
+    if request.status != PaymentRequestStatus.WAITING_CONFIRMATION.value:
+        raise ValueError("Заявка уже отправлена или закрыта")
+
+
 async def submit_checkout_for_telegram_user(
     session: AsyncSession,
     *,
