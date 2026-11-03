@@ -350,6 +350,12 @@ async def claim_next_access_action(
             return None
         examined_ids.append(action.id)
 
+        was_expired_processing = (
+            action.status == AccessActionStatus.PROCESSING.value
+            and action.locked_at is not None
+            and action.locked_at <= stale_before
+        )
+
         state = await session.scalar(
             select(AccessState)
             .where(
@@ -364,16 +370,29 @@ async def claim_next_access_action(
             raise RuntimeError("Access state disappeared before action claim")
 
         expected_action = _desired_action_type(state)
-        if (
+        action_is_stale = (
             action.desired_revision != state.desired_revision
             or action.action_type != expected_action.value
             or _actual_matches_desired(state)
-        ):
+        )
+        if action_is_stale:
             action.status = AccessActionStatus.SUPERSEDED.value
             action.processed_at = moment
             action.locked_at = None
             action.last_error = None
+            if was_expired_processing:
+                # The external call may have succeeded before the worker died. Persisted actual
+                # state can no longer be trusted; force a corrective command for current desired.
+                state.actual_state = ActualAccessState.UNKNOWN.value
             await session.flush()
+            if was_expired_processing:
+                await enqueue_access_action_for_state(
+                    session,
+                    project_id=project_id,
+                    customer_id=action.customer_id,
+                    resource_id=action.resource_id,
+                    available_at=moment,
+                )
             continue
 
         other_processing = await session.scalar(
