@@ -53,6 +53,19 @@ def _normalize_amount(
     return value
 
 
+def _effective_timestamp(
+    explicit: datetime | None,
+    *,
+    not_before: datetime | None = None,
+) -> datetime:
+    timestamp = explicit or datetime.now(UTC)
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("Price validity timestamp must be timezone-aware")
+    if not_before is not None and timestamp < not_before:
+        raise ValueError("Price validity timestamp cannot precede existing price history")
+    return timestamp
+
+
 async def _lock_plan(session: AsyncSession, *, project_id: UUID, plan_id: UUID) -> None:
     locked_plan = await session.scalar(
         select(Plan.id)
@@ -87,10 +100,9 @@ async def replace_active_plan_price(
     """Create the next immutable price version and retire the previous active version.
 
     The caller owns the surrounding transaction. Locking the Plan serializes all price
-    changes for that Plan, so version allocation and active-pair replacement are safe.
+    changes for that Plan, so version allocation and validity windows are monotonic.
     """
 
-    timestamp = changed_at or datetime.now(UTC)
     code = currency_code.upper()
     precision = await _currency_precision(session, code)
     normalized_amount = _normalize_amount(amount, max_fractional_digits=precision)
@@ -107,6 +119,27 @@ async def replace_active_plan_price(
         )
         .with_for_update()
     )
+    latest = await session.scalar(
+        select(PlanPrice)
+        .where(
+            PlanPrice.plan_id == plan_id,
+            PlanPrice.project_id == project_id,
+            PlanPrice.currency_code == code,
+        )
+        .order_by(PlanPrice.version.desc())
+        .limit(1)
+        .with_for_update()
+    )
+
+    history_boundary: datetime | None = None
+    if current is not None:
+        history_boundary = current.active_from
+    elif latest is not None:
+        history_boundary = latest.active_until or latest.active_from
+
+    # Generate the default time only after the Plan lock is held. This prevents a
+    # request that waited longer for the lock from receiving an earlier validity time.
+    timestamp = _effective_timestamp(changed_at, not_before=history_boundary)
 
     max_version = await session.scalar(
         select(func.max(PlanPrice.version)).where(
@@ -145,7 +178,6 @@ async def retire_active_plan_price(
 ) -> PlanPrice | None:
     """Remove a currency from the current Plan offer without deleting its history."""
 
-    timestamp = retired_at or datetime.now(UTC)
     code = currency_code.upper()
 
     await _lock_plan(session, project_id=project_id, plan_id=plan_id)
@@ -162,6 +194,7 @@ async def retire_active_plan_price(
     if current is None:
         return None
 
+    timestamp = _effective_timestamp(retired_at, not_before=current.active_from)
     current.status = PlanPriceStatus.RETIRED.value
     current.active_until = timestamp
     await session.flush()
