@@ -59,7 +59,9 @@ def test_customer_dispatcher_does_not_expose_admin_routes():
 
 def test_central_can_drop_buyer_routes_for_cutover():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
-    assert [r.name for r in dispatcher.sub_routers] == ["telegram-admin"]
+    assert [r.name for r in dispatcher.sub_routers] == [
+        "telegram-admin", "central-buyer-redirect"
+    ]
 
 
 def test_central_default_preserves_old_staging_path():
@@ -216,3 +218,34 @@ def test_customer_bot_config_and_blank_id(monkeypatch):
     assert Settings(_env_file=None).customer_telegram_bot_id is None
     with pytest.raises(ValueError):
         Settings(customer_telegram_bot_id=-1, _env_file=None)
+
+
+async def test_old_central_approval_buttons_redirect_without_changing_payment():
+    dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
+    router = dispatcher.sub_routers[-1]
+    callback = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "old_payment_decision_handler"
+    )
+    query = SimpleNamespace(answer=AsyncMock())
+    await callback(query)
+    assert query.answer.await_args.kwargs["show_alert"] is True
+    assert "своего бота" in query.answer.await_args.args[0]
+
+
+async def test_central_payment_command_directs_to_customer_bot():
+    dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
+    router = dispatcher.sub_routers[-1]
+    handler = next(
+        h.callback for h in router.message.handlers
+        if h.callback.__name__ == "old_customer_command_handler"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=123),
+        chat=SimpleNamespace(type="private"),
+    )
+    await handler(message, bot)
+    assert "подключённого бота" in bot.send_message.await_args.kwargs["text"]
+    assert "/payments" in bot.send_message.await_args.kwargs["text"]
