@@ -16,6 +16,23 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql+asyncpg://app:app@localhost:5432/app
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -35,14 +52,17 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Alembic heads
+        run: alembic heads
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
       - name: Test
         run: pytest
 
       - name: Compile imports
         run: python -m compileall -q src
-
-      - name: Alembic metadata smoke check
-        run: alembic heads
 
       - name: Validate compose
         run: docker compose config
