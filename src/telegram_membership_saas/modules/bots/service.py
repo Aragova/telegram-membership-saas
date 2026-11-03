@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from aiogram import Bot
-from aiogram.exceptions import AiogramError
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy import select
@@ -110,14 +109,20 @@ async def verify_telegram_bot(token: str) -> VerifiedBot:
     # getMe validates credentials and returns Telegram's immutable numeric bot identity.
     try:
         candidate = Bot(token=token)
-    except (ValueError, TypeError) as exc:
-        raise ValueError("Не удалось проверить токен Telegram-бота") from exc
+    except Exception:
+        # Never preserve raw token or HTTP URL in a traceback chain.
+        raise ValueError("Не удалось проверить токен Telegram-бота") from None
     try:
         identity = await candidate.get_me()
-    except (AiogramError, OSError, TimeoutError) as exc:
-        raise ValueError("Telegram не подтвердил токен бота") from exc
+    except Exception:
+        # Different Telegram transport errors may include a token-bearing URL.
+        raise ValueError("Telegram не подтвердил токен бота") from None
     finally:
-        await candidate.session.close()
+        try:
+            await candidate.session.close()
+        except Exception:
+            # Closing a failed transport must not disclose a token-bearing URL.
+            pass
 
     if not identity.is_bot or not identity.username:
         raise ValueError("Telegram не вернул корректную учётную запись бота")
@@ -183,9 +188,9 @@ async def register_customer_bot(
             await session.flush()
     except TenantAccessDenied as exc:
         raise PermissionError("Подключение ботов доступно только владельцу проекта") from exc
-    except IntegrityError as exc:
-        # Do not disclose the other tenant or its database values.
-        raise ValueError("Этот Telegram-бот уже привязан к другому проекту") from exc
+    except IntegrityError:
+        # Do not disclose the other tenant or SQL parameters in an exception chain.
+        raise ValueError("Этот Telegram-бот уже привязан к другому проекту") from None
     return BotRegistration(
         telegram_bot_id=verified.telegram_bot_id,
         username=verified.username,
