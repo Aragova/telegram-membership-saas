@@ -10,7 +10,7 @@ Do not replace that acceptance criterion with API-only or manually seeded stagin
 This slice introduces a real, project-scoped admin entry point in the existing
 one-bot / one-project Telegram runtime:
 
-- `/admin` opens the owner/admin home.
+- `/start` opens the owner’s registered bots immediately; `/menu` opens the project overview. The legacy `/admin` command remains only as a compatibility alias. The central management bot never routes `/start` to the buyer catalog; nonowners get a clear onboarding-in-progress message. The existing `/plans` buyer command remains only for staging backwards compatibility until a customer-bot runtime is deployed.
 - View current channels/groups, plans and payment methods using **live project DB data**.
 - Open a live payment-review queue from the **Заявки** button; existing
   `/payments` still works.
