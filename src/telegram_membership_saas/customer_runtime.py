@@ -26,6 +26,7 @@ from telegram_membership_saas.db import (
 from telegram_membership_saas.modules.bots import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
+from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
@@ -96,6 +97,43 @@ async def check_customer_bot_identity(bot: Bot, telegram_bot_id: int) -> None:
         raise RuntimeError("Customer bot Telegram identity or webhook check failed") from None
 
 
+async def verify_resource_permissions(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    project_id: UUID,
+    bot: Bot,
+) -> None:
+    """Refuse sales if the customer bot cannot grant and revoke channel access."""
+    async with system_project_session_scope(session_factory, project_id) as session:
+        resources = list((await session.scalars(
+            select(Resource).where(
+                Resource.project_id == project_id,
+                Resource.status == ResourceStatus.ACTIVE.value,
+            )
+        )).all())
+    if not resources:
+        raise RuntimeError("Customer bot project has no active channel/group")
+
+    for resource in resources:
+        try:
+            member = await bot.get_chat_member(
+                chat_id=resource.external_id,
+                user_id=bot.id,
+            )
+            status = getattr(member.status, "value", member.status)
+            if status != "creator" and (
+                status != "administrator"
+                or not member.can_invite_users
+                or not member.can_restrict_members
+            ):
+                raise ValueError("Insufficient Telegram administrator rights")
+        except Exception:
+            # Do not print Telegram transport errors, which may contain secrets.
+            raise RuntimeError(
+                "Customer bot lacks required channel/group administrator rights"
+            ) from None
+
+
 async def run_customer_bot(settings: Settings | None = None) -> None:
     current = settings or get_settings()
     project_id = current.telegram_project_id
@@ -120,6 +158,11 @@ async def run_customer_bot(settings: Settings | None = None) -> None:
         # returned to Telegram UI or passed to external project contexts.
         bot = Bot(token=config.token)
         await check_customer_bot_identity(bot, config.telegram_bot_id)
+        await verify_resource_permissions(
+            session_factory,
+            project_id=project_id,
+            bot=bot,
+        )
 
         dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
         worker = asyncio.create_task(
