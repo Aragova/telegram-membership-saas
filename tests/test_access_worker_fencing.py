@@ -80,6 +80,38 @@ async def _create_target(session_factory, owner_id: UUID, buyer_id: UUID, projec
         return customer.id, resource.id
 
 
+async def _set_actual_revoked(
+    session,
+    *,
+    project_id: UUID,
+    customer_id: UUID,
+    resource_id: UUID,
+    moment: datetime,
+) -> None:
+    initial = await recalculate_effective_access(
+        session,
+        project_id=project_id,
+        customer_id=customer_id,
+        resource_id=resource_id,
+        calculated_at=moment,
+    )
+    assert initial.queued_action is not None
+    assert initial.queued_action.action_type == AccessActionType.REVOKE.value
+    action = await claim_next_access_action(
+        session,
+        project_id=project_id,
+        claimed_at=moment,
+    )
+    assert action is not None
+    await mark_access_action_succeeded(
+        session,
+        project_id=project_id,
+        action_id=action.id,
+        claim_attempt=action.attempt_count,
+        processed_at=moment,
+    )
+
+
 async def test_opposite_processing_action_enqueues_corrective_action() -> None:
     settings = Settings()
     engine = build_engine(settings)
@@ -101,27 +133,12 @@ async def test_opposite_processing_action_enqueues_corrective_action() -> None:
             session_factory,
             TenantContext(user_id=owner_id, project_id=project_id),
         ) as session:
-            initial = await recalculate_effective_access(
+            await _set_actual_revoked(
                 session,
                 project_id=project_id,
                 customer_id=customer_id,
                 resource_id=resource_id,
-                calculated_at=base,
-            )
-            assert initial.queued_action is not None
-            assert initial.queued_action.action_type == AccessActionType.REVOKE.value
-            initial_revoke = await claim_next_access_action(
-                session,
-                project_id=project_id,
-                claimed_at=base,
-            )
-            assert initial_revoke is not None
-            await mark_access_action_succeeded(
-                session,
-                project_id=project_id,
-                action_id=initial_revoke.id,
-                claim_attempt=initial_revoke.attempt_count,
-                processed_at=base,
+                moment=base,
             )
 
             grant = EntitlementGrant(
@@ -208,7 +225,7 @@ async def test_opposite_processing_action_enqueues_corrective_action() -> None:
         await engine.dispose()
 
 
-async def test_reclaimed_lease_rejects_stale_success_and_failure() -> None:
+async def test_reclaimed_lease_observes_stale_success_but_rejects_stale_failure() -> None:
     settings = Settings()
     engine = build_engine(settings)
     session_factory = build_session_factory(engine)
@@ -274,18 +291,28 @@ async def test_reclaimed_lease_rejects_stale_success_and_failure() -> None:
             second_attempt = second_claim.attempt_count
             assert second_attempt == 2
 
-        with pytest.raises(ValueError, match="lease is no longer current"):
-            async with tenant_session_scope(
-                session_factory,
-                TenantContext(user_id=owner_id, project_id=project_id),
-            ) as session:
-                await mark_access_action_succeeded(
-                    session,
-                    project_id=project_id,
-                    action_id=action_id,
-                    claim_attempt=first_attempt,
-                    processed_at=reclaim_at + timedelta(seconds=1),
+        async with tenant_session_scope(
+            session_factory,
+            TenantContext(user_id=owner_id, project_id=project_id),
+        ) as session:
+            observed = await mark_access_action_succeeded(
+                session,
+                project_id=project_id,
+                action_id=action_id,
+                claim_attempt=first_attempt,
+                processed_at=reclaim_at + timedelta(seconds=1),
+            )
+            assert observed.status == AccessActionStatus.PROCESSING.value
+            assert observed.attempt_count == second_attempt
+            state = await session.scalar(
+                select(AccessState).where(
+                    AccessState.project_id == project_id,
+                    AccessState.customer_id == customer_id,
+                    AccessState.resource_id == resource_id,
                 )
+            )
+            assert state is not None
+            assert state.actual_state == ActualAccessState.GRANTED.value
 
         with pytest.raises(ValueError, match="lease is no longer current"):
             async with tenant_session_scope(
@@ -315,5 +342,149 @@ async def test_reclaimed_lease_rejects_stale_success_and_failure() -> None:
             )
             assert completed.status == AccessActionStatus.SUCCEEDED.value
             assert completed.attempt_count == second_attempt
+    finally:
+        await engine.dispose()
+
+
+async def test_late_success_after_superseded_action_requeues_correction() -> None:
+    settings = Settings()
+    engine = build_engine(settings)
+    session_factory = build_session_factory(engine)
+    base = datetime(2026, 2, 5, 12, 0, tzinfo=UTC)
+
+    try:
+        owner_id = await _create_user(session_factory, "late_owner")
+        buyer_id = await _create_user(session_factory, "late_buyer")
+        project_id = await _create_project(session_factory, owner_id, "Late success")
+        customer_id, resource_id = await _create_target(
+            session_factory,
+            owner_id,
+            buyer_id,
+            project_id,
+        )
+
+        async with tenant_session_scope(
+            session_factory,
+            TenantContext(user_id=owner_id, project_id=project_id),
+        ) as session:
+            await _set_actual_revoked(
+                session,
+                project_id=project_id,
+                customer_id=customer_id,
+                resource_id=resource_id,
+                moment=base,
+            )
+            grant = EntitlementGrant(
+                project_id=project_id,
+                customer_id=customer_id,
+                resource_id=resource_id,
+                source=EntitlementSource.MANUAL.value,
+                source_id=uuid4(),
+                status=EntitlementGrantStatus.ACTIVE.value,
+                valid_from=base,
+                valid_until=base + timedelta(hours=1),
+            )
+            session.add(grant)
+            await session.flush()
+            await recalculate_effective_access(
+                session,
+                project_id=project_id,
+                customer_id=customer_id,
+                resource_id=resource_id,
+                calculated_at=base + timedelta(seconds=1),
+            )
+            grant_action = await claim_next_access_action(
+                session,
+                project_id=project_id,
+                claimed_at=base + timedelta(seconds=1),
+            )
+            assert grant_action is not None
+            grant_action_id = grant_action.id
+            grant_attempt = grant_action.attempt_count
+
+            grant.status = EntitlementGrantStatus.REVOKED.value
+            grant.revoked_at = base + timedelta(seconds=2)
+            desired_false = await recalculate_effective_access(
+                session,
+                project_id=project_id,
+                customer_id=customer_id,
+                resource_id=resource_id,
+                calculated_at=base + timedelta(seconds=2),
+            )
+            assert desired_false.queued_action is not None
+            assert desired_false.queued_action.action_type == AccessActionType.REVOKE.value
+
+        reclaim_at = base + timedelta(minutes=7)
+        async with tenant_session_scope(
+            session_factory,
+            TenantContext(user_id=owner_id, project_id=project_id),
+        ) as session:
+            corrective = await claim_next_access_action(
+                session,
+                project_id=project_id,
+                claimed_at=reclaim_at,
+                lease_timeout=timedelta(minutes=5),
+            )
+            assert corrective is not None
+            assert corrective.action_type == AccessActionType.REVOKE.value
+            stale_grant = await session.get(type(corrective), grant_action_id)
+            assert stale_grant is not None
+            assert stale_grant.status == AccessActionStatus.SUPERSEDED.value
+            await mark_access_action_succeeded(
+                session,
+                project_id=project_id,
+                action_id=corrective.id,
+                claim_attempt=corrective.attempt_count,
+                processed_at=reclaim_at,
+            )
+
+        late_at = reclaim_at + timedelta(seconds=1)
+        async with tenant_session_scope(
+            session_factory,
+            TenantContext(user_id=owner_id, project_id=project_id),
+        ) as session:
+            late = await mark_access_action_succeeded(
+                session,
+                project_id=project_id,
+                action_id=grant_action_id,
+                claim_attempt=grant_attempt,
+                processed_at=late_at,
+            )
+            assert late.status == AccessActionStatus.SUPERSEDED.value
+            state = await session.scalar(
+                select(AccessState).where(
+                    AccessState.project_id == project_id,
+                    AccessState.customer_id == customer_id,
+                    AccessState.resource_id == resource_id,
+                )
+            )
+            assert state is not None
+            assert state.desired_access is False
+            assert state.actual_state == ActualAccessState.GRANTED.value
+
+            fresh_correction = await claim_next_access_action(
+                session,
+                project_id=project_id,
+                claimed_at=late_at,
+            )
+            assert fresh_correction is not None
+            assert fresh_correction.action_type == AccessActionType.REVOKE.value
+            await mark_access_action_succeeded(
+                session,
+                project_id=project_id,
+                action_id=fresh_correction.id,
+                claim_attempt=fresh_correction.attempt_count,
+                processed_at=late_at + timedelta(seconds=1),
+            )
+
+            final_state = await session.scalar(
+                select(AccessState).where(
+                    AccessState.project_id == project_id,
+                    AccessState.customer_id == customer_id,
+                    AccessState.resource_id == resource_id,
+                )
+            )
+            assert final_state is not None
+            assert final_state.actual_state == ActualAccessState.REVOKED.value
     finally:
         await engine.dispose()
