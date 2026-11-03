@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: membership
+      POSTGRES_USER: membership
+      POSTGRES_PASSWORD: membership
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U membership -d membership"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TMS_ENVIRONMENT: development
+      TMS_DATABASE_URL: postgresql+asyncpg://membership:membership@postgres:5432/membership
+      TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_data:
