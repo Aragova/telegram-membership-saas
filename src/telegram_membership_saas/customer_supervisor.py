@@ -14,19 +14,13 @@ from datetime import datetime
 from time import monotonic
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.customer_runtime import run_customer_bot_instance
-from telegram_membership_saas.db import (
-    build_engine,
-    build_session_factory,
-    system_project_session_scope,
-)
+from telegram_membership_saas.db import build_engine, build_session_factory
 from telegram_membership_saas.modules.bots.health_service import write_bot_health
-from telegram_membership_saas.modules.resources import Resource, ResourceStatus
-from telegram_membership_saas.modules.telegram_commerce.service import list_checkout_options
 from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
     confirm_project_lock,
@@ -64,20 +58,6 @@ async def discover_targets(
             )
         )).all()
     return tuple(BotTarget(*row) for row in rows)
-
-
-async def project_has_checkout(
-    factory: async_sessionmaker[AsyncSession], project_id: UUID,
-) -> bool:
-    """Do not start a bot until an actual payable checkout exists."""
-    async with system_project_session_scope(factory, project_id) as session:
-        channel = await session.scalar(select(Resource.id).where(
-            Resource.project_id == project_id,
-            Resource.status == ResourceStatus.ACTIVE.value,
-        ).limit(1))
-        if channel is None:
-            return False
-        return bool(await list_checkout_options(session, project_id=project_id))
 
 
 def safe_error_code(exc: Exception) -> str:
@@ -192,23 +172,13 @@ class CustomerBotSupervisor:
         self.settings = settings
         self.workers: dict[UUID, RunningTarget] = {}
         self.retry_after: dict[UUID, float] = {}
-        self._supervisor_id = uuid4()
 
     async def reconcile_once(self) -> None:
         targets = {t.project_id: t for t in await discover_targets(self.factory)}
-        ready: dict[UUID, BotTarget] = {}
-        for pid, target in targets.items():
-            try:
-                if await project_has_checkout(self.factory, pid):
-                    ready[pid] = target
-                elif pid not in self.workers:
-                    await write_bot_health(
-                        self.factory, project_id=pid, bot_id=target.telegram_bot_id,
-                        instance_id=self._supervisor_id, state="setup_needed",
-                    )
-            except Exception:
-                # A failing project should not interrupt reconciliation of others.
-                logger.warning("Customer bot readiness unavailable for project %s", pid)
+        # Buyer catalog eligibility and long-lived entitlement enforcement
+        # are independent. Never stop a project worker when its last tariff
+        # becomes unavailable: existing grants still need expiry/revocation.
+        ready = targets
 
         for pid, current in list(self.workers.items()):
             if current.task.done():
