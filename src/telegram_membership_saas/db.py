@@ -3,13 +3,13 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.modules.projects import Project
