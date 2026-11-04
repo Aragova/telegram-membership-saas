@@ -32,6 +32,7 @@ def _snapshot(period="30", page=0):
         period=period, page=page, pages=1,
         counts={
             "bots": 2, "bots_active": 1, "bots_disabled": 1,
+            "bots_running": 1,
             "owners": 2, "resources": 3, "plans_published": 4,
             "plans_draft": 1, "subscriptions_active": 5,
             "requests_pending": 2, "bots_new_period": 1,
@@ -42,6 +43,7 @@ def _snapshot(period="30", page=0):
             "status": "registered", "runtime_state": "running",
             "resources": 1, "plans": 2, "subscriptions": 3,
             "payments_period": 3,
+            "gmv_by_currency": [{"currency": "USD", "amount": "17.50"}],
         },),
         turnover=({"currency": "RUB", "amount": "1200.00", "count": 3},),
     )
@@ -175,6 +177,7 @@ async def test_operator_navigation_periods_and_per_bot_details(monkeypatch):
     callback=_callback("plat:detail:7:0:0")
     await _callback_handler(router)(callback,bot)
     assert "Статистика бота" in bot.send_message.await_args.args[1]
+    assert "17.5" in bot.send_message.await_args.args[1]
 
 
 async def test_stale_platform_detail_fails_closed(monkeypatch):
