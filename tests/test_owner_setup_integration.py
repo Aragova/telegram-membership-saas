@@ -24,6 +24,7 @@ from telegram_membership_saas.modules.bots.service import encrypt_token
 from telegram_membership_saas.modules.owner_setup import service as setup
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.pricing import PlanPrice
+from telegram_membership_saas.modules.projects import ProjectMember
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -188,6 +189,13 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
             sf, telegram_id=_new_telegram_id(),
             username="other_owner", first_name="Other",
         )
+        async with tenant_session_scope(
+            sf, TenantContext(user_id=actor_id, project_id=project_id)
+        ) as session:
+            session.add(ProjectMember(
+                project_id=project_id, user_id=other_actor, role="viewer"
+            ))
+        # RLS visibility as a viewer must not be interpreted as management access.
         assert (await setup.owner_home(sf, actor_id=other_actor)).projects == ()
         with pytest.raises((PermissionError, TenantAccessDenied)):
             await setup.setup_overview(
