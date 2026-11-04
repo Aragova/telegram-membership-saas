@@ -864,7 +864,7 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, currency: str | None = None, page: int = 0,
         price_id: UUID | None = None, method_id: UUID | None = None,
-        message_id: int | None = None,
+        instruction_page: int = 0, message_id: int | None = None,
     ) -> None:
         """Interactive buyer-like display with no checkout/payment writes."""
         if fixed_project_id is None or project_id != fixed_project_id:
@@ -897,6 +897,7 @@ def create_owner_setup_router(
                 rendered = preview_method_screen(
                     offers, price_id=price_id, payment_method_id=method_id,
                     instruction_template=method.instruction_template, page=page,
+                    instruction_page=instruction_page,
                 )
             elif price_id is not None:
                 rendered = preview_offer_screen(
@@ -1089,6 +1090,22 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     price_id=decode_uuid(price_token),
                     method_id=decode_uuid(method_token), page=int(page_token),
+                    message_id=query.message.message_id,
+                )
+            elif action.startswith("pvi:"):
+                _, price_token, method_token, page_token, part_token = (
+                    action.split(":", 4)
+                )
+                if not all(
+                    part.isascii() and part.isdecimal()
+                    for part in (page_token, part_token)
+                ) or int(page_token) > 10000 or int(part_token) > 1000:
+                    raise ValueError("Недопустимая страница")
+                await show_guest_preview(
+                    bot, user_id, actor_id, project_id,
+                    price_id=decode_uuid(price_token),
+                    method_id=decode_uuid(method_token), page=int(page_token),
+                    instruction_page=int(part_token),
                     message_id=query.message.message_id,
                 )
             elif action.startswith("drop:"):
