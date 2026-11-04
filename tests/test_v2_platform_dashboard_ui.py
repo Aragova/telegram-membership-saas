@@ -8,13 +8,13 @@ import pytest
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.modules import platform_dashboard_handlers as ui
-from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 from telegram_membership_saas.modules.platform_dashboard import (
     PlatformSnapshot,
     fmt_turnover,
     is_configured_platform_owner,
     period_start,
 )
+from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 from telegram_membership_saas.telegram_adapter import (
     create_customer_dispatcher,
     create_dispatcher,
