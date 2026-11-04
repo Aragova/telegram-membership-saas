@@ -225,6 +225,17 @@ async def test_owner_can_navigate_preview_without_creating_payment(monkeypatch):
         await callback(query, bot)
         assert query.answer.await_args.kwargs["show_alert"] is True
         assert session.scalar.await_count == 1  # method not eligible for USD
+
+        # A large valid template stays in the owner-only callback namespace.
+        method.instruction_template = "&" * 4000
+        query.data = (
+            "own:pvi:" + encode_uuid(fixture.usd_price)
+            + ":" + encode_uuid(fixture.usd_method) + ":0:1"
+        )
+        await callback(query, bot)
+        assert "Instructions · part 2/" in bot.edit_message_text.await_args.args[0]
+        assert len(bot.edit_message_text.await_args.args[0]) <= 4096
+        assert session.scalar.await_count == 2
     finally:
         _language.reset(token)
 
@@ -257,3 +268,49 @@ async def test_preview_requires_connected_owner_permission(monkeypatch):
     assert query.answer.await_args.kwargs["show_alert"] is True
     select_project.assert_not_awaited()
     bot.send_message.assert_not_awaited()
+
+
+def test_max_allowed_instruction_is_paginated_without_broken_html_entities():
+    fixture = _offers()
+    # 4,000 input chars is accepted by owner setup, and HTML escaping grows
+    # this further. Every Telegram screen must stay below the 4,096 limit.
+    instruction = "&" * 4000
+    collected = []
+    language = _language.set("en")
+    try:
+        for part in range(30):
+            rendered = preview_method_screen(
+                fixture.offers, price_id=fixture.usd_price,
+                payment_method_id=fixture.usd_method,
+                instruction_template=instruction,
+                instruction_page=part,
+            )
+            if rendered is None:
+                break
+            text, keyboard = rendered
+            assert len(text) <= 4096
+            buttons = _buttons(keyboard)
+            assert all(len(callback.encode("utf-8")) <= 64
+                       for _, callback in buttons)
+            assert all(not callback.startswith("buy:")
+                       for _, callback in buttons)
+            assert "&amp;" in text
+            assert "&am\n" not in text
+            assert "No payment request" in text
+            body = text.split("Method: Bank &amp; Co\n\n", 1)[1]
+            body = body.split("\n\n<i>Instructions · part ", 1)[0]
+            body = body.split("\n\n<i>Preview only.", 1)[0]
+            collected.append(body)
+            if part == 0:
+                assert any(cb.startswith("own:pvi:") and cb.endswith(":1")
+                           for _, cb in buttons)
+        assert 2 <= len(collected) < 30
+        assert "".join(collected) == "&amp;" * 4000
+        assert preview_method_screen(
+            fixture.offers, price_id=fixture.usd_price,
+            payment_method_id=fixture.usd_method,
+            instruction_template=instruction,
+            instruction_page=1000,
+        ) is None
+    finally:
+        _language.reset(language)
