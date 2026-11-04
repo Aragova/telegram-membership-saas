@@ -260,3 +260,42 @@ async def test_publish_without_payment_offers_direct_fix_not_an_alert(monkeypatc
     assert "own:newmethod" in controls
     assert "own:plan:" + plan_id.hex in controls
     query.answer.assert_awaited_once()
+
+
+async def test_stray_botfather_token_is_deleted_in_central_only_mode(monkeypatch):
+    secret = "123456:" + "A" * 35
+    bot = _bot()
+    message = _message()
+    message.text = secret
+    message.message_id = 35
+    message.reply_to_message = None
+    assert await ui.StrayBotTokenFilter()(message) is True
+    router = ui.create_owner_setup_router(MagicMock())
+    scrub = next(
+        item.callback for item in router.message.handlers
+        if item.callback.__name__ == "stray_bot_token_handler"
+    )
+    register = AsyncMock()
+    monkeypatch.setattr(ui, "register_new_owner_bot", register)
+    monkeypatch.setattr(ui, "register_customer_bot", register)
+    await scrub(message, bot)
+    bot.delete_message.assert_awaited_once_with(123456, 35)
+    register.assert_not_awaited()
+    assert secret not in str(bot.send_message.await_args)
+    assert "@vimipay_bot" in bot.send_message.await_args.args[1]
+
+
+async def test_failed_stray_token_delete_requires_manual_rotation():
+    bot = _bot()
+    bot.delete_message.return_value = False
+    message = _message()
+    message.text = "123456:" + "B" * 35
+    message.message_id = 77
+    router = ui.create_owner_setup_router(MagicMock())
+    scrub = next(
+        item.callback for item in router.message.handlers
+        if item.callback.__name__ == "stray_bot_token_handler"
+    )
+    await scrub(message, bot)
+    assert "смените токен" in bot.send_message.await_args.args[1]
+    assert message.text not in str(bot.send_message.await_args)
