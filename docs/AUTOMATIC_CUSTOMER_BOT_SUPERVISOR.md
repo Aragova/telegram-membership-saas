@@ -11,15 +11,20 @@ is needed after the platform operator deploys the supervisor **once**.
 3. Add the bot to the intended channel/group with invite + ban permissions;
    connect/verify that channel through central ViMi Pay.
 4. Configure and publish a priced plan and compatible manual payment method.
-5. The supervisor discovers this active project automatically, validates
-   buyer-facing Telegram identity, webhook state, channel rights and encrypted
-   credential; it begins processing buyer /start, requests, reviews and access.
-6. `🤖 Мой бот` reads a project-scoped **live heartbeat**, showing
-   `🟢 Работает` only if fresh (<=40 seconds) and attached to the registered
-   Telegram bot ID. Only then show an owner-bot link suitable for buyers.
-7. On token rotation, unpublishing/removing checkout, suspension or outage:
-   the supervisor stops/restarts the appropriate polling task and the UI
-   stops claiming it is live.
+5. The supervisor discovers every active registered bot automatically,
+   validates Telegram identity, webhook and resource rights, and keeps the
+   buyer-facing bot **and access-expiration/revocation worker** running.
+   A published payable catalog is **not required to keep enforcement alive**.
+6. `🤖 Мой бот` reads a project-scoped health record based on **successful
+   Telegram getUpdates responses** (including empty polls) and a recent DB
+   heartbeat. A buyer link appears only if the correct bot is actively
+   polling **and** there is an actual priced checkout.
+   A registered/idle bot is never advertised as ready for purchases.
+7. Token rotation restarts only that bot; suspension/disabling the bot
+   stops the worker. Withdrawing prices or payment methods hides buyer
+   checkout and the public buyer link, **without suspending subscription
+   expiry, revocation and access reconciliation**. Outages clear the live
+   status after a bounded polling-response timeout.
 
 ## Safety design
 
@@ -38,10 +43,12 @@ is needed after the platform operator deploys the supervisor **once**.
   cannot simultaneously hold the same project's advisory lock.
 - Worker runs buyer commerce + access handlers only; the central bot stays
   management-only. No project-wide token or buyer data is leaked to another
-  owner's runtime.
-- Supervisor rechecks readiness every 10 seconds, provides 45-second backoff
-  after a genuine worker failure, and promptly restarts after planned token
-  rotation/configuration changes.
+  owner's runtime. Polling is explicitly stopped and awaited before the
+  per-project advisory lock is released, including for old central workers.
+- Supervisor discovers active registrations every 10 seconds, provides
+  45-second backoff after a genuine worker failure, and promptly restarts
+  after planned token rotation/configuration changes. Telegram getUpdates
+  responses must remain fresh; database heartbeat alone is insufficient.
 - Access, checkout and payment proofs use existing RLS and state transitions.
   Receipts are not stored; owner verifies actual bank settlement manually.
 
@@ -79,5 +86,7 @@ is needed after the platform operator deploys the supervisor **once**.
 - Health is checked when owner reopens/refreshed the bot view; no background
   Telegram spam is sent to owners for transient errors.
 - A registered bot does not imply ready or live. A valid priced catalog,
-  matching payments, correct admin rights, a clear webhook, and a recent
-  worker heartbeat are all required.
+  matching payments, correct admin rights, a clear webhook, and fresh
+  successful getUpdates responses are required **before publishing its
+  buyer link**. The worker itself stays active without new sales to maintain
+  existing subscriber access.
