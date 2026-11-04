@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from secrets import token_urlsafe
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -117,6 +118,7 @@ async def owner_home(
             state.selected_project_id = selected
             state.step = None
             state.prompt_message_id = None
+            state.generation = None
             state.payload = {}
         return OwnerHome(
             projects=tuple((p.id, p.name) for p in projects),
@@ -138,6 +140,7 @@ async def choose_project(
         state.step = None
         state.payload = {}
         state.prompt_message_id = None
+        state.generation = None
 
 
 async def set_flow(
@@ -146,7 +149,7 @@ async def set_flow(
     step: str,
     payload: dict | None = None,
     project_id: UUID | None = None,
-) -> None:
+) -> str:
     if len(step) > 48:
         raise ValueError("Invalid flow")
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
@@ -162,7 +165,9 @@ async def set_flow(
         state.step = step
         state.payload = payload or {}
         state.prompt_message_id = None
+        state.generation = token_urlsafe(12)
         state.expires_at = datetime.now(UTC) + FLOW_TTL
+        return state.generation
 
 
 async def bind_prompt(
@@ -170,11 +175,12 @@ async def bind_prompt(
     actor_id: UUID,
     step: str,
     message_id: int,
+    generation: str,
 ) -> None:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         state = await _current_session(session, actor_id)
-        if state.step != step:
-            raise ValueError("Этот шаг уже завершён")
+        if state.step != step or state.generation != generation:
+            raise ValueError("Этот шаг уже заменён другим запросом")
         state.prompt_message_id = message_id
 
 
@@ -214,6 +220,7 @@ async def consume_flow(
         )
         state.step = None
         state.prompt_message_id = None
+        state.generation = None
         state.payload = {}
         return saved
 
@@ -223,12 +230,14 @@ async def consume_button_flow(
     actor_id: UUID,
     expected_step: str,
     request_id: int | None = None,
+    generation: str | None = None,
 ) -> SetupFlow:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         state = await _current_session(session, actor_id)
         if (
             state.step != expected_step
             or state.expires_at <= datetime.now(UTC)
+            or (generation is not None and state.generation != generation)
             or (
                 request_id is not None
                 and state.payload.get("request_id") != request_id
@@ -244,6 +253,7 @@ async def consume_button_flow(
         state.step = None
         state.payload = {}
         state.prompt_message_id = None
+        state.generation = None
         return flow
 
 
