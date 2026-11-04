@@ -80,6 +80,7 @@ def _callback(data, user_id=7777):
 def _bot():
     b=MagicMock()
     b.send_message=AsyncMock()
+    b.set_my_commands=AsyncMock()
     return b
 
 

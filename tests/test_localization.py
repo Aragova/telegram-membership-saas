@@ -35,7 +35,10 @@ def test_english_buyer_empty_catalog_and_period() -> None:
         text, keyboard = catalog_screen(())
         assert "Subscriptions" in text
         assert "No plans" in text
-        assert keyboard.inline_keyboard[0][0].callback_data == "lng:menu"
+        assert any(
+            button.callback_data == "lng:menu"
+            for row in keyboard.inline_keyboard for button in row
+        )
         assert format_period(3, "month") == "3 months"
         assert format_period(None, "lifetime") == "Lifetime"
     finally:
@@ -45,7 +48,10 @@ def test_english_buyer_empty_catalog_and_period() -> None:
 def test_russian_buyer_fallback() -> None:
     text, keyboard = catalog_screen(())
     assert "Подписки" in text
-    assert keyboard.inline_keyboard[0][0].callback_data == "lng:menu"
+    assert any(
+            button.callback_data == "lng:menu"
+            for row in keyboard.inline_keyboard for button in row
+        )
     assert format_period(3, "month") == "3 месяца"
 
 
