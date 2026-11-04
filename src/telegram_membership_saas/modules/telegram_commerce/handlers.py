@@ -24,6 +24,13 @@ from telegram_membership_saas.localization import (
     recipient_language,
     tr,
 )
+from telegram_membership_saas.modules.telegram_commerce.account import (
+    ACCOUNT_MAX_PAGE,
+    account_home_screen,
+    account_list_screen,
+    load_buyer_account,
+    support_screen,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -44,6 +51,7 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     list_buyer_offers,
     offer_screen,
 )
+from telegram_membership_saas.telegram_menus import refresh_user_commands
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
 RECEIPT_REPLY_PREFIX_EN = "Payment confirmation for request: "
@@ -108,11 +116,19 @@ def _checkout_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text=tr("Отменить", "Cancel"),
+                    text=tr("Отменить заявку", "Cancel request"),
                     style="danger",
                     callback_data=f"cancel:{token}",
                 )
             ],
+            [InlineKeyboardButton(
+                text=tr("🧾 Мои покупки", "🧾 My purchases"),
+                callback_data="checkoutnav:home",
+            )],
+            [InlineKeyboardButton(
+                text=tr("💎 К тарифам", "💎 Browse plans"),
+                callback_data="checkoutnav:catalog",
+            )],
         ]
     )
 
@@ -247,6 +263,40 @@ async def _safe_send_message(bot: Bot, chat_id: int, text: str, **kwargs) -> Non
         return
 
 
+def _account_navigation_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=tr("🧾 Мои покупки", "🧾 My purchases"),
+            callback_data="account:home",
+        )],
+        [InlineKeyboardButton(
+            text=tr("💎 К тарифам", "💎 Browse plans"),
+            callback_data="account:catalog",
+        )],
+    ])
+
+
+async def _send_screen(
+    bot: Bot, *, chat_id: int, text: str,
+    keyboard: InlineKeyboardMarkup, message_id: int | None = None,
+) -> None:
+    """Edit an inline screen; fall back if the old message is not editable."""
+    if message_id is not None:
+        try:
+            await bot.edit_message_text(
+                text=text, chat_id=chat_id, message_id=message_id,
+                parse_mode="HTML", reply_markup=keyboard,
+            )
+            return
+        except AiogramError as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+    await bot.send_message(
+        chat_id=chat_id, text=text,
+        parse_mode="HTML", reply_markup=keyboard,
+    )
+
+
 async def _send_catalog(
     bot: Bot,
     *,
@@ -270,22 +320,9 @@ async def _send_catalog(
         text, keyboard = catalog_screen(
             offers, currency=currency, page=page,
         )
-    if message_id is not None:
-        try:
-            await bot.edit_message_text(
-                text=text, chat_id=chat_id, message_id=message_id,
-                parse_mode="HTML", reply_markup=keyboard,
-            )
-            return True
-        except AiogramError as exc:
-            # Repeated tap of the selected currency changes no message.
-            if "message is not modified" in str(exc).lower():
-                return True
-            # Deleted/old Telegram messages may no longer be editable.
-            pass
-    await bot.send_message(
-        chat_id=chat_id, text=text, parse_mode="HTML",
-        reply_markup=keyboard,
+    await _send_screen(
+        bot, chat_id=chat_id, text=text, keyboard=keyboard,
+        message_id=message_id,
     )
     return True
 
@@ -305,16 +342,147 @@ def create_telegram_commerce_router(
 ) -> Router:
     router = Router(name="telegram-commerce")
 
-    @router.message(Command("start", "plans"))
+    async def refresh_menu(bot: Bot, user_id: int) -> None:
+        # An owner may open buyer history/support without losing their admin
+        # Telegram command menu. Refresh from the actual current project role.
+        await refresh_user_commands(
+            bot, session_factory, chat_id=user_id,
+            language=current_language(), project_id=project_id,
+        )
+
+    @router.message(Command("start", "plans", "menu"))
     async def catalog_handler(message: Message, bot: Bot) -> None:
-        if message.from_user is None:
+        if message.from_user is None or message.chat.type != "private":
             return
+        await refresh_menu(bot, message.from_user.id)
         await _send_catalog(
             bot,
             chat_id=message.from_user.id,
             session_factory=session_factory,
             project_id=project_id,
         )
+
+    async def send_account(
+        bot: Bot, *, user_id: int, section: str = "home",
+        page: int = 0, message_id: int | None = None,
+    ) -> None:
+        async with system_project_session_scope(session_factory, project_id) as session:
+            account = await load_buyer_account(
+                session, project_id=project_id, telegram_user_id=user_id,
+                section=section, page=page,
+            )
+        text, keyboard = (
+            account_home_screen(account)
+            if section == "home"
+            else account_list_screen(account, section=section, page=page)
+        )
+        await _send_screen(
+            bot, chat_id=user_id, text=text, keyboard=keyboard,
+            message_id=message_id,
+        )
+
+    @router.message(Command("subscriptions", "subscription"))
+    async def subscriptions_command(message: Message, bot: Bot) -> None:
+        if message.from_user is None or message.chat.type != "private":
+            return
+        await refresh_menu(bot, message.from_user.id)
+        await send_account(bot, user_id=message.from_user.id)
+
+    @router.message(Command("support"))
+    async def support_command(message: Message, bot: Bot) -> None:
+        if message.from_user is None or message.chat.type != "private":
+            return
+        await refresh_menu(bot, message.from_user.id)
+        text, keyboard = support_screen()
+        await _send_screen(
+            bot, chat_id=message.from_user.id, text=text, keyboard=keyboard,
+        )
+
+    @router.message(Command("cancel"))
+    async def buyer_exit_command(message: Message, bot: Bot) -> None:
+        """Leaving the UI must never implicitly cancel a payment request."""
+        if message.from_user is None or message.chat.type != "private":
+            return
+        await refresh_menu(bot, message.from_user.id)
+        await send_account(bot, user_id=message.from_user.id)
+
+    @router.callback_query(F.data.startswith("checkoutnav:"))
+    async def checkout_navigation_callback(callback: CallbackQuery, bot: Bot) -> None:
+        """Preserve the original payment instructions and cancel controls.
+
+        These callbacks are used ONLY on already-created checkout messages.
+        Sending a new screen (rather than editing the payment message) lets
+        buyers return to the original instructions without creating new requests.
+        """
+        if not _buyer_screen_callback(callback):
+            await callback.answer(
+                tr("Откройте личный чат с ботом", "Open a private chat with this bot"),
+                show_alert=True,
+            )
+            return
+        action = (callback.data or "").removeprefix("checkoutnav:")
+        if action == "home":
+            await send_account(bot, user_id=callback.from_user.id)
+        elif action == "catalog":
+            await _send_catalog(
+                bot, chat_id=callback.from_user.id,
+                session_factory=session_factory, project_id=project_id,
+            )
+        else:
+            await callback.answer(
+                tr("Кнопка устарела", "This button has expired"),
+                show_alert=True,
+            )
+            return
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("account:"))
+    async def account_callback(callback: CallbackQuery, bot: Bot) -> None:
+        if not _buyer_screen_callback(callback):
+            await callback.answer(
+                tr("Откройте личный чат с ботом", "Open a private chat with this bot"),
+                show_alert=True,
+            )
+            return
+        action = (callback.data or "")[8:]
+        try:
+            if action == "home":
+                await send_account(
+                    bot, user_id=callback.from_user.id,
+                    message_id=callback.message.message_id,
+                )
+            elif action == "catalog":
+                await _send_catalog(
+                    bot, chat_id=callback.from_user.id,
+                    session_factory=session_factory, project_id=project_id,
+                    message_id=callback.message.message_id,
+                )
+            elif action == "support":
+                text, keyboard = support_screen()
+                await _send_screen(
+                    bot, chat_id=callback.from_user.id, text=text,
+                    keyboard=keyboard, message_id=callback.message.message_id,
+                )
+            else:
+                section, page_token = action.split(":", 1)
+                if section not in ("subs", "reqs") or (
+                    not page_token.isascii() or not page_token.isdecimal()
+                    or int(page_token) > ACCOUNT_MAX_PAGE
+                ):
+                    raise ValueError("Invalid account page")
+                await send_account(
+                    bot, user_id=callback.from_user.id,
+                    section=section, page=int(page_token),
+                    message_id=callback.message.message_id,
+                )
+        except ValueError:
+            await callback.answer(
+                tr("Экран устарел. Откройте /subscriptions.",
+                   "This screen has expired. Open /subscriptions."),
+                show_alert=True,
+            )
+            return
+        await callback.answer()
 
     @router.callback_query(F.data.startswith("cat:"))
     async def currency_handler(callback: CallbackQuery, bot: Bot) -> None:
@@ -464,6 +632,12 @@ def create_telegram_commerce_router(
                      "Reply to this message with a receipt photo or a document "
                      "(PDF/JPG/PNG/WEBP). Your payment will not be sent for review "
                      "until the attachment is received.")
+                + tr(
+                    "\n\nМожно выйти через /menu. Заявка останется "
+                    "в разделе /subscriptions.",
+                    "\n\nYou can leave via /menu. Your pending request "
+                    "stays in /subscriptions.",
+                )
             ),
             reply_markup=ForceReply(
                 selective=True,
@@ -488,6 +662,7 @@ def create_telegram_commerce_router(
                        "A receipt photo or PDF/JPG/PNG/WEBP document is required. "
                        "Reply to the payment request with an attachment.")
                 ),
+                reply_markup=_account_navigation_keyboard(),
             )
             return
 
@@ -536,6 +711,7 @@ def create_telegram_commerce_router(
                        "The administrator will verify your payment and notify you.")
                 ),
                 parse_mode="HTML",
+                reply_markup=_account_navigation_keyboard(),
             )
         else:
             await bot.send_message(
@@ -546,6 +722,7 @@ def create_telegram_commerce_router(
                        "Your payment request was recorded, but the receipt could not be "
                        "delivered to the administrator. Reply with the attachment again.")
                 ),
+                reply_markup=_account_navigation_keyboard(),
             )
 
     @router.callback_query(F.data.startswith("cancel:"))
@@ -568,6 +745,7 @@ def create_telegram_commerce_router(
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=tr("Заявка на оплату отменена.", "Your payment request was canceled."),
+            reply_markup=_account_navigation_keyboard(),
         )
 
     async def _review_callback(
@@ -631,6 +809,7 @@ def create_telegram_commerce_router(
                 result.item.customer_telegram_user_id,
                 _customer_review_result_text(result, approve=approve),
                 parse_mode="HTML",
+                reply_markup=_account_navigation_keyboard(),
             )
 
     @router.callback_query(F.data.startswith("approve:"))

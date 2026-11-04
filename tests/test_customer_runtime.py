@@ -288,6 +288,7 @@ async def test_cancel_drains_aiogram_before_access_worker_exits(monkeypatch):
     dispatcher = DispatcherStub()
     mock_bot = MagicMock()
     mock_bot.session.close = AsyncMock()
+    mock_bot.set_my_commands = AsyncMock()
 
     async def maintain_access(*_args, **_kwargs):
         try:
@@ -338,6 +339,7 @@ async def test_repeated_cancel_cannot_skip_slow_aiogram_shutdown(monkeypatch):
 
     bot = MagicMock()
     bot.session.close = AsyncMock()
+    bot.set_my_commands = AsyncMock()
 
     async def access_worker(*_args, **_kwargs):
         try:

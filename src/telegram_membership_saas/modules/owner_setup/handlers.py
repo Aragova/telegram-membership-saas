@@ -29,7 +29,7 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
-from telegram_membership_saas.localization import recipient_language, tr
+from telegram_membership_saas.localization import current_language, recipient_language, tr
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -67,6 +67,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     advance_flow,
     bind_prompt,
     can_manage_project,
+    cancel_owner_flow,
     choose_project,
     consume_button_flow,
     consume_flow,
@@ -108,6 +109,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     list_pending_reviews_for_actor,
 )
 from telegram_membership_saas.modules.telegram_commerce.storefront import list_buyer_offers
+from telegram_membership_saas.telegram_menus import set_chat_commands
 from telegram_membership_saas.tenant_context import TenantContext
 
 DURATIONS = {
@@ -374,7 +376,12 @@ def create_owner_setup_router(
                 bot_scope_id=bot.id if fixed_project_id else 0,
             )
         sent = await bot.send_message(
-            user_id, text, parse_mode="HTML",
+            user_id,
+            text + tr(
+                "\n\nДля отмены настройки отправьте /cancel.",
+                "\n\nTo cancel setup, send /cancel.",
+            ),
+            parse_mode="HTML",
             reply_markup=ForceReply(
                 selective=True, input_field_placeholder=tr("Введите ответ", "Type your reply")
             ),
@@ -926,6 +933,42 @@ def create_owner_setup_router(
         )
 
 
+    async def show_help(bot: Bot, user_id: int) -> None:
+        rows = (
+            [
+                [_button("📢 Каналы", "resources")],
+                [_button("📦 Тарифы", "plans")],
+                [_button("💳 Оплата", "methods")],
+                [_button("⬅️ Панель администратора", "dashboard")],
+            ]
+            if fixed_project_id is not None
+            else [
+                [_button("🤖 Управление ботом", "bots")],
+                [_button("⬅️ Мои подключения", "projects")],
+            ]
+        )
+        await bot.send_message(
+            user_id,
+            tr(
+                "❔ <b>Как запустить подписки</b>\n\n"
+                "1. Подключите токен в @vimipay_bot.\n"
+                "2. Откройте собственный бот и добавьте его в канал.\n"
+                "3. Настройте валюты и способы оплаты.\n"
+                "4. Создайте тариф, цену и опубликуйте.\n\n"
+                "Ваши чеки ViMi Pay не хранит — поступления "
+                "проверяются администратором в банке.",
+                "❔ <b>How to launch subscriptions</b>\n\n"
+                "1. Connect a bot token in @vimipay_bot.\n"
+                "2. Open your bot and add it to your channel.\n"
+                "3. Set up currencies and payment methods.\n"
+                "4. Create, price and publish a plan.\n\n"
+                "ViMi Pay does not retain receipts. "
+                "Channel admins verify transfers in their banks.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+
     async def currency_picker(
         bot: Bot, user_id: int, actor_id: UUID, *,
         mode: str, plan_id: UUID | None = None,
@@ -945,12 +988,63 @@ def create_owner_setup_router(
         )
 
     @router.message(
-        Command("start", "menu"), OwnerHomeFilter(factory, fixed_project_id),
+        Command("start", "menu", "bots", "plans", "help"),
+        OwnerHomeFilter(factory, fixed_project_id),
     )
     async def home_message(message: Message, bot: Bot) -> None:
         if not _private(message):
             return
         actor_id = await actor(message.from_user)
+        command = (
+            (getattr(message, "text", None) or "/start")
+            .split(maxsplit=1)[0].split("@")[0].lower()
+        )
+        role = (
+            "owner" if fixed_project_id is not None
+            else "platform" if message.from_user.id == get_settings().platform_owner_telegram_id
+            else "central"
+        )
+        await set_chat_commands(
+            bot, chat_id=message.from_user.id, role=role,
+            language=current_language(),
+        )
+        if command == "/help":
+            await show_help(bot, message.chat.id)
+        elif command == "/plans" and fixed_project_id is not None:
+            await show_plans(bot, message.chat.id, actor_id, fixed_project_id)
+        elif command == "/bots":
+            selected = await get_selected_project(
+                factory, actor_id=actor_id,
+                bot_scope_id=bot.id if fixed_project_id else 0,
+                fixed_project_id=fixed_project_id,
+            )
+            if selected is None:
+                await show_home(bot, message.chat.id, actor_id)
+            elif fixed_project_id is None:
+                await show_bots(bot, message.chat.id, actor_id, selected)
+            else:
+                await show_dashboard(bot, message.chat.id, actor_id, selected)
+        else:
+            await show_home(bot, message.chat.id, actor_id)
+
+    @router.message(Command("cancel"), OwnerHomeFilter(factory, fixed_project_id))
+    @router.message(
+        F.text.in_({"✖️ Отмена", "✖️ Cancel"}),
+        OwnerHomeFilter(factory, fixed_project_id),
+    )
+    async def cancel_setup_message(message: Message, bot: Bot) -> None:
+        if not _private(message):
+            return
+        actor_id = await actor(message.from_user)
+        await cancel_owner_flow(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+        )
+        await bot.send_message(
+            message.chat.id,
+            tr("✖️ Настройка отменена.", "✖️ Setup canceled."),
+            reply_markup=ReplyKeyboardRemove(),
+        )
         await show_home(bot, message.chat.id, actor_id)
 
     @router.callback_query(F.data.startswith("own:"))
@@ -971,7 +1065,7 @@ def create_owner_setup_router(
         if fixed_project_id is None:
             is_registry_action = action in {
                 "new", "projects", "dashboard", "bots", "connect",
-                "help", "oblist",
+                "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
             ))
@@ -1039,6 +1133,19 @@ def create_owner_setup_router(
                 await choose_project(
                     factory, actor_id=actor_id,
                     project_id=UUID(hex=action.split(":", 1)[1]),
+                )
+                await show_home(bot, user_id, actor_id)
+                await query.answer()
+                return
+            if action == "cancel":
+                await cancel_owner_flow(
+                    factory, actor_id=actor_id,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr("✖️ Настройка отменена.", "✖️ Setup canceled."),
+                    reply_markup=ReplyKeyboardRemove(),
                 )
                 await show_home(bot, user_id, actor_id)
                 await query.answer()
@@ -1358,14 +1465,17 @@ def create_owner_setup_router(
                         "with permission to invite and ban members.",
                     ),
                     reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(
-                            text=tr("📢 Выбрать чат", "📢 Choose chat"),
-                            request_chat=KeyboardButtonRequestChat(
-                                request_id=request_id,
-                                chat_is_channel=(kind == "channel"),
-                                request_title=True,
-                            ),
-                        )]],
+                        keyboard=[
+                            [KeyboardButton(
+                                text=tr("📢 Выбрать чат", "📢 Choose chat"),
+                                request_chat=KeyboardButtonRequestChat(
+                                    request_id=request_id,
+                                    chat_is_channel=(kind == "channel"),
+                                    request_title=True,
+                                ),
+                            )],
+                            [KeyboardButton(text=tr("✖️ Отмена", "✖️ Cancel"))],
+                        ],
                         resize_keyboard=True,
                         one_time_keyboard=True,
                     ),
@@ -1436,7 +1546,9 @@ def create_owner_setup_router(
                     await bot.send_message(
                         user_id, tr("📢 Какой канал откроет этот тариф?",
                                      "📢 Which channel does this plan unlock?"),
-                        reply_markup=_markup(rows),
+                        reply_markup=_markup(
+                            rows + [[_button("✖️ Отмена", "cancel")]],
+                        ),
                     )
             elif action.startswith("use:"):
                 _, resource_hex, generation = action.split(":", 2)
@@ -1686,26 +1798,7 @@ def create_owner_setup_router(
                     reply_markup=_markup(rows),
                 )
             elif action == "help":
-                await bot.send_message(
-                    user_id,
-                    tr(
-                        "❔ <b>Как запустить подписки</b>\n\n"
-                        "1. Подключите токен в @vimipay_bot.\n"
-                        "2. Откройте собственный бот и добавьте его в канал.\n"
-                        "3. Настройте валюты и способы оплаты.\n"
-                        "4. Создайте тариф, цену и опубликуйте.\n\n"
-                        "Ваши чеки ViMi Pay не хранит — поступления "
-                        "проверяются администратором в банке.",
-                        "❔ <b>How to launch subscriptions</b>\n\n"
-                        "1. Connect a bot token in @vimipay_bot.\n"
-                        "2. Open your bot and add it to your channel.\n"
-                        "3. Set up currencies and payment methods.\n"
-                        "4. Create, price and publish a plan.\n\n"
-                        "ViMi Pay does not retain receipts. "
-                        "Channel admins verify transfers in their banks.",
-                    ),
-                    parse_mode="HTML",
-                )
+                await show_help(bot, user_id)
             else:
                 raise ValueError(tr("Неизвестное действие", "Unknown action"))
         except (ValueError, PermissionError) as exc:
@@ -1939,7 +2032,7 @@ def create_owner_setup_router(
                         [_button(tr(value[2], format_period(value[0], value[1])),
                                   "duration:" + key + ":" + generation)]
                         for key, value in DURATIONS.items()
-                    ]),
+                    ] + [[_button("✖️ Отмена", "cancel")]]),
                 )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])

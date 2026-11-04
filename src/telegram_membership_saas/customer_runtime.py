@@ -33,6 +33,7 @@ from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapt
 from telegram_membership_saas.project_worker_lock import project_worker_lock
 from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
+from telegram_membership_saas.telegram_menus import install_public_commands
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,7 @@ async def run_customer_bot_instance(
             session_factory, project_id=project_id, bot=bot
         )
         dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
+        await install_public_commands(bot, customer=True)
         worker = asyncio.create_task(
             run_project_runtime_loop(
                 session_factory,

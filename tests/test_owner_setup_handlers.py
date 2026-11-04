@@ -29,6 +29,7 @@ def _bot():
         return_value=SimpleNamespace(message_id=1357)
     )
     bot.delete_message = AsyncMock(return_value=True)
+    bot.set_my_commands = AsyncMock()
     return bot
 
 

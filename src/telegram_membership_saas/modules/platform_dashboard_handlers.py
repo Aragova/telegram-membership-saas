@@ -21,7 +21,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
-from telegram_membership_saas.localization import tr
+from telegram_membership_saas.localization import current_language, tr
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
@@ -37,6 +37,7 @@ from telegram_membership_saas.modules.platform_usage import (
     platform_usage_report,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+from telegram_membership_saas.telegram_menus import set_chat_commands
 
 PERIOD_LABELS_EN = {
     "day": "Today",
@@ -341,6 +342,10 @@ def create_platform_dashboard_router(
     )
     async def platform_start(message: Message, bot: Bot) -> None:
         try:
+            await set_chat_commands(
+                bot, chat_id=message.from_user.id, role="platform",
+                language=current_language(),
+            )
             await send_platform_home(bot, message.from_user, period="30")
         except Exception:
             # No internals, credentials, or SQL errors in operator chat.
