@@ -71,8 +71,10 @@ from telegram_membership_saas.modules.owner_setup.service import (
     verify_channel_and_add,
 )
 from telegram_membership_saas.modules.owner_setup.tenant_admin import (
+    METHOD_PAGE_SIZE,
     attach_owner_method_currency,
     change_owner_method_status,
+    get_owner_method_info,
     get_owner_plan_info,
     list_owner_methods,
 )
@@ -631,14 +633,21 @@ def create_owner_setup_router(
 
     async def show_methods(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        page: int = 0,
     ) -> None:
         methods = await list_owner_methods(
-            factory, actor_id=actor_id, project_id=project_id,
+            factory, actor_id=actor_id, project_id=project_id, page=page,
         )
-        lines = ["💳 <b>Способы оплаты</b>", ""]
+        lines = [
+            "💳 <b>Способы оплаты</b>",
+            "Страница " + str(page + 1),
+            "",
+        ]
         rows = []
         if not methods:
             lines.append(
+                "Нет способов оплаты на этой странице."
+                if page else
                 "Пока ничего не подключено. Для начала выберите валюту "
                 "и добавьте способ перевода."
             )
@@ -651,10 +660,21 @@ def create_owner_setup_router(
             rows.append([
                 _button("⚙️ " + method.name[:40], "method:" + method.id.hex),
             ])
+        navigation = []
+        if page > 0:
+            navigation.append(_button(
+                "⬅️ Назад", "methodpage:" + str(page - 1),
+            ))
+        if len(methods) == METHOD_PAGE_SIZE and page < 10000:
+            navigation.append(_button(
+                "➡️ Далее", "methodpage:" + str(page + 1),
+            ))
+        if navigation:
+            rows.append(navigation)
         rows.append([
             _button("➕ Добавить способ", "newmethod", "success"),
         ])
-        if methods:
+        if methods or page > 0:
             rows.append([
                 _button("➡️ Перейти к тарифам", "plans"),
             ])
@@ -668,12 +688,10 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID, method_id: UUID,
     ) -> None:
-        methods = await list_owner_methods(
+        method = await get_owner_method_info(
             factory, actor_id=actor_id, project_id=project_id,
+            method_id=method_id,
         )
-        method = next((item for item in methods if item.id == method_id), None)
-        if method is None:
-            raise ValueError("Способ оплаты не найден в этом проекте")
         rows = [[_button(
             "🌐 Добавить валюту", "methodlink:" + method_id.hex,
         )]]
@@ -1197,6 +1215,11 @@ def create_owner_setup_router(
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action == "methods":
                 await show_methods(bot, user_id, actor_id, project_id)
+            elif action.startswith("methodpage:"):
+                page = int(action.split(":", 1)[1])
+                await show_methods(
+                    bot, user_id, actor_id, project_id, page=page,
+                )
             elif action == "newmethod":
                 await currency_picker(
                     bot, user_id, actor_id, mode="method"
@@ -1208,14 +1231,10 @@ def create_owner_setup_router(
                 )
             elif action.startswith("methodlink:"):
                 method_id = UUID(hex=action.split(":", 1)[1])
-                methods = await list_owner_methods(
+                method = await get_owner_method_info(
                     factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id,
                 )
-                method = next(
-                    (item for item in methods if item.id == method_id), None,
-                )
-                if method is None:
-                    raise ValueError("Способ оплаты недоступен")
                 codes = await owner_available_currencies(
                     factory, actor_id=actor_id,
                 )
