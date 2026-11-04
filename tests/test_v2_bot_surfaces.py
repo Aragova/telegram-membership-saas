@@ -234,3 +234,33 @@ async def test_token_first_connection_deletes_secret_and_links_owner_bot(monkeyp
     assert [b.url for b in buttons if b.url] == [
         "https://t.me/rus_chan_prem_bot",
     ]
+
+
+async def test_publish_without_payment_offers_direct_fix_not_an_alert(monkeypatch):
+    project_id, plan_id, actor_id = uuid4(), uuid4(), uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        ui, "get_selected_project", AsyncMock(return_value=project_id),
+    )
+    publish = AsyncMock(side_effect=ValueError(
+        "Добавьте действующий способ оплаты для валюты тарифа"
+    ))
+    monkeypatch.setattr(ui, "publish_owner_plan", publish)
+    router = ui.create_owner_setup_router(
+        MagicMock(), fixed_project_id=project_id,
+    )
+    bot = _bot()
+    query = _callback("publish:" + plan_id.hex)
+    await _handler(router, "owner_callback")(query, bot)
+    publish.assert_awaited_once()
+    outgoing = bot.send_message.await_args
+    assert "Черновик и цены сохранены" in outgoing.args[1]
+    controls = [
+        button.callback_data
+        for row in outgoing.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "own:newmethod" in controls
+    assert "own:plan:" + plan_id.hex in controls
+    query.answer.assert_awaited_once()
