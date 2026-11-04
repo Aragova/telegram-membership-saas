@@ -73,6 +73,9 @@ async def test_connected_owner_error_callback_stays_authorized_and_english(
     monkeypatch.setattr(
         owner_ui, "can_manage_project", AsyncMock(return_value=True),
     )
+    monkeypatch.setattr(
+        owner_ui, "get_selected_project", AsyncMock(return_value=project_id),
+    )
     setup = AsyncMock(
         side_effect=ValueError("Вы должны быть администратором выбранного канала"),
     )
