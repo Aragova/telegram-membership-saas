@@ -6,7 +6,6 @@ Revises: 0015_customer_runtime_supervisor
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0016_bot_deletion_lifecycle"
