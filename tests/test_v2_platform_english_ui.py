@@ -121,6 +121,7 @@ async def test_english_central_welcome(monkeypatch) -> None:
     bot = MagicMock()
     bot.id = 12345
     bot.send_message = AsyncMock()
+    bot.set_my_commands = AsyncMock()
     token = _language.set("en")
     try:
         await start(message, bot)

@@ -71,9 +71,9 @@ async def install_public_commands(bot: Bot, *, customer: bool) -> None:
     role = "buyer" if customer else "central"
     scope = BotCommandScopeAllPrivateChats()
     try:
-        await bot.set_my_commands(commands_for(role, "en"), scope=scope)
+        await bot.set_my_commands(commands=commands_for(role, "en"), scope=scope)
         await bot.set_my_commands(
-            commands_for(role, "ru"), scope=scope, language_code="ru",
+            commands=commands_for(role, "ru"), scope=scope, language_code="ru",
         )
     except AiogramError:
         # Telegram Menu availability must not block polling or billing.
@@ -86,7 +86,7 @@ async def set_chat_commands(
     """A role and preferred language override that applies immediately."""
     try:
         await bot.set_my_commands(
-            commands_for(role, language),
+            commands=commands_for(role, language),
             scope=BotCommandScopeChat(chat_id=chat_id),
         )
     except AiogramError:
