@@ -91,5 +91,12 @@ def public_health_label(
     if health.state == "setup_needed":
         return "🟡 Требуется настройка", False
     if health.state == "error":
-        return "🔴 Ошибка запуска — проверьте права бота", False
+        labels = {
+            "invalid_credentials": "🔴 Ошибка токена — подключите бота повторно",
+            "telegram_check_failed": "🔴 Проверьте токен и webhook бота",
+            "missing_admin_rights": "🔴 Проверьте права бота в канале",
+            "lock_lost": "🟡 Бот перезапускается",
+            "worker_stopped": "🟡 Бот перезапускается",
+        }
+        return labels.get(health.error_code, "🔴 Не удалось запустить бота"), False
     return "⚪ Не запущен", False
