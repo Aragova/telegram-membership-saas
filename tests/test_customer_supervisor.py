@@ -185,3 +185,114 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(monkeypatc
     assert "running" in events
     assert "error" in events
     assert events.index("customer_stopped") < events.index("unlocked")
+
+
+async def test_repeated_cancel_never_releases_lease_before_slow_customer_teardown(
+    monkeypatch,
+):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    events = []
+    target = _target()
+    entered_cleanup = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    worker_started = asyncio.Event()
+
+    @asynccontextmanager
+    async def lease(_engine, _project):
+        events.append("lease_acquired")
+        try:
+            yield MagicMock()
+        finally:
+            events.append("lease_released")
+
+    async def slow_customer(
+        _factory, *, project_id, telegram_bot_id, settings, on_poll_response
+    ):
+        worker_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("customer_cleanup_started")
+            entered_cleanup.set()
+            await allow_cleanup.wait()
+            events.append("customer_cleanup_complete")
+
+    monkeypatch.setattr(runtime, "project_worker_lock", lease)
+    monkeypatch.setattr(runtime, "confirm_project_lock", AsyncMock())
+    monkeypatch.setattr(runtime, "run_customer_bot_instance", slow_customer)
+    monkeypatch.setattr(runtime, "write_bot_health", AsyncMock())
+
+    task = asyncio.create_task(
+        runtime.run_target(MagicMock(), MagicMock(), target, settings=_settings())
+    )
+    try:
+        await asyncio.wait_for(worker_started.wait(), timeout=2)
+        task.cancel()
+        await asyncio.wait_for(entered_cleanup.wait(), timeout=2)
+
+        # A second cancellation arrives while the first is still draining.
+        # It must not propagate into the slow customer cleanup or unlock DB.
+        task.cancel()
+        await asyncio.sleep(0)
+        assert "lease_released" not in events
+        assert "customer_cleanup_complete" not in events
+
+        allow_cleanup.set()
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=2)
+        assert events.index("customer_cleanup_complete") < events.index("lease_released")
+    finally:
+        allow_cleanup.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_supervisor_does_not_send_second_cancel_to_stopping_worker(monkeypatch):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    target = _target()
+    started = asyncio.Event()
+    shutting_down = asyncio.Event()
+    finish_shutdown = asyncio.Event()
+
+    async def discovery(_factory):
+        return (target,) if not shutting_down.is_set() else ()
+
+    async def slow_worker(*_args, **_kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            shutting_down.set()
+            await finish_shutdown.wait()
+
+    monkeypatch.setattr(runtime, "discover_targets", discovery)
+    monkeypatch.setattr(runtime, "run_target", slow_worker)
+    supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
+    await supervisor.reconcile_once()
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        shutting_down.set()
+        await supervisor.reconcile_once()
+        worker = supervisor.workers[target.project_id].task
+        assert worker.cancelling() == 1
+        await asyncio.sleep(0)
+
+        # Further scans or shutdown must not cancel this task twice.
+        await supervisor.reconcile_once()
+        assert worker.cancelling() == 1
+
+        finish_shutdown.set()
+        await asyncio.wait_for(asyncio.gather(worker, return_exceptions=True), timeout=2)
+        await supervisor.reconcile_once()
+        assert target.project_id not in supervisor.workers
+    finally:
+        finish_shutdown.set()
+        for running in supervisor.workers.values():
+            if not running.task.done():
+                running.task.cancel()
+        await asyncio.gather(
+            *(x.task for x in supervisor.workers.values()),
+            return_exceptions=True,
+        )
