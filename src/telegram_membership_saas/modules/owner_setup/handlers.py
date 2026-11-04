@@ -126,16 +126,16 @@ def _status(value: str) -> str:
 def _next_setup_step(snapshot) -> tuple[str, str] | None:
     """One contextual action at a time, not an error-driven wizard."""
     if not any(status == "active" for _, _, status in snapshot.resources):
-        return "📢 1. Подключить канал", "resources"
+        return tr("📢 1. Подключить канал", "📢 1. Connect a channel"), "resources"
     if not any(status == "active" for _, _, status in snapshot.methods):
-        return "💳 2. Настроить оплату", "methods"
+        return tr("💳 2. Настроить оплату", "💳 2. Set up payments"), "methods"
     if not any(status == "active" for _, _, status in snapshot.plans):
-        return "📦 3. Подготовить тариф", "plans"
+        return tr("📦 3. Подготовить тариф", "📦 3. Create a plan"), "plans"
     if not snapshot.sales_configured:
         # A published plan can lose its last currency-compatible payment
         # method without losing its draft prices. Readiness must lead to an
         # actionable repair, never back to itself.
-        return "💳 4. Проверить валюты оплаты", "methods"
+        return tr("💳 4. Проверить валюты оплаты", "💳 4. Check payment currencies"), "methods"
     return None
 
 
@@ -146,11 +146,11 @@ def _private(message: Message) -> bool:
 def _progress(snapshot) -> tuple[str, ...]:
     # A registered bot is configured, not necessarily running.
     steps = (
-        ("Собственный бот", any(s == "registered" for _, s in snapshot.bots)),
-        ("Канал / группа", any(s == "active" for _, _, s in snapshot.resources)),
-        ("Тариф", any(s == "active" for _, _, s in snapshot.plans)),
-        ("Способ оплаты", any(s == "active" for _, _, s in snapshot.methods)),
-        ("Бот принимает покупателей", bool(snapshot.live_bot_username)),
+        (tr("Собственный бот", "Connected bot"), any(s == "registered" for _, s in snapshot.bots)),
+        (tr("Канал / группа", "Channel / group"), any(s == "active" for _, _, s in snapshot.resources)),
+        (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
+        (tr("Способ оплаты", "Payment method"), any(s == "active" for _, _, s in snapshot.methods)),
+        (tr("Бот принимает покупателей", "Bot accepts buyers"), bool(snapshot.live_bot_username)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
 
@@ -240,7 +240,7 @@ def create_owner_setup_router(
             and getattr(get_settings(), "platform_owner_telegram_id", None) == user_id
         ):
             return [InlineKeyboardButton(
-                text="👑 Панель платформы", callback_data="plat:home",
+                text=tr("👑 Панель платформы", "👑 Platform dashboard"), callback_data="plat:home",
             )]
         return []
 
@@ -253,15 +253,18 @@ def create_owner_setup_router(
         if home.selected is not None:
             await show_dashboard(bot, user_id, actor_id, home.selected)
             return
-        lines = ["✨ <b>ViMi Pay · Управление подписками</b>", ""]
+        lines = [tr("✨ <b>ViMi Pay · Управление подписками</b>",
+                    "✨ <b>ViMi Pay · Membership management</b>"), ""]
         rows: list[list[InlineKeyboardButton]] = []
         if not home.projects:
             lines.append(
-                "Подключите собственного Telegram-бота, затем "
-                "откройте его для настройки тарифов и оплаты."
+                tr("Подключите собственного Telegram-бота, затем "
+                   "откройте его для настройки тарифов и оплаты.",
+                   "Connect your Telegram bot, then open it to configure "
+                   "subscriptions and payments.")
             )
         else:
-            lines.append("Выберите проект для управления:")
+            lines.append(tr("Выберите проект для управления:", "Select a connection to manage:"))
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
         rows.append([_button("➕ Подключить бота подписок", "new", "success")])
@@ -282,11 +285,12 @@ def create_owner_setup_router(
         if fixed_project_id is None:
             # Central is a connection manager, not a tenant sales console.
             text = (
-                "✦ <b>ViMi Pay</b>\n"
-                "<i>Ваши подключения</i>\n\n"
+                tr("✦ <b>ViMi Pay</b>\n<i>Ваши подключения</i>\n\n",
+                   "✦ <b>ViMi Pay</b>\n<i>Your connections</i>\n\n") +
                 f"🤖 <b>{escape(data.project_name)}</b>\n"
                 f"{escape(data.bot_runtime_label)}\n\n"
-                "Подключите бота и продолжите настройку внутри него."
+                + tr("Подключите бота и продолжите настройку внутри него.",
+                     "Connect a bot and finish setup inside that bot.")
             )
             rows = [
                 [_button("🤖 Управление ботом", "bots", "success")],
@@ -299,16 +303,19 @@ def create_owner_setup_router(
         else:
             next_step = _next_setup_step(data)
             text = (
-                "✦ <b>Панель администратора</b>\n"
+                tr("✦ <b>Панель администратора</b>\n",
+                   "✦ <b>Admin dashboard</b>\n") +
                 f"<b>{escape(data.project_name)}</b>\n"
                 f"🌍 {escape(data.timezone)}\n\n"
                 + "\n".join(_progress(data))
                 + "\n\n"
                 + (
-                    "✅ Продажи готовы. Управляйте тарифами и заявками."
+                    tr("✅ Продажи готовы. Управляйте тарифами и заявками.",
+                        "✅ Ready for sales. Manage plans and payment requests.")
                     if data.sales_configured
-                    else "Настройте продажи по порядку. Уже сохранённые "
-                    "данные останутся на месте."
+                    else tr("Настройте продажи по порядку. Уже сохранённые "
+                            "данные останутся на месте.",
+                            "Complete the setup steps. Saved settings will remain intact.")
                 )
             )
             rows = []
@@ -350,7 +357,7 @@ def create_owner_setup_router(
         sent = await bot.send_message(
             user_id, text, parse_mode="HTML",
             reply_markup=ForceReply(
-                selective=True, input_field_placeholder="Введите ответ"
+                selective=True, input_field_placeholder=tr("Введите ответ", "Type your reply")
             ),
         )
         await bind_prompt(
