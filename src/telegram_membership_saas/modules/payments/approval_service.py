@@ -205,7 +205,11 @@ async def approve_payment_request(
         plan_id=request.plan_id,
     )
 
-    if subscription is not None and subscription.current_period_end is None:
+    if (
+        subscription is not None
+        and subscription.status == SubscriptionStatus.ACTIVE.value
+        and subscription.current_period_end is None
+    ):
         grant_start = moment
         grant_end = calculate_period_end(
             grant_start,
@@ -216,7 +220,12 @@ async def approve_payment_request(
         subscription.status = SubscriptionStatus.ACTIVE.value
         subscription.last_payment_id = payment.id
     else:
-        previous_end = subscription.current_period_end if subscription is not None else None
+        previous_end = (
+            subscription.current_period_end
+            if subscription is not None
+            and subscription.status == SubscriptionStatus.ACTIVE.value
+            else None
+        )
         grant_start = previous_end if previous_end is not None and previous_end > moment else moment
         grant_end = calculate_period_end(
             grant_start,
