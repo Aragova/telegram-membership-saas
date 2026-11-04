@@ -131,7 +131,9 @@ async def verify_resource_permissions(
             )
         )).all())
     if not resources:
-        raise RuntimeError("Customer bot project has no active channel/group")
+        # Still run the entitlement worker: subscriptions issued for a
+        # previously disabled channel may require expiry/revocation.
+        return
 
     for resource in resources:
         try:
