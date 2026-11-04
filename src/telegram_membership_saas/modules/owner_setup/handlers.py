@@ -1,4 +1,4 @@
-"""End-to-end owner setup UI for central ViMi Pay (not customer storefront)."""
+"""Owner bot administration with a restricted central connection registrar."""
 
 from __future__ import annotations
 
@@ -47,6 +47,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     SetupFlow,
     advance_flow,
     bind_prompt,
+    can_manage_project,
     choose_project,
     consume_button_flow,
     consume_flow,
@@ -59,7 +60,9 @@ from telegram_membership_saas.modules.owner_setup.service import (
     owner_available_currencies,
     owner_home,
     publish_owner_plan,
+    register_new_owner_bot,
     save_owner_price,
+    set_default_project_name_from_bot,
     set_flow,
     setup_overview,
     verify_channel_and_add,
@@ -116,9 +119,24 @@ def _progress(snapshot) -> tuple[str, ...]:
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
 
 
+class StrayBotTokenFilter(BaseFilter):
+    """Scrub credentials even when there is no live ForceReply wizard."""
+
+    async def __call__(self, message: Message) -> bool:
+        return bool(
+            _private(message)
+            and message.text is not None
+            and TOKEN_PATTERN.fullmatch(message.text.strip())
+        )
+
+
 class SetupReplyFilter(BaseFilter):
-    def __init__(self, factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, factory: async_sessionmaker[AsyncSession],
+        fixed_project_id: UUID | None = None,
+    ) -> None:
         self.factory = factory
+        self.fixed_project_id = fixed_project_id
 
     async def __call__(self, message: Message, bot: Bot) -> bool:
         if not _private(message) or message.reply_to_message is None:
@@ -131,16 +149,47 @@ class SetupReplyFilter(BaseFilter):
             self.factory, telegram_id=user.id,
             username=user.username, first_name=user.first_name,
         )
+        if self.fixed_project_id is not None and not await can_manage_project(
+            self.factory, actor_id=actor_id, project_id=self.fixed_project_id,
+        ):
+            return False
         return await is_expected_prompt(
             self.factory, actor_id=actor_id,
             reply_message_id=origin.message_id,
+            bot_scope_id=bot.id if self.fixed_project_id else 0,
+        )
+
+
+class OwnerHomeFilter(BaseFilter):
+    """Owner / tenant manager sees administration; ordinary buyers fall through."""
+
+    def __init__(
+        self, factory: async_sessionmaker[AsyncSession],
+        fixed_project_id: UUID | None,
+    ) -> None:
+        self.factory = factory
+        self.fixed_project_id = fixed_project_id
+
+    async def __call__(self, message: Message) -> bool:
+        if not _private(message):
+            return False
+        if self.fixed_project_id is None:
+            return True
+        user = message.from_user
+        actor_id = await ensure_telegram_actor(
+            self.factory, telegram_id=user.id,
+            username=user.username, first_name=user.first_name,
+        )
+        return await can_manage_project(
+            self.factory, actor_id=actor_id, project_id=self.fixed_project_id,
         )
 
 
 def create_owner_setup_router(
-    factory: async_sessionmaker[AsyncSession],
+    factory: async_sessionmaker[AsyncSession], *,
+    fixed_project_id: UUID | None = None,
 ) -> Router:
-    router = Router(name="owner-setup")
+    router = Router(name="owner-tenant" if fixed_project_id else "central-registrar")
 
     async def actor(user) -> UUID:
         return await ensure_telegram_actor(
@@ -149,7 +198,11 @@ def create_owner_setup_router(
         )
 
     async def show_home(bot: Bot, user_id: int, actor_id: UUID) -> None:
-        home = await owner_home(factory, actor_id=actor_id)
+        home = await owner_home(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+            fixed_project_id=fixed_project_id,
+        )
         if home.selected is not None:
             await show_dashboard(bot, user_id, actor_id, home.selected)
             return
@@ -157,44 +210,65 @@ def create_owner_setup_router(
         rows: list[list[InlineKeyboardButton]] = []
         if not home.projects:
             lines.append(
-                "Создайте первый проект: подключите собственный бот, "
-                "канал, тарифы и способы оплаты."
+                "Подключите собственного Telegram-бота, затем "
+                "откройте его для настройки тарифов и оплаты."
             )
         else:
             lines.append("Выберите проект для управления:")
             for project_id, name in home.projects[:20]:
-                rows.append([_button("📁 " + name[:45], "select:" + project_id.hex)])
-        rows.append([_button("➕ Создать проект", "new", "success")])
+                rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
+        rows.append([_button("➕ Подключить бота подписок", "new", "success")])
         await bot.send_message(
             user_id, "\n".join(lines),
             parse_mode="HTML", reply_markup=_markup(rows),
         )
 
-    async def show_dashboard(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
+    async def show_dashboard(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
         data = await setup_overview(
-            factory, actor_id=actor_id, project_id=project_id
+            factory, actor_id=actor_id, project_id=project_id,
         )
-        text = (
-            "✨ <b>ViMi Pay · Панель владельца</b>\n\n"
-            f"📁 <b>{escape(data.project_name)}</b>\n"
-            f"🌍 {escape(data.timezone)}\n\n"
-            + "\n".join(_progress(data))
-            + "\n\n🤖 " + escape(data.bot_runtime_label)
-            + (
-                "\n\n✅ Проект настроен. Управляйте ботом и подписками."
-                if data.live_bot_username else
-                "\n\nПродолжайте настройку проекта через меню."
+        if fixed_project_id is None:
+            # Central is a connection manager, not a tenant sales console.
+            text = (
+                "✦ <b>ViMi Pay</b>\n"
+                "<i>Ваши подключения</i>\n\n"
+                f"🤖 <b>{escape(data.project_name)}</b>\n"
+                f"{escape(data.bot_runtime_label)}\n\n"
+                "Подключите бота и продолжите настройку внутри него."
             )
-        )
-        rows = [
-            [_button("🤖 Мой бот", "bots"), _button("📢 Каналы", "resources")],
-            [_button("📦 Тарифы", "plans"), _button("💳 Оплата", "methods")],
-            [_button("🌍 Часовой пояс", "timezone")],
-            [_button("📋 Проверить готовность", "readiness")],
-            [_button("📁 Мои проекты", "projects"), _button("❔ Помощь", "help")],
-        ]
+            rows = [
+                [_button("🤖 Управление ботом", "bots", "success")],
+                [_button("📁 Все подключения", "projects")],
+                [_button("❔ Как это работает", "help")],
+            ]
+        else:
+            text = (
+                "✦ <b>Панель администратора</b>\n"
+                f"<b>{escape(data.project_name)}</b>\n"
+                f"🌍 {escape(data.timezone)}\n\n"
+                + "\n".join(_progress(data))
+                + "\n\n"
+                + (
+                    "✅ Приём подписок настроен."
+                    if data.sales_configured else
+                    "Начните с канала и способа оплаты.\n"
+                    "Покупки откроются после публикации тарифа."
+                )
+            )
+            rows = [
+                [_button("📦 Тарифы", "plans"),
+                 _button("📢 Каналы / группы", "resources")],
+                [_button("💳 Оплата", "methods"),
+                 _button("📋 Заявки", "reviews")],
+                [_button("🌍 TimeZone", "timezone"),
+                 _button("📋 Готовность", "readiness")],
+                [_button("👀 Смотреть гостем", "preview")],
+                [_button("❔ Помощь", "help")],
+            ]
         await bot.send_message(
-            user_id, text, parse_mode="HTML", reply_markup=_markup(rows)
+            user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
         )
 
     async def prompt(
@@ -204,12 +278,15 @@ def create_owner_setup_router(
     ) -> None:
         if source_flow is None:
             generation = await set_flow(
-                factory, actor_id=actor_id, step=step, payload=payload
+                factory, actor_id=actor_id, step=step, payload=payload,
+                project_id=fixed_project_id,
+                bot_scope_id=bot.id if fixed_project_id else 0,
             )
         else:
             generation = await advance_flow(
                 factory, actor_id=actor_id, source=source_flow,
                 step=step, payload=payload or {},
+                bot_scope_id=bot.id if fixed_project_id else 0,
             )
         sent = await bot.send_message(
             user_id, text, parse_mode="HTML",
@@ -220,6 +297,7 @@ def create_owner_setup_router(
         await bind_prompt(
             factory, actor_id=actor_id, step=step,
             message_id=sent.message_id, generation=generation,
+            bot_scope_id=bot.id if fixed_project_id else 0,
         )
 
     async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
@@ -237,16 +315,20 @@ def create_owner_setup_router(
             "\n" + (
                 "⏳ Бот отключается. Нажмите «Обновить статус» после завершения."
                 if retiring else escape(data.bot_runtime_label)
-                + "\n\nПосле настройки канала, опубликованного тарифа "
-                "и оплаты система запускает вашего бота автоматически."
+                + "\n\nБот доступен для настройки сразу после подключения."
+                "\nОткройте его и добавьте каналы, оплату и тарифы."
             )
         )
         rows = []
-        if data.live_bot_username:
+        connected = next(
+            (username for _, username, status in data.bot_instances
+             if status == "registered"), None,
+        )
+        if connected:
             rows.append([
                 InlineKeyboardButton(
-                    text="🟢 Открыть моего бота",
-                    url="https://t.me/" + data.live_bot_username,
+                    text="🚀 Перейти к своему боту",
+                    url="https://t.me/" + connected,
                     style="success",
                 )
             ])
@@ -265,8 +347,8 @@ def create_owner_setup_router(
                         )
                     ])
         rows.extend([
-            [_button("➕ Новый проект с нуля", "new")],
-            [_button("⬅️ Панель управления", "dashboard")],
+            [_button("➕ Подключить другого бота", "new")],
+            [_button("⬅️ Мои подключения", "dashboard")],
         ])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
@@ -499,6 +581,27 @@ def create_owner_setup_router(
             ]),
         )
 
+    async def show_guest_preview(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        """Preview active offers without a purchase or financial side effect."""
+        data = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        published = [name for _, name, status in data.plans if status == "active"]
+        content = (
+            "👀 <b>Гостевой просмотр</b>\n\n"
+            + ("\n".join("• " + escape(name) for name in published[:15])
+               if published else "Пока нет опубликованных тарифов.")
+            + "\n\nЭто просмотр каталога. Никакие платежи не создаются."
+        )
+        await bot.send_message(
+            user_id, content, parse_mode="HTML",
+            reply_markup=_markup([
+                [_button("⬅️ Панель администратора", "dashboard")],
+            ]),
+        )
+
     async def currency_picker(bot: Bot, user_id: int, actor_id: UUID, *,
                               mode: str, plan_id: UUID | None = None):
         codes = await owner_available_currencies(factory, actor_id=actor_id)
@@ -514,7 +617,9 @@ def create_owner_setup_router(
             user_id, "💱 Выберите валюту:", reply_markup=_markup(rows),
         )
 
-    @router.message(Command("start", "menu"))
+    @router.message(
+        Command("start", "menu"), OwnerHomeFilter(factory, fixed_project_id),
+    )
     async def home_message(message: Message, bot: Bot) -> None:
         if not _private(message):
             return
@@ -529,12 +634,50 @@ def create_owner_setup_router(
         user_id = query.from_user.id
         actor_id = await actor(query.from_user)
         action = (query.data or "")[4:]
+        if fixed_project_id is not None and not await can_manage_project(
+            factory, actor_id=actor_id, project_id=fixed_project_id,
+        ):
+            await query.answer("Нет доступа к управлению ботом", show_alert=True)
+            return
+        if fixed_project_id is None:
+            is_registry_action = action in {
+                "new", "projects", "dashboard", "bots", "connect",
+                "help", "oblist",
+            } or action.startswith((
+                "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+            ))
+            if not is_registry_action:
+                await query.answer(
+                    "Настройте продажи в своём подключённом боте",
+                    show_alert=True,
+                )
+                return
+        else:
+            if action in {"new", "projects", "bots", "connect", "oblist"} or (
+                action.startswith((
+                    "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                ))
+            ):
+                await query.answer(
+                    "Управляйте подключением через @vimipay_bot",
+                    show_alert=True,
+                )
+                return
         try:
             if action == "new":
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError("Подключение ботов пока недоступно")
                 await prompt(
-                    bot, user_id, actor_id, step="project_name",
-                    text="📁 Как назовём новый проект?\n\n"
-                    "Ответьте названием — его можно будет изменить позднее.",
+                    bot, user_id, actor_id, step="new_bot_token",
+                    text=(
+                        "✦ <b>Подключение бота подписок</b>\n\n"
+                        "1. Создайте бота в @BotFather или получите новый "
+                        "токен существующего.\n"
+                        "2. Ответьте на это сообщение токеном.\n"
+                        "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
+                        "После проверки откройте своего бота и "
+                        "настройте каналы, оплату и тарифы."
+                    ),
                 )
                 await query.answer()
                 return
@@ -544,7 +687,7 @@ def create_owner_setup_router(
                     [_button("📁 " + name[:45], "select:" + pid.hex)]
                     for pid, name in home.projects[:20]
                 ]
-                rows.append([_button("➕ Новый проект", "new", "success")])
+                rows.append([_button("➕ Подключить бота", "new", "success")])
                 await bot.send_message(user_id, "📁 Мои проекты", reply_markup=_markup(rows))
                 await query.answer()
                 return
@@ -556,11 +699,22 @@ def create_owner_setup_router(
                 await show_home(bot, user_id, actor_id)
                 await query.answer()
                 return
-            project_id = await get_selected_project(factory, actor_id=actor_id)
+            project_id = await get_selected_project(
+                factory, actor_id=actor_id,
+                bot_scope_id=bot.id if fixed_project_id else 0,
+                fixed_project_id=fixed_project_id,
+            )
             if project_id is None:
                 raise ValueError("Сначала создайте или выберите проект")
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action == "reviews":
+                await bot.send_message(
+                    user_id, "📋 Заявки на проверку оплаты: /payments\n"
+                    "Подтверждайте только после проверки денег в банке.",
+                )
+            elif action == "preview":
+                await show_guest_preview(bot, user_id, actor_id, project_id)
             elif action.startswith("drop:"):
                 _, project_ref, instance_ref = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
@@ -742,6 +896,7 @@ def create_owner_setup_router(
                 await set_flow(
                     factory, actor_id=actor_id,
                     step="chat_picker", payload={"request_id": request_id},
+                    bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 await bot.send_message(
                     user_id,
@@ -786,6 +941,7 @@ def create_owner_setup_router(
                 flow = await consume_button_flow(
                     factory, actor_id=actor_id,
                     expected_step="plan_duration", generation=generation,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 if flow.project_id != project_id:
                     raise ValueError("Проект изменился. Повторите действие.")
@@ -810,6 +966,7 @@ def create_owner_setup_router(
                         factory, actor_id=actor_id, source=flow,
                         step="plan_resource",
                         payload={"name": flow.payload["name"], "value": value, "unit": unit},
+                        bot_scope_id=bot.id if fixed_project_id else 0,
                     )
                     rows = [
                         [_button(name[:45], "use:" + rid.hex + ":" + generation)]
@@ -824,6 +981,7 @@ def create_owner_setup_router(
                 flow = await consume_button_flow(
                     factory, actor_id=actor_id,
                     expected_step="plan_resource", generation=generation,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 if flow.project_id != project_id:
                     raise ValueError("Проект изменился. Повторите действие.")
@@ -849,10 +1007,31 @@ def create_owner_setup_router(
                     text=f"💰 Укажите цену в {currency} (например, 499 или 9.99):",
                 )
             elif action.startswith("publish:"):
-                name = await publish_owner_plan(
-                    factory, actor_id=actor_id, project_id=project_id,
-                    plan_id=UUID(hex=action.split(":", 1)[1]),
-                )
+                plan_id = UUID(hex=action.split(":", 1)[1])
+                try:
+                    name = await publish_owner_plan(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=plan_id,
+                    )
+                except ValueError as exc:
+                    if "Добавьте действующий способ оплаты" not in str(exc):
+                        raise
+                    await bot.send_message(
+                        user_id,
+                        "💳 <b>Остался один шаг</b>\n\n"
+                        "Добавьте способ оплаты, который поддерживает "
+                        "валюту тарифа. Черновик и цены сохранены.",
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                "➕ Настроить способ оплаты",
+                                "newmethod", "success",
+                            )],
+                            [_button("⬅️ Вернуться к тарифу", "plan:" + plan_id.hex)],
+                        ]),
+                    )
+                    await query.answer()
+                    return
                 await bot.send_message(
                     user_id, f"✅ Тариф «{escape(name)}» опубликован.",
                     parse_mode="HTML",
@@ -921,11 +1100,10 @@ def create_owner_setup_router(
                 await bot.send_message(
                     user_id,
                     "❔ <b>Как запустить подписки</b>\n\n"
-                    "1. Подключите своего бота через @BotFather.\n"
-                    "2. Добавьте его администратором канала.\n"
-                    "3. Подключите канал, создайте тариф и цену.\n"
-                    "4. Добавьте способ оплаты и инструкцию.\n"
-                    "5. Опубликуйте тариф и проверьте готовность.\n\n"
+                    "1. Подключите токен в @vimipay_bot.\n"
+                    "2. Откройте собственный бот и добавьте его в канал.\n"
+                    "3. Настройте валюты и способы оплаты.\n"
+                    "4. Создайте тариф, цену и опубликуйте.\n\n"
                     "Ваши чеки ViMi Pay не хранит — поступления "
                     "проверяются администратором в банке.",
                     parse_mode="HTML",
@@ -939,16 +1117,21 @@ def create_owner_setup_router(
 
     @router.message(F.chat_shared)
     async def shared_chat_handler(message: Message, bot: Bot) -> None:
-        if not _private(message):
+        if not _private(message) or fixed_project_id is None:
             return
         actor_id = await actor(message.from_user)
+        if not await can_manage_project(
+            factory, actor_id=actor_id, project_id=fixed_project_id,
+        ):
+            return
         try:
             flow = await consume_button_flow(
                 factory, actor_id=actor_id, expected_step="chat_picker",
                 request_id=message.chat_shared.request_id,
+                bot_scope_id=bot.id,
             )
-            if flow.project_id is None:
-                raise ValueError("Проект не выбран")
+            if flow.project_id != fixed_project_id:
+                raise ValueError("Настройка другого бота недоступна")
             chat = await verify_channel_and_add(
                 factory, actor_id=actor_id,
                 actor_telegram_id=message.from_user.id,
@@ -968,7 +1151,45 @@ def create_owner_setup_router(
         )
         await show_resources(bot, message.chat.id, actor_id, flow.project_id)
 
-    @router.message(SetupReplyFilter(factory))
+    async def send_connected_bot(
+        bot: Bot, user_id: int, actor_id: UUID,
+        project_id: UUID, username: str,
+    ) -> None:
+        await bot.send_message(
+            user_id,
+            f"✅ <b>@{escape(username)} подключён</b>\n\n"
+            "Настройка в ViMi Pay завершена.\n"
+            "Перейдите в свой бот и добавьте канал, "
+            "способы оплаты и тарифы.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🚀 Перейти к своему боту",
+                    url="https://t.me/" + username,
+                    style="success",
+                ),
+            ]]),
+        )
+        await show_bots(bot, user_id, actor_id, project_id)
+
+    async def finish_bot_connection(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, token: str,
+    ) -> None:
+        result = await register_customer_bot(
+            factory, project_id=project_id,
+            actor_telegram_user_id=user_id, token=token,
+            encryption_key=get_settings().bot_token_encryption_key,
+            central_bot_id=bot.id,
+        )
+        await set_default_project_name_from_bot(
+            factory, actor_id=actor_id, project_id=project_id,
+            username=result.username,
+        )
+        await send_connected_bot(
+            bot, user_id, actor_id, project_id, result.username,
+        )
+
+    @router.message(SetupReplyFilter(factory, fixed_project_id))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:
         if not _private(message) or message.reply_to_message is None:
             return
@@ -982,15 +1203,17 @@ def create_owner_setup_router(
         flow = await consume_flow(
             factory, actor_id=actor_id,
             reply_message_id=message.reply_to_message.message_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
         )
         if flow is None:
             return
         # Always delete BotFather credential messages before validating or storing
         # anything, even if the credential was typed incorrectly.
         unexpected_secret = bool(
-            flow.step != "bot_token" and TOKEN_PATTERN.fullmatch(text)
+            flow.step not in ("bot_token", "new_bot_token")
+            and TOKEN_PATTERN.fullmatch(text)
         )
-        if flow.step == "bot_token" or unexpected_secret:
+        if flow.step in ("bot_token", "new_bot_token") or unexpected_secret:
             try:
                 deleted = await bot.delete_message(
                     message.chat.id, message.message_id
@@ -1010,7 +1233,43 @@ def create_owner_setup_router(
                     "Для безопасности смените токен в BotFather и повторите шаг.",
                 )
                 return
+        # Old central setup prompts remain in Telegram after a deployment.
+        # Do not permit completing tenant settings via stale central messages.
+        if fixed_project_id is None and flow.step not in (
+            "new_bot_token", "bot_token",
+        ):
+            await bot.send_message(
+                message.chat.id,
+                "Настройка перенесена в вашего бота. "
+                "Откройте его через «Мои боты».",
+            )
+            return
+        if fixed_project_id is not None and flow.step in (
+            "new_bot_token", "bot_token", "project_name",
+        ):
+            await bot.send_message(
+                message.chat.id,
+                "Подключение токена доступно только в @vimipay_bot.",
+            )
+            return
         try:
+            if flow.step == "new_bot_token":
+                if not TOKEN_PATTERN.fullmatch(text):
+                    raise ValueError(
+                        "Неверный формат токена. Получите токен в @BotFather."
+                    )
+                project_id, registration = await register_new_owner_bot(
+                    factory, actor_id=actor_id,
+                    actor_telegram_user_id=message.from_user.id,
+                    token=text,
+                    encryption_key=get_settings().bot_token_encryption_key,
+                    central_bot_id=bot.id,
+                )
+                await send_connected_bot(
+                    bot, message.chat.id, actor_id,
+                    project_id, registration.username,
+                )
+                return
             if flow.step == "project_name":
                 await create_owner_project(factory, actor_id=actor_id, name=text)
                 await bot.send_message(
@@ -1020,24 +1279,16 @@ def create_owner_setup_router(
                 await show_home(bot, message.chat.id, actor_id)
                 return
             project_id = flow.project_id
-            if project_id is None:
-                raise ValueError("Проект не выбран")
+            if project_id is None or (
+                fixed_project_id is not None and project_id != fixed_project_id
+            ):
+                raise ValueError("Настройка другого бота недоступна")
             if flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError("Неверный формат токена. Получите его в BotFather.")
-                result = await register_customer_bot(
-                    factory, project_id=project_id,
-                    actor_telegram_user_id=message.from_user.id, token=text,
-                    encryption_key=get_settings().bot_token_encryption_key,
-                    central_bot_id=bot.id,
+                await finish_bot_connection(
+                    bot, message.chat.id, actor_id, project_id, text,
                 )
-                await bot.send_message(
-                    message.chat.id,
-                    f"✅ Бот @{escape(result.username)} подключён.\n"
-                    "Теперь добавьте канал, тарифы и способы оплаты.",
-                    parse_mode="HTML",
-                )
-                await show_bots(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "resource_reference":
                 reference: str | int = int(text) if text.lstrip("-").isdigit() else text
                 resource = await verify_channel_and_add(
@@ -1057,6 +1308,7 @@ def create_owner_setup_router(
                 generation = await advance_flow(
                     factory, actor_id=actor_id, source=flow,
                     step="plan_duration", payload={"name": text},
+                    bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 await bot.send_message(
                     message.chat.id,
@@ -1110,5 +1362,27 @@ def create_owner_setup_router(
                 message.chat.id,
                 "⚠️ " + str(exc)[:220] + "\nОткройте нужный раздел и повторите.",
             )
+
+    @router.message(StrayBotTokenFilter())
+    async def stray_bot_token_handler(message: Message, bot: Bot) -> None:
+        # An expired/replaced prompt must never leave a credential in chat.
+        try:
+            removed = await bot.delete_message(
+                message.chat.id, message.message_id,
+            )
+        except AiogramError:
+            removed = False
+        if not removed:
+            await bot.send_message(
+                message.chat.id,
+                "⚠️ Не удалось удалить токен. Удалите сообщение и "
+                "смените токен в @BotFather.",
+            )
+            return
+        await bot.send_message(
+            message.chat.id,
+            "🔐 Токен удалён из чата. Для подключения "
+            "откройте @vimipay_bot → Подключить бота.",
+        )
 
     return router

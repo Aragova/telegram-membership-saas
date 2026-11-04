@@ -388,32 +388,32 @@ Append-only audit trail for important administrative/domain changes:
 - administrator/permission changes;
 - project settings changes.
 
-## 25. Bot credentials
+## 25. Bot credentials, control plane and tenant plane
 
-Bot tokens and future provider secrets are secret material.
+See [approved v2 contract](VIMI_PAY_V2.md). Two bot surfaces:
 
-MVP bring-your-own-bot architecture:
-
-- The central ViMi Pay bot manages project owners and their settings; individual
-  customer-facing Telegram bots belong to a specific tenant Project.
-- `BotInstance` contains globally unique Telegram bot ID, project ID, username,
-  display metadata, `registered/disabled` state and Fernet-encrypted token.
-- The first registration slice performs bot `getMe`, owner authorization and
-  encrypted persistence, but does not start a dispatcher; registered is not running.
-- Bot credentials must be encrypted using a separately provisioned secret,
-  never echoed into chats or logs, and never committed. Incoming BotFather token
-  messages are deleted before validation or database writes; Telegram private
-  chats still are not end-to-end encrypted.
-- The future multi-bot runtime must resolve an incoming bot identity to the
-  exact Project before handling buyers, and must enforce tenant context for
-  every request, callback, access event and worker job. A project may have
-  multiple resources; bot/runtime routing may not rely on a global fixed
-  `TMS_TELEGRAM_PROJECT_ID` once onboarding is enabled.
-- Do not expose the buyer link until registered bots have a working dispatcher
-  and a tested Telegram end-to-end flow. Plan credentials rotation and recovery.
-
-Database stores a credential reference or encrypted secret mechanism, never
-exposes secret values in logs or git.
+- Central `@vimipay_bot`: bot type, project registry, encrypted token
+  registration/replacement, runtime status, safe detach and transition deep link.
+  No tenant channel/plan/payment settings in central. Platform Owner has a
+  separate, privileged global analytics mode plus a personal bot-owner mode.
+- Connected BotInstance: both tenant administrative setup and buyer storefront
+  in the **same bot**. Owner/manager `/start` routes to premium admin UI;
+  buyer `/start` to catalog. Authorization is server-side, project-bound,
+  permission-scoped. Read-only «Смотреть гостем» preview for admins.
+- A registered bot's dispatcher must start promptly, even before resource or
+  tariff readiness. Prevent purchases until a valid, published offer and payment
+  method exist.
+- One live poller / customer access runtime per project; never duplicate
+  owner and buyer workers. Bot registration uses Telegram `getMe`, secure
+  deletion of token chat messages, Fernet at rest, and no token logging.
+- Owner wizard state is isolated per (actor, bot scope), so chat callbacks in
+  another bot cannot change the project or consume pending replies.
+- Preserve tenant RLS, access reconciliation, audit, subscription/ledger
+  history and safe retirement. Platform global aggregates use separate,
+  audited report interfaces, not unrestricted RLS bypass.
+- Buyer currency navigation filters PlanPrice and PaymentMethodCurrency;
+  there is no primary/base currency. Per-resource multiple durations are
+  distinct plans and can be grouped in the storefront.
 
 ## 26. Localization
 

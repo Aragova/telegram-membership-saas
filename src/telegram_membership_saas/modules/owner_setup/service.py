@@ -1,4 +1,4 @@
-"""Tenant-safe, durable setup operations for the central ViMi Pay owner console."""
+"""Tenant-safe owner setup operations for each connected bot and central registrar."""
 
 from __future__ import annotations
 
@@ -9,18 +9,25 @@ from uuid import UUID
 
 from aiogram import Bot
 from cryptography.fernet import InvalidToken
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
-from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.db import apply_tenant_context, tenant_session_scope
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.health_service import (
     public_health_label,
     read_bot_health,
 )
-from telegram_membership_saas.modules.bots.service import decrypt_token
+from telegram_membership_saas.modules.bots.service import (
+    BotRegistration,
+    decrypt_token,
+    encrypt_token,
+    verify_telegram_bot,
+)
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.payments import (
@@ -46,7 +53,7 @@ from telegram_membership_saas.modules.projects import (
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.modules.telegram_commerce.service import list_checkout_options
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
 ALLOWED_CURRENCIES = ("RUB", "USD", "EUR", "USDT", "TON", "KZT", "AED")
@@ -111,10 +118,16 @@ async def ensure_telegram_actor(
             return result.scalar_one()
 
 
-async def _current_session(session: AsyncSession, actor_id: UUID) -> OwnerSetupSession:
-    state = await session.get(OwnerSetupSession, actor_id, with_for_update=True)
+async def _current_session(
+    session: AsyncSession, actor_id: UUID, bot_scope_id: int = 0,
+) -> OwnerSetupSession:
+    state = await session.get(
+        OwnerSetupSession, (actor_id, bot_scope_id), with_for_update=True,
+    )
     if state is None:
-        state = OwnerSetupSession(user_id=actor_id, payload={})
+        state = OwnerSetupSession(
+            user_id=actor_id, bot_scope_id=bot_scope_id, payload={},
+        )
         session.add(state)
         await session.flush()
     return state
@@ -122,7 +135,8 @@ async def _current_session(session: AsyncSession, actor_id: UUID) -> OwnerSetupS
 
 async def owner_home(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID,
+    actor_id: UUID, bot_scope_id: int = 0,
+    fixed_project_id: UUID | None = None,
 ) -> OwnerHome:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         visible = list(
@@ -146,11 +160,18 @@ async def owner_home(
                 )
             )
         ]
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         ids = {p.id for p in projects}
+        if fixed_project_id is not None and fixed_project_id not in ids:
+            raise PermissionError("Нет прав на управление этим ботом")
         selected = state.selected_project_id
-        if selected not in ids:
-            selected = projects[0].id if len(projects) == 1 else None
+        expected = (
+            fixed_project_id if fixed_project_id is not None
+            else selected if selected in ids
+            else projects[0].id if len(projects) == 1 else None
+        )
+        if selected != expected:
+            selected = expected
             state.selected_project_id = selected
             state.step = None
             state.prompt_message_id = None
@@ -162,16 +183,33 @@ async def owner_home(
         )
 
 
+async def can_manage_project(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID,
+) -> bool:
+    """Authorize tenant owner/manager without modifying central wizard state."""
+    try:
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id, project_id=project_id)
+        ) as session:
+            await _require_project_manager(
+                session, project_id=project_id, actor_user_id=actor_id,
+            )
+            return True
+    except (PermissionError, TenantAccessDenied):
+        return False
+
+
 async def choose_project(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
-    project_id: UUID,
+    project_id: UUID, bot_scope_id: int = 0,
 ) -> None:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         await _require_project_manager(
             session, project_id=project_id, actor_user_id=actor_id
         )
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         state.selected_project_id = project_id
         state.step = None
         state.payload = {}
@@ -185,18 +223,19 @@ async def set_flow(
     step: str,
     payload: dict | None = None,
     project_id: UUID | None = None,
+    bot_scope_id: int = 0,
 ) -> str:
     if len(step) > 48:
         raise ValueError("Invalid flow")
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         chosen = project_id if project_id is not None else state.selected_project_id
         if chosen is not None:
             await _require_project_manager(
                 session, project_id=chosen, actor_user_id=actor_id
             )
-        elif step != "project_name":
-            raise PermissionError("Сначала создайте проект")
+        elif step not in ("project_name", "new_bot_token"):
+            raise PermissionError("Сначала подключите бота")
         state.selected_project_id = chosen
         state.step = step
         state.payload = payload or {}
@@ -212,9 +251,10 @@ async def bind_prompt(
     step: str,
     message_id: int,
     generation: str,
+    bot_scope_id: int = 0,
 ) -> None:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if state.step != step or state.generation != generation:
             raise ValueError("Этот шаг уже заменён другим запросом")
         state.prompt_message_id = message_id
@@ -223,9 +263,10 @@ async def bind_prompt(
 async def is_expected_prompt(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, reply_message_id: int,
+    bot_scope_id: int = 0,
 ) -> bool:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await session.get(OwnerSetupSession, actor_id)
+        state = await session.get(OwnerSetupSession, (actor_id, bot_scope_id))
         return bool(
             state is not None
             and state.step
@@ -238,11 +279,12 @@ async def consume_flow(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
     reply_message_id: int | None,
+    bot_scope_id: int = 0,
 ) -> SetupFlow | None:
     if reply_message_id is None:
         return None
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if (
             not state.step or state.prompt_message_id != reply_message_id
             or state.expires_at <= datetime.now(UTC)
@@ -267,9 +309,10 @@ async def consume_button_flow(
     expected_step: str,
     request_id: int | None = None,
     generation: str | None = None,
+    bot_scope_id: int = 0,
 ) -> SetupFlow:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if (
             state.step != expected_step
             or state.expires_at <= datetime.now(UTC)
@@ -299,12 +342,13 @@ async def advance_flow(
     source: SetupFlow,
     step: str,
     payload: dict,
+    bot_scope_id: int = 0,
 ) -> str:
     """Continue only the exact consumed flow and project, atomically."""
     if source.generation is None:
         raise ValueError("Шаг настройки устарел")
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if (
             state.step is not None
             or state.selected_project_id != source.project_id
@@ -325,9 +369,13 @@ async def advance_flow(
 
 async def get_selected_project(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID,
+    actor_id: UUID, bot_scope_id: int = 0,
+    fixed_project_id: UUID | None = None,
 ) -> UUID | None:
-    home = await owner_home(factory, actor_id=actor_id)
+    home = await owner_home(
+        factory, actor_id=actor_id, bot_scope_id=bot_scope_id,
+        fixed_project_id=fixed_project_id,
+    )
     return home.selected
 
 
@@ -348,6 +396,86 @@ async def create_owner_project(
         state.generation = None
         state.payload = {}
         return project.id
+
+
+async def register_new_owner_bot(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID,
+    actor_telegram_user_id: int,
+    token: str,
+    encryption_key: SecretStr | None,
+    central_bot_id: int,
+) -> tuple[UUID, BotRegistration]:
+    """Verify first; commit new project and unique bot together, or neither."""
+    verified = await verify_telegram_bot(token)
+    if verified.telegram_bot_id == central_bot_id:
+        raise ValueError("Нельзя подключить управляющий бот ViMi Pay")
+    encrypted = encrypt_token(token, key=encryption_key)
+    try:
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id)
+        ) as session:
+            actual_id = await session.scalar(
+                select(TelegramUser.telegram_user_id).where(
+                    TelegramUser.id == actor_id,
+                )
+            )
+            if actual_id != actor_telegram_user_id:
+                raise PermissionError("Не удалось подтвердить владельца бота")
+            project = Project(
+                owner_user_id=actor_id, name="@" + verified.username,
+                timezone="Europe/Moscow",
+            )
+            session.add(project)
+            await session.flush()
+            # Project exists in this transaction: bind tenant RLS before
+            # writing the credential, while keeping the insert atomic.
+            await apply_tenant_context(
+                session, TenantContext(user_id=actor_id, project_id=project.id),
+            )
+            session.add(BotInstance(
+                project_id=project.id,
+                telegram_bot_id=verified.telegram_bot_id,
+                username=verified.username,
+                display_name=verified.display_name,
+                token_ciphertext=encrypted,
+                status="registered",
+            ))
+            await session.flush()
+            state = await _current_session(session, actor_id, 0)
+            state.selected_project_id = project.id
+            state.step = None
+            state.prompt_message_id = None
+            state.generation = None
+            state.payload = {}
+            return project.id, BotRegistration(
+                telegram_bot_id=verified.telegram_bot_id,
+                username=verified.username, updated=False,
+            )
+    except IntegrityError:
+        # Global bot ID uniqueness prevents a bot being claimed twice.
+        # The same DB rollback also removes the newly created project.
+        raise ValueError("Этот Telegram-бот уже подключён в другом проекте") from None
+
+
+async def set_default_project_name_from_bot(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, username: str,
+) -> None:
+    """Name an automatically created project after its verified Telegram bot."""
+    if not username or len(username) > 32:
+        raise ValueError("Некорректное имя бота")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id)
+    ) as session:
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        project = await session.scalar(
+            select(Project).where(Project.id == project_id).with_for_update()
+        )
+        if project is not None and project.name == "Подключение бота":
+            project.name = "@" + username
 
 
 async def setup_overview(

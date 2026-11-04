@@ -1,7 +1,10 @@
-# Customer bot runtime — first branded buyer bot slice
+# Connected owner-bot runtime — administration + buyer storefront
 
-Source of truth: [CONCEPT.md](CONCEPT.md) v1.5. Owner manages projects
-through central ViMi Pay; customers must buy through the owner's BotInstance.
+Source of truth: [ViMi Pay v2 contract](VIMI_PAY_V2.md).
+Earlier paragraphs about a buyer-only dispatcher and administration in central
+document **legacy implementation**, not the approved target. This migration
+moves tenant administration to the connected BotInstance while central remains
+its token/lifecycle registry.
 
 ## What this slice runs
 
@@ -13,8 +16,9 @@ checks absence of an existing webhook (does **not** delete foreign hooks), and
 verifies that the bot has both invite and ban/restrict permissions in every
 active Telegram channel/group in the project.
 
-The customer Dispatcher has **only** purchase/payment and channel-join
-handlers, not owner token management. Existing review/receipt/approval services
+Historically, the customer Dispatcher had **only** purchase/payment and channel-join
+handlers. Under v2 it additionally has project-scoped owner administration,
+while **token management always remains in central**. Existing review/receipt/approval services
 are reused in the same project-scoped transactions and the same Telegram bot
 sends the resulting access invitations. Incoming join requests are restricted
 to the worker's exact project, including when an invite is forged for another
@@ -25,7 +29,7 @@ When the customer bot is deployed, central management continues in a separate
 `bot` container with `TMS_TELEGRAM_CENTRAL_ACCESS_ENABLED=false`.
 This disables **both** customer commerce and the old central access worker
 and join-request listener, preventing two bots competing for the same
-project's access queue. The owner management screens remain available. The
+project's access queue. Legacy central owner management screens are being retired in staged v2 slices; they must not be exposed as the final tenant workflow. The
 central `Заявки` button and old `/payments` command now direct the owner
 to the customer bot's `/payments`; old central approve/reject inline
 buttons display an explicit redirect instead of silently failing or sending
