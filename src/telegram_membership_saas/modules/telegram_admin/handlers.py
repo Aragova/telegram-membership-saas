@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
     register_customer_bot,
@@ -49,6 +50,7 @@ TIMEZONE_CHOICES = (
 )
 SCREENS = frozenset({"main", "resources", "plans", "methods", "settings", "timezone", "bots"})
 CONNECT_PROMPT_PREFIX = "Подключение собственного бота"
+CONNECT_PROMPT_PREFIX_EN = "Connect your own bot"
 STATUS_LABELS = {
     "active": "🟢 Активно",
     "disabled": "⚪ Отключено",
@@ -59,8 +61,33 @@ STATUS_LABELS = {
 }
 
 
+ADMIN_BUTTON_LABELS_EN = {
+    "📦 Тарифы": "📦 Plans",
+    "📢 Каналы / группы": "📢 Channels / groups",
+    "💳 Оплата": "💳 Payments",
+    "⚙️ Настройки": "⚙️ Settings",
+    "🤖 Мои боты": "🤖 My bots",
+    "🧾 Заявки": "🧾 Payment reviews",
+    "👁 Посмотреть как клиент": "👁 Buyer preview",
+    "➕ Подключить своего бота": "➕ Connect my bot",
+    "⬅️ Главное меню": "⬅️ Main menu",
+    "🌍 Изменить часовой пояс": "🌍 Change timezone",
+    "⬅️ Настройки": "⬅️ Settings",
+}
+STATUS_LABELS_EN = {
+    "active": "🟢 Active",
+    "disabled": "⚪ Disabled",
+    "archived": "📦 Archived",
+    "draft": "📝 Draft",
+    "registered": "⏳ Registered",
+}
+
+
 def _button(text: str, callback_data: str, *, style: str = "primary") -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, callback_data=callback_data, style=style)
+    return InlineKeyboardButton(
+        text=tr(text, ADMIN_BUTTON_LABELS_EN.get(text, text)),
+        callback_data=callback_data, style=style,
+    )
 
 
 def _keyboard(screen: str, snapshot: AdminProjectSnapshot) -> InlineKeyboardMarkup:
@@ -77,6 +104,7 @@ def _keyboard(screen: str, snapshot: AdminProjectSnapshot) -> InlineKeyboardMark
             [_button("🤖 Мои боты", "adm:bots")],
             [_button("🧾 Заявки", "adm:reviews")],
             [_button("👁 Посмотреть как клиент", "adm:client")],
+            [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
         ]
     elif screen == "bots":
         rows = [
@@ -107,59 +135,83 @@ def _keyboard(screen: str, snapshot: AdminProjectSnapshot) -> InlineKeyboardMark
 
 def _render_entries(title: str, entries: tuple[AdminEntry, ...]) -> str:
     if not entries:
-        return f"<b>{title}</b>\n\nЗаписей пока нет."
+        return f"<b>{title}</b>\n\n" + tr("Записей пока нет.", "No records yet.")
     lines = [f"<b>{title}</b>", ""]
     for entry in entries[:15]:
-        state = STATUS_LABELS.get(entry.status, escape(entry.status))
+        state = tr(
+            STATUS_LABELS.get(entry.status, escape(entry.status)),
+            STATUS_LABELS_EN.get(entry.status, escape(entry.status)),
+        )
         suffix = f" · {escape(entry.details)}" if entry.details else ""
         lines.append(f"• <b>{escape(entry.name)}</b>{suffix}\n  {state}")
     if len(entries) > 15:
-        lines.append(f"\nПоказаны первые 15 из {len(entries)}.")
+        lines.append(tr(f"\nПоказаны первые 15 из {len(entries)}.",
+                        f"\nShowing the first 15 of {len(entries)}."))
     return "\n".join(lines)
 
 
 def _screen_text(screen: str, snapshot: AdminProjectSnapshot) -> str:
     if screen == "main":
         return (
-            "👑 <b>ViMi Pay · Управление</b>\n\n"
-            f"📁 Проект: <b>{escape(snapshot.project_name)}</b>\n"
-            f"🌍 Часовой пояс: <b>{escape(snapshot.timezone)}</b>\n\n"
-            f"Каналов и групп: {len(snapshot.resources)}\n"
-            f"Тарифов: {len(snapshot.plans)}\n"
-            f"Способов оплаты: {len(snapshot.payment_methods)}\n"
-            f"Подключённых ботов: {len(snapshot.bots)}\n\n"
-            "Выберите раздел управления."
+            tr("👑 <b>ViMi Pay · Управление</b>\n\n",
+               "👑 <b>ViMi Pay · Management</b>\n\n")
+            + tr("📁 Проект: ", "📁 Project: ")
+            + f"<b>{escape(snapshot.project_name)}</b>\n"
+            + tr("🌍 Часовой пояс: ", "🌍 Timezone: ")
+            + f"<b>{escape(snapshot.timezone)}</b>\n\n"
+            + tr("Каналов и групп: ", "Channels and groups: ")
+            + f"{len(snapshot.resources)}\n"
+            + tr("Тарифов: ", "Plans: ") + f"{len(snapshot.plans)}\n"
+            + tr("Способов оплаты: ", "Payment methods: ")
+            + f"{len(snapshot.payment_methods)}\n"
+            + tr("Подключённых ботов: ", "Connected bots: ")
+            + f"{len(snapshot.bots)}\n\n"
+            + tr("Выберите раздел управления.", "Choose a management section.")
         )
     if screen == "bots":
         return (
-            _render_entries("🤖 Мои боты", snapshot.bots)
-            + "\n\nЗарегистрированные боты ещё не принимают покупателей. "
-            "после настройки каналов, тарифов и способов оплаты и проверки запуска."
+            _render_entries(tr("🤖 Мои боты", "🤖 My bots"), snapshot.bots)
+            + tr("\n\nЗарегистрированные боты ещё не принимают покупателей. "
+                 "после настройки каналов, тарифов и способов оплаты и проверки запуска.",
+                 "\n\nRegistered bots do not accept buyers until channels, "
+                 "plans, payment methods and runtime are configured.")
         )
     if screen == "resources":
-        return _render_entries("📢 Каналы / группы", snapshot.resources)
+        return _render_entries(
+            tr("📢 Каналы / группы", "📢 Channels / groups"), snapshot.resources,
+        )
     if screen == "plans":
-        return _render_entries("📦 Тарифы", snapshot.plans)
+        return _render_entries(tr("📦 Тарифы", "📦 Plans"), snapshot.plans)
     if screen == "methods":
-        return _render_entries("💳 Способы оплаты", snapshot.payment_methods)
+        return _render_entries(
+            tr("💳 Способы оплаты", "💳 Payment methods"), snapshot.payment_methods,
+        )
     if screen == "settings":
         return (
-            "⚙️ <b>Настройки проекта</b>\n\n"
-            f"📁 {escape(snapshot.project_name)}\n"
-            f"🌍 Текущий часовой пояс: <b>{escape(snapshot.timezone)}</b>\n\n"
-            "Время в базе хранится в UTC. Даты подписок отображаются "
-            "с учётом часового пояса проекта."
+            tr("⚙️ <b>Настройки проекта</b>\n\n",
+               "⚙️ <b>Project settings</b>\n\n")
+            + f"📁 {escape(snapshot.project_name)}\n"
+            + tr("🌍 Текущий часовой пояс: ", "🌍 Current timezone: ")
+            + f"<b>{escape(snapshot.timezone)}</b>\n\n"
+            + tr("Время в базе хранится в UTC. Даты подписок отображаются "
+                 "с учётом часового пояса проекта.",
+                 "Database timestamps use UTC. Subscription dates are "
+                 "displayed in the project's timezone.")
         )
     if screen == "timezone":
         return (
-            "🌍 <b>Часовой пояс проекта</b>\n\n"
-            f"Сейчас: <b>{escape(snapshot.timezone)}</b>\n\n"
-            "Выберите зону ниже или отправьте команду "
-            "<code>/timezone Region/City</code> для любой IANA-зоны.\n"
-            "По умолчанию для новых проектов — Europe/Moscow."
+            tr("🌍 <b>Часовой пояс проекта</b>\n\n",
+               "🌍 <b>Project timezone</b>\n\n")
+            + tr("Сейчас: ", "Current: ")
+            + f"<b>{escape(snapshot.timezone)}</b>\n\n"
+            + tr("Выберите зону ниже или отправьте команду "
+                 "<code>/timezone Region/City</code> для любой IANA-зоны.\n"
+                 "По умолчанию для новых проектов — Europe/Moscow.",
+                 "Choose a timezone below or send "
+                 "<code>/timezone Region/City</code> for any IANA timezone.\n"
+                 "Default for new projects: Europe/Moscow.")
         )
     raise ValueError("Unknown admin screen")
-
 
 def _private_chat(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
@@ -173,7 +225,9 @@ class BotTokenReplyFilter(BaseFilter):
         return bool(
             prompt.from_user is not None
             and prompt.from_user.id == bot.id
-            and (prompt.text or "").startswith(CONNECT_PROMPT_PREFIX)
+            and (prompt.text or "").startswith(
+                (CONNECT_PROMPT_PREFIX, CONNECT_PROMPT_PREFIX_EN)
+            )
         )
 
 
