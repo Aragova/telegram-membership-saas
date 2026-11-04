@@ -521,7 +521,7 @@ def create_telegram_admin_router(
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=tr("Не удалось удалить сообщение с токеном. Подключение отменено.",
-                        "Could not delete the token message. Connection canceled."),,
+                        "Could not delete the token message. Connection canceled."),
             )
             return
 
@@ -567,13 +567,13 @@ def create_telegram_admin_router(
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=tr("Удалите сообщение с токеном вручную и смените токен в BotFather.",
-                        "Delete the token message manually and rotate it in BotFather."),,
+                        "Delete the token message manually and rotate it in BotFather."),
             )
             return
         await bot.send_message(
             chat_id=message.chat.id,
             text=tr("Для подключения используйте /start → Подключить своего бота.",
-                    "Use /start → Connect my bot to connect a token."),,
+                    "Use /start → Connect my bot to connect a token."),
         )
 
     return router
