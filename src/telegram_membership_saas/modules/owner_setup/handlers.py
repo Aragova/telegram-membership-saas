@@ -29,6 +29,7 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -37,6 +38,10 @@ from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
     decrypt_token,
     register_customer_bot,
+)
+from telegram_membership_saas.modules.owner_setup.labels import (
+    owner_button_label,
+    owner_runtime_label,
 )
 from telegram_membership_saas.modules.owner_setup.obligations import (
     close_owner_payment,
@@ -103,7 +108,9 @@ DURATIONS = {
 
 
 def _button(label: str, data: str, style: str = "primary") -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=label, callback_data="own:" + data, style=style)
+    return InlineKeyboardButton(
+        text=owner_button_label(label), callback_data="own:" + data, style=style,
+    )
 
 
 def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
@@ -112,28 +119,28 @@ def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
 
 def _status(value: str) -> str:
     return {
-        "active": "🟢 Активно",
-        "registered": "✅ Подключён",
-        "draft": "📝 Черновик",
-        "disabled": "⚪ Отключено",
-        "archived": "📦 Архив",
-        "deleting": "🟡 Удаляется",
-    }.get(value, "Неизвестно")
+        "active": tr("🟢 Активно", "🟢 Active"),
+        "registered": tr("✅ Подключён", "✅ Connected"),
+        "draft": tr("📝 Черновик", "📝 Draft"),
+        "disabled": tr("⚪ Отключено", "⚪ Disabled"),
+        "archived": tr("📦 Архив", "📦 Archived"),
+        "deleting": tr("🟡 Удаляется", "🟡 Removing"),
+    }.get(value, tr("Неизвестно", "Unknown"))
 
 
 def _next_setup_step(snapshot) -> tuple[str, str] | None:
     """One contextual action at a time, not an error-driven wizard."""
     if not any(status == "active" for _, _, status in snapshot.resources):
-        return "📢 1. Подключить канал", "resources"
+        return tr("📢 1. Подключить канал", "📢 1. Connect a channel"), "resources"
     if not any(status == "active" for _, _, status in snapshot.methods):
-        return "💳 2. Настроить оплату", "methods"
+        return tr("💳 2. Настроить оплату", "💳 2. Set up payments"), "methods"
     if not any(status == "active" for _, _, status in snapshot.plans):
-        return "📦 3. Подготовить тариф", "plans"
+        return tr("📦 3. Подготовить тариф", "📦 3. Create a plan"), "plans"
     if not snapshot.sales_configured:
         # A published plan can lose its last currency-compatible payment
         # method without losing its draft prices. Readiness must lead to an
         # actionable repair, never back to itself.
-        return "💳 4. Проверить валюты оплаты", "methods"
+        return tr("💳 4. Проверить валюты оплаты", "💳 4. Check payment currencies"), "methods"
     return None
 
 
@@ -144,11 +151,12 @@ def _private(message: Message) -> bool:
 def _progress(snapshot) -> tuple[str, ...]:
     # A registered bot is configured, not necessarily running.
     steps = (
-        ("Собственный бот", any(s == "registered" for _, s in snapshot.bots)),
-        ("Канал / группа", any(s == "active" for _, _, s in snapshot.resources)),
-        ("Тариф", any(s == "active" for _, _, s in snapshot.plans)),
-        ("Способ оплаты", any(s == "active" for _, _, s in snapshot.methods)),
-        ("Бот принимает покупателей", bool(snapshot.live_bot_username)),
+        (tr("Собственный бот", "Connected bot"), any(s == "registered" for _, s in snapshot.bots)),
+        (tr("Канал / группа", "Channel / group"),
+         any(s == "active" for _, _, s in snapshot.resources)),
+        (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
+        (tr("Способ оплаты", "Payment method"), any(s == "active" for _, _, s in snapshot.methods)),
+        (tr("Бот принимает покупателей", "Bot accepts buyers"), bool(snapshot.live_bot_username)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
 
@@ -238,7 +246,7 @@ def create_owner_setup_router(
             and getattr(get_settings(), "platform_owner_telegram_id", None) == user_id
         ):
             return [InlineKeyboardButton(
-                text="👑 Панель платформы", callback_data="plat:home",
+                text=tr("👑 Панель платформы", "👑 Platform dashboard"), callback_data="plat:home",
             )]
         return []
 
@@ -251,15 +259,18 @@ def create_owner_setup_router(
         if home.selected is not None:
             await show_dashboard(bot, user_id, actor_id, home.selected)
             return
-        lines = ["✨ <b>ViMi Pay · Управление подписками</b>", ""]
+        lines = [tr("✨ <b>ViMi Pay · Управление подписками</b>",
+                    "✨ <b>ViMi Pay · Membership management</b>"), ""]
         rows: list[list[InlineKeyboardButton]] = []
         if not home.projects:
             lines.append(
-                "Подключите собственного Telegram-бота, затем "
-                "откройте его для настройки тарифов и оплаты."
+                tr("Подключите собственного Telegram-бота, затем "
+                   "откройте его для настройки тарифов и оплаты.",
+                   "Connect your Telegram bot, then open it to configure "
+                   "subscriptions and payments.")
             )
         else:
-            lines.append("Выберите проект для управления:")
+            lines.append(tr("Выберите проект для управления:", "Select a connection to manage:"))
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
         rows.append([_button("➕ Подключить бота подписок", "new", "success")])
@@ -280,11 +291,12 @@ def create_owner_setup_router(
         if fixed_project_id is None:
             # Central is a connection manager, not a tenant sales console.
             text = (
-                "✦ <b>ViMi Pay</b>\n"
-                "<i>Ваши подключения</i>\n\n"
+                tr("✦ <b>ViMi Pay</b>\n<i>Ваши подключения</i>\n\n",
+                   "✦ <b>ViMi Pay</b>\n<i>Your connections</i>\n\n") +
                 f"🤖 <b>{escape(data.project_name)}</b>\n"
-                f"{escape(data.bot_runtime_label)}\n\n"
-                "Подключите бота и продолжите настройку внутри него."
+                f"{escape(owner_runtime_label(data.bot_runtime_label))}\n\n"
+                + tr("Подключите бота и продолжите настройку внутри него.",
+                     "Connect a bot and finish setup inside that bot.")
             )
             rows = [
                 [_button("🤖 Управление ботом", "bots", "success")],
@@ -297,16 +309,19 @@ def create_owner_setup_router(
         else:
             next_step = _next_setup_step(data)
             text = (
-                "✦ <b>Панель администратора</b>\n"
+                tr("✦ <b>Панель администратора</b>\n",
+                   "✦ <b>Admin dashboard</b>\n") +
                 f"<b>{escape(data.project_name)}</b>\n"
                 f"🌍 {escape(data.timezone)}\n\n"
                 + "\n".join(_progress(data))
                 + "\n\n"
                 + (
-                    "✅ Продажи готовы. Управляйте тарифами и заявками."
+                    tr("✅ Продажи готовы. Управляйте тарифами и заявками.",
+                        "✅ Ready for sales. Manage plans and payment requests.")
                     if data.sales_configured
-                    else "Настройте продажи по порядку. Уже сохранённые "
-                    "данные останутся на месте."
+                    else tr("Настройте продажи по порядку. Уже сохранённые "
+                            "данные останутся на месте.",
+                            "Complete the setup steps. Saved settings will remain intact.")
                 )
             )
             rows = []
@@ -348,7 +363,7 @@ def create_owner_setup_router(
         sent = await bot.send_message(
             user_id, text, parse_mode="HTML",
             reply_markup=ForceReply(
-                selective=True, input_field_placeholder="Введите ответ"
+                selective=True, input_field_placeholder=tr("Введите ответ", "Type your reply")
             ),
         )
         await bind_prompt(
@@ -359,21 +374,25 @@ def create_owner_setup_router(
 
     async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = ["🤖 <b>Мои боты</b>", ""]
+        lines = [tr("🤖 <b>Мои боты</b>", "🤖 <b>My bots</b>"), ""]
         if not data.bots:
-            lines.append("Бот пока не подключён.")
+            lines.append(tr("Бот пока не подключён.", "No bot connected yet."))
         for username, status in data.bots:
             lines.append(
                 f"• <b>@{escape(username)}</b> — "
-                + ("токен проверен" if status == "registered" else _status(status))
+                + (tr("токен проверен", "token verified") if status == "registered"
+                   else _status(status))
             )
         retiring = any(status == "deleting" for _, _, status in data.bot_instances)
         lines.append(
             "\n" + (
-                "⏳ Бот отключается. Нажмите «Обновить статус» после завершения."
-                if retiring else escape(data.bot_runtime_label)
-                + "\n\nБот доступен для настройки сразу после подключения."
-                "\nОткройте его и добавьте каналы, оплату и тарифы."
+                tr("⏳ Бот отключается. Нажмите «Обновить статус» после завершения.",
+                    "⏳ Bot is shutting down. Refresh its status once complete.")
+                if retiring else escape(owner_runtime_label(data.bot_runtime_label))
+                + tr("\n\nБот доступен для настройки сразу после подключения."
+                     "\nОткройте его и добавьте каналы, оплату и тарифы.",
+                     "\n\nA verified bot can be configured immediately."
+                     "\nOpen it to add channels, payments and plans.")
             )
         )
         rows = []
@@ -384,7 +403,7 @@ def create_owner_setup_router(
         if connected:
             rows.append([
                 InlineKeyboardButton(
-                    text="🚀 Перейти к своему боту",
+                    text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
                     url="https://t.me/" + connected,
                     style="success",
                 )
@@ -397,7 +416,7 @@ def create_owner_setup_router(
                 if status != "deleting":
                     rows.append([
                         _button(
-                            "🗑 Удалить @" + username[:35],
+                            tr("🗑 Удалить @", "🗑 Remove @") + username[:35],
                             "drop:" + encode_uuid(project_id)
                             + ":" + encode_uuid(instance_id),
                             "danger",
@@ -828,7 +847,8 @@ def create_owner_setup_router(
     @router.callback_query(F.data.startswith("own:"))
     async def owner_callback(query: CallbackQuery, bot: Bot) -> None:
         if query.message is None or query.message.chat.type != "private":
-            await query.answer("Откройте личный чат с ViMi Pay", show_alert=True)
+            await query.answer(tr("Откройте личный чат с ViMi Pay",
+                              "Open your private chat with ViMi Pay"), show_alert=True)
             return
         user_id = query.from_user.id
         actor_id = await actor(query.from_user)
@@ -836,7 +856,8 @@ def create_owner_setup_router(
         if fixed_project_id is not None and not await can_manage_project(
             factory, actor_id=actor_id, project_id=fixed_project_id,
         ):
-            await query.answer("Нет доступа к управлению ботом", show_alert=True)
+            await query.answer(tr("Нет доступа к управлению ботом",
+                              "You cannot manage this bot"), show_alert=True)
             return
         if fixed_project_id is None:
             is_registry_action = action in {
@@ -847,7 +868,8 @@ def create_owner_setup_router(
             ))
             if not is_registry_action:
                 await query.answer(
-                    "Настройте продажи в своём подключённом боте",
+                    tr("Настройте продажи в своём подключённом боте",
+                       "Set up sales inside your connected bot"),
                     show_alert=True,
                 )
                 return
@@ -858,24 +880,35 @@ def create_owner_setup_router(
                 ))
             ):
                 await query.answer(
-                    "Управляйте подключением через @vimipay_bot",
+                    tr("Управляйте подключением через @vimipay_bot",
+                       "Manage bot connections in @vimipay_bot"),
                     show_alert=True,
                 )
                 return
         try:
             if action == "new":
                 if get_settings().bot_token_encryption_key is None:
-                    raise ValueError("Подключение ботов пока недоступно")
+                    raise ValueError(tr("Подключение ботов пока недоступно",
+                                        "Bot connections are unavailable"))
                 await prompt(
                     bot, user_id, actor_id, step="new_bot_token",
                     text=(
-                        "✦ <b>Подключение бота подписок</b>\n\n"
-                        "1. Создайте бота в @BotFather или получите новый "
-                        "токен существующего.\n"
-                        "2. Ответьте на это сообщение токеном.\n"
-                        "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
-                        "После проверки откройте своего бота и "
-                        "настройте каналы, оплату и тарифы."
+                        tr(
+                            "✦ <b>Подключение бота подписок</b>\n\n"
+                            "1. Создайте бота в @BotFather или получите новый "
+                            "токен существующего.\n"
+                            "2. Ответьте на это сообщение токеном.\n"
+                            "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
+                            "После проверки откройте своего бота и "
+                            "настройте каналы, оплату и тарифы.",
+                            "✦ <b>Connect a subscription bot</b>\n\n"
+                            "1. Create a bot in @BotFather or request a new token "
+                            "for an existing bot.\n"
+                            "2. Reply to this message with its token.\n"
+                            "3. We delete the token message immediately and "
+                            "verify the connection.\n\n"
+                            "Then open your bot to set up channels, payments and plans.",
+                        )
                     ),
                 )
                 await query.answer()
@@ -889,7 +922,8 @@ def create_owner_setup_router(
                 rows.append([_button("➕ Подключить бота", "new", "success")])
                 if platform_navigation(user_id):
                     rows.append(platform_navigation(user_id))
-                await bot.send_message(user_id, "📁 Мои боты", reply_markup=_markup(rows))
+                await bot.send_message(user_id, tr("📁 Мои боты", "📁 My bots"),
+                                       reply_markup=_markup(rows))
                 await query.answer()
                 return
             if action.startswith("select:"):
@@ -906,7 +940,8 @@ def create_owner_setup_router(
                 fixed_project_id=fixed_project_id,
             )
             if project_id is None:
-                raise ValueError("Сначала создайте или выберите проект")
+                raise ValueError(tr("Сначала создайте или выберите проект",
+                                    "Create or select a connection first"))
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action == "reviews":
@@ -1073,15 +1108,24 @@ def create_owner_setup_router(
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "connect":
                 if get_settings().bot_token_encryption_key is None:
-                    raise ValueError("Подключение ботов временно недоступно")
+                    raise ValueError(tr("Подключение ботов временно недоступно",
+                                        "Bot connections are temporarily unavailable"))
                 await prompt(
                     bot, user_id, actor_id, step="bot_token",
                     text=(
-                        "🤖 <b>Подключение вашего бота</b>\n\n"
-                        "1. Создайте бота в @BotFather.\n"
-                        "2. Ответьте на это сообщение токеном.\n"
-                        "3. ViMi Pay сразу удалит ваше сообщение и проверит токен.\n\n"
-                        "Бот пока не начнёт принимать покупателей."
+                        tr(
+                            "🤖 <b>Подключение вашего бота</b>\n\n"
+                            "1. Создайте бота в @BotFather.\n"
+                            "2. Ответьте на это сообщение токеном.\n"
+                            "3. ViMi Pay сразу удалит ваше сообщение и проверит токен.\n\n"
+                            "Бот пока не начнёт принимать покупателей.",
+                            "🤖 <b>Connect your bot</b>\n\n"
+                            "1. Create a bot in @BotFather.\n"
+                            "2. Reply to this message with its token.\n"
+                            "3. ViMi Pay deletes your message immediately and verifies "
+                            "the token.\n\n"
+                            "Buyers cannot purchase until setup is finished.",
+                        )
                     ),
                 )
             elif action == "resources":
@@ -1449,14 +1493,19 @@ def create_owner_setup_router(
     ) -> None:
         await bot.send_message(
             user_id,
-            f"✅ <b>@{escape(username)} подключён</b>\n\n"
-            "Настройка в ViMi Pay завершена.\n"
-            "Перейдите в свой бот и добавьте канал, "
-            "способы оплаты и тарифы.",
+            tr(
+                f"✅ <b>@{escape(username)} подключён</b>\n\n"
+                "Настройка в ViMi Pay завершена.\n"
+                "Перейдите в свой бот и добавьте канал, "
+                "способы оплаты и тарифы.",
+                f"✅ <b>@{escape(username)} connected</b>\n\n"
+                "Your bot is connected to ViMi Pay.\n"
+                "Open it to configure channels, payment methods and plans.",
+            ),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="🚀 Перейти к своему боту",
+                    text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
                     url="https://t.me/" + username,
                     style="success",
                 ),
@@ -1532,8 +1581,10 @@ def create_owner_setup_router(
         ):
             await bot.send_message(
                 message.chat.id,
-                "Настройка перенесена в вашего бота. "
-                "Откройте его через «Мои боты».",
+                tr("Настройка перенесена в вашего бота. "
+                   "Откройте его через «Мои боты».",
+                   "Setup has moved to your connected bot. "
+                   "Open it from My bots."),
             )
             return
         if fixed_project_id is not None and flow.step in (
@@ -1541,14 +1592,16 @@ def create_owner_setup_router(
         ):
             await bot.send_message(
                 message.chat.id,
-                "Подключение токена доступно только в @vimipay_bot.",
+                tr("Подключение токена доступно только в @vimipay_bot.",
+                   "Bot tokens can only be connected through @vimipay_bot."),
             )
             return
         try:
             if flow.step == "new_bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(
-                        "Неверный формат токена. Получите токен в @BotFather."
+                        tr("Неверный формат токена. Получите токен в @BotFather.",
+                           "Invalid token format. Get a token from @BotFather.")
                     )
                 project_id, registration = await register_new_owner_bot(
                     factory, actor_id=actor_id,
@@ -1566,7 +1619,8 @@ def create_owner_setup_router(
                 await create_owner_project(factory, actor_id=actor_id, name=text)
                 await bot.send_message(
                     message.chat.id,
-                    "✅ Проект создан. Часовой пояс — Москва (можно изменить).",
+                    tr("✅ Проект создан. Часовой пояс — Москва (можно изменить).",
+                       "✅ Project created. Default timezone: Moscow (editable)."),
                 )
                 await show_home(bot, message.chat.id, actor_id)
                 return
@@ -1577,7 +1631,8 @@ def create_owner_setup_router(
                 raise ValueError("Настройка другого бота недоступна")
             if flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
-                    raise ValueError("Неверный формат токена. Получите его в BotFather.")
+                    raise ValueError(tr("Неверный формат токена. Получите его в BotFather.",
+                                        "Invalid token format. Get it from BotFather."))
                 await finish_bot_connection(
                     bot, message.chat.id, actor_id, project_id, text,
                 )

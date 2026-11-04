@@ -21,6 +21,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
@@ -36,6 +37,56 @@ from telegram_membership_saas.modules.platform_usage import (
     platform_usage_report,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+
+PERIOD_LABELS_EN = {
+    "day": "Today",
+    "7": "7 days",
+    "30": "30 days",
+    "365": "Year",
+    "all": "All time",
+}
+
+EVENT_LABELS_EN = {
+    "bot_connected": "Bot connections",
+    "bot_removed": "Bot removals",
+    "bot_disabled": "Bot disables",
+    "bot_reenabled": "Bot reactivations",
+    "bot_deleting": "Deletion requests",
+    "plan_published": "Plan publications",
+    "payment_approved": "Approved payments",
+    "customer_joined": "New customers",
+    "subscription_started": "New subscriptions",
+    "subscription_renewed": "Subscription renewals",
+}
+
+BOT_EVENT_LABELS_EN = {
+    "bot_connected": "connected",
+    "bot_removed": "removed",
+    "bot_disabled": "disabled",
+    "bot_reenabled": "reactivated",
+    "bot_deleting": "removal requested",
+}
+
+
+def _period_label(value: str) -> str:
+    return tr(PERIOD_LABELS[value], PERIOD_LABELS_EN[value])
+
+
+def _status_label(value: str) -> str:
+    states = {
+        "registered": ("зарегистрирован", "registered"),
+        "running": ("работает", "running"),
+        "stale": ("нет сигнала", "stale"),
+        "stopped": ("остановлен", "stopped"),
+        "disabled": ("отключён", "disabled"),
+        "deleting": ("удаляется", "deleting"),
+        "unknown": ("неизвестно", "unknown"),
+        "active": ("активен", "active"),
+        "starting": ("запускается", "starting"),
+        "failed": ("ошибка", "failed"),
+    }
+    labels = states.get(value)
+    return tr(*labels) if labels is not None else value
 
 
 class PlatformOwnerStartFilter(BaseFilter):
@@ -63,7 +114,7 @@ def _keyboard(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
 def _period_rows(current: str, *, section: str) -> list[list[InlineKeyboardButton]]:
     result = [
         _button(
-            ("✓ " if period == current else "") + PERIOD_LABELS[period],
+            ("✓ " if period == current else "") + _period_label(period),
             f"{section}:{period}:0",
         ) for period in PERIODS
     ]
@@ -73,69 +124,87 @@ def _period_rows(current: str, *, section: str) -> list[list[InlineKeyboardButto
 def _summary_text(snapshot) -> str:
     stats = snapshot.counts
     text = [
-        "✦ <b>ViMi Pay · Платформа</b>",
-        "Статистика всей сети",
+        tr("✦ <b>ViMi Pay · Платформа</b>", "✦ <b>ViMi Pay · Platform</b>"),
+        tr("Статистика всей сети", "Platform-wide statistics"),
         "",
-        f"🤖 Подключённых ботов: <b>{stats['bots']}</b>",
-        f"✅ Зарегистрировано: {stats['bots_active']}",
-        f"🟢 Работают сейчас: {stats['bots_running']}",
-        f"▫️ Отключено: {stats['bots_disabled']}",
-        f"👥 Владельцев: <b>{stats['owners']}</b>",
-        f"📢 Каналов и групп: {stats['resources']}",
-        f"💎 Опубликованных тарифов: {stats['plans_published']}",
-        f"📝 Черновиков тарифов: {stats['plans_draft']}",
-        f"🔐 Активных подписок: {stats['subscriptions_active']}",
-        f"📋 Заявок на проверке: {stats['requests_pending']}",
+        tr(f"🤖 Подключённых ботов: <b>{stats['bots']}</b>",
+           f"🤖 Connected bots: <b>{stats['bots']}</b>"),
+        tr(f"✅ Зарегистрировано: {stats['bots_active']}",
+           f"✅ Registered: {stats['bots_active']}"),
+        tr(f"🟢 Работают сейчас: {stats['bots_running']}",
+           f"🟢 Running now: {stats['bots_running']}"),
+        tr(f"▫️ Отключено: {stats['bots_disabled']}",
+           f"▫️ Disabled: {stats['bots_disabled']}"),
+        tr(f"👥 Владельцев: <b>{stats['owners']}</b>",
+           f"👥 Owners: <b>{stats['owners']}</b>"),
+        tr(f"📢 Каналов и групп: {stats['resources']}",
+           f"📢 Channels and groups: {stats['resources']}"),
+        tr(f"💎 Опубликованных тарифов: {stats['plans_published']}",
+           f"💎 Published plans: {stats['plans_published']}"),
+        tr(f"📝 Черновиков тарифов: {stats['plans_draft']}",
+           f"📝 Draft plans: {stats['plans_draft']}"),
+        tr(f"🔐 Активных подписок: {stats['subscriptions_active']}",
+           f"🔐 Active subscriptions: {stats['subscriptions_active']}"),
+        tr(f"📋 Заявок на проверке: {stats['requests_pending']}",
+           f"📋 Pending reviews: {stats['requests_pending']}"),
         "",
-        f"<b>{PERIOD_LABELS[snapshot.period]}</b>",
-        f"Новых ботов: {stats['bots_new_period']}",
-        f"Новых подписок: {stats['subscriptions_new_period']}",
-        f"Подтверждённых оплат: {stats['payments_period']}",
+        f"<b>{_period_label(snapshot.period)}</b>",
+        tr(f"Новых ботов: {stats['bots_new_period']}",
+           f"New bots: {stats['bots_new_period']}"),
+        tr(f"Новых подписок: {stats['subscriptions_new_period']}",
+           f"New subscriptions: {stats['subscriptions_new_period']}"),
+        tr(f"Подтверждённых оплат: {stats['payments_period']}",
+           f"Approved payments: {stats['payments_period']}"),
         "",
-        "💰 <b>Оборот клиентов по валютам</b>",
+        tr("💰 <b>Оборот клиентов по валютам</b>",
+           "💰 <b>Client turnover by currency</b>"),
     ]
     if snapshot.turnover:
         text.extend(
             "• " + escape(str(item["currency"])) + " — "
             + escape(fmt_turnover(str(item["amount"])))
-            + " (операций: " + str(item["count"]) + ")"
+            + tr(" (операций: ", " (transactions: ") + str(item["count"]) + ")"
             for item in snapshot.turnover
         )
     else:
-        text.append("Подтверждённых платежей за период нет.")
+        text.append(tr("Подтверждённых платежей за период нет.",
+                       "No approved payments in this period."))
     text.extend([
         "",
-        "<i>Суммы подтверждены администраторами каналов, "
-        "но не проверены ViMi Pay в банках.</i>",
-        "Выручка ViMi Pay: <b>биллинг ещё не запущен</b>.",
+        tr("<i>Суммы подтверждены администраторами каналов, "
+           "но не проверены ViMi Pay в банках.</i>",
+           "<i>Amounts were approved by channel admins, "
+           "but ViMi Pay has not verified bank transfers.</i>"),
+        tr("Выручка ViMi Pay: <b>биллинг ещё не запущен</b>.",
+           "ViMi Pay revenue: <b>billing is not yet enabled</b>."),
     ])
     return "\n".join(text)
 
-
 def _bot_list(snapshot) -> str:
     lines = [
-        "✦ <b>Подключённые боты</b>",
-        "Период: " + PERIOD_LABELS[snapshot.period],
+        tr("✦ <b>Подключённые боты</b>", "✦ <b>Connected bots</b>"),
+        tr("Период: ", "Period: ") + _period_label(snapshot.period),
         "",
     ]
     if not snapshot.bots:
-        lines.append("На этой странице нет подключений.")
+        lines.append(tr("На этой странице нет подключений.",
+                        "No connections on this page."))
     for idx, bot in enumerate(snapshot.bots, 1):
         lines.extend([
             f"<b>{idx + snapshot.page * PAGE_SIZE}. "
             + escape("@" + bot["username"]) + "</b>",
-            "Работа: " + escape(bot["runtime_state"]),
-            "Тарифов: " + str(bot["plans"])
-            + " · Подписок: " + str(bot["subscriptions"])
-            + " · Оплат: " + str(bot["payments_period"]),
+            tr("Работа: ", "Runtime: ")
+            + escape(_status_label(bot["runtime_state"])),
+            tr("Тарифов: ", "Plans: ") + str(bot["plans"])
+            + tr(" · Подписок: ", " · Subscriptions: ") + str(bot["subscriptions"])
+            + tr(" · Оплат: ", " · Payments: ") + str(bot["payments_period"]),
             "",
         ])
     lines.append(
-        "Страница " + str(snapshot.page + 1) + " из "
-        + str(max(1, snapshot.pages))
+        tr("Страница ", "Page ") + str(snapshot.page + 1)
+        + tr(" из ", " of ") + str(max(1, snapshot.pages))
     )
     return "\n".join(lines)
-
 
 def _bot_details(bot: dict, *, period: str) -> str:
     currency_rows = bot.get("gmv_by_currency") or []
@@ -144,72 +213,92 @@ def _bot_details(bot: dict, *, period: str) -> str:
             "• " + escape(item["currency"]) + " — "
             + escape(fmt_turnover(str(item["amount"])))
             for item in currency_rows
-        ) if currency_rows else "Подтверждённых оплат за период нет."
+        ) if currency_rows else tr(
+            "Подтверждённых оплат за период нет.",
+            "No approved payments in this period.",
+        )
     )
     return (
-        "✦ <b>Статистика бота</b>\n\n"
-        "🤖 <b>@" + escape(bot["username"]) + "</b>\n"
-        "Проект: " + escape(bot["project_name"]) + "\n"
-        "Подключение: " + escape(bot["status"]) + "\n"
-        "Работа: " + escape(bot["runtime_state"]) + "\n\n"
-        "📢 Ресурсов: " + str(bot["resources"]) + "\n"
-        "💎 Опубликованных тарифов: " + str(bot["plans"]) + "\n"
-        "🔐 Активных подписок: " + str(bot["subscriptions"]) + "\n"
-        "💳 Подтверждённых оплат ("
-        + escape(PERIOD_LABELS[period]) + "): "
+        tr("✦ <b>Статистика бота</b>\n\n",
+           "✦ <b>Bot statistics</b>\n\n")
+        + "🤖 <b>@" + escape(bot["username"]) + "</b>\n"
+        + tr("Проект: ", "Project: ") + escape(bot["project_name"]) + "\n"
+        + tr("Подключение: ", "Connection: ")
+        + escape(_status_label(bot["status"])) + "\n"
+        + tr("Работа: ", "Runtime: ")
+        + escape(_status_label(bot["runtime_state"])) + "\n\n"
+        + tr("📢 Ресурсов: ", "📢 Resources: ") + str(bot["resources"]) + "\n"
+        + tr("💎 Опубликованных тарифов: ", "💎 Published plans: ")
+        + str(bot["plans"]) + "\n"
+        + tr("🔐 Активных подписок: ", "🔐 Active subscriptions: ")
+        + str(bot["subscriptions"]) + "\n"
+        + tr("💳 Подтверждённых оплат (", "💳 Approved payments (")
+        + escape(_period_label(period)) + "): "
         + str(bot["payments_period"]) + "\n\n"
-        "💰 <b>Оборот по валютам</b>\n"
+        + tr("💰 <b>Оборот по валютам</b>\n",
+             "💰 <b>Turnover by currency</b>\n")
         + finance + "\n\n"
-        "<i>Только агрегаты. Управление каналом и платежами "
-        "осуществляется в собственном боте владельца.</i>"
+        + tr("<i>Только агрегаты. Управление каналом и платежами "
+             "осуществляется в собственном боте владельца.</i>",
+             "<i>Aggregate figures only. Channels and payments "
+             "are managed in the owner's connected bot.</i>")
     )
-
 
 def _usage_text(snapshot, *, timezone: str) -> str:
     lines = [
-        "✦ <b>ViMi Pay · Использование</b>",
-        "Журнал работы платформы",
+        tr("✦ <b>ViMi Pay · Использование</b>",
+           "✦ <b>ViMi Pay · Usage</b>"),
+        tr("Журнал работы платформы", "Platform activity history"),
         "",
-        "<b>" + escape(PERIOD_LABELS[snapshot.period]) + "</b>",
-        "Событий: " + str(snapshot.event_total),
+        "<b>" + escape(_period_label(snapshot.period)) + "</b>",
+        tr("Событий: ", "Events: ") + str(snapshot.event_total),
     ]
     for kind, label in EVENT_LABELS.items():
         count = snapshot.counts.get(kind, 0)
-        lines.append("• " + label + ": " + str(count))
-    lines.extend(["", "💳 <b>Платежи клиентов по валютам</b>"])
+        lines.append("• " + tr(label, EVENT_LABELS_EN[kind]) + ": " + str(count))
+    lines.extend(["", tr("💳 <b>Платежи клиентов по валютам</b>",
+                         "💳 <b>Client payments by currency</b>")])
     if snapshot.turnover:
         for item in snapshot.turnover:
             lines.append(
                 "• " + escape(item["currency"]) + " — "
                 + escape(fmt_turnover(str(item["amount"])))
-                + " (подтверждений: " + str(item["count"]) + ")"
+                + tr(" (подтверждений: ", " (approvals: ")
+                + str(item["count"]) + ")"
             )
     else:
-        lines.append("Нет подтверждённых платежей за период.")
-    lines.extend(["", "🤖 <b>История подключений и удалений</b>"])
+        lines.append(tr("Нет подтверждённых платежей за период.",
+                        "No approved payments in this period."))
+    lines.extend(["", tr("🤖 <b>История подключений и удалений</b>",
+                         "🤖 <b>Connection and removal history</b>")])
     for item in snapshot.history:
         occurred = datetime.fromisoformat(item["occurred_at"])
         timestamp = occurred.astimezone(ZoneInfo(timezone)).strftime("%d.%m %H:%M")
         lines.append(
             "• " + timestamp + " — @"
             + escape(item["bot_username"] or "unknown") + ": "
-            + escape(BOT_EVENT_LABELS.get(item["event_type"], "событие"))
+            + escape(tr(
+                BOT_EVENT_LABELS.get(item["event_type"], "событие"),
+                BOT_EVENT_LABELS_EN.get(item["event_type"], "event"),
+            ))
         )
     if not snapshot.history:
-        lines.append("На этой странице нет событий.")
+        lines.append(tr("На этой странице нет событий.",
+                        "No events on this page."))
     if snapshot.pages > 1:
         lines.append(
-            "\nСтраница " + str(snapshot.page + 1)
-            + " из " + str(snapshot.pages)
+            tr("\nСтраница ", "\nPage ") + str(snapshot.page + 1)
+            + tr(" из ", " of ") + str(snapshot.pages)
         )
     lines.extend([
         "",
-        "<i>Журнал сохраняет удалённые подключения. Метрики "
-        "не являются выставленными счетами ViMi Pay. "
-        "Платежи подтверждены администраторами каналов.</i>",
+        tr("<i>Журнал сохраняет удалённые подключения. Метрики "
+           "не являются выставленными счетами ViMi Pay. "
+           "Платежи подтверждены администраторами каналов.</i>",
+           "<i>Deleted connections remain in this ledger. These are "
+           "not ViMi Pay invoices. Channel admins confirmed the payments.</i>"),
     ])
     return "\n".join(lines)
-
 
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
@@ -220,7 +309,7 @@ def create_platform_dashboard_router(
 
     async def read_report(user, *, period: str, page: int = 0):
         if not is_configured_platform_owner(user.id, config):
-            raise PermissionError("Нет доступа к платформе")
+            raise PermissionError("Platform access denied")
         actor_id = await ensure_telegram_actor(
             factory, telegram_id=user.id, username=user.username,
             first_name=user.first_name,
@@ -234,11 +323,11 @@ def create_platform_dashboard_router(
         report = await read_report(user, period=period)
         rows = _period_rows(period, section="home")
         rows.extend([
-            [_button("🤖 Все подключённые боты", f"bots:{period}:0")],
-            [_button("📊 Использование и история", f"usage:{period}:0")],
+            [_button(tr("🤖 Все подключённые боты", "🤖 Connected bots"), f"bots:{period}:0")],
+            [_button(tr("📊 Использование и история", "📊 Usage & history"), f"usage:{period}:0")],
             [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             [InlineKeyboardButton(
-                text="🤖 Мои боты · личный режим",
+                text=tr("🤖 Мои боты · личный режим", "🤖 My bots · personal mode"),
                 callback_data="own:projects",
             )],
         ])
@@ -257,8 +346,10 @@ def create_platform_dashboard_router(
             # No internals, credentials, or SQL errors in operator chat.
             await bot.send_message(
                 message.from_user.id,
-                "👑 Панель платформы пока недоступна. "
-                "Проверьте подключение и права оператора.",
+                tr("👑 Панель платформы пока недоступна. "
+                   "Проверьте подключение и права оператора.",
+                   "👑 Platform dashboard is temporarily unavailable. "
+                   "Check operator access and connectivity."),
             )
 
     @router.callback_query(F.data.startswith("plat:"))
@@ -269,7 +360,10 @@ def create_platform_dashboard_router(
             or query.message.chat.id != query.from_user.id
             or not is_configured_platform_owner(query.from_user.id, config)
         ):
-            await query.answer("Нет доступа к панели платформы", show_alert=True)
+            await query.answer(
+                tr("Нет доступа к панели платформы", "Platform access denied"),
+                show_alert=True,
+            )
             return
         tokens = (query.data or "").split(":")
         try:
@@ -306,15 +400,15 @@ def create_platform_dashboard_router(
                 nav = []
                 if page > 0:
                     nav.append(_button(
-                        "⬅️ Предыдущие", f"usage:{period}:{page - 1}",
+                        tr("⬅️ Предыдущие", "⬅️ Previous"), f"usage:{period}:{page - 1}",
                     ))
                 if page + 1 < report.pages:
                     nav.append(_button(
-                        "Следующие ➡️", f"usage:{period}:{page + 1}",
+                        tr("Следующие ➡️", "Next ➡️"), f"usage:{period}:{page + 1}",
                     ))
                 if nav:
                     rows.append(nav)
-                rows.append([_button("⬅️ Платформа", f"home:{period}:0")])
+                rows.append([_button(tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0")])
                 await bot.send_message(
                     query.from_user.id,
                     _usage_text(report, timezone=config.platform_timezone),
@@ -342,7 +436,7 @@ def create_platform_dashboard_router(
                     nav.append(_button("➡️", f"bots:{period}:{page + 1}"))
                 if nav:
                     rows.append(nav)
-                rows.append([_button("⬅️ Платформа", f"home:{period}:0")])
+                rows.append([_button(tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0")])
                 await bot.send_message(
                     query.from_user.id, _bot_list(report),
                     parse_mode="HTML", reply_markup=_keyboard(rows),
@@ -368,16 +462,24 @@ def create_platform_dashboard_router(
                     query.from_user.id,
                     _bot_details(report.bots[index], period=period),
                     parse_mode="HTML", reply_markup=_keyboard([
-                        [_button("⬅️ Все боты", f"bots:{period}:{page}")],
+                        [_button(tr("⬅️ Все боты", "⬅️ All bots"), f"bots:{period}:{page}")],
                     ]),
                 )
             else:
                 raise ValueError("Кнопка устарела")
         except (PermissionError, ValueError):
-            await query.answer("Недоступно. Откройте /platform заново.", show_alert=True)
+            await query.answer(
+                tr("Недоступно. Откройте /platform заново.",
+                   "Unavailable. Reopen /platform."),
+                show_alert=True,
+            )
             return
         except Exception:
-            await query.answer("Отчёт временно недоступен.", show_alert=True)
+            await query.answer(
+                tr("Отчёт временно недоступен.",
+                   "Report temporarily unavailable."),
+                show_alert=True,
+            )
             return
         await query.answer()
 
