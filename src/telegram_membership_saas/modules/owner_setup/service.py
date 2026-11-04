@@ -45,6 +45,7 @@ from telegram_membership_saas.modules.projects import (
 )
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
+from telegram_membership_saas.modules.telegram_commerce.service import list_checkout_options
 from telegram_membership_saas.tenant_context import TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
@@ -77,6 +78,7 @@ class SetupOverview:
     methods: tuple[tuple[UUID, str, str], ...]
     bot_runtime_label: str = "⚪ Ожидает запуска"
     live_bot_username: str | None = None
+    sales_configured: bool = False
 
 
 async def ensure_telegram_actor(
@@ -368,6 +370,9 @@ async def setup_overview(
         methods = list((await session.scalars(select(PaymentMethod).where(
             PaymentMethod.project_id == project_id
         ))).all())
+        sales_configured = bool(await list_checkout_options(
+            session, project_id=project_id
+        ))
         health = await read_bot_health(session, project_id=project_id)
         eligible_bots = [b for b in bots if b.status == "registered"]
         runtime_label, live = (
@@ -378,8 +383,14 @@ async def setup_overview(
             else ("⚪ Не подключён", False)
         )
         return SetupOverview(
-            bot_runtime_label=runtime_label,
-            live_bot_username=eligible_bots[0].username if live else None,
+            bot_runtime_label=(
+                "🟡 Бот работает, но тарифы или оплата не настроены"
+                if live and not sales_configured else runtime_label
+            ),
+            live_bot_username=(
+                eligible_bots[0].username if live and sales_configured else None
+            ),
+            sales_configured=sales_configured,
             project_id=project_id,
             project_name=project.name,
             timezone=project.timezone,
