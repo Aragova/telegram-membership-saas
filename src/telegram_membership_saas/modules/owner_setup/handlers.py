@@ -64,6 +64,7 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
     SetupFlow,
+    back_owner_flow,
     advance_flow,
     bind_prompt,
     can_manage_project,
@@ -378,8 +379,8 @@ def create_owner_setup_router(
         sent = await bot.send_message(
             user_id,
             text + tr(
-                "\n\nДля отмены настройки отправьте /cancel.",
-                "\n\nTo cancel setup, send /cancel.",
+                "\n\n↩ /back — назад · /cancel — в меню.",
+                "\n\n↩ /back — back · /cancel — main menu.",
             ),
             parse_mode="HTML",
             reply_markup=ForceReply(
@@ -1069,6 +1070,47 @@ def create_owner_setup_router(
             reply_markup=ReplyKeyboardRemove(),
         )
         await show_home(bot, message.chat.id, actor_id)
+
+    @router.message(Command("back"), OwnerHomeFilter(factory, fixed_project_id))
+    async def back_setup_message(message: Message, bot: Bot) -> None:
+        """Return to the parent section, clearing only this unfinished wizard."""
+        if not _private(message):
+            return
+        actor_id = await actor(message.from_user)
+        prior = await back_owner_flow(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+        )
+        if prior is None or prior.project_id is None:
+            await show_home(bot, message.chat.id, actor_id)
+            return
+        if fixed_project_id is not None and prior.project_id != fixed_project_id:
+            await show_home(bot, message.chat.id, actor_id)
+            return
+        project_id = prior.project_id
+        if prior.step == "chat_picker":
+            await bot.send_message(
+                message.chat.id,
+                tr("Выбор чата закрыт.", "Chat selection closed."),
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        if prior.step in ("plan_name", "plan_duration", "plan_resource"):
+            await show_plans(bot, message.chat.id, actor_id, project_id)
+        elif prior.step == "price_amount":
+            try:
+                plan_id = UUID(hex=prior.payload["plan_id"])
+            except (KeyError, TypeError, ValueError, AttributeError):
+                await show_plans(bot, message.chat.id, actor_id, project_id)
+            else:
+                await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+        elif prior.step in ("method_name", "method_instruction"):
+            await show_methods(bot, message.chat.id, actor_id, project_id)
+        elif prior.step in ("chat_picker", "resource_reference"):
+            await show_resources(bot, message.chat.id, actor_id, project_id)
+        elif prior.step == "bot_token" and fixed_project_id is None:
+            await show_bots(bot, message.chat.id, actor_id, project_id)
+        else:
+            await show_dashboard(bot, message.chat.id, actor_id, project_id)
 
     @router.callback_query(F.data.startswith("own:"))
     async def owner_callback(query: CallbackQuery, bot: Bot) -> None:
