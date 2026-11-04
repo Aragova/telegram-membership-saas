@@ -51,7 +51,7 @@ def test_platform_english_reporting_and_periods() -> None:
         assert "Подключённых" not in body
         buttons = [b for row in platform_ui._period_rows("30", section="home")
                    for b in row]
-        assert "30 days" in [b.text for b in buttons]
+        assert "✓ 30 days" in [b.text for b in buttons]
         assert "plat:home:30:0" in [b.callback_data for b in buttons]
         detail = platform_ui._bot_details(snapshot.bots[0], period="30")
         assert "My Custom Channel" in detail
