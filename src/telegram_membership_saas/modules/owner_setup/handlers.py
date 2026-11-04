@@ -578,7 +578,8 @@ def create_owner_setup_router(
         key = get_settings().bot_token_encryption_key
         if not key:
             await central_bot.send_message(
-                owner_tg_id, "⚠️ Состояние сохранено, но уведомление покупателя недоступно.",
+                owner_tg_id, tr("⚠️ Состояние сохранено, но уведомление покупателя недоступно.",
+                                "⚠️ Change saved, but buyer notifications are unavailable."),
             )
             return
         async with tenant_session_scope(
@@ -591,21 +592,24 @@ def create_owner_setup_router(
             cipher = instance.token_ciphertext if instance else None
         if not cipher:
             await central_bot.send_message(
-                owner_tg_id, "⚠️ Изменение сохранено, но бот покупателя отключён.",
+                owner_tg_id, tr("⚠️ Изменение сохранено, но бот покупателя отключён.",
+                                "⚠️ Change saved, but the buyer bot is disconnected."),
             )
             return
         try:
             customer_bot = Bot(token=decrypt_token(cipher, key=key))
             try:
-                await customer_bot.send_message(
-                    change.telegram_user_id, change.message,
-                )
+                async with recipient_language(factory, change.telegram_user_id):
+                    await customer_bot.send_message(
+                        change.telegram_user_id, obligation_message(change.message),
+                    )
             finally:
                 await customer_bot.session.close()
         except (AiogramError, ValueError, RuntimeError, InvalidToken):
             await central_bot.send_message(
                 owner_tg_id,
-                "⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
+                tr("⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
+                   "⚠️ Change saved, but Telegram could not notify the buyer."),
             )
 
 
@@ -1007,7 +1011,8 @@ def create_owner_setup_router(
             elif action.startswith("drop:"):
                 _, project_ref, instance_ref = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Меню другого проекта. Откройте «Мои боты» снова.")
+                    raise ValueError(tr("Меню другого проекта. Откройте «Мои боты» снова.",
+                                        "Another project menu. Reopen My bots."))
                 instance_id = decode_uuid(instance_ref)
                 data = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id
@@ -1017,18 +1022,28 @@ def create_owner_setup_router(
                     if bot_id == instance_id and status != "deleting"
                 ), None)
                 if name is None or not data.can_delete_bot:
-                    raise PermissionError("Этот бот не доступен для удаления")
+                    raise PermissionError(tr("Этот бот не доступен для удаления",
+                                            "This bot cannot be removed."))
                 await bot.send_message(
                     user_id,
-                    "🗑 <b>Удалить @" + escape(name) + "?</b>\n\n"
-                    "ViMi Pay отключит обработку покупателей, затем удалит "
-                    "подключение, сохранённый токен и состояние запуска.\n\n"
-                    "Настройки проекта и история платежей останутся: они "
-                    "не принадлежат токену бота. Повторно подключить этот "
-                    "Telegram-бот можно после завершения удаления.\n\n"
-                    "При незавершённых оплатах или действующих подписках "
-                    "удаление не начнётся, чтобы не оставить людей без "
-                    "управления доступом.",
+                    tr("🗑 <b>Удалить @", "🗑 <b>Remove @") + escape(name)
+                    + "?</b>\n\n"
+                    + tr(
+                        "ViMi Pay отключит обработку покупателей, затем удалит "
+                        "подключение, сохранённый токен и состояние запуска.\n\n"
+                        "Настройки проекта и история платежей останутся: они "
+                        "не принадлежат токену бота. Повторно подключить этот "
+                        "Telegram-бот можно после завершения удаления.\n\n"
+                        "При незавершённых оплатах или действующих подписках "
+                        "удаление не начнётся, чтобы не оставить людей без "
+                        "управления доступом.",
+                        "ViMi Pay will stop serving buyers, then remove this "
+                        "connection, saved token and runtime state.\n\n"
+                        "Project settings and payment history are preserved. "
+                        "You can reconnect this Telegram bot after removal finishes.\n\n"
+                        "Removal will be blocked while payments or paid subscriptions "
+                        "remain unsettled, so buyers do not lose access management.",
+                    ),
                     parse_mode="HTML",
                     reply_markup=_markup([
                         [_button(
@@ -1043,7 +1058,8 @@ def create_owner_setup_router(
             elif action.startswith("dropok:"):
                 _, project_ref, instance_ref = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Проект изменился. Откройте «Мои боты» снова.")
+                    raise ValueError(tr("Проект изменился. Откройте «Мои боты» снова.",
+                                        "Project changed. Reopen My bots."))
                 try:
                     requested = await request_bot_retirement(
                         factory, actor_id=actor_id,
@@ -1053,20 +1069,34 @@ def create_owner_setup_router(
                 except ValueError as exc:
                     # Include the entire safety explanation; Telegram alert
                     # callbacks are limited in length and would truncate it.
-                    await bot.send_message(user_id, "⚠️ " + str(exc))
+                    await bot.send_message(user_id, tr(
+                        "⚠️ " + str(exc),
+                        "⚠️ Bot removal is blocked by outstanding obligations. "
+                        "Review and resolve each obligation below.",
+                    ))
                     await show_obligations(bot, user_id, actor_id, project_id)
-                    await query.answer("Удаление пока недоступно", show_alert=True)
+                    await query.answer(tr("Удаление пока недоступно",
+                                          "Bot removal is blocked"), show_alert=True)
                     return
                 await bot.send_message(
                     user_id,
-                    "✅ Удаление запрошено. Бот прекратит обработку покупателей, "
-                    "а после безопасной остановки ViMi Pay удалит его "
-                    "данные подключения.\n\n"
-                    "Нажмите «🔄 Обновить статус» в разделе «Мои боты». "
-                    "Когда бот исчезнет из списка, его можно подключить "
-                    "заново или создать новый проект с нуля."
-                    if requested else
-                    "Этот бот уже не подключён. Обновите список.",
+                    (
+                        tr(
+                            "✅ Удаление запрошено. Бот прекратит обработку покупателей, "
+                            "а после безопасной остановки ViMi Pay удалит его "
+                            "данные подключения.\n\n"
+                            "Нажмите «🔄 Обновить статус» в разделе «Мои боты». "
+                            "Когда бот исчезнет из списка, его можно подключить "
+                            "заново или создать новый проект с нуля.",
+                            "✅ Bot removal requested. Buyer processing will stop, "
+                            "then ViMi Pay will safely remove the connection.\n\n"
+                            "Use Refresh status in My bots. Once removed, "
+                            "you can reconnect it or start a new project.",
+                        ) if requested else tr(
+                            "Этот бот уже не подключён. Обновите список.",
+                            "This bot is already disconnected. Refresh the list.",
+                        )
+                    ),
                 )
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "oblist":
@@ -1074,7 +1104,8 @@ def create_owner_setup_router(
             elif action.startswith("obpage:"):
                 _, project_ref, page_number = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Открыто меню другого проекта")
+                    raise ValueError(tr("Открыто меню другого проекта",
+                                        "Another project menu is open."))
                 await show_obligations(
                     bot, user_id, actor_id, project_id, page=int(page_number),
                 )
@@ -1087,7 +1118,8 @@ def create_owner_setup_router(
                 verb, kind, project_ref, object_ref = parts[:4]
                 page = int(parts[4]) if len(parts) == 5 else 0
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Открыто меню другого проекта. Обновите обязательства.")
+                    raise ValueError(tr("Открыто меню другого проекта. Обновите обязательства.",
+                                        "Another project menu. Refresh obligations."))
                 object_id = decode_uuid(object_ref)
                 snapshot = await list_owner_obligations(
                     factory, actor_id=actor_id, project_id=project_id,
@@ -1101,20 +1133,38 @@ def create_owner_setup_router(
                 }
                 if verb == "ob":
                     if object_id not in active_ids[kind]:
-                        raise ValueError("Действие уже неактуально. Обновите обязательства.")
+                        raise ValueError(tr("Действие уже неактуально. Обновите обязательства.",
+                                        "Action is stale. Refresh obligations."))
                     warnings = {
-                        "pay": "Проверьте поступление денег в банке. "
-                        "Отклонение или отмена заявки не возвращает деньги.",
-                        "sub": "Вы досрочно закрываете оплаченный срок! "
-                        "Возврат денег ViMi Pay не выполняет. "
-                        "Урегулируйте вопрос с покупателем самостоятельно.",
-                        "grant": "Это отдельное право доступа. "
-                        "Проверьте, не является ли оно служебным или бессрочным.",
-                        "sync": "ViMi Pay перепроверит права и отправит действие "
-                        "в Telegram. Доступ не будет удалён при других действующих правах.",
+                        "pay": tr(
+                            "Проверьте поступление денег в банке. "
+                            "Отклонение или отмена заявки не возвращает деньги.",
+                            "Verify the bank transfer. Rejecting or closing "
+                            "a payment request does not refund money.",
+                        ),
+                        "sub": tr(
+                            "Вы досрочно закрываете оплаченный срок! "
+                            "Возврат денег ViMi Pay не выполняет. "
+                            "Урегулируйте вопрос с покупателем самостоятельно.",
+                            "You are ending a paid term early. ViMi Pay "
+                            "does not issue refunds. Resolve this with the buyer.",
+                        ),
+                        "grant": tr(
+                            "Это отдельное право доступа. "
+                            "Проверьте, не является ли оно служебным или бессрочным.",
+                            "This is a separate access grant. Check whether it "
+                            "is permanent or used for account management.",
+                        ),
+                        "sync": tr(
+                            "ViMi Pay перепроверит права и отправит действие "
+                            "в Telegram. Доступ не будет удалён при других действующих правах.",
+                            "ViMi Pay will recalculate access and send the action "
+                            "to Telegram. Other valid grants still preserve access.",
+                        ),
                     }
                     await bot.send_message(
-                        user_id, "⚠️ <b>Подтвердите действие</b>\n\n"
+                        user_id, tr("⚠️ <b>Подтвердите действие</b>\n\n",
+                                   "⚠️ <b>Confirm this action</b>\n\n")
                         + escape(warnings[kind]),
                         parse_mode="HTML", reply_markup=_markup([
                             [_button(
@@ -1128,7 +1178,8 @@ def create_owner_setup_router(
                     )
                 else:
                     if object_id not in active_ids[kind]:
-                        raise ValueError("Действие уже выполнено или устарело")
+                        raise ValueError(tr("Действие уже выполнено или устарело",
+                                        "Action was completed or has expired."))
                     if kind == "pay":
                         change = await close_owner_payment(
                             factory, actor_id=actor_id, project_id=project_id,
@@ -1149,13 +1200,13 @@ def create_owner_setup_router(
                             factory, actor_id=actor_id, project_id=project_id,
                             state_id=object_id,
                         )
-                        await bot.send_message(user_id, "🔄 " + message)
+                        await bot.send_message(user_id, "🔄 " + obligation_message(message))
                         change = None
                     if change is not None:
                         await bot.send_message(
                             user_id, "✅ " + (
-                                "Состояние сохранено" if change.changed
-                                else change.message
+                                tr("Состояние сохранено", "Change saved")
+                                if change.changed else obligation_message(change.message)
                             ),
                         )
                         await notify_buyer(bot, user_id, actor_id, project_id, change)
