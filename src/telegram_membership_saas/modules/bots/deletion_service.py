@@ -26,6 +26,7 @@ from telegram_membership_saas.modules.payments.models import PaymentRequest, Pay
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions.models import Subscription
 from telegram_membership_saas.modules.telegram_access.models import TelegramJoinTicket
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
 
 
@@ -136,6 +137,9 @@ async def request_bot_retirement(
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:
+        # Serialize with every new checkout so a payment accepted during
+        # deletion confirmation cannot escape the blockers check.
+        await checkout_retirement_lock(session, project_id)
         project = await session.scalar(
             select(Project).where(Project.id == project_id).with_for_update()
         )
