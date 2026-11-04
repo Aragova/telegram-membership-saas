@@ -11,6 +11,10 @@ import pytest
 from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
+from telegram_membership_saas.customer_supervisor import (
+    CustomerBotSupervisor,
+    discover_removal_targets,
+)
 from telegram_membership_saas.db import (
     build_engine,
     build_session_factory,
@@ -18,7 +22,6 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
-    finalize_bot_retirement,
     request_bot_retirement,
 )
 from telegram_membership_saas.modules.bots.health_service import (
@@ -37,6 +40,7 @@ from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
     project_worker_lock,
 )
+from telegram_membership_saas.tenant_context import TenantAccessDenied
 from telegram_membership_saas.tenant_context import TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -53,6 +57,7 @@ async def test_delete_reconnect_same_bot_twice_and_preserve_project():
     engine = build_engine(Settings())
     factory = build_session_factory(engine)
     telegram_bot_id = _user_id()
+    supervisor = CustomerBotSupervisor(engine, factory, Settings())
     try:
         alice = await ensure_telegram_actor(
             factory, telegram_id=_user_id(),
@@ -71,7 +76,7 @@ async def test_delete_reconnect_same_bot_twice_and_preserve_project():
         outsider = await create_owner_project(
             factory, actor_id=bob, name="Other owner's project",
         )
-        for iteration, project_id in enumerate((old_project, new_project), start=1):
+        for project_id in (old_project, new_project):
             instance_id = uuid4()
             async with tenant_session_scope(
                 factory, TenantContext(user_id=alice, project_id=project_id)
@@ -96,7 +101,7 @@ async def test_delete_reconnect_same_bot_twice_and_preserve_project():
                     bot_id=telegram_bot_id, instance_id=worker_id,
                     state="running",
                 )
-                with pytest.raises(PermissionError):
+                with pytest.raises((PermissionError, TenantAccessDenied)):
                     await request_bot_retirement(
                         factory, actor_id=bob, project_id=project_id,
                         bot_instance_id=instance_id,
@@ -114,12 +119,22 @@ async def test_delete_reconnect_same_bot_twice_and_preserve_project():
                     factory, actor_id=alice, project_id=project_id,
                     bot_instance_id=instance_id,
                 )
-
-            async with project_worker_lock(engine, project_id):
-                assert await finalize_bot_retirement(
-                    factory, project_id=project_id,
-                    telegram_bot_id=telegram_bot_id,
+                assert (project_id, telegram_bot_id) in await discover_removal_targets(
+                    factory
                 )
+                await supervisor.finalize_removals()
+                # Cleanup cannot race a running old poller.
+                async with tenant_session_scope(
+                    factory, TenantContext(user_id=alice, project_id=project_id)
+                ) as session:
+                    state = await session.scalar(
+                        select(BotInstance).where(BotInstance.id == instance_id)
+                    )
+                    assert state.status == "deleting"
+
+            # Once the worker releases its lock, supervisor cleans up the
+            # token and bot runtime data without any manual SQL operation.
+            await supervisor.finalize_removals()
             async with tenant_session_scope(
                 factory, TenantContext(user_id=alice, project_id=project_id)
             ) as session:
