@@ -79,6 +79,8 @@ class SetupOverview:
     bot_runtime_label: str = "⚪ Ожидает запуска"
     live_bot_username: str | None = None
     sales_configured: bool = False
+    bot_instances: tuple[tuple[UUID, str, str], ...] = ()
+    can_delete_bot: bool = False
 
 
 async def ensure_telegram_actor(
@@ -398,6 +400,8 @@ async def setup_overview(
             resources=tuple((r.id, r.name, r.status) for r in resources),
             plans=tuple((p.id, p.name, p.status) for p in plans),
             methods=tuple((m.id, m.name, m.status) for m in methods),
+            bot_instances=tuple((b.id, b.username, b.status) for b in bots),
+            can_delete_bot=project.owner_user_id == actor_id,
         )
 
 
