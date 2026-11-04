@@ -13,7 +13,7 @@ class CustomerBotRuntimeHealth(Base):
     __tablename__ = "customer_bot_runtime_health"
     __table_args__ = (
         CheckConstraint(
-            "state IN ('setup_needed', 'starting', 'running', 'stopped', 'error')",
+            "state IN ('setup_needed', 'queued', 'starting', 'running', 'stopped', 'error')",
             name="ck_customer_bot_runtime_health_state",
         ),
     )
