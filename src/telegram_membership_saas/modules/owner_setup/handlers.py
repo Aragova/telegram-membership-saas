@@ -128,7 +128,10 @@ def _next_setup_step(snapshot) -> tuple[str, str] | None:
     if not any(status == "active" for _, _, status in snapshot.plans):
         return "📦 3. Подготовить тариф", "plans"
     if not snapshot.sales_configured:
-        return "📋 4. Проверить настройки", "readiness"
+        # A published plan can lose its last currency-compatible payment
+        # method without losing its draft prices. Readiness must lead to an
+        # actionable repair, never back to itself.
+        return "💳 4. Проверить валюты оплаты", "methods"
     return None
 
 
