@@ -39,3 +39,18 @@ users separately; switch language, restart and switch between central and
 connected bots, ensure language stays selected. Verify buyer receipts and
 moderation have the recipient's own language and no cross-user state leaks.
 Do not assume migration and locale infrastructure alone translate every screen.
+
+
+## Delivery sequence
+
+- Stage 1 (PR #36): Telegram language detection, persistent per-user preference,
+  `/language`, bilingual buyer catalog / duration / payment choice.
+- Stage 2 (this stage): bilingual Platform Owner reporting, bot timeline,
+  connected bot list, central welcome and initial token registration.
+  All business and authorization decisions remain server-side.
+- Next stages: complete central removal/obligation flow, connected owner
+  setup, buyer payment confirmation and notifications, error states and
+  end-to-end language consistency.
+
+Until those stages pass, the product must not claim that *all* UI text is
+already translated.
