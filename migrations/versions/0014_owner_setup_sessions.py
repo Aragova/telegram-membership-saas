@@ -23,6 +23,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Uuid(), nullable=False),
         sa.Column("selected_project_id", sa.Uuid(), nullable=True),
         sa.Column("step", sa.String(length=48), nullable=True),
+        sa.Column("prompt_message_id", sa.BigInteger(), nullable=True),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["telegram_users.id"], ondelete="CASCADE"),
