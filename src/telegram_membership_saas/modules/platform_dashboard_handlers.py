@@ -6,6 +6,7 @@ but each button performs a fresh server-side role check.
 from __future__ import annotations
 
 from html import escape
+from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
     PERIOD_LABELS,
@@ -237,7 +239,8 @@ def create_platform_dashboard_router(
                 for idx, item in enumerate(report.bots):
                     rows.append([_button(
                         "🤖 @" + item["username"][:43],
-                        f"detail:{period}:{page}:{idx}",
+                        f"detail:{period}:{page}:{idx}:"
+                        + encode_uuid(UUID(item["bot_instance_id"])),
                     )])
                 nav = []
                 if page > 0:
@@ -251,8 +254,8 @@ def create_platform_dashboard_router(
                     query.from_user.id, _bot_list(report),
                     parse_mode="HTML", reply_markup=_keyboard(rows),
                 )
-            elif len(tokens) == 5 and tokens[1] == "detail":
-                _, _, period, page_token, index_token = tokens
+            elif len(tokens) == 6 and tokens[1] == "detail":
+                _, _, period, page_token, index_token, bot_token = tokens
                 if period not in PERIODS or not page_token.isascii() or (
                     not page_token.isdecimal()
                 ) or not index_token.isascii() or (
@@ -264,8 +267,10 @@ def create_platform_dashboard_router(
                 if index >= PAGE_SIZE:
                     raise ValueError("Карточка недоступна")
                 report = await read_report(query.from_user, period=period, page=page)
-                if index >= len(report.bots):
-                    raise ValueError("Карточка устарела")
+                if index >= len(report.bots) or bot_token != encode_uuid(
+                    UUID(report.bots[index]["bot_instance_id"])
+                ):
+                    raise ValueError("Карточка устарела. Обновите список.")
                 await bot.send_message(
                     query.from_user.id,
                     _bot_details(report.bots[index], period=period),
