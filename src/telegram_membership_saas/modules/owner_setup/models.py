@@ -17,6 +17,11 @@ class OwnerSetupSession(Base):
         ForeignKey("telegram_users.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    # 0 is the central registrar; a connected bot uses its Telegram bot ID.
+    # A user's open wizard in one bot must never consume another bot's reply.
+    bot_scope_id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, default=0, server_default="0",
+    )
     selected_project_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL")
     )
