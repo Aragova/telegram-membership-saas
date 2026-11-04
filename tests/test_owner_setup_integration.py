@@ -24,7 +24,6 @@ from telegram_membership_saas.modules.bots.service import encrypt_token
 from telegram_membership_saas.modules.owner_setup import service as setup
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.pricing import PlanPrice
-from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
