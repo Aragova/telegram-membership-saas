@@ -28,6 +28,15 @@ def upgrade() -> None:
     # Deleting a BotInstance will automatically remove its runtime health.
     # No former poller can recreate an orphan health record after the bot is
     # gone: the FK rejects the stale INSERT.
+    op.execute(
+        """
+        DELETE FROM public.customer_bot_runtime_health AS h
+        WHERE NOT EXISTS (
+            SELECT 1 FROM public.bot_instances AS b
+            WHERE b.telegram_bot_id = h.telegram_bot_id
+        )
+        """
+    )
     op.create_foreign_key(
         "fk_customer_bot_health_telegram_identity",
         "customer_bot_runtime_health", "bot_instances",
