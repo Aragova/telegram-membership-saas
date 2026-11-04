@@ -34,7 +34,6 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     encode_uuid,
     format_amount,
     format_period,
-    list_checkout_options,
     list_pending_reviews_for_actor,
     require_awaiting_receipt_for_telegram_user,
     review_payment_request_from_telegram,
