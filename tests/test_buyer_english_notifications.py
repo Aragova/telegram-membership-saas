@@ -38,8 +38,9 @@ def test_english_payment_and_review_texts() -> None:
     )
     token = _language.set("en")
     try:
-        assert "✅ I have paid" == commerce._checkout_keyboard(item.request_id).inline_keyboard[0][0].text
-        assert "Cancel" == commerce._checkout_keyboard(item.request_id).inline_keyboard[1][0].text
+        keyboard = commerce._checkout_keyboard(item.request_id)
+        assert keyboard.inline_keyboard[0][0].text == "✅ I have paid"
+        assert keyboard.inline_keyboard[1][0].text == "Cancel"
         assert "Subscription activated" in commerce._customer_review_result_text(
             result, approve=True,
         )
