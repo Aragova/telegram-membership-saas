@@ -217,6 +217,27 @@ async def choose_project(
         state.generation = None
 
 
+async def cancel_owner_flow(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, bot_scope_id: int = 0,
+) -> bool:
+    """Invalidate the exact bot-scoped pending wizard without touching project data."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id),
+    ) as session:
+        state = await session.get(
+            OwnerSetupSession, (actor_id, bot_scope_id), with_for_update=True,
+        )
+        if state is None or state.step is None:
+            return False
+        state.step = None
+        state.payload = {}
+        state.prompt_message_id = None
+        state.generation = None
+        state.expires_at = datetime.now(UTC)
+        return True
+
+
 async def set_flow(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
