@@ -151,9 +151,13 @@ def catalog_screen(
                 "✦ <b>Subscriptions</b>\n\n"
                 "No plans are available for purchase yet. Please check back later.",
             ),
-            InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu"),
-            ]]),
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=tr("🧾 Мои покупки", "🧾 My purchases"),
+                    callback_data="account:home",
+                )],
+                [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
+            ]),
         )
     chosen = currency if currency in currencies else currencies[0]
     selected = [o for o in offers if o.option.currency_code == chosen]
@@ -208,6 +212,10 @@ def catalog_screen(
     lines.extend(["", tr("Способ оплаты выберете на следующем шаге.",
                           "You will choose a payment method next.")])
     rows.append([InlineKeyboardButton(
+        text=tr("🧾 Мои покупки", "🧾 My purchases"),
+        callback_data="account:home",
+    )])
+    rows.append([InlineKeyboardButton(
         text="🌐 Language / Язык", callback_data="lng:menu",
     )])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
@@ -251,6 +259,10 @@ def offer_screen(
     rows.append([InlineKeyboardButton(
         text=tr("⬅️ Все тарифы", "⬅️ All plans"),
         callback_data=f"cat:{option.currency_code}:{page}",
+    )])
+    rows.append([InlineKeyboardButton(
+        text=tr("🧾 Мои покупки", "🧾 My purchases"),
+        callback_data="account:home",
     )])
     rows.append([InlineKeyboardButton(
         text="🌐 Language / Язык", callback_data="lng:menu",
