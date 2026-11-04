@@ -137,7 +137,7 @@ def test_long_catalog_uses_bounded_pages_and_callback_ids_fit_telegram():
     )
     offers = build_buyer_offers(options)
     first_text, first_keyboard = catalog_screen(offers)
-    assert f"Страница 1 из 2" in first_text
+    assert "Страница 1 из 2" in first_text
     assert "cat:RUB:1" in [b.callback_data for b in _buttons(first_keyboard)]
     second_text, second_keyboard = catalog_screen(offers, page=1)
     assert "Страница 2 из 2" in second_text
