@@ -25,11 +25,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
-from telegram_membership_saas.localization import tr
 from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -108,7 +108,9 @@ DURATIONS = {
 
 
 def _button(label: str, data: str, style: str = "primary") -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=owner_button_label(label), callback_data="own:" + data, style=style)
+    return InlineKeyboardButton(
+        text=owner_button_label(label), callback_data="own:" + data, style=style,
+    )
 
 
 def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
@@ -150,7 +152,8 @@ def _progress(snapshot) -> tuple[str, ...]:
     # A registered bot is configured, not necessarily running.
     steps = (
         (tr("Собственный бот", "Connected bot"), any(s == "registered" for _, s in snapshot.bots)),
-        (tr("Канал / группа", "Channel / group"), any(s == "active" for _, _, s in snapshot.resources)),
+        (tr("Канал / группа", "Channel / group"),
+         any(s == "active" for _, _, s in snapshot.resources)),
         (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
         (tr("Способ оплаты", "Payment method"), any(s == "active" for _, _, s in snapshot.methods)),
         (tr("Бот принимает покупателей", "Bot accepts buyers"), bool(snapshot.live_bot_username)),

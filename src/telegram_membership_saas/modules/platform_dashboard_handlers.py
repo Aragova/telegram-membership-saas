@@ -38,7 +38,6 @@ from telegram_membership_saas.modules.platform_usage import (
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
-
 PERIOD_LABELS_EN = {
     "day": "Today",
     "7": "7 days",
@@ -361,7 +360,10 @@ def create_platform_dashboard_router(
             or query.message.chat.id != query.from_user.id
             or not is_configured_platform_owner(query.from_user.id, config)
         ):
-            await query.answer(tr("Нет доступа к панели платформы", "Platform access denied"), show_alert=True)
+            await query.answer(
+                tr("Нет доступа к панели платформы", "Platform access denied"),
+                show_alert=True,
+            )
             return
         tokens = (query.data or "").split(":")
         try:
@@ -466,10 +468,18 @@ def create_platform_dashboard_router(
             else:
                 raise ValueError("Кнопка устарела")
         except (PermissionError, ValueError):
-            await query.answer(tr("Недоступно. Откройте /platform заново.", "Unavailable. Reopen /platform."), show_alert=True)
+            await query.answer(
+                tr("Недоступно. Откройте /platform заново.",
+                   "Unavailable. Reopen /platform."),
+                show_alert=True,
+            )
             return
         except Exception:
-            await query.answer(tr("Отчёт временно недоступен.", "Report temporarily unavailable."), show_alert=True)
+            await query.answer(
+                tr("Отчёт временно недоступен.",
+                   "Report temporarily unavailable."),
+                show_alert=True,
+            )
             return
         await query.answer()
 
