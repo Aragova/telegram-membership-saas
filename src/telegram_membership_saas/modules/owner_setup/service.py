@@ -53,6 +53,7 @@ class SetupFlow:
     project_id: UUID | None
     payload: dict
     prompt_message_id: int | None
+    generation: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,10 +243,10 @@ async def consume_flow(
             project_id=state.selected_project_id,
             payload=state.payload or {},
             prompt_message_id=state.prompt_message_id,
+            generation=state.generation,
         )
         state.step = None
         state.prompt_message_id = None
-        state.generation = None
         state.payload = {}
         return saved
 
@@ -274,12 +275,42 @@ async def consume_button_flow(
             project_id=state.selected_project_id,
             payload=state.payload or {},
             prompt_message_id=state.prompt_message_id,
+            generation=state.generation,
         )
         state.step = None
         state.payload = {}
         state.prompt_message_id = None
-        state.generation = None
         return flow
+
+
+async def advance_flow(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID,
+    source: SetupFlow,
+    step: str,
+    payload: dict,
+) -> str:
+    """Continue only the exact consumed flow and project, atomically."""
+    if source.generation is None:
+        raise ValueError("Шаг настройки устарел")
+    async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
+        state = await _current_session(session, actor_id)
+        if (
+            state.step is not None
+            or state.selected_project_id != source.project_id
+            or state.generation != source.generation
+        ):
+            raise ValueError("Проект или шаг изменился. Начните действие заново.")
+        if source.project_id is not None:
+            await _require_project_manager(
+                session, project_id=source.project_id, actor_user_id=actor_id
+            )
+        state.step = step
+        state.payload = payload
+        state.prompt_message_id = None
+        state.generation = token_urlsafe(12)
+        state.expires_at = datetime.now(UTC) + FLOW_TTL
+        return state.generation
 
 
 async def get_selected_project(
@@ -303,6 +334,8 @@ async def create_owner_project(
         state = await _current_session(session, actor_id)
         state.selected_project_id = project.id
         state.step = None
+        state.prompt_message_id = None
+        state.generation = None
         state.payload = {}
         return project.id
 
