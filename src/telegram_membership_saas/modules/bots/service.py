@@ -168,6 +168,23 @@ async def register_customer_bot(
                     BotInstance.telegram_bot_id == verified.telegram_bot_id,
                 )
             )
+            # Until access actions are routed by BotInstance, the
+            # project's customer runtime can operate only one registered bot.
+            # The project row lock serializes concurrent registrations.
+            another_registered = await session.scalar(
+                select(BotInstance.id).where(
+                    BotInstance.project_id == project_id,
+                    BotInstance.status == BotInstanceStatus.REGISTERED.value,
+                    BotInstance.telegram_bot_id != verified.telegram_bot_id,
+                ).limit(1)
+            )
+            if another_registered is not None:
+                raise ValueError(
+                    "В этом проекте уже подключён другой бот. "
+                    "Пока поддерживается один бот на проект. "
+                    "Для другого бота создайте отдельный проект; "
+                    "токен текущего бота можно обновить здесь."
+                )
             updated = existing is not None
             if existing is None:
                 session.add(
