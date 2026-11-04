@@ -40,6 +40,7 @@ from telegram_membership_saas.modules.projects import (
     ProjectMember,
     ProjectStatus,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,17 +194,13 @@ async def upsert_telegram_user(
     return user
 
 
-async def _require_active_project(
-    session: AsyncSession, project_id: UUID, *, lock_for_checkout: bool = False,
-) -> Project:
-    statement = select(Project).where(
-        Project.id == project_id, Project.status == ProjectStatus.ACTIVE.value,
+async def _require_active_project(session: AsyncSession, project_id: UUID) -> Project:
+    project = await session.scalar(
+        select(Project).where(
+            Project.id == project_id,
+            Project.status == ProjectStatus.ACTIVE.value,
+        )
     )
-    if lock_for_checkout:
-        # Owner retirement takes Project FOR UPDATE, so a checkout already
-        # in progress must finish before the deletion guard is evaluated.
-        statement = statement.with_for_update(read=True)
-    project = await session.scalar(statement)
     if project is None:
         raise ValueError("Project is not active or accessible")
     return project
@@ -325,7 +322,11 @@ async def create_checkout_for_telegram_user(
     plan_price_id: UUID,
     payment_method_id: UUID,
 ) -> CheckoutResult:
-    await _require_active_project(session, project_id, lock_for_checkout=True)
+    # A checkout already in progress must commit before an owner can
+    # transition this bot to deleting. This advisory transaction key is
+    # different from the worker's long-lived polling lease key.
+    await checkout_retirement_lock(session, project_id)
+    await _require_active_project(session, project_id)
     await _ensure_bot_not_retiring(session, project_id)
     option = await _load_checkout_option(
         session,
