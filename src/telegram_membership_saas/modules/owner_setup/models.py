@@ -13,12 +13,12 @@ class OwnerSetupSession(Base):
     __tablename__ = "owner_setup_sessions"
 
     user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("telegram_users.id", ondelete="CASCADE"),
         Uuid(as_uuid=True),
+        ForeignKey("telegram_users.id", ondelete="CASCADE"),
         primary_key=True,
     )
     selected_project_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("projects.id", ondelete="SET NULL"), Uuid(as_uuid=True)
+        Uuid(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL")
     )
     step: Mapped[str | None] = mapped_column(String(48), nullable=True)
     prompt_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
