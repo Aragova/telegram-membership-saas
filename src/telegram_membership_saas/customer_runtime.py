@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from aiogram import Bot
+from aiogram.methods import GetUpdates
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -34,6 +35,22 @@ from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
+
+
+class ObservedCustomerBot(Bot):
+    """Report only successful getUpdates responses, even when there are no updates."""
+
+    def __init__(
+        self, *, token: str, on_poll_response: Callable[[], None] | None = None
+    ) -> None:
+        super().__init__(token=token)
+        self._poll_response = on_poll_response
+
+    async def __call__(self, method, request_timeout=None):
+        result = await super().__call__(method, request_timeout=request_timeout)
+        if isinstance(method, GetUpdates) and self._poll_response is not None:
+            self._poll_response()
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,10 +160,13 @@ async def run_customer_bot_instance(
     telegram_bot_id: int,
     settings: Settings,
     on_started: Callable[[], Awaitable[None]] | None = None,
+    on_poll_response: Callable[[], None] | None = None,
 ) -> None:
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
     worker: asyncio.Task[None] | None = None
+    polling: asyncio.Task[None] | None = None
+    dispatcher = None
     try:
         config = await load_customer_bot(
             session_factory,
@@ -155,7 +175,9 @@ async def run_customer_bot_instance(
             settings=settings,
         )
         try:
-            bot = Bot(token=config.token)
+            bot = ObservedCustomerBot(
+                token=config.token, on_poll_response=on_poll_response
+            )
         except Exception:
             raise RuntimeError("Customer bot credential is invalid") from None
 
@@ -177,10 +199,30 @@ async def run_customer_bot_instance(
         logger.info("Customer bot ready for project %s", project_id)
         # The supervisor can run many independent dispatchers inside one
         # process; only the top-level app should own OS signals.
-        await dispatcher.start_polling(
-            bot, handle_signals=False, close_bot_session=False
+        polling = asyncio.create_task(
+            dispatcher.start_polling(
+                bot,
+                handle_signals=False,
+                close_bot_session=False,
+                handle_as_tasks=False,
+            )
         )
+        # Never propagate cancellation to aiogram's start_polling task directly.
+        # It manages an internal GetUpdates task that must be stopped gracefully.
+        await asyncio.shield(polling)
     finally:
+        if polling is not None:
+            if not polling.done() and dispatcher is not None:
+                # Let start_polling acquire its internal lock before stopping;
+                # if it never started, cancelling it cannot leave GetUpdates alive.
+                await asyncio.sleep(0)
+                try:
+                    if not polling.done():
+                        await dispatcher.stop_polling()
+                except RuntimeError:
+                    polling.cancel()
+            await asyncio.gather(polling, return_exceptions=True)
+        # The per-project access worker must not outlive Telegram polling.
         if worker is not None:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
