@@ -98,7 +98,7 @@ async def read_language(
 
 @asynccontextmanager
 async def recipient_language(
-    factory: async_sessionmaker[AsyncSession],
+    factory: async_sessionmaker[AsyncSession] | None,
     telegram_id: int,
 ) -> AsyncIterator[None]:
     """Use recipient preference for unsolicited messages, never sender's locale.
@@ -107,7 +107,8 @@ async def recipient_language(
     Use the recipient's explicit choice or last observed Telegram language.
     Without either, keep the historical Russian default.
     """
-    language = await read_language(factory, telegram_id, "ru")
+    language = (await read_language(factory, telegram_id, "ru")
+                if factory is not None else "ru")
     token = _language.set(language)
     try:
         yield

@@ -4,6 +4,9 @@ from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from telegram_membership_saas.localization import recipient_language, tr
 
 from telegram_membership_saas.modules.access import AccessActionType, AccessCommand
 
@@ -32,12 +35,14 @@ class TelegramAccessAdapter:
         *,
         invite_ttl: timedelta = timedelta(minutes=15),
         clock: Callable[[], datetime] | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         if invite_ttl.total_seconds() <= 0:
             raise ValueError("invite_ttl must be positive")
         self._bot = bot
         self._invite_ttl = invite_ttl
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._session_factory = session_factory
 
     @property
     def invite_ttl(self) -> timedelta:
@@ -99,27 +104,30 @@ class TelegramAccessAdapter:
     ) -> None:
         if result.invite_link is None:
             return
-        await self._bot.send_message(
-            chat_id=command.telegram_user_id,
-            text=(
-                "🔐 <b>Доступ к каналу готов</b>\n\n"
-                "Нажмите зелёную кнопку ниже и отправьте запрос на вступление. "
-                "ViMi Pay подтвердит его автоматически.\n\n"
-                "⏳ Приглашение временное."
-            ),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
+        async with recipient_language(self._session_factory, command.telegram_user_id):
+            await self._bot.send_message(
+                chat_id=command.telegram_user_id,
+                text=tr(
+                    "🔐 <b>Доступ к каналу готов</b>\n\n"
+                    "Нажмите зелёную кнопку ниже и отправьте запрос на вступление. "
+                    "ViMi Pay подтвердит его автоматически.\n\n"
+                    "⏳ Приглашение временное.",
+                    "🔐 <b>Your channel access is ready</b>\n\n"
+                    "Tap the button below and request to join. "
+                    "ViMi Pay will approve your request automatically.\n\n"
+                    "⏳ This invite is temporary.",
+                ),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[[
                         InlineKeyboardButton(
-                            text="Вступить в канал",
+                            text=tr("Вступить в канал", "Join channel"),
                             url=result.invite_link,
                             style="success",
-                        )
-                    ]
-                ]
-            ),
-        )
+                        ),
+                    ]],
+                ),
+            )
 
     async def discard(self, result: TelegramAccessResult) -> None:
         if result.invite_link is None or result.resolved_chat_id is None:

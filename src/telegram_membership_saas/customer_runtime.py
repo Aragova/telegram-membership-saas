@@ -193,7 +193,7 @@ async def run_customer_bot_instance(
             run_project_runtime_loop(
                 session_factory,
                 project_id=project_id,
-                adapter=TelegramAccessAdapter(bot),
+                adapter=TelegramAccessAdapter(bot, session_factory=session_factory),
                 poll_seconds=settings.telegram_worker_poll_seconds,
             )
         )
