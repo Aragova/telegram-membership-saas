@@ -1062,7 +1062,7 @@ def create_owner_setup_router(
         if fixed_project_id is None:
             is_registry_action = action in {
                 "new", "projects", "dashboard", "bots", "connect",
-                "help", "oblist",
+                "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
             ))
@@ -1130,6 +1130,19 @@ def create_owner_setup_router(
                 await choose_project(
                     factory, actor_id=actor_id,
                     project_id=UUID(hex=action.split(":", 1)[1]),
+                )
+                await show_home(bot, user_id, actor_id)
+                await query.answer()
+                return
+            if action == "cancel":
+                await cancel_owner_flow(
+                    factory, actor_id=actor_id,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr("✖️ Настройка отменена.", "✖️ Setup canceled."),
+                    reply_markup=ReplyKeyboardRemove(),
                 )
                 await show_home(bot, user_id, actor_id)
                 await query.answer()
@@ -1449,14 +1462,17 @@ def create_owner_setup_router(
                         "with permission to invite and ban members.",
                     ),
                     reply_markup=ReplyKeyboardMarkup(
-                        keyboard=[[KeyboardButton(
-                            text=tr("📢 Выбрать чат", "📢 Choose chat"),
-                            request_chat=KeyboardButtonRequestChat(
-                                request_id=request_id,
-                                chat_is_channel=(kind == "channel"),
-                                request_title=True,
-                            ),
-                        )]],
+                        keyboard=[
+                            [KeyboardButton(
+                                text=tr("📢 Выбрать чат", "📢 Choose chat"),
+                                request_chat=KeyboardButtonRequestChat(
+                                    request_id=request_id,
+                                    chat_is_channel=(kind == "channel"),
+                                    request_title=True,
+                                ),
+                            )],
+                            [KeyboardButton(text=tr("✖️ Отмена", "✖️ Cancel"))],
+                        ],
                         resize_keyboard=True,
                         one_time_keyboard=True,
                     ),
@@ -1527,7 +1543,9 @@ def create_owner_setup_router(
                     await bot.send_message(
                         user_id, tr("📢 Какой канал откроет этот тариф?",
                                      "📢 Which channel does this plan unlock?"),
-                        reply_markup=_markup(rows),
+                        reply_markup=_markup(
+                            rows + [[_button("✖️ Отмена", "cancel")]],
+                        ),
                     )
             elif action.startswith("use:"):
                 _, resource_hex, generation = action.split(":", 2)
@@ -1777,26 +1795,7 @@ def create_owner_setup_router(
                     reply_markup=_markup(rows),
                 )
             elif action == "help":
-                await bot.send_message(
-                    user_id,
-                    tr(
-                        "❔ <b>Как запустить подписки</b>\n\n"
-                        "1. Подключите токен в @vimipay_bot.\n"
-                        "2. Откройте собственный бот и добавьте его в канал.\n"
-                        "3. Настройте валюты и способы оплаты.\n"
-                        "4. Создайте тариф, цену и опубликуйте.\n\n"
-                        "Ваши чеки ViMi Pay не хранит — поступления "
-                        "проверяются администратором в банке.",
-                        "❔ <b>How to launch subscriptions</b>\n\n"
-                        "1. Connect a bot token in @vimipay_bot.\n"
-                        "2. Open your bot and add it to your channel.\n"
-                        "3. Set up currencies and payment methods.\n"
-                        "4. Create, price and publish a plan.\n\n"
-                        "ViMi Pay does not retain receipts. "
-                        "Channel admins verify transfers in their banks.",
-                    ),
-                    parse_mode="HTML",
-                )
+                await show_help(bot, user_id)
             else:
                 raise ValueError(tr("Неизвестное действие", "Unknown action"))
         except (ValueError, PermissionError) as exc:
@@ -2030,7 +2029,7 @@ def create_owner_setup_router(
                         [_button(tr(value[2], format_period(value[0], value[1])),
                                   "duration:" + key + ":" + generation)]
                         for key, value in DURATIONS.items()
-                    ]),
+                    ] + [[_button("✖️ Отмена", "cancel")]]),
                 )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
