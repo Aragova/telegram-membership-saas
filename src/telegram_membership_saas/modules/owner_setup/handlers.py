@@ -61,6 +61,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     owner_home,
     publish_owner_plan,
     save_owner_price,
+    set_default_project_name_from_bot,
     set_flow,
     setup_overview,
     verify_channel_and_add,
@@ -197,14 +198,14 @@ def create_owner_setup_router(
         rows: list[list[InlineKeyboardButton]] = []
         if not home.projects:
             lines.append(
-                "Создайте первый проект: подключите собственный бот, "
-                "канал, тарифы и способы оплаты."
+                "Подключите собственного Telegram-бота, затем "
+                "откройте его для настройки тарифов и оплаты."
             )
         else:
             lines.append("Выберите проект для управления:")
             for project_id, name in home.projects[:20]:
-                rows.append([_button("📁 " + name[:45], "select:" + project_id.hex)])
-        rows.append([_button("➕ Создать проект", "new", "success")])
+                rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
+        rows.append([_button("➕ Подключить бота подписок", "new", "success")])
         await bot.send_message(
             user_id, "\n".join(lines),
             parse_mode="HTML", reply_markup=_markup(rows),
@@ -652,10 +653,19 @@ def create_owner_setup_router(
                 return
         try:
             if action == "new":
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError("Подключение ботов пока недоступно")
                 await prompt(
-                    bot, user_id, actor_id, step="project_name",
-                    text="📁 Как назовём новый проект?\n\n"
-                    "Ответьте названием — его можно будет изменить позднее.",
+                    bot, user_id, actor_id, step="new_bot_token",
+                    text=(
+                        "✦ <b>Подключение бота подписок</b>\n\n"
+                        "1. Создайте бота в @BotFather или получите новый "
+                        "токен существующего.\n"
+                        "2. Ответьте на это сообщение токеном.\n"
+                        "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
+                        "После проверки откройте своего бота и "
+                        "настройте каналы, оплату и тарифы."
+                    ),
                 )
                 await query.answer()
                 return
@@ -665,7 +675,7 @@ def create_owner_setup_router(
                     [_button("📁 " + name[:45], "select:" + pid.hex)]
                     for pid, name in home.projects[:20]
                 ]
-                rows.append([_button("➕ Новый проект", "new", "success")])
+                rows.append([_button("➕ Подключить бота", "new", "success")])
                 await bot.send_message(user_id, "📁 Мои проекты", reply_markup=_markup(rows))
                 await query.answer()
                 return
@@ -1129,9 +1139,10 @@ def create_owner_setup_router(
         # Always delete BotFather credential messages before validating or storing
         # anything, even if the credential was typed incorrectly.
         unexpected_secret = bool(
-            flow.step != "bot_token" and TOKEN_PATTERN.fullmatch(text)
+            flow.step not in ("bot_token", "new_bot_token")
+            and TOKEN_PATTERN.fullmatch(text)
         )
-        if flow.step == "bot_token" or unexpected_secret:
+        if flow.step in ("bot_token", "new_bot_token") or unexpected_secret:
             try:
                 deleted = await bot.delete_message(
                     message.chat.id, message.message_id
