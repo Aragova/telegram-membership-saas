@@ -22,6 +22,10 @@ from telegram_membership_saas.modules.outbox import (
     mark_outbox_event_failed,
     process_claimed_access_recalculate_event,
 )
+from telegram_membership_saas.project_worker_lock import (
+    confirm_project_lock,
+    project_worker_lock,
+)
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessAdapter,
     ensure_owner_service_for_project,
@@ -176,32 +180,61 @@ async def run_project_runtime_loop(
 
 async def run_telegram_bot(settings: Settings | None = None) -> None:
     current = settings or get_settings()
-    if current.telegram_project_id is None:
-        raise RuntimeError("TMS_TELEGRAM_PROJECT_ID is required to start the Telegram bot")
+    if current.telegram_central_access_enabled and current.telegram_project_id is None:
+        raise RuntimeError(
+            "TMS_TELEGRAM_PROJECT_ID is required while legacy central access is enabled"
+        )
 
     engine = build_engine(current)
-    session_factory = build_session_factory(engine)
-    bot: Bot = create_bot(current)
+    factory = build_session_factory(engine)
+    bot = create_bot(current)
     dispatcher = create_dispatcher(
-        session_factory,
+        factory,
         project_id=current.telegram_project_id,
         enable_access=current.telegram_central_access_enabled,
     )
-    runtime_task: asyncio.Task[None] | None = None
-    if current.telegram_central_access_enabled:
-        runtime_task = asyncio.create_task(
-            run_project_runtime_loop(
-                session_factory,
-                project_id=current.telegram_project_id,
-                adapter=TelegramAccessAdapter(bot),
-                poll_seconds=current.telegram_worker_poll_seconds,
-            )
-        )
+    worker: asyncio.Task[None] | None = None
+    polling: asyncio.Task[None] | None = None
+    guard: asyncio.Task[None] | None = None
     try:
-        await dispatcher.start_polling(bot)
+        if not current.telegram_central_access_enabled:
+            # Central ViMi Pay is an owner-only entry point. Newly onboarded
+            # owners must never need a project UUID in deployment settings.
+            await dispatcher.start_polling(bot)
+        else:
+            project_id = current.telegram_project_id
+            assert project_id is not None
+            # Prevent the legacy access worker from running concurrently
+            # with the new supervisor (or a manually started customer bot).
+            async with project_worker_lock(engine, project_id) as lease:
+                worker = asyncio.create_task(run_project_runtime_loop(
+                    factory,
+                    project_id=project_id,
+                    adapter=TelegramAccessAdapter(bot),
+                    poll_seconds=current.telegram_worker_poll_seconds,
+                ))
+
+                async def heartbeat() -> None:
+                    while True:
+                        await asyncio.sleep(3)
+                        await confirm_project_lock(lease, project_id)
+
+                guard = asyncio.create_task(heartbeat())
+                polling = asyncio.create_task(
+                    dispatcher.start_polling(bot, handle_signals=False)
+                )
+                done, _ = await asyncio.wait(
+                    (guard, polling), return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    task.result()
     finally:
-        if runtime_task is not None:
-            runtime_task.cancel()
-            await asyncio.gather(runtime_task, return_exceptions=True)
+        for task in (worker, polling, guard):
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (worker, polling, guard) if task is not None),
+            return_exceptions=True,
+        )
         await bot.session.close()
         await engine.dispose()
