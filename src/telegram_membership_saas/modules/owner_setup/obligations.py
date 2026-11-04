@@ -18,6 +18,7 @@ from telegram_membership_saas.modules.access.service import reconcile_access_tar
 from telegram_membership_saas.modules.bots.deletion_service import (
     RetirementBlockers,
     count_retirement_blockers,
+    owner_self_managed_access_predicate,
 )
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
@@ -182,7 +183,8 @@ async def list_owner_obligations(
             select(AccessState)
             .where(AccessState.project_id == project_id,
                    or_(AccessState.desired_access.is_(True),
-                       AccessState.actual_state == "granted"))
+                       AccessState.actual_state == "granted"),
+                   ~owner_self_managed_access_predicate())
             .order_by(AccessState.created_at, AccessState.id).offset(page * 5).limit(5)
         )).all()
         return OwnerObligations(
