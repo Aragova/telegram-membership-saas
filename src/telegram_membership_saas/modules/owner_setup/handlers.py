@@ -60,6 +60,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     owner_available_currencies,
     owner_home,
     publish_owner_plan,
+    register_new_owner_bot,
     save_owner_price,
     set_default_project_name_from_bot,
     set_flow,
@@ -1139,6 +1140,27 @@ def create_owner_setup_router(
         )
         await show_resources(bot, message.chat.id, actor_id, flow.project_id)
 
+    async def send_connected_bot(
+        bot: Bot, user_id: int, actor_id: UUID,
+        project_id: UUID, username: str,
+    ) -> None:
+        await bot.send_message(
+            user_id,
+            f"✅ <b>@{escape(username)} подключён</b>\n\n"
+            "Настройка в ViMi Pay завершена.\n"
+            "Перейдите в свой бот и добавьте канал, "
+            "способы оплаты и тарифы.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🚀 Перейти к своему боту",
+                    url="https://t.me/" + username,
+                    style="success",
+                ),
+            ]]),
+        )
+        await show_bots(bot, user_id, actor_id, project_id)
+
     async def finish_bot_connection(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, token: str,
     ) -> None:
@@ -1152,22 +1174,9 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
             username=result.username,
         )
-        await bot.send_message(
-            user_id,
-            f"✅ <b>@{escape(result.username)} подключён</b>\n\n"
-            "Настройка в ViMi Pay завершена.\n"
-            "Перейдите в свой бот и добавьте канал, "
-            "способы оплаты и тарифы.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="🚀 Перейти к своему боту",
-                    url="https://t.me/" + result.username,
-                    style="success",
-                ),
-            ]]),
+        await send_connected_bot(
+            bot, user_id, actor_id, project_id, result.username,
         )
-        await show_bots(bot, user_id, actor_id, project_id)
 
     @router.message(SetupReplyFilter(factory, fixed_project_id))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:
@@ -1238,11 +1247,16 @@ def create_owner_setup_router(
                     raise ValueError(
                         "Неверный формат токена. Получите токен в @BotFather."
                     )
-                project_id = await create_owner_project(
-                    factory, actor_id=actor_id, name="Подключение бота",
+                project_id, registration = await register_new_owner_bot(
+                    factory, actor_id=actor_id,
+                    actor_telegram_user_id=message.from_user.id,
+                    token=text,
+                    encryption_key=get_settings().bot_token_encryption_key,
+                    central_bot_id=bot.id,
                 )
-                await finish_bot_connection(
-                    bot, message.chat.id, actor_id, project_id, text,
+                await send_connected_bot(
+                    bot, message.chat.id, actor_id,
+                    project_id, registration.username,
                 )
                 return
             if flow.step == "project_name":
