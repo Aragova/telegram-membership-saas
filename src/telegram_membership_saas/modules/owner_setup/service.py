@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from uuid import UUID
 
 from aiogram import Bot
@@ -34,7 +33,7 @@ from telegram_membership_saas.modules.pricing import (
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
-from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
+from telegram_membership_saas.tenant_context import TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
 ALLOWED_CURRENCIES = ("RUB", "USD", "EUR", "USDT", "TON", "KZT", "AED")
