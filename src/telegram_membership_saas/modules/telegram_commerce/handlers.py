@@ -19,7 +19,11 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
-from telegram_membership_saas.localization import recipient_language, tr
+from telegram_membership_saas.localization import (
+    current_language,
+    recipient_language,
+    tr,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -42,6 +46,7 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
 )
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
+RECEIPT_REPLY_PREFIX_EN = "Payment confirmation for request: "
 ALLOWED_RECEIPT_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 )
@@ -55,12 +60,13 @@ def _receipt_request_id(message: Message, *, bot_id: int) -> UUID | None:
     if prompt is None or prompt.from_user is None or prompt.from_user.id != bot_id:
         return None
     header = (prompt.text or "").split("\n", 1)[0]
-    if not header.startswith(RECEIPT_REPLY_PREFIX):
-        return None
-    try:
-        return UUID(header[len(RECEIPT_REPLY_PREFIX) :])
-    except ValueError:
-        return None
+    for prefix in (RECEIPT_REPLY_PREFIX, RECEIPT_REPLY_PREFIX_EN):
+        if header.startswith(prefix):
+            try:
+                return UUID(header[len(prefix):])
+            except ValueError:
+                return None
+    return None
 
 
 class ReceiptReplyFilter(BaseFilter):
@@ -95,14 +101,14 @@ def _checkout_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Я оплатил",
+                    text=tr("✅ Я оплатил", "✅ I have paid"),
                     style="success",
                     callback_data=f"paid:{token}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Отменить",
+                    text=tr("Отменить", "Cancel"),
                     style="danger",
                     callback_data=f"cancel:{token}",
                 )
@@ -157,8 +163,9 @@ def _review_text(item: ReviewItem) -> str:
 
 def _subscription_end_text(ends_at: datetime | None, timezone: str) -> str:
     if ends_at is None:
-        return "Бессрочно"
+        return tr("Бессрочно", "Lifetime")
     return f"{ends_at.astimezone(ZoneInfo(timezone)):%d.%m.%Y %H:%M} ({timezone})"
+
 
 
 def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
@@ -169,21 +176,26 @@ def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
     username = f"@{item.customer_username}" if item.customer_username else str(
         item.customer_telegram_user_id
     )
-    headline = "✅ <b>Оплата подтверждена</b>" if approve else "❌ <b>Оплата отклонена</b>"
+    headline = (
+        tr("✅ <b>Оплата подтверждена</b>", "✅ <b>Payment approved</b>")
+        if approve else tr("❌ <b>Оплата отклонена</b>", "❌ <b>Payment rejected</b>")
+    )
     details = (
-        f"👤 Покупатель: {escape(username)}\n"
-        f"📦 Тариф: {escape(item.plan_name)}\n"
-        f"💳 Сумма: {format_amount(item.amount, 18)} {escape(item.currency_code)}\n"
+        tr("👤 Покупатель: ", "👤 Customer: ") + escape(username) + "\n"
+        + tr("📦 Тариф: ", "📦 Plan: ") + escape(item.plan_name) + "\n"
+        + tr("💳 Сумма: ", "💳 Amount: ")
+        + f"{format_amount(item.amount, 18)} {escape(item.currency_code)}\n"
     )
     if approve:
         details += (
-            "🟢 Статус подписки: активна\n"
-            f"📅 Действует до: "
-            f"{expiration}\n\n"
-            "Бот автоматически предоставит доступ покупателю."
+            tr("🟢 Статус подписки: активна\n", "🟢 Subscription: active\n")
+            + tr("📅 Действует до: ", "📅 Valid until: ") + expiration + "\n\n"
+            + tr("Бот автоматически предоставит доступ покупателю.",
+                 "The bot will automatically grant the customer access.")
         )
     else:
-        details += "\nЗаявка закрыта. Подписка не активирована."
+        details += tr("\nЗаявка закрыта. Подписка не активирована.",
+                      "\nThe request is closed. No subscription was activated.")
     return f"{headline}\n\n{details}"
 
 
@@ -193,18 +205,40 @@ def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
     )
     if approve:
         return (
-            "✅ <b>Подписка активирована</b>\n\n"
-            f"📦 {escape(result.item.plan_name)}\n"
-            f"📅 До: "
-            f"{expiration}\n\n"
-            "🔐 Если вы ещё не в канале, бот пришлёт кнопку для вступления."
+            tr("✅ <b>Подписка активирована</b>\n\n",
+               "✅ <b>Subscription activated</b>\n\n")
+            + f"📦 {escape(result.item.plan_name)}\n"
+            + tr("📅 До: ", "📅 Until: ") + expiration + "\n\n"
+            + tr("🔐 Если вы ещё не в канале, бот пришлёт кнопку для вступления.",
+                 "🔐 If you are not in the channel yet, the bot will send a join button.")
         )
     return (
-        "❌ <b>Оплата отклонена</b>\n\n"
-        f"Тариф: {escape(result.item.plan_name)}\n"
-        "Если произошла ошибка, свяжитесь с администратором канала."
+        tr("❌ <b>Оплата отклонена</b>\n\n", "❌ <b>Payment rejected</b>\n\n")
+        + tr("Тариф: ", "Plan: ") + escape(result.item.plan_name) + "\n"
+        + tr("Если произошла ошибка, свяжитесь с администратором канала.",
+             "If you believe this is a mistake, contact the channel administrator.")
     )
 
+
+def _buyer_error(exc: Exception) -> str:
+    """Return safe English UI errors; do not expose unexpected service internals."""
+    if current_language() == "ru":
+        return str(exc)
+    translated = {
+        "Бот отключается. Создание новых оплат временно недоступно":
+            "This bot is shutting down; new purchases are temporarily unavailable.",
+        "Заявка уже отправлена или закрыта":
+            "This payment request has already been submitted or closed.",
+        "Selected plan price/payment method is no longer available":
+            "This plan or payment option is no longer available. Reopen /plans.",
+        "Payment request does not belong to this Telegram user":
+            "This payment request does not belong to your account.",
+        "Project is not active or accessible":
+            "This subscription service is currently unavailable.",
+        "Payment request is not accessible in the current project scope":
+            "This payment request is no longer accessible.",
+    }
+    return translated.get(str(exc), "Request unavailable. Please reopen /plans and retry.")
 
 async def _safe_send_message(bot: Bot, chat_id: int, text: str, **kwargs) -> None:
     try:
@@ -285,7 +319,10 @@ def create_telegram_commerce_router(
     @router.callback_query(F.data.startswith("cat:"))
     async def currency_handler(callback: CallbackQuery, bot: Bot) -> None:
         if not _buyer_screen_callback(callback):
-            await callback.answer("Откройте личный чат с ботом", show_alert=True)
+            await callback.answer(
+                tr("Откройте личный чат с ботом", "Open your private chat with the bot"),
+                show_alert=True,
+            )
             return
         try:
             _, currency, page_token = (callback.data or "").split(":", 2)
@@ -304,7 +341,8 @@ def create_telegram_commerce_router(
             )
         except ValueError:
             await callback.answer(
-                "Список изменился. Откройте /plans заново.",
+                tr("Список изменился. Откройте /plans заново.",
+                   "The catalog changed. Reopen /plans."),
                 show_alert=True,
             )
             return
@@ -313,7 +351,10 @@ def create_telegram_commerce_router(
     @router.callback_query(F.data.startswith("offer:"))
     async def offer_handler(callback: CallbackQuery, bot: Bot) -> None:
         if not _buyer_screen_callback(callback):
-            await callback.answer("Откройте личный чат с ботом", show_alert=True)
+            await callback.answer(
+                tr("Откройте личный чат с ботом", "Open your private chat with the bot"),
+                show_alert=True,
+            )
             return
         try:
             _, price_token, page_token = (callback.data or "").split(":", 2)
@@ -330,13 +371,15 @@ def create_telegram_commerce_router(
             )
             if not matched:
                 await callback.answer(
-                    "Тариф больше недоступен. Откройте /plans заново.",
+                    tr("Тариф больше недоступен. Откройте /plans заново.",
+                       "This plan is no longer available. Reopen /plans."),
                     show_alert=True,
                 )
                 return
         except ValueError:
             await callback.answer(
-                "Тариф больше недоступен. Откройте /plans заново.",
+                tr("Тариф больше недоступен. Откройте /plans заново.",
+                   "This plan is no longer available. Reopen /plans."),
                 show_alert=True,
             )
             return
@@ -361,7 +404,7 @@ def create_telegram_commerce_router(
                     payment_method_id=payment_method_id,
                 )
         except (ValueError, PermissionError) as exc:
-            await callback.answer(str(exc), show_alert=True)
+            await callback.answer(_buyer_error(exc), show_alert=True)
             return
 
         await callback.answer()
@@ -375,14 +418,18 @@ def create_telegram_commerce_router(
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=(
-                "💎 <b>Оформление подписки</b>\n\n"
-                f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
-                f"⏳ {period}\n"
-                f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
-                f"Способ: {escape(checkout.option.payment_method_name)}\n\n"
-                f"{escape(checkout.instruction)}\n\n"
-                "После оплаты нажмите <b>«Я оплатил»</b> и прикрепите чек. "
-                "Поступление проверит администратор."
+                tr("💎 <b>Оформление подписки</b>\n\n",
+                   "💎 <b>Subscription checkout</b>\n\n")
+                + f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
+                + f"⏳ {period}\n"
+                + f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
+                + tr("Способ: ", "Method: ")
+                + f"{escape(checkout.option.payment_method_name)}\n\n"
+                + f"{escape(checkout.instruction)}\n\n"
+                + tr("После оплаты нажмите <b>«Я оплатил»</b> и прикрепите чек. "
+                     "Поступление проверит администратор.",
+                     "After paying, tap <b>“I have paid”</b> and attach your receipt. "
+                     "The channel administrator will verify your payment.")
             ),
             reply_markup=_checkout_keyboard(checkout.request.id),
             parse_mode="HTML",
@@ -402,21 +449,26 @@ def create_telegram_commerce_router(
                     telegram_user_id=callback.from_user.id,
                 )
         except (ValueError, PermissionError) as exc:
-            await callback.answer(str(exc), show_alert=True)
+            await callback.answer(_buyer_error(exc), show_alert=True)
             return
 
         await callback.answer()
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=(
-                f"{RECEIPT_REPLY_PREFIX}{request_id}\n"
-                "Ответьте на это сообщение фотографией чека или документом "
-                "(PDF/JPG/PNG/WEBP). До получения вложения заявка не будет "
-                "отправлена администратору."
+                tr(RECEIPT_REPLY_PREFIX, RECEIPT_REPLY_PREFIX_EN)
+                + f"{request_id}\n"
+                + tr("Ответьте на это сообщение фотографией чека или документом "
+                     "(PDF/JPG/PNG/WEBP). До получения вложения заявка не будет "
+                     "отправлена администратору.",
+                     "Reply to this message with a receipt photo or a document "
+                     "(PDF/JPG/PNG/WEBP). Your payment will not be sent for review "
+                     "until the attachment is received.")
             ),
             reply_markup=ForceReply(
                 selective=True,
-                input_field_placeholder="Прикрепите чек или скриншот",
+                input_field_placeholder=tr("Прикрепите чек или скриншот",
+                                           "Attach receipt or screenshot"),
             ),
         )
 
@@ -431,8 +483,10 @@ def create_telegram_commerce_router(
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=(
-                    "Нужен файл: фото или документ PDF/JPG/PNG/WEBP. "
-                    "Ответьте вложением на сообщение с номером заявки."
+                    tr("Нужен файл: фото или документ PDF/JPG/PNG/WEBP. "
+                       "Ответьте вложением на сообщение с номером заявки.",
+                       "A receipt photo or PDF/JPG/PNG/WEBP document is required. "
+                       "Reply to the payment request with an attachment.")
                 ),
             )
             return
@@ -446,7 +500,7 @@ def create_telegram_commerce_router(
                     telegram_user_id=message.from_user.id,
                 )
         except (ValueError, PermissionError) as exc:
-            await bot.send_message(chat_id=message.chat.id, text=str(exc))
+            await bot.send_message(chat_id=message.chat.id, text=_buyer_error(exc))
             return
 
         delivered = 0
@@ -476,8 +530,10 @@ def create_telegram_commerce_router(
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=(
-                    "📨 <b>Подтверждение отправлено</b>\n\n"
-                    "Администратор проверит поступление средств и сообщит результат."
+                    tr("📨 <b>Подтверждение отправлено</b>\n\n"
+                       "Администратор проверит поступление средств и сообщит результат.",
+                       "📨 <b>Receipt submitted</b>\n\n"
+                       "The administrator will verify your payment and notify you.")
                 ),
                 parse_mode="HTML",
             )
@@ -485,8 +541,10 @@ def create_telegram_commerce_router(
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=(
-                    "Заявка зарегистрирована, но доставить документ администратору "
-                    "не удалось. Повторите отправку вложения ответом на запрос выше."
+                    tr("Заявка зарегистрирована, но доставить документ администратору "
+                       "не удалось. Повторите отправку вложения ответом на запрос выше.",
+                       "Your payment request was recorded, but the receipt could not be "
+                       "delivered to the administrator. Reply with the attachment again.")
                 ),
             )
 
@@ -504,12 +562,12 @@ def create_telegram_commerce_router(
                     telegram_user_id=callback.from_user.id,
                 )
         except (ValueError, PermissionError) as exc:
-            await callback.answer(str(exc), show_alert=True)
+            await callback.answer(_buyer_error(exc), show_alert=True)
             return
-        await callback.answer("Заявка отменена")
+        await callback.answer(tr("Заявка отменена", "Payment request canceled"))
         await bot.send_message(
             chat_id=callback.from_user.id,
-            text="Заявка на оплату отменена.",
+            text=tr("Заявка на оплату отменена.", "Your payment request was canceled."),
         )
 
     async def _review_callback(
@@ -533,17 +591,21 @@ def create_telegram_commerce_router(
                     approve=approve,
                 )
         except PermissionError:
-            await callback.answer("Недостаточно прав", show_alert=True)
+            await callback.answer(tr("Недостаточно прав", "Not authorized"), show_alert=True)
             return
         except ValueError as exc:
-            await callback.answer(str(exc), show_alert=True)
+            await callback.answer(_buyer_error(exc), show_alert=True)
             return
 
         if not result.changed:
-            await callback.answer("Эта заявка уже обработана", show_alert=True)
+            await callback.answer(tr("Эта заявка уже обработана", "Request already reviewed"),
+                                  show_alert=True)
             return
 
-        await callback.answer("Оплата подтверждена" if approve else "Оплата отклонена")
+        await callback.answer(
+            tr("Оплата подтверждена", "Payment approved") if approve
+            else tr("Оплата отклонена", "Payment rejected"),
+        )
         if callback.message is not None:
             try:
                 await bot.edit_message_reply_markup(
@@ -561,12 +623,15 @@ def create_telegram_commerce_router(
             _admin_review_result_text(result, approve=approve),
             parse_mode="HTML",
         )
-        await _safe_send_message(
-            bot,
-            result.item.customer_telegram_user_id,
-            _customer_review_result_text(result, approve=approve),
-            parse_mode="HTML",
-        )
+        async with recipient_language(
+            session_factory, result.item.customer_telegram_user_id,
+        ):
+            await _safe_send_message(
+                bot,
+                result.item.customer_telegram_user_id,
+                _customer_review_result_text(result, approve=approve),
+                parse_mode="HTML",
+            )
 
     @router.callback_query(F.data.startswith("approve:"))
     async def approve_handler(callback: CallbackQuery, bot: Bot) -> None:
@@ -590,13 +655,17 @@ def create_telegram_commerce_router(
                     actor_first_name=message.from_user.first_name,
                 )
         except PermissionError:
-            await bot.send_message(chat_id=message.from_user.id, text="Недостаточно прав.")
+            await bot.send_message(
+                chat_id=message.from_user.id,
+                text=tr("Недостаточно прав.", "Not authorized."),
+            )
             return
 
         if not items:
             await bot.send_message(
                 chat_id=message.from_user.id,
-                text="Заявок на проверку сейчас нет.",
+                text=tr("Заявок на проверку сейчас нет.",
+                        "There are no pending payment reviews."),
             )
             return
 

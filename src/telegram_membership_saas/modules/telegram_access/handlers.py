@@ -7,6 +7,7 @@ from aiogram.types import ChatJoinRequest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.telegram_access.service import (
     finalize_join_request_approval,
     prepare_join_request_decision,
@@ -85,14 +86,17 @@ async def process_chat_join_request(
         )
 
     try:
-        await bot.send_message(
-            chat_id=request.from_user.id,
-            text=(
-                "✅ <b>Вы в канале!</b>\n\n"
-                "Ваша заявка на вступление одобрена. Приятного просмотра!"
-            ),
-            parse_mode="HTML",
-        )
+        async with recipient_language(session_factory, request.from_user.id):
+            await bot.send_message(
+                chat_id=request.from_user.id,
+                text=tr(
+                    "✅ <b>Вы в канале!</b>\n\n"
+                    "Ваша заявка на вступление одобрена. Приятного просмотра!",
+                    "✅ <b>Welcome to the channel!</b>\n\n"
+                    "Your join request was approved. Enjoy your membership!",
+                ),
+                parse_mode="HTML",
+            )
     except AiogramError:
         # Membership was already granted; a notification failure must not roll it back.
         pass

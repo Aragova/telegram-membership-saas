@@ -234,7 +234,7 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
                     worker = asyncio.create_task(run_project_runtime_loop(
                         factory,
                         project_id=project_id,
-                        adapter=TelegramAccessAdapter(bot),
+                        adapter=TelegramAccessAdapter(bot, session_factory=factory),
                         poll_seconds=current.telegram_worker_poll_seconds,
                     ))
 
