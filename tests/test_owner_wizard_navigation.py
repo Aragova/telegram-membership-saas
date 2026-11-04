@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from aiogram.types import ReplyKeyboardRemove
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
@@ -252,3 +253,33 @@ async def test_method_currency_picker_has_back_and_no_extra_menu_commands(monkey
     assert any(data == "own:methods" for _, data in commands)
     assert any(data == "own:methodcurrency:RUB" for _, data in commands)
     assert len(commands) == 3
+
+
+@pytest.mark.asyncio
+async def test_expired_chat_picker_back_removes_stale_telegram_keyboard(monkeypatch):
+    """After the 15-minute TTL the expired step cannot identify a picker."""
+    project_id, actor_id = uuid4(), uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
+    pending = AsyncMock(return_value=None)
+    monkeypatch.setattr(ui, "back_owner_flow", pending)
+    monkeypatch.setattr(
+        ui, "owner_home",
+        AsyncMock(return_value=SimpleNamespace(selected=None, projects=())),
+    )
+    router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=project_id)
+    handler = next(
+        item.callback for item in router.message.handlers
+        if item.callback.__name__ == "back_setup_message"
+    )
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=700),
+        from_user=SimpleNamespace(id=700, username="owner", first_name="Owner"),
+    )
+    bot = _bot()
+    await handler(message, bot)
+    assert pending.await_args.kwargs["bot_scope_id"] == 900
+    assert bot.send_message.await_count == 2
+    first, second = bot.send_message.await_args_list
+    assert isinstance(first.kwargs["reply_markup"], ReplyKeyboardRemove)
+    assert "главное меню" in first.args[1]
+    assert "ViMi Pay" in second.args[1]
