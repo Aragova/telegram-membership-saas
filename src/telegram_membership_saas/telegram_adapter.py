@@ -4,11 +4,11 @@ from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
+from telegram_membership_saas.localization import LanguageMiddleware, create_language_router
 from telegram_membership_saas.modules.owner_setup.handlers import create_owner_setup_router
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     create_platform_dashboard_router,
 )
-from telegram_membership_saas.localization import LanguageMiddleware, create_language_router
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
