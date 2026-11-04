@@ -223,3 +223,19 @@ async def test_stale_timezone_button_cannot_change_another_project(monkeypatch):
     assert callback.answer.await_args.kwargs["show_alert"] is True
 
 
+
+
+def test_readiness_does_not_count_drafts_or_disabled_resources():
+    project_id = uuid4()
+    snapshot = SetupOverview(
+        project_id=project_id,
+        project_name="Not ready", timezone="Europe/Moscow",
+        bots=(("stopped_bot", "disabled"),),
+        resources=((uuid4(), "Off", "disabled"),),
+        plans=((uuid4(), "Draft", "draft"),),
+        methods=((uuid4(), "Bank", "disabled"),),
+    )
+    assert all(label.startswith("▫️") for label in ui._progress(snapshot))
+    assert "📝 Черновик" == ui._status("draft")
+
+
