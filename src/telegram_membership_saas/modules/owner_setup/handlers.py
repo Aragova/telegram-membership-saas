@@ -235,7 +235,7 @@ def create_owner_setup_router(
         """Switch roles only on central and only for configured owner."""
         if (
             fixed_project_id is None
-            and get_settings().platform_owner_telegram_id == user_id
+            and getattr(get_settings(), "platform_owner_telegram_id", None) == user_id
         ):
             return [InlineKeyboardButton(
                 text="👑 Панель платформы", callback_data="plat:home",
