@@ -636,6 +636,8 @@ async def review_payment_request_from_telegram(
         actor_user_id=actor.id,
         permission=permission,
     )
+    # Match owner remediation and checkout lock order before the row FOR UPDATE.
+    await checkout_retirement_lock(session, project_id)
 
     locked_request = await session.scalar(
         select(PaymentRequest)
