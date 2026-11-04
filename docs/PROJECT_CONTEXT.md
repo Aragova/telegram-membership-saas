@@ -12,6 +12,20 @@
 
 Это не одноразовый single-channel bot и не копия UnionBot один-в-один. Мы строим modular SaaS core с возможностью позже добавить Telegram Stars, Stripe, YooKassa, PayPal, crypto providers, web dashboard, API, white-label bots, multi-resource plans и другие access providers.
 
+## Этап D — закрытая аналитика платформы
+
+Канал управления ViMi Pay имеет отдельный mode `👑 Платформа` только для
+выданного по Telegram numeric ID владельца. `TMS_PLATFORM_OWNER_TELEGRAM_ID`
+в staging/production секреты не содержит, но не коммитить конкретный ID.
+Alembic `0019_platform_dashboard` + однократная административная команда
+`python -m telegram_membership_saas.platform_bootstrap` привязывают
+операторское разрешение без доступа runtime к записи прав. Отчёт
+`public.platform_report_snapshot` имеет фиксированную агрегированную
+структуру, проверяет PostgreSQL ACL, аудирует каждый запрос и не выдаёт
+персональных данных покупателей. Только подтверждённый клиентский оборот,
+в разрезе валют; выручка SaaS ещё не реализована. См.
+[PLATFORM_OWNER.md](PLATFORM_OWNER.md).
+
 ## ОБЯЗАТЕЛЬНО: ViMi Pay v2.0 (утверждено 04.11.2026)
 
 Прочитать [VIMI_PAY_V2.md](VIMI_PAY_V2.md) **перед изменением кода**.
