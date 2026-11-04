@@ -235,3 +235,28 @@ async def test_central_cannot_open_tenant_review_inbox(monkeypatch):
     query = _query("reviews")
     await callback(query, _bot())
     assert query.answer.await_args.kwargs["show_alert"] is True
+
+
+async def test_incompatible_published_currency_guides_owner_back_to_payment(monkeypatch):
+    # A plan remains published when its last matching payment method is disabled.
+    from dataclasses import replace
+
+    project = uuid4()
+    _auth(monkeypatch, project)
+    snapshot = replace(
+        _snapshot(project, has_channel=True, has_method=True, has_plan=True),
+        sales_configured=False,
+    )
+    assert ui._next_setup_step(snapshot)[1] == "methods"
+    monkeypatch.setattr(
+        ui, "setup_overview", AsyncMock(return_value=snapshot),
+    )
+    bot = _bot()
+    await _callback(project)(_query("readiness"), bot)
+    sent = bot.send_message.await_args
+    callbacks = [
+        b.callback_data for row in sent.kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert "own:methods" in callbacks
+    assert "own:readiness" not in callbacks
