@@ -39,6 +39,12 @@ from telegram_membership_saas.modules.bots.service import (
     decrypt_token,
     register_customer_bot,
 )
+from telegram_membership_saas.modules.payments.models import PaymentMethod
+from telegram_membership_saas.modules.owner_setup.buyer_preview import (
+    preview_catalog_screen,
+    preview_method_screen,
+    preview_offer_screen,
+)
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
@@ -101,6 +107,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     format_period,
     list_pending_reviews_for_actor,
 )
+from telegram_membership_saas.modules.telegram_commerce.storefront import list_buyer_offers
 from telegram_membership_saas.tenant_context import TenantContext
 
 DURATIONS = {
@@ -855,26 +862,66 @@ def create_owner_setup_router(
 
     async def show_guest_preview(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, currency: str | None = None, page: int = 0,
+        price_id: UUID | None = None, method_id: UUID | None = None,
+        message_id: int | None = None,
     ) -> None:
-        """Preview active offers without a purchase or financial side effect."""
-        data = await setup_overview(
+        """Interactive buyer-like display with no checkout/payment writes."""
+        if fixed_project_id is None or project_id != fixed_project_id:
+            raise PermissionError("Нет прав на управление этим ботом")
+        if not await can_manage_project(
             factory, actor_id=actor_id, project_id=project_id,
-        )
-        published = [name for _, name, status in data.plans if status == "active"]
-        content = (
-            tr("👀 <b>Гостевой просмотр</b>\n\n",
-               "👀 <b>Buyer preview</b>\n\n")
-            + ("\n".join("• " + escape(name) for name in published[:15])
-               if published else tr("Пока нет опубликованных тарифов.",
-                                    "There are no published plans yet."))
-            + tr("\n\nЭто просмотр каталога. Никакие платежи не создаются.",
-                 "\n\nThis is a catalog preview. No payment is created.")
-        )
+        ):
+            raise PermissionError("Нет прав на управление этим ботом")
+
+        async with system_project_session_scope(factory, project_id) as session:
+            offers = await list_buyer_offers(session, project_id=project_id)
+            if method_id is not None and price_id is not None:
+                # Method must still be checkout-eligible for this exact price.
+                eligible = any(
+                    offer.option.plan_price_id == price_id
+                    and any(m.payment_method_id == method_id for m in offer.methods)
+                    for offer in offers
+                )
+                if not eligible:
+                    raise ValueError("Способ оплаты недоступен в этом проекте")
+                method = await session.scalar(
+                    select(PaymentMethod).where(
+                        PaymentMethod.id == method_id,
+                        PaymentMethod.project_id == project_id,
+                        PaymentMethod.status == "active",
+                    )
+                )
+                if method is None:
+                    raise ValueError("Способ оплаты недоступен в этом проекте")
+                rendered = preview_method_screen(
+                    offers, price_id=price_id, payment_method_id=method_id,
+                    instruction_template=method.instruction_template, page=page,
+                )
+            elif price_id is not None:
+                rendered = preview_offer_screen(
+                    offers, price_id=price_id, page=page,
+                )
+            else:
+                rendered = preview_catalog_screen(
+                    offers, currency=currency, page=page,
+                )
+        if rendered is None:
+            raise ValueError("Тариф не найден в этом проекте")
+        content, keyboard = rendered
+        if message_id is not None:
+            try:
+                await bot.edit_message_text(
+                    content, chat_id=user_id, message_id=message_id,
+                    parse_mode="HTML", reply_markup=keyboard,
+                )
+                return
+            except AiogramError as exc:
+                if "message is not modified" in str(exc).lower():
+                    return
+                # Older/deleted messages fall back to a new safe preview.
         await bot.send_message(
-            user_id, content, parse_mode="HTML",
-            reply_markup=_markup([
-                [_button("⬅️ Панель администратора", "dashboard")],
-            ]),
+            user_id, content, parse_mode="HTML", reply_markup=keyboard,
         )
 
 
@@ -1009,6 +1056,41 @@ def create_owner_setup_router(
                 await show_reviews(bot, user_id, actor_id, project_id)
             elif action == "preview":
                 await show_guest_preview(bot, user_id, actor_id, project_id)
+            elif action.startswith("pvcat:"):
+                _, currency, page_token = action.split(":", 2)
+                if not currency.isascii() or not currency.isalnum() or (
+                    not page_token.isascii() or not page_token.isdecimal()
+                    or int(page_token) > 10000
+                ):
+                    raise ValueError("Недопустимая страница")
+                await show_guest_preview(
+                    bot, user_id, actor_id, project_id,
+                    currency=currency, page=int(page_token),
+                    message_id=query.message.message_id,
+                )
+            elif action.startswith("pvoffer:"):
+                _, price_token, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal() or (
+                    int(page_token) > 10000
+                ):
+                    raise ValueError("Недопустимая страница")
+                await show_guest_preview(
+                    bot, user_id, actor_id, project_id,
+                    price_id=decode_uuid(price_token), page=int(page_token),
+                    message_id=query.message.message_id,
+                )
+            elif action.startswith("pvmethod:"):
+                _, price_token, method_token, page_token = action.split(":", 3)
+                if not page_token.isascii() or not page_token.isdecimal() or (
+                    int(page_token) > 10000
+                ):
+                    raise ValueError("Недопустимая страница")
+                await show_guest_preview(
+                    bot, user_id, actor_id, project_id,
+                    price_id=decode_uuid(price_token),
+                    method_id=decode_uuid(method_token), page=int(page_token),
+                    message_id=query.message.message_id,
+                )
             elif action.startswith("drop:"):
                 _, project_ref, instance_ref = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
