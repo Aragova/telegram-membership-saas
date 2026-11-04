@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -40,31 +40,33 @@ async def write_bot_health(
             "error_code": error_code,
         }
         stmt = insert(CustomerBotRuntimeHealth).values(**values)
-        # A finishing old worker cannot overwrite a different worker's status.
-        # A new startup (after obtaining the advisory lock) may take ownership.
+        # A queued replica has NOT acquired the per-project advisory lease.
+        # It must never replace the instance_id of an existing record, even
+        # when the owning worker's heartbeat is temporarily stale. Otherwise
+        # the real lease holder can no longer refresh its running status.
         if state == "queued":
-            # Other supervisor replicas may already be running the project.
-            # Never overwrite their recent live heartbeat with 'queued'.
-            allowed = (
-                CustomerBotRuntimeHealth.last_heartbeat
-                < datetime.now(UTC) - timedelta(seconds=45)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=[CustomerBotRuntimeHealth.project_id],
             )
         else:
+            # A finishing old worker cannot overwrite a different worker's
+            # status. A new startup takes ownership only *after* its caller
+            # has acquired the project lease.
             allowed = (
                 True if state in {"starting", "setup_needed"} else
                 CustomerBotRuntimeHealth.instance_id == instance_id
             )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[CustomerBotRuntimeHealth.project_id],
-            set_={
-                "telegram_bot_id": stmt.excluded.telegram_bot_id,
-                "instance_id": stmt.excluded.instance_id,
-                "state": stmt.excluded.state,
-                "last_heartbeat": stmt.excluded.last_heartbeat,
-                "error_code": stmt.excluded.error_code,
-            },
-            where=allowed,
-        )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[CustomerBotRuntimeHealth.project_id],
+                set_={
+                    "telegram_bot_id": stmt.excluded.telegram_bot_id,
+                    "instance_id": stmt.excluded.instance_id,
+                    "state": stmt.excluded.state,
+                    "last_heartbeat": stmt.excluded.last_heartbeat,
+                    "error_code": stmt.excluded.error_code,
+                },
+                where=allowed,
+            )
         await session.execute(stmt)
 
 
