@@ -83,8 +83,8 @@ async def test_duration_back_cancels_only_current_wizard(monkeypatch):
     assert consume.await_args.kwargs["expected_step"] == "plan_duration"
     assert consume.await_args.kwargs["generation"] == "current"
     assert consume.await_args.kwargs["bot_scope_id"] == 900
-    cancel.assert_awaited_once()
-    assert cancel.await_args.kwargs["bot_scope_id"] == 900
+    assert consume.await_args.kwargs["discard"] is True
+    cancel.assert_not_awaited()
     create.assert_not_awaited()
     assert "Plans" in bot.send_message.await_args.args[1]
     query.answer.assert_awaited_once()
@@ -112,6 +112,7 @@ async def test_resource_back_restores_duration_with_fresh_generation(monkeypatch
         commands = _buttons(bot)
     finally:
         _language.reset(token)
+    assert consume.await_args.kwargs["discard"] is False
     assert advance.await_args.kwargs["step"] == "plan_duration"
     assert advance.await_args.kwargs["payload"] == {"name": "Premium"}
     assert advance.await_args.kwargs["bot_scope_id"] == 900
@@ -283,3 +284,44 @@ async def test_expired_chat_picker_back_removes_stale_telegram_keyboard(monkeypa
     assert isinstance(first.kwargs["reply_markup"], ReplyKeyboardRemove)
     assert "главное меню" in first.args[1]
     assert "ViMi Pay" in second.args[1]
+
+
+@pytest.mark.asyncio
+async def test_generation_checked_and_discarded_under_single_transaction(monkeypatch):
+    """No second unconditional cancellation may overwrite a newer setup."""
+    actor_id, project_id = uuid4(), uuid4()
+    state = SimpleNamespace(
+        step="plan_duration", payload={"name": "Premium"},
+        selected_project_id=project_id, prompt_message_id=None,
+        generation="current", expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    session = SimpleNamespace(get=AsyncMock(return_value=state))
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield session
+    monkeypatch.setattr(service, "tenant_session_scope", scope)
+    result = await service.consume_button_flow(
+        MagicMock(), actor_id=actor_id, bot_scope_id=900,
+        expected_step="plan_duration", generation="current",
+        discard=True,
+    )
+    assert result.generation == "current"
+    assert state.step is None
+    assert state.generation is None
+    assert state.payload == {}
+    assert state.expires_at <= datetime.now(UTC)
+
+    # A different (newly started) wizard cannot be cleared with the old Back.
+    state.step = "plan_name"
+    state.generation = "new"
+    state.payload = {"draft": "another"}
+    state.expires_at = datetime.now(UTC) + timedelta(minutes=10)
+    with pytest.raises(ValueError, match="Шаг устарел"):
+        await service.consume_button_flow(
+            MagicMock(), actor_id=actor_id, bot_scope_id=900,
+            expected_step="plan_duration", generation="current",
+            discard=True,
+        )
+    assert state.step == "plan_name"
+    assert state.generation == "new"
+    assert state.payload == {"draft": "another"}
