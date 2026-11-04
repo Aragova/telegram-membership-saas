@@ -40,8 +40,7 @@ from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
     project_worker_lock,
 )
-from telegram_membership_saas.tenant_context import TenantAccessDenied
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"),
