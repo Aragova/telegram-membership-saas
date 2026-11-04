@@ -118,7 +118,8 @@ async def test_supervisor_only_launches_ready_projects_and_stops_removed(monkeyp
             supervisor.workers[pid].task, return_exceptions=True
         )
         await supervisor.reconcile_once()
-        assert pid not in supervisor.workers
+        # Reconciliation immediately starts the rotated bot with fresh identity.
+        assert supervisor.workers[pid].target == current[0]
         assert pid not in supervisor.retry_after
 
         await supervisor.reconcile_once()
