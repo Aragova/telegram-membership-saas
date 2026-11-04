@@ -54,3 +54,26 @@ BUTTON_LABELS_EN = {
 
 def owner_button_label(value: str) -> str:
     return tr(value, BUTTON_LABELS_EN.get(value, value))
+
+
+RUNTIME_LABELS_EN = {
+    "⚪ Ожидает запуска": "⚪ Waiting to start",
+    "⚪ Нет связи с ботом": "⚪ Bot is offline",
+    "🟢 Работает": "🟢 Running",
+    "🟡 Запускается": "🟡 Starting",
+    "🟡 В очереди на запуск": "🟡 Queued to start",
+    "🟡 Требуется настройка": "🟡 Setup required",
+    "🔴 Ошибка токена — подключите бота повторно": "🔴 Invalid token — reconnect the bot",
+    "🔴 Проверьте токен и webhook бота": "🔴 Check the bot token and webhook",
+    "🔴 Проверьте права бота в канале": "🔴 Check bot permissions in the channel",
+    "🟡 Бот перезапускается": "🟡 Bot is restarting",
+    "🔴 Не удалось запустить бота": "🔴 Unable to start bot",
+    "⚪ Не запущен": "⚪ Not running",
+    "⚪ Не подключён": "⚪ Not connected",
+    "🟡 Бот работает, но тарифы или оплата не настроены":
+        "🟡 Bot runs, but plans or payments are not set up",
+}
+
+
+def owner_runtime_label(value: str) -> str:
+    return tr(value, RUNTIME_LABELS_EN.get(value, value))

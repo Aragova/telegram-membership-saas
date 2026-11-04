@@ -39,7 +39,10 @@ from telegram_membership_saas.modules.bots.service import (
     decrypt_token,
     register_customer_bot,
 )
-from telegram_membership_saas.modules.owner_setup.labels import owner_button_label
+from telegram_membership_saas.modules.owner_setup.labels import (
+    owner_button_label,
+    owner_runtime_label,
+)
 from telegram_membership_saas.modules.owner_setup.obligations import (
     close_owner_payment,
     end_owner_subscription,
@@ -288,7 +291,7 @@ def create_owner_setup_router(
                 tr("✦ <b>ViMi Pay</b>\n<i>Ваши подключения</i>\n\n",
                    "✦ <b>ViMi Pay</b>\n<i>Your connections</i>\n\n") +
                 f"🤖 <b>{escape(data.project_name)}</b>\n"
-                f"{escape(data.bot_runtime_label)}\n\n"
+                f"{escape(owner_runtime_label(data.bot_runtime_label))}\n\n"
                 + tr("Подключите бота и продолжите настройку внутри него.",
                      "Connect a bot and finish setup inside that bot.")
             )
@@ -368,21 +371,25 @@ def create_owner_setup_router(
 
     async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = ["🤖 <b>Мои боты</b>", ""]
+        lines = [tr("🤖 <b>Мои боты</b>", "🤖 <b>My bots</b>"), ""]
         if not data.bots:
-            lines.append("Бот пока не подключён.")
+            lines.append(tr("Бот пока не подключён.", "No bot connected yet."))
         for username, status in data.bots:
             lines.append(
                 f"• <b>@{escape(username)}</b> — "
-                + ("токен проверен" if status == "registered" else _status(status))
+                + (tr("токен проверен", "token verified") if status == "registered"
+                   else _status(status))
             )
         retiring = any(status == "deleting" for _, _, status in data.bot_instances)
         lines.append(
             "\n" + (
-                "⏳ Бот отключается. Нажмите «Обновить статус» после завершения."
-                if retiring else escape(data.bot_runtime_label)
-                + "\n\nБот доступен для настройки сразу после подключения."
-                "\nОткройте его и добавьте каналы, оплату и тарифы."
+                tr("⏳ Бот отключается. Нажмите «Обновить статус» после завершения.",
+                    "⏳ Bot is shutting down. Refresh its status once complete.")
+                if retiring else escape(owner_runtime_label(data.bot_runtime_label))
+                + tr("\n\nБот доступен для настройки сразу после подключения."
+                     "\nОткройте его и добавьте каналы, оплату и тарифы.",
+                     "\n\nA verified bot can be configured immediately."
+                     "\nOpen it to add channels, payments and plans.")
             )
         )
         rows = []
@@ -393,7 +400,7 @@ def create_owner_setup_router(
         if connected:
             rows.append([
                 InlineKeyboardButton(
-                    text="🚀 Перейти к своему боту",
+                    text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
                     url="https://t.me/" + connected,
                     style="success",
                 )
@@ -406,7 +413,7 @@ def create_owner_setup_router(
                 if status != "deleting":
                     rows.append([
                         _button(
-                            "🗑 Удалить @" + username[:35],
+                            tr("🗑 Удалить @", "🗑 Remove @") + username[:35],
                             "drop:" + encode_uuid(project_id)
                             + ":" + encode_uuid(instance_id),
                             "danger",
@@ -1465,7 +1472,7 @@ def create_owner_setup_router(
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="🚀 Перейти к своему боту",
+                    text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
                     url="https://t.me/" + username,
                     style="success",
                 ),
