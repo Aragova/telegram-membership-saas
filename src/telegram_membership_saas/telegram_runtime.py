@@ -195,45 +195,75 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
     worker: asyncio.Task[None] | None = None
     polling: asyncio.Task[None] | None = None
     guard: asyncio.Task[None] | None = None
+
+    async def stop_dispatcher() -> None:
+        if polling is not None:
+            if not polling.done():
+                await asyncio.sleep(0)
+                try:
+                    if not polling.done():
+                        await dispatcher.stop_polling()
+                except RuntimeError:
+                    polling.cancel()
+            await asyncio.gather(polling, return_exceptions=True)
+
     try:
         if not current.telegram_central_access_enabled:
-            # Central ViMi Pay is an owner-only entry point. Newly onboarded
-            # owners must never need a project UUID in deployment settings.
-            await dispatcher.start_polling(bot)
+            # Central ViMi Pay must remain available for every new owner,
+            # without a per-owner project UUID in deployment settings.
+            polling = asyncio.create_task(
+                dispatcher.start_polling(
+                    bot, handle_signals=False, handle_as_tasks=False,
+                    close_bot_session=False,
+                )
+            )
+            try:
+                await asyncio.shield(polling)
+            finally:
+                await stop_dispatcher()
         else:
             project_id = current.telegram_project_id
             assert project_id is not None
-            # Prevent the legacy access worker from running concurrently
-            # with the new supervisor (or a manually started customer bot).
+            # Release the project lock only *after* polling and access-worker
+            # tasks have fully stopped. New workers can then safely take over.
             async with project_worker_lock(engine, project_id) as lease:
-                worker = asyncio.create_task(run_project_runtime_loop(
-                    factory,
-                    project_id=project_id,
-                    adapter=TelegramAccessAdapter(bot),
-                    poll_seconds=current.telegram_worker_poll_seconds,
-                ))
+                try:
+                    worker = asyncio.create_task(run_project_runtime_loop(
+                        factory,
+                        project_id=project_id,
+                        adapter=TelegramAccessAdapter(bot),
+                        poll_seconds=current.telegram_worker_poll_seconds,
+                    ))
 
-                async def heartbeat() -> None:
-                    while True:
-                        await asyncio.sleep(3)
-                        await confirm_project_lock(lease, project_id)
+                    async def heartbeat() -> None:
+                        while True:
+                            await asyncio.sleep(3)
+                            await confirm_project_lock(lease, project_id)
 
-                guard = asyncio.create_task(heartbeat())
-                polling = asyncio.create_task(
-                    dispatcher.start_polling(bot, handle_signals=False)
-                )
-                done, _ = await asyncio.wait(
-                    (guard, polling), return_when=asyncio.FIRST_COMPLETED
-                )
-                for task in done:
-                    task.result()
+                    guard = asyncio.create_task(heartbeat())
+                    polling = asyncio.create_task(
+                        dispatcher.start_polling(
+                            bot, handle_signals=False, handle_as_tasks=False,
+                            close_bot_session=False,
+                        )
+                    )
+                    done, _ = await asyncio.wait(
+                        (guard, polling), return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in done:
+                        task.result()
+                finally:
+                    # Order matters: both Telegram polling and access queue
+                    # maintenance must be drained before releasing DB lock.
+                    await stop_dispatcher()
+                    if guard is not None:
+                        guard.cancel()
+                    if worker is not None:
+                        worker.cancel()
+                    await asyncio.gather(
+                        *(task for task in (worker, guard) if task is not None),
+                        return_exceptions=True,
+                    )
     finally:
-        for task in (worker, polling, guard):
-            if task is not None:
-                task.cancel()
-        await asyncio.gather(
-            *(task for task in (worker, polling, guard) if task is not None),
-            return_exceptions=True,
-        )
         await bot.session.close()
         await engine.dispose()
