@@ -49,6 +49,13 @@ from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
 )
+from telegram_membership_saas.modules.owner_setup.plan_management import (
+    archive_owner_plan,
+    delete_unused_owner_plan,
+    edit_owner_draft_duration,
+    edit_owner_draft_resource,
+    rename_owner_plan,
+)
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -716,16 +723,113 @@ def create_owner_setup_router(
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
             ])
+        token = encode_uuid(plan_id)
+        lines.append("")
+        lines.append(tr("<b>Управление тарифом</b>", "<b>Manage plan</b>"))
+        rows.append([_button(
+            tr("✏️ Изменить название", "✏️ Rename plan"),
+            "plrename:" + token,
+        )])
         if data.status == "draft":
+            rows.append([
+                _button(
+                    tr("⏳ Изменить срок", "⏳ Change duration"),
+                    "plduration:" + token,
+                ),
+                _button(
+                    tr("📢 Изменить канал", "📢 Change channel"),
+                    "plresource:" + token,
+                ),
+            ])
             rows.append([
                 _button("✅ Опубликовать тариф", "publish:" + plan_id.hex, "success"),
             ])
+        elif data.status == "active":
+            rows.append([_button(
+                tr("⏸️ Снять с продажи", "⏸️ Stop new sales"),
+                "plarchive:" + token,
+            )])
+        elif data.status == "archived":
+            rows.append([_button(
+                tr("▶️ Вернуть в продажу", "▶️ Resume sales"),
+                "plrestore:" + token, "success",
+            )])
+        if not data.has_history:
+            rows.append([_button(
+                tr("🗑 Удалить тариф", "🗑 Delete plan"),
+                "pldelete:" + token, "danger",
+            )])
+        else:
+            lines.append(tr(
+                "<i>Удаление недоступно: по тарифу есть история покупок. "
+                "Снятие с продажи сохраняет подписки и платежи.</i>",
+                "<i>Deletion is unavailable: this plan has purchase history. "
+                "Archiving keeps subscriptions and payments intact.</i>",
+            ))
         rows.append([_button("⬅️ Все тарифы", "plans")])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
         )
 
+
+    async def show_plan_duration_editor(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, plan_id: UUID,
+    ) -> None:
+        data = await get_owner_plan_info(
+            factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
+        )
+        if data.status != "draft":
+            raise ValueError("Срок можно изменить только у неопубликованного тарифа")
+        token = encode_uuid(plan_id)
+        rows = [
+            [_button(
+                tr(label, format_period(value, unit)),
+                "plsetperiod:" + token + ":" + key,
+            )]
+            for key, (value, unit, label) in DURATIONS.items()
+        ]
+        rows.append([_button(
+            tr("⬅️ К тарифу", "⬅️ Back to plan"), "plan:" + plan_id.hex,
+        )])
+        await bot.send_message(
+            user_id, tr(
+                "⏳ <b>Изменить срок черновика</b>\n\n"
+                "Выберите новый срок. Существующие цены сохранятся.",
+                "⏳ <b>Change draft duration</b>\n\n"
+                "Choose the new duration. Existing prices are retained.",
+            ), parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_plan_resource_editor(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, plan_id: UUID,
+    ) -> None:
+        data = await get_owner_plan_info(
+            factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
+        )
+        if data.status != "draft":
+            raise ValueError("Канал можно изменить только у неопубликованного тарифа")
+        snapshot = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        token = encode_uuid(plan_id)
+        rows = [
+            [_button(
+                "📢 " + name[:45], "plsetres:" + token + ":" + encode_uuid(rid),
+            )]
+            for rid, name, status in snapshot.resources if status == "active"
+        ]
+        rows.append([_button(
+            tr("⬅️ К тарифу", "⬅️ Back to plan"), "plan:" + plan_id.hex,
+        )])
+        await bot.send_message(
+            user_id, tr(
+                "📢 <b>Изменить канал черновика</b>\n\n"
+                "Выберите канал или группу, доступ к которым даст тариф.",
+                "📢 <b>Change draft channel</b>\n\n"
+                "Select the channel or group this plan will grant access to.",
+            ), parse_mode="HTML", reply_markup=_markup(rows),
+        )
 
     async def show_methods(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
