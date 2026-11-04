@@ -24,6 +24,9 @@ from telegram_membership_saas.db import (
     build_lease_engine,
     build_session_factory,
 )
+from telegram_membership_saas.modules.bots.deletion_service import (
+    finalize_bot_retirement,
+)
 from telegram_membership_saas.modules.bots.health_service import (
     claim_bot_health,
     write_bot_health,
@@ -67,6 +70,20 @@ async def discover_targets(
             )
         )).all()
     return tuple(BotTarget(*row) for row in rows)
+
+
+async def discover_removal_targets(
+    factory: async_sessionmaker[AsyncSession],
+) -> tuple[tuple[UUID, int], ...]:
+    """Discover retirement requests without exposing any stored credentials."""
+    async with factory() as session:
+        rows = (await session.execute(
+            text(
+                "SELECT project_id, telegram_bot_id "
+                "FROM public.list_customer_bot_removals()"
+            )
+        )).all()
+    return tuple((project_id, bot_id) for project_id, bot_id in rows)
 
 
 def safe_error_code(exc: Exception) -> str:
@@ -219,6 +236,10 @@ class CustomerBotSupervisor:
 
         # Each running project consumes one dedicated PostgreSQL advisory-lock
         # connection. Never admit more than the configured safe DB capacity.
+        # Retiring bots have already disappeared from registered targets.
+        # Polling must be fully drained and the advisory lock free first.
+        await self.finalize_removals()
+
         for pid, target in sorted(ready.items(), key=lambda item: item[0].int):
             if pid in self.workers or monotonic() < self.retry_after.get(pid, 0):
                 continue
@@ -237,6 +258,27 @@ class CustomerBotSupervisor:
             )
             self.workers[pid] = RunningTarget(target=target, task=task)
             logger.info("Customer runtime scheduled for project %s", pid)
+
+    async def finalize_removals(self) -> None:
+        """Remove credentials only after the project's poller has stopped."""
+        pending = await discover_removal_targets(self.factory)
+        for project_id, bot_id in pending:
+            if project_id in self.workers:
+                continue
+            try:
+                async with project_worker_lock(self.engine, project_id):
+                    await finalize_bot_retirement(
+                        self.factory,
+                        project_id=project_id,
+                        telegram_bot_id=bot_id,
+                    )
+            except ProjectWorkerBusy:
+                # Another supervisor (or old bot instance) owns this lease.
+                continue
+            except Exception:
+                logger.warning(
+                    "Bot retirement will be retried for project %s", project_id
+                )
 
     async def run(self) -> None:
         try:
