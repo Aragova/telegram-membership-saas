@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 SCAN_SECONDS = 10
 HEARTBEAT_SECONDS = 3
 FAILURE_BACKOFF_SECONDS = 45
+POLLING_STALE_SECONDS = 45
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +71,7 @@ def safe_error_code(exc: Exception) -> str:
         return "invalid_credentials"
     if "administrator rights" in message:
         return "missing_admin_rights"
-    if "identity or webhook" in message:
+    if "identity or webhook" in message or "polling stalled" in message:
         return "telegram_check_failed"
     return "startup_failed"
 
@@ -96,28 +97,35 @@ async def run_target(
                 factory, project_id=project_id, bot_id=bot_id,
                 instance_id=instance_id, state="starting",
             )
-            started = asyncio.Event()
+            # Aiogram retries getUpdates errors internally without ending the
+            # polling task. Only successful getUpdates, including empty
+            # responses, prove real Telegram reachability.
+            booted_at = monotonic()
+            last_poll_response: float | None = None
 
-            async def on_started() -> None:
-                started.set()
-                await write_bot_health(
-                    factory, project_id=project_id, bot_id=bot_id,
-                    instance_id=instance_id, state="running",
-                )
+            def observed_poll_response() -> None:
+                nonlocal last_poll_response
+                last_poll_response = monotonic()
 
             async def heartbeat() -> None:
                 while True:
                     await asyncio.sleep(HEARTBEAT_SECONDS)
                     await confirm_project_lock(lease, project_id)
+                    last_ok = last_poll_response
+                    silence = monotonic() - (
+                        last_ok if last_ok is not None else booted_at
+                    )
+                    if silence > POLLING_STALE_SECONDS:
+                        raise RuntimeError("Customer Telegram polling stalled")
                     await write_bot_health(
                         factory, project_id=project_id, bot_id=bot_id,
                         instance_id=instance_id,
-                        state="running" if started.is_set() else "starting",
+                        state="running" if last_ok is not None else "starting",
                     )
 
             customer = asyncio.create_task(run_customer_bot_instance(
                 factory, project_id=project_id, telegram_bot_id=bot_id,
-                settings=settings, on_started=on_started,
+                settings=settings, on_poll_response=observed_poll_response,
             ))
             guard = asyncio.create_task(heartbeat())
             try:
