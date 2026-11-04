@@ -4,6 +4,8 @@ Do not localize exceptions inside service code: these are also consumed by
 state machines and tests. Unknown messages get a safe generic English error,
 while Russian keeps the original diagnostic for existing operators.
 """
+import re
+
 from telegram_membership_saas.localization import tr
 
 _ERROR_EN = {
@@ -100,9 +102,40 @@ _KNOWN_EN_ERRORS = frozenset(_ERROR_EN.values()) | {
     "Payment method name must be 2–120 characters",
 }
 
+# Price-service errors are already public validation messages in English.
+# Only these exact strings and bounded precision variants can reach the UI;
+# never return an arbitrary exception or DB detail.
+_PRICE_ERRORS_RU = {
+    "Price amount must be a valid decimal number":
+        "Введите корректную числовую сумму.",
+    "Price amount must be finite and positive":
+        "Цена должна быть положительным конечным числом.",
+}
+
+
+def _price_error(message: str) -> str | None:
+    if message in _PRICE_ERRORS_RU:
+        return tr(_PRICE_ERRORS_RU[message], message)
+    match = re.fullmatch(
+        r"Price amount supports at most ([0-9]{1,2}) (fractional|integer) digits",
+        message,
+    )
+    if match is None:
+        return None
+    limit = int(match.group(1))
+    kind = match.group(2)
+    if kind == "fractional" and 0 <= limit <= 18:
+        return tr(f"Цена: максимум {limit} знаков после запятой.", message)
+    if kind == "integer" and limit == 20:
+        return tr("Цена: максимум 20 цифр до запятой.", message)
+    return None
+
 
 def owner_error(message: str) -> str:
     """Preserve safe, already localized errors; redact unknown English exceptions."""
+    price_message = _price_error(message)
+    if price_message is not None:
+        return price_message
     if message in _KNOWN_EN_ERRORS:
         return message
     return tr(message, _ERROR_EN.get(message, "Action unavailable. Reopen the section."))

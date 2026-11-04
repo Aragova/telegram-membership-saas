@@ -1,5 +1,8 @@
 """Final bilingual UI audit: service errors and central legacy redirects."""
+from decimal import Decimal
 from types import SimpleNamespace
+
+import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -10,6 +13,7 @@ from telegram_membership_saas.modules.owner_setup.obligation_locale import oblig
 from telegram_membership_saas.modules.telegram_admin.redirects import (
     create_central_cutover_router,
 )
+from telegram_membership_saas.modules.pricing.service import _normalize_amount
 
 
 def test_owner_service_errors_are_localized_without_changing_service_text() -> None:
@@ -133,5 +137,57 @@ def test_obligation_errors_preserve_safe_english_only() -> None:
         assert obligation_error("raw-driver-error-with-ids") == (
             "Action unavailable. Refresh the list."
         )
+    finally:
+        _language.reset(token)
+
+
+@pytest.mark.parametrize(
+    ("amount", "max_fractional_digits", "english", "russian"),
+    [
+        (
+            "0", 2, "Price amount must be finite and positive",
+            "Цена должна быть положительным конечным числом.",
+        ),
+        (
+            "not-a-number", 2, "Price amount must be a valid decimal number",
+            "Введите корректную числовую сумму.",
+        ),
+        (
+            "1.234", 2, "Price amount supports at most 2 fractional digits",
+            "Цена: максимум 2 знаков после запятой.",
+        ),
+        (
+            "1e21", 2, "Price amount supports at most 20 integer digits",
+            "Цена: максимум 20 цифр до запятой.",
+        ),
+    ],
+)
+def test_real_price_validation_errors_are_actionable_in_both_languages(
+    amount: str, max_fractional_digits: int, english: str, russian: str,
+) -> None:
+    with pytest.raises(ValueError) as captured:
+        _normalize_amount(
+            Decimal(amount) if amount != "not-a-number" else amount,
+            max_fractional_digits=max_fractional_digits,
+        )
+    assert str(captured.value) == english
+    token = _language.set("en")
+    try:
+        assert owner_error(str(captured.value)) == english
+    finally:
+        _language.reset(token)
+    assert owner_error(str(captured.value)) == russian
+
+
+def test_untrusted_price_error_variants_remain_redacted_in_english() -> None:
+    token = _language.set("en")
+    try:
+        for unknown in (
+            "Price amount supports at most 99 fractional digits",
+            "Price amount supports at most 21 integer digits",
+            "Price amount supports at most 2 fractional digits; db user: 123",
+            "Price amount must be finite and positive [internal info]",
+        ):
+            assert owner_error(unknown) == "Action unavailable. Reopen the section."
     finally:
         _language.reset(token)
