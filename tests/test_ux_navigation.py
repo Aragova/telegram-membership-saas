@@ -140,6 +140,12 @@ def test_request_account_can_resume_receipt_without_approving_or_canceling():
         assert "Under review" in text
         actions = [data for _, data in _buttons(keyboard)]
         assert len([x for x in actions if x.startswith("paid:")]) == 1
+        receipt_label = next(
+            label for label, cb in _buttons(keyboard) if cb.startswith("paid:")
+        )
+        assert request_id.hex[:10] in receipt_label
+        assert "Premium" in receipt_label
+        assert request_id.hex[:10] in text
         assert not any(x.startswith(("approve:", "cancel:", "buy:")) for x in actions)
         assert "account:home" in actions
         assert "account:catalog" in actions
@@ -255,6 +261,30 @@ async def test_cancel_owner_setup_invalidates_prompt_but_not_project(monkeypatch
     assert session.get.await_args.args[1] == (actor_id, 9000)
 
 
+async def test_cancel_consumed_step_revokes_inflight_generation(monkeypatch):
+    from telegram_membership_saas.modules.owner_setup import service
+
+    state = SimpleNamespace(
+        step=None, payload={}, generation="still-valid",
+        prompt_message_id=None, selected_project_id=uuid4(),
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    session = SimpleNamespace(get=AsyncMock(return_value=state))
+
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield session
+
+    monkeypatch.setattr(service, "tenant_session_scope", scope)
+    changed = await service.cancel_owner_flow(
+        MagicMock(), actor_id=uuid4(), bot_scope_id=9000,
+    )
+    assert changed is True
+    assert state.generation is None
+    assert state.expires_at <= datetime.now(UTC)
+    assert state.selected_project_id is not None
+
+
 def test_checkout_has_return_navigation_and_no_implicit_cancel():
     request_id = uuid4()
     keyboard = commerce._checkout_keyboard(request_id)
@@ -262,3 +292,32 @@ def test_checkout_has_return_navigation_and_no_implicit_cancel():
     assert ("🧾 Мои покупки", "account:home") in labels
     assert ("💎 К тарифам", "account:catalog") in labels
     assert labels[1][0] == "Отменить заявку"
+
+
+def test_multiple_receipt_buttons_identify_matching_requests():
+    first, second = uuid4(), uuid4()
+    account = BuyerAccount(
+        requests_count=3,
+        requests=(
+            BuyerRequest(first, "Premium", "waiting_confirmation",
+                         Decimal("550"), "RUB"),
+            BuyerRequest(uuid4(), "Premium", "waiting_review",
+                         Decimal("550"), "RUB"),
+            BuyerRequest(second, "Premium", "waiting_confirmation",
+                         Decimal("550"), "RUB"),
+        ),
+    )
+    language = _language.set("en")
+    try:
+        text, keyboard = account_list_screen(account, section="reqs", page=0)
+        labels = [(label, cb) for label, cb in _buttons(keyboard)
+                  if cb.startswith("paid:")]
+        assert len(labels) == 2
+        assert first.hex[:10] in labels[0][0]
+        assert second.hex[:10] in labels[1][0]
+        assert labels[0][1] != labels[1][1]
+        assert first.hex[:10] in text and second.hex[:10] in text
+        assert "Under review" in text
+        assert all(len(label) <= 64 for label, _ in labels)
+    finally:
+        _language.reset(language)

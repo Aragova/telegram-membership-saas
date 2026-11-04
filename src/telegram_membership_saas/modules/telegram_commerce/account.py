@@ -210,18 +210,23 @@ def account_list_screen(
         for item in account.requests:
             status = _REQUEST_STATUS.get(item.status)
             label = tr(*status) if status else tr("Неизвестно", "Unknown")
+            reference = "#" + item.id.hex[:10]
             lines.append(
                 "💎 <b>" + escape(item.name) + "</b>\n"
                 + label + " · " + escape(format_amount(item.amount, 18))
-                + " " + escape(item.currency) + "\n"
+                + " " + escape(item.currency)
+                + " · " + reference + "\n"
             )
             if item.status == "waiting_confirmation":
-                rows.append([
-                    _button(
-                        "📎 Прикрепить чек", "📎 Submit receipt",
-                        "paid:" + encode_uuid(item.id),
-                    ),
-                ])
+                button_name = item.name[:22]
+                caption = (
+                    tr("📎 Чек", "📎 Receipt")
+                    + " · " + reference + " · " + button_name
+                )
+                rows.append([InlineKeyboardButton(
+                    text=caption[:64],
+                    callback_data="paid:" + encode_uuid(item.id),
+                )])
     if not (account.subscriptions if section == "subs" else account.requests):
         lines.append(tr(
             "Здесь пока нет записей.", "Nothing to show here yet.",
