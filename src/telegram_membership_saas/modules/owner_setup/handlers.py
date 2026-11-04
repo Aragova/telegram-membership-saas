@@ -581,17 +581,23 @@ def create_owner_setup_router(
                 "⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
             )
 
+
     async def show_resources(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = ["📢 <b>Каналы и группы</b>", ""]
+        lines = [tr("📢 <b>Каналы и группы</b>", "📢 <b>Channels and groups</b>"), ""]
         lines.extend(
             f"• {escape(name)} — {_status(status)}"
             for _, name, status in data.resources
         )
         if not data.resources:
-            lines.append("Нет подключённых каналов и групп.")
-        lines.append("\nСначала добавьте своего бота администратором канала.")
-        await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML",
+            lines.append(tr("Нет подключённых каналов и групп.",
+                            "No channels or groups are connected."))
+        lines.append(tr(
+            "\nСначала добавьте своего бота администратором канала.",
+            "\nFirst, add your bot as a channel administrator.",
+        ))
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup([
                 [_button("➕ Выбрать канал", "pick:channel", "success")],
                 [_button("➕ Выбрать группу", "pick:group", "success")],
@@ -601,25 +607,28 @@ def create_owner_setup_router(
             ]),
         )
 
+
     async def show_plans(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
         rows: list[list[InlineKeyboardButton]] = []
-        lines = ["📦 <b>Тарифы</b>", ""]
+        lines = [tr("📦 <b>Тарифы</b>", "📦 <b>Plans</b>"), ""]
         if not data.plans:
-            lines.append("Тарифов пока нет.")
+            lines.append(tr("Тарифов пока нет.", "There are no plans yet."))
         for pid, name, status in data.plans[:15]:
             lines.append(f"• <b>{escape(name)}</b> — {_status(status)}")
             rows.append([_button("⚙️ " + name[:45], "plan:" + pid.hex)])
-        rows.extend([
-            [_button("➕ Создать тариф", "newplan", "success")],
-        ])
+        rows.append([_button("➕ Создать тариф", "newplan", "success")])
         if not data.methods:
-            lines.append("\n💳 Настройте оплату, затем публикуйте тарифы.")
+            lines.append(tr(
+                "\n💳 Настройте оплату, затем публикуйте тарифы.",
+                "\n💳 Configure payments before publishing plans.",
+            ))
             rows.append([_button("➕ Настроить оплату", "methods")])
         rows.append([_button("⬅️ Панель администратора", "dashboard")])
         await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML", reply_markup=_markup(rows)
+            user_id, "\n".join(lines), parse_mode="HTML", reply_markup=_markup(rows),
         )
+
 
     async def show_plan_card(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, plan_id: UUID,
@@ -631,14 +640,14 @@ def create_owner_setup_router(
         codes = await owner_available_currencies(factory, actor_id=actor_id)
         lines = [
             "📦 <b>" + escape(data.name) + "</b>",
-            "Статус: " + _status(data.status),
+            tr("Статус: ", "Status: ") + _status(data.status),
             "⏳ " + escape(format_period(data.duration_value, data.duration_unit)),
-            "📢 " + escape(data.resource_name or "Канал не привязан"),
+            "📢 " + escape(data.resource_name or tr("Канал не привязан", "No channel assigned")),
             "",
-            "<b>Цены и оплата</b>",
+            tr("<b>Цены и оплата</b>", "<b>Prices and payments</b>"),
         ]
         if not data.prices:
-            lines.append("Цена ещё не указана.")
+            lines.append(tr("Цена ещё не указана.", "No price has been set yet."))
         for price in data.prices:
             lines.append(
                 ("✅ " if price.method_count else "⚠️ ")
@@ -647,9 +656,9 @@ def create_owner_setup_router(
                     + " " + price.currency
                 )
                 + (
-                    " · оплата настроена"
+                    tr(" · оплата настроена", " · payment ready")
                     if price.method_count
-                    else " · нужен способ оплаты"
+                    else tr(" · нужен способ оплаты", " · payment method required")
                 )
             )
         rows.extend([
@@ -670,6 +679,7 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+
     async def show_methods(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         page: int = 0,
@@ -678,23 +688,26 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id, page=page,
         )
         lines = [
-            "💳 <b>Способы оплаты</b>",
-            "Страница " + str(page + 1),
+            tr("💳 <b>Способы оплаты</b>", "💳 <b>Payment methods</b>"),
+            tr("Страница ", "Page ") + str(page + 1),
             "",
         ]
         rows = []
         if not methods:
             lines.append(
-                "Нет способов оплаты на этой странице."
+                tr("Нет способов оплаты на этой странице.",
+                   "No payment methods on this page.")
                 if page else
-                "Пока ничего не подключено. Для начала выберите валюту "
-                "и добавьте способ перевода."
+                tr("Пока ничего не подключено. Для начала выберите валюту "
+                   "и добавьте способ перевода.",
+                   "No payment methods yet. Choose a currency "
+                   "and add a transfer method to get started.")
             )
         for method in methods:
             lines.append(
                 "• <b>" + escape(method.name) + "</b> — "
                 + _status(method.status) + "\n  "
-                + escape(", ".join(method.currencies) or "Без валюты")
+                + escape(", ".join(method.currencies) or tr("Без валюты", "No currency"))
             )
             rows.append([
                 _button("⚙️ " + method.name[:40], "method:" + method.id.hex),
@@ -710,18 +723,15 @@ def create_owner_setup_router(
             ))
         if navigation:
             rows.append(navigation)
-        rows.append([
-            _button("➕ Добавить способ", "newmethod", "success"),
-        ])
+        rows.append([_button("➕ Добавить способ", "newmethod", "success")])
         if methods or page > 0:
-            rows.append([
-                _button("➡️ Перейти к тарифам", "plans"),
-            ])
+            rows.append([_button("➡️ Перейти к тарифам", "plans")])
         rows.append([_button("⬅️ Панель администратора", "dashboard")])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
         )
+
 
     async def show_method_card(
         bot: Bot, user_id: int, actor_id: UUID,
@@ -731,9 +741,7 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
             method_id=method_id,
         )
-        rows = [[_button(
-            "🌐 Добавить валюту", "methodlink:" + method_id.hex,
-        )]]
+        rows = [[_button("🌐 Добавить валюту", "methodlink:" + method_id.hex)]]
         if method.status == "active":
             rows.append([_button(
                 "⏸️ Отключить для новых покупок",
@@ -748,14 +756,17 @@ def create_owner_setup_router(
         await bot.send_message(
             user_id,
             "💳 <b>" + escape(method.name) + "</b>\n"
-            "Статус: " + _status(method.status)
-            + "\nВалюты: "
-            + escape(", ".join(method.currencies) or "не выбраны")
-            + "\n\nПокупателям показываются только способы, "
-            "совместимые с валютой тарифа.",
+            + tr("Статус: ", "Status: ") + _status(method.status)
+            + tr("\nВалюты: ", "\nCurrencies: ")
+            + escape(", ".join(method.currencies) or tr("не выбраны", "none selected"))
+            + tr("\n\nПокупателям показываются только способы, "
+                 "совместимые с валютой тарифа.",
+                 "\n\nBuyers see only payment methods that support "
+                 "the selected plan currency."),
             parse_mode="HTML",
             reply_markup=_markup(rows),
         )
+
 
     async def show_reviews(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -770,9 +781,14 @@ def create_owner_setup_router(
         if not items:
             await bot.send_message(
                 user_id,
-                "📋 <b>Заявки</b>\n\n"
-                "Сейчас нет платежей, ожидающих проверки.\n"
-                "Новые подтверждения придут сюда вместе с чеком.",
+                tr(
+                    "📋 <b>Заявки</b>\n\n"
+                    "Сейчас нет платежей, ожидающих проверки.\n"
+                    "Новые подтверждения придут сюда вместе с чеком.",
+                    "📋 <b>Payment reviews</b>\n\n"
+                    "There are no payments awaiting review.\n"
+                    "New payment confirmations will appear here with a receipt.",
+                ),
                 parse_mode="HTML",
                 reply_markup=_markup([
                     [_button("⬅️ Панель администратора", "dashboard")],
@@ -781,9 +797,13 @@ def create_owner_setup_router(
             return
         await bot.send_message(
             user_id,
-            f"📋 <b>Заявки на проверку — {len(items)}</b>\n\n"
-            "Перед подтверждением убедитесь, что деньги "
-            "действительно поступили в банк.",
+            tr(
+                f"📋 <b>Заявки на проверку — {len(items)}</b>\n\n"
+                "Перед подтверждением убедитесь, что деньги "
+                "действительно поступили в банк.",
+                f"📋 <b>Pending reviews — {len(items)}</b>\n\n"
+                "Check your bank balance before approving any payment.",
+            ),
             parse_mode="HTML",
         )
         for item in items:
@@ -792,12 +812,14 @@ def create_owner_setup_router(
                 reply_markup=_review_keyboard(item.request_id),
             )
         await bot.send_message(
-            user_id, "Все доступные заявки показаны выше.",
+            user_id,
+            tr("Все доступные заявки показаны выше.", "All available requests are shown above."),
             reply_markup=_markup([
                 [_button("🔄 Обновить заявки", "reviews")],
                 [_button("⬅️ Панель администратора", "dashboard")],
             ]),
         )
+
 
     async def show_guest_preview(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -808,10 +830,13 @@ def create_owner_setup_router(
         )
         published = [name for _, name, status in data.plans if status == "active"]
         content = (
-            "👀 <b>Гостевой просмотр</b>\n\n"
+            tr("👀 <b>Гостевой просмотр</b>\n\n",
+               "👀 <b>Buyer preview</b>\n\n")
             + ("\n".join("• " + escape(name) for name in published[:15])
-               if published else "Пока нет опубликованных тарифов.")
-            + "\n\nЭто просмотр каталога. Никакие платежи не создаются."
+               if published else tr("Пока нет опубликованных тарифов.",
+                                    "There are no published plans yet."))
+            + tr("\n\nЭто просмотр каталога. Никакие платежи не создаются.",
+                 "\n\nThis is a catalog preview. No payment is created.")
         )
         await bot.send_message(
             user_id, content, parse_mode="HTML",
@@ -820,8 +845,11 @@ def create_owner_setup_router(
             ]),
         )
 
-    async def currency_picker(bot: Bot, user_id: int, actor_id: UUID, *,
-                              mode: str, plan_id: UUID | None = None):
+
+    async def currency_picker(
+        bot: Bot, user_id: int, actor_id: UUID, *,
+        mode: str, plan_id: UUID | None = None,
+    ):
         codes = await owner_available_currencies(factory, actor_id=actor_id)
         rows = [
             [_button(
@@ -832,7 +860,8 @@ def create_owner_setup_router(
         ]
         rows.append([_button("⬅️ Панель управления", "dashboard")])
         await bot.send_message(
-            user_id, "💱 Выберите валюту:", reply_markup=_markup(rows),
+            user_id, tr("💱 Выберите валюту:", "💱 Choose a currency:"),
+            reply_markup=_markup(rows),
         )
 
     @router.message(
@@ -1027,7 +1056,7 @@ def create_owner_setup_router(
                 if len(parts) not in (4, 5) or parts[1] not in (
                     "pay", "sub", "grant", "sync"
                 ):
-                    raise ValueError("Неизвестное действие")
+                    raise ValueError(tr("Неизвестное действие", "Unknown action"))
                 verb, kind, project_ref, object_ref = parts[:4]
                 page = int(parts[4]) if len(parts) == 5 else 0
                 if decode_uuid(project_ref) != project_id:
@@ -1133,7 +1162,7 @@ def create_owner_setup_router(
             elif action.startswith("pick:"):
                 kind = action.split(":", 1)[1]
                 if kind not in ("channel", "group"):
-                    raise ValueError("Неизвестный тип чата")
+                    raise ValueError(tr("Неизвестный тип чата", "Unsupported chat type"))
                 request_id = randbelow(2**31 - 2) + 1
                 await set_flow(
                     factory, actor_id=actor_id,
@@ -1142,12 +1171,17 @@ def create_owner_setup_router(
                 )
                 await bot.send_message(
                     user_id,
-                    "📢 Выберите ваш канал или группу с помощью кнопки ниже.\n"
-                    "Убедитесь, что ваш подключённый бот уже добавлен "
-                    "администратором с правами приглашения и блокировки.",
+                    tr(
+                        "📢 Выберите ваш канал или группу с помощью кнопки ниже.\n"
+                        "Убедитесь, что ваш подключённый бот уже добавлен "
+                        "администратором с правами приглашения и блокировки.",
+                        "📢 Choose a channel or group using the button below.\n"
+                        "Your connected bot must already be an administrator "
+                        "with permission to invite and ban members.",
+                    ),
                     reply_markup=ReplyKeyboardMarkup(
                         keyboard=[[KeyboardButton(
-                            text="📢 Выбрать чат",
+                            text=tr("📢 Выбрать чат", "📢 Choose chat"),
                             request_chat=KeyboardButtonRequestChat(
                                 request_id=request_id,
                                 chat_is_channel=(kind == "channel"),
@@ -1161,8 +1195,12 @@ def create_owner_setup_router(
             elif action == "resource:manual":
                 await prompt(
                     bot, user_id, actor_id, step="resource_reference",
-                    text="📢 Отправьте ID канала (например, -100…) или @username.\n"
-                    "Ваш собственный бот уже должен быть администратором.",
+                    text=tr(
+                        "📢 Отправьте ID канала (например, -100…) или @username.\n"
+                        "Ваш собственный бот уже должен быть администратором.",
+                        "📢 Send the channel ID (for example, -100…) or @username.\n"
+                        "Your bot must already be a channel administrator.",
+                    ),
                 )
             elif action == "plans":
                 await show_plans(bot, user_id, actor_id, project_id)
@@ -1171,22 +1209,25 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id, project_id=project_id
                 )
                 if not any(status == "active" for _, _, status in data.resources):
-                    raise ValueError("Сначала подключите действующий канал или группу")
+                    raise ValueError(tr("Сначала подключите действующий канал или группу",
+                                        "Connect an active channel or group first"))
                 await prompt(
                     bot, user_id, actor_id, step="plan_name",
-                    text="📦 Как назвать новый тариф?\nНапример: Premium",
+                    text=tr("📦 Как назвать новый тариф?\nНапример: Premium",
+                             "📦 What is the new plan's name?\nFor example: Premium"),
                 )
             elif action.startswith("duration:"):
                 _, key, generation = action.split(":", 2)
                 if key not in DURATIONS:
-                    raise ValueError("Неподдерживаемый срок")
+                    raise ValueError(tr("Неподдерживаемый срок", "Unsupported duration"))
                 flow = await consume_button_flow(
                     factory, actor_id=actor_id,
                     expected_step="plan_duration", generation=generation,
                     bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 if flow.project_id != project_id:
-                    raise ValueError("Проект изменился. Повторите действие.")
+                    raise ValueError(tr("Проект изменился. Повторите действие.",
+                                            "Project changed. Please retry."))
                 value, unit, _ = DURATIONS[key]
                 data = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id
@@ -1195,7 +1236,7 @@ def create_owner_setup_router(
                     rid for rid, _, status in data.resources if status == "active"
                 ]
                 if not resources:
-                    raise ValueError("Сначала подключите канал")
+                    raise ValueError(tr("Сначала подключите канал", "Connect a channel first"))
                 if len(resources) == 1:
                     plan_id = await create_owner_plan(
                         factory, actor_id=actor_id, project_id=project_id,
@@ -1215,7 +1256,8 @@ def create_owner_setup_router(
                         for rid, name, status in data.resources if status == "active"
                     ]
                     await bot.send_message(
-                        user_id, "📢 Какой канал откроет этот тариф?",
+                        user_id, tr("📢 Какой канал откроет этот тариф?",
+                                     "📢 Which channel does this plan unlock?"),
                         reply_markup=_markup(rows),
                     )
             elif action.startswith("use:"):
@@ -1226,7 +1268,8 @@ def create_owner_setup_router(
                     bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 if flow.project_id != project_id:
-                    raise ValueError("Проект изменился. Повторите действие.")
+                    raise ValueError(tr("Проект изменился. Повторите действие.",
+                                            "Project changed. Please retry."))
                 plan_id = await create_owner_plan(
                     factory, actor_id=actor_id, project_id=project_id,
                     name=flow.payload["name"], duration_value=flow.payload["value"],
@@ -1242,11 +1285,14 @@ def create_owner_setup_router(
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
                 if currency not in ALLOWED_CURRENCIES:
-                    raise ValueError("Неизвестная валюта")
+                    raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
                     bot, user_id, actor_id, step="price_amount",
                     payload={"plan_id": plan_hex, "currency": currency},
-                    text=f"💰 Укажите цену в {currency} (например, 499 или 9.99):",
+                    text=tr(
+                        f"💰 Укажите цену в {currency} (например, 499 или 9.99):",
+                        f"💰 Enter the price in {currency} (e.g. 499 or 9.99):",
+                    ),
                 )
             elif action.startswith("publish:"):
                 plan_id = UUID(hex=action.split(":", 1)[1])
@@ -1260,9 +1306,14 @@ def create_owner_setup_router(
                         raise
                     await bot.send_message(
                         user_id,
-                        "💳 <b>Остался один шаг</b>\n\n"
-                        "Добавьте способ оплаты, который поддерживает "
-                        "валюту тарифа. Черновик и цены сохранены.",
+                        tr(
+                            "💳 <b>Остался один шаг</b>\n\n"
+                            "Добавьте способ оплаты, который поддерживает "
+                            "валюту тарифа. Черновик и цены сохранены.",
+                            "💳 <b>One step left</b>\n\n"
+                            "Add a payment method supporting this plan's "
+                            "currency. Your draft and prices are saved.",
+                        ),
                         parse_mode="HTML",
                         reply_markup=_markup([
                             [_button(
@@ -1275,7 +1326,8 @@ def create_owner_setup_router(
                     await query.answer()
                     return
                 await bot.send_message(
-                    user_id, f"✅ Тариф «{escape(name)}» опубликован.",
+                    user_id, tr(f"✅ Тариф «{escape(name)}» опубликован.",
+                                 f"✅ Plan “{escape(name)}” published."),
                     parse_mode="HTML",
                 )
                 await show_plans(bot, user_id, actor_id, project_id)
@@ -1312,7 +1364,8 @@ def create_owner_setup_router(
                 ]
                 if not rows:
                     await bot.send_message(
-                        user_id, "Все доступные валюты уже подключены.",
+                        user_id, tr("Все доступные валюты уже подключены.",
+                                     "All available currencies are already enabled."),
                     )
                 else:
                     rows.append([
@@ -1321,8 +1374,10 @@ def create_owner_setup_router(
                     await bot.send_message(
                         user_id,
                         "🌐 <b>" + escape(method.name) + "</b>\n\n"
-                        "Выберите дополнительную валюту. "
-                        "Текущие подключения сохранятся.",
+                        + tr("Выберите дополнительную валюту. "
+                             "Текущие подключения сохранятся.",
+                             "Select another currency. "
+                             "Existing currencies will remain enabled."),
                         parse_mode="HTML", reply_markup=_markup(rows),
                     )
             elif action.startswith("methodattach:"):
@@ -1333,8 +1388,9 @@ def create_owner_setup_router(
                 )
                 await bot.send_message(
                     user_id,
-                    "✅ Валюта подключена" if added
-                    else "Эта валюта уже подключена.",
+                    tr("✅ Валюта подключена", "✅ Currency enabled") if added
+                    else tr("Эта валюта уже подключена.",
+                            "This currency is already enabled."),
                 )
                 await show_method_card(
                     bot, user_id, actor_id, project_id, UUID(hex=method_hex),
@@ -1343,9 +1399,14 @@ def create_owner_setup_router(
                 method_id = UUID(hex=action.split(":", 1)[1])
                 await bot.send_message(
                     user_id,
-                    "⏸️ <b>Отключить способ оплаты?</b>\n\n"
-                    "Он исчезнет из новых покупок. Уже полученные "
-                    "заявки и история платежей сохранятся.",
+                    tr(
+                        "⏸️ <b>Отключить способ оплаты?</b>\n\n"
+                        "Он исчезнет из новых покупок. Уже полученные "
+                        "заявки и история платежей сохранятся.",
+                        "⏸️ <b>Disable this payment method?</b>\n\n"
+                        "It will no longer be offered for new purchases. "
+                        "Existing payment requests and history are preserved.",
+                    ),
                     parse_mode="HTML",
                     reply_markup=_markup([
                         [_button(
@@ -1370,12 +1431,16 @@ def create_owner_setup_router(
                 if code not in await owner_available_currencies(
                     factory, actor_id=actor_id
                 ):
-                    raise ValueError("Неизвестная валюта")
+                    raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
                     bot, user_id, actor_id, step="method_name",
                     payload={"currency": code},
-                    text=f"💳 Название способа оплаты для {code}:\n"
-                    "Например: СБП или Банковский перевод.",
+                    text=tr(
+                        f"💳 Название способа оплаты для {code}:\n"
+                        "Например: СБП или Банковский перевод.",
+                        f"💳 Payment method name for {code}:\n"
+                        "For example: Bank transfer.",
+                    ),
                 )
             elif action == "timezone":
                 rows = [
@@ -1387,18 +1452,24 @@ def create_owner_setup_router(
                 ]
                 rows.append([_button("✍️ Указать другой", "tzcustom")])
                 await bot.send_message(
-                    user_id, "🌍 Выберите часовой пояс:",
+                    user_id, tr("🌍 Выберите часовой пояс:", "🌍 Choose a timezone:"),
                     reply_markup=_markup(rows),
                 )
             elif action == "tzcustom":
                 await prompt(
                     bot, user_id, actor_id, step="timezone",
-                    text="🌍 Отправьте часовой пояс IANA, например Europe/Moscow.",
+                    text=tr(
+                        "🌍 Отправьте часовой пояс IANA, например Europe/Moscow.",
+                        "🌍 Send an IANA timezone, for example Europe/London.",
+                    ),
                 )
             elif action.startswith("tz:"):
                 _, value, origin_hex = action.split(":", 2)
                 if UUID(hex=origin_hex) != project_id:
-                    raise ValueError("Это меню другого проекта. Откройте настройки заново.")
+                    raise ValueError(tr(
+                        "Это меню другого проекта. Откройте настройки заново.",
+                        "This menu belongs to another project. Reopen settings.",
+                    ))
                 await change_project_timezone(
                     factory, project_id=project_id,
                     actor_telegram_user_id=user_id, timezone_name=value,
@@ -1419,15 +1490,19 @@ def create_owner_setup_router(
                 )])
                 await bot.send_message(
                     user_id,
-                    "📋 <b>Готовность к продажам</b>\n\n"
+                    tr("📋 <b>Готовность к продажам</b>\n\n",
+                       "📋 <b>Sales readiness</b>\n\n")
                     + "\n".join(_progress(data))
-                    + "\n\n🤖 " + escape(data.bot_runtime_label)
+                    + "\n\n🤖 " + escape(owner_runtime_label(data.bot_runtime_label))
                     + "\n\n"
                     + (
-                        "✅ Тарифы доступны для покупки."
+                        tr("✅ Тарифы доступны для покупки.",
+                           "✅ Plans are available to buyers.")
                         if data.sales_configured
-                        else "Бот уже может принимать настройки. "
-                        "Покупатели увидят тарифы после завершения шагов."
+                        else tr("Бот уже может принимать настройки. "
+                                "Покупатели увидят тарифы после завершения шагов.",
+                                "The bot is ready for configuration. "
+                                "Buyers will see plans after setup is complete.")
                     ),
                     parse_mode="HTML",
                     reply_markup=_markup(rows),
@@ -1435,17 +1510,26 @@ def create_owner_setup_router(
             elif action == "help":
                 await bot.send_message(
                     user_id,
-                    "❔ <b>Как запустить подписки</b>\n\n"
-                    "1. Подключите токен в @vimipay_bot.\n"
-                    "2. Откройте собственный бот и добавьте его в канал.\n"
-                    "3. Настройте валюты и способы оплаты.\n"
-                    "4. Создайте тариф, цену и опубликуйте.\n\n"
-                    "Ваши чеки ViMi Pay не хранит — поступления "
-                    "проверяются администратором в банке.",
+                    tr(
+                        "❔ <b>Как запустить подписки</b>\n\n"
+                        "1. Подключите токен в @vimipay_bot.\n"
+                        "2. Откройте собственный бот и добавьте его в канал.\n"
+                        "3. Настройте валюты и способы оплаты.\n"
+                        "4. Создайте тариф, цену и опубликуйте.\n\n"
+                        "Ваши чеки ViMi Pay не хранит — поступления "
+                        "проверяются администратором в банке.",
+                        "❔ <b>How to launch subscriptions</b>\n\n"
+                        "1. Connect a bot token in @vimipay_bot.\n"
+                        "2. Open your bot and add it to your channel.\n"
+                        "3. Set up currencies and payment methods.\n"
+                        "4. Create, price and publish a plan.\n\n"
+                        "ViMi Pay does not retain receipts. "
+                        "Channel admins verify transfers in their banks.",
+                    ),
                     parse_mode="HTML",
                 )
             else:
-                raise ValueError("Неизвестное действие")
+                raise ValueError(tr("Неизвестное действие", "Unknown action"))
         except (ValueError, PermissionError) as exc:
             await query.answer(str(exc)[:180], show_alert=True)
             return
@@ -1467,7 +1551,8 @@ def create_owner_setup_router(
                 bot_scope_id=bot.id,
             )
             if flow.project_id != fixed_project_id:
-                raise ValueError("Настройка другого бота недоступна")
+                raise ValueError(tr("Настройка другого бота недоступна",
+                                    "You cannot change another bot's settings"))
             chat = await verify_channel_and_add(
                 factory, actor_id=actor_id,
                 actor_telegram_id=message.from_user.id,
@@ -1482,7 +1567,8 @@ def create_owner_setup_router(
             return
         await bot.send_message(
             message.chat.id,
-            "✅ Канал «" + escape(chat.name) + "» подключён.",
+            tr("✅ Канал «" + escape(chat.name) + "» подключён.",
+                       "✅ Channel “" + escape(chat.name) + "” connected."),
             parse_mode="HTML", reply_markup=ReplyKeyboardRemove(),
         )
         await show_resources(bot, message.chat.id, actor_id, flow.project_id)
@@ -1564,14 +1650,17 @@ def create_owner_setup_router(
             if not deleted:
                 await bot.send_message(
                     message.chat.id,
-                    "⚠️ Не удалось удалить токен. Смените его в BotFather.",
+                    tr("⚠️ Не удалось удалить токен. Смените его в BotFather.",
+                       "⚠️ Could not delete your bot token. Rotate it in BotFather."),
                 )
                 return
             if unexpected_secret:
                 await bot.send_message(
                     message.chat.id,
-                    "⚠️ Вы прислали токен вместо запрошенных данных. "
-                    "Для безопасности смените токен в BotFather и повторите шаг.",
+                    tr("⚠️ Вы прислали токен вместо запрошенных данных. "
+                       "Для безопасности смените токен в BotFather и повторите шаг.",
+                       "⚠️ You sent a bot token instead of the requested information. "
+                       "Rotate your token in BotFather and retry."),
                 )
                 return
         # Old central setup prompts remain in Telegram after a deployment.
@@ -1628,7 +1717,8 @@ def create_owner_setup_router(
             if project_id is None or (
                 fixed_project_id is not None and project_id != fixed_project_id
             ):
-                raise ValueError("Настройка другого бота недоступна")
+                raise ValueError(tr("Настройка другого бота недоступна",
+                                    "You cannot change another bot's settings"))
             if flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(tr("Неверный формат токена. Получите его в BotFather.",
@@ -1645,13 +1735,15 @@ def create_owner_setup_router(
                 )
                 await bot.send_message(
                     message.chat.id,
-                    f"✅ Канал «{escape(resource.name)}» подключён.",
+                    tr(f"✅ Канал «{escape(resource.name)}» подключён.",
+                       f"✅ Channel “{escape(resource.name)}” connected."),
                     parse_mode="HTML",
                 )
                 await show_resources(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "plan_name":
                 if not 2 <= len(text) <= 120:
-                    raise ValueError("Название тарифа: от 2 до 120 символов")
+                    raise ValueError(tr("Название тарифа: от 2 до 120 символов",
+                                        "Plan name must be 2–120 characters"))
                 generation = await advance_flow(
                     factory, actor_id=actor_id, source=flow,
                     step="plan_duration", payload={"name": text},
@@ -1659,9 +1751,10 @@ def create_owner_setup_router(
                 )
                 await bot.send_message(
                     message.chat.id,
-                    "⏳ Выберите срок действия:",
+                    tr("⏳ Выберите срок действия:", "⏳ Choose plan duration:"),
                     reply_markup=_markup([
-                        [_button(value[2], "duration:" + key + ":" + generation)]
+                        [_button(tr(value[2], format_period(value[0], value[1])),
+                                  "duration:" + key + ":" + generation)]
                         for key, value in DURATIONS.items()
                     ]),
                 )
@@ -1672,21 +1765,27 @@ def create_owner_setup_router(
                     plan_id=plan_id,
                     currency_code=flow.payload["currency"], amount=text,
                 )
-                await bot.send_message(message.chat.id, "✅ Цена сохранена.")
+                await bot.send_message(message.chat.id, tr("✅ Цена сохранена.", "✅ Price saved."))
                 await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
             elif flow.step == "method_name":
                 if not 2 <= len(text) <= 120:
-                    raise ValueError("Название способа оплаты: от 2 до 120 символов")
+                    raise ValueError(tr("Название способа оплаты: от 2 до 120 символов",
+                                        "Payment method name must be 2–120 characters"))
                 await prompt(
                     bot, message.chat.id, actor_id,
                     step="method_instruction",
                     source_flow=flow,
                     payload={"currency": flow.payload["currency"], "name": text},
                     text=(
-                        "💳 Отправьте инструкцию покупателю: куда и как переводить "
-                        "деньги.\n\nМожно использовать {amount}, {currency}, "
-                        "{plan}, {period}.\n"
-                        "Например: Переведите {amount} {currency} по СБП на ..."
+                        tr(
+                            "💳 Отправьте инструкцию покупателю: куда и как переводить "
+                            "деньги.\n\nМожно использовать {amount}, {currency}, "
+                            "{plan}, {period}.\n"
+                            "Например: Переведите {amount} {currency} по СБП на ...",
+                            "💳 Send the instructions that buyers should follow.\n\n"
+                            "You can use {amount}, {currency}, {plan}, {period}.\n"
+                            "For example: Transfer {amount} {currency} to ...",
+                        )
                     ),
                 )
             elif flow.step == "method_instruction":
@@ -1695,19 +1794,27 @@ def create_owner_setup_router(
                     name=flow.payload["name"],
                     currency_code=flow.payload["currency"], instruction=text,
                 )
-                await bot.send_message(message.chat.id, "✅ Способ оплаты добавлен.")
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Способ оплаты добавлен.", "✅ Payment method added."),
+                )
                 await show_methods(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "timezone":
                 await change_project_timezone(
                     factory, project_id=project_id,
                     actor_telegram_user_id=message.from_user.id, timezone_name=text,
                 )
-                await bot.send_message(message.chat.id, "✅ Часовой пояс обновлён.")
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Часовой пояс обновлён.", "✅ Timezone updated."),
+                )
                 await show_dashboard(bot, message.chat.id, actor_id, project_id)
         except (ValueError, PermissionError, RuntimeError) as exc:
             await bot.send_message(
                 message.chat.id,
-                "⚠️ " + str(exc)[:220] + "\nОткройте нужный раздел и повторите.",
+                "⚠️ " + str(exc)[:220]
+                + tr("\nОткройте нужный раздел и повторите.",
+                     "\nReopen the relevant section and try again."),
             )
 
     @router.message(StrayBotTokenFilter())
@@ -1722,14 +1829,18 @@ def create_owner_setup_router(
         if not removed:
             await bot.send_message(
                 message.chat.id,
-                "⚠️ Не удалось удалить токен. Удалите сообщение и "
-                "смените токен в @BotFather.",
+                tr("⚠️ Не удалось удалить токен. Удалите сообщение и "
+                   "смените токен в @BotFather.",
+                   "⚠️ Could not delete the token. Delete the message and "
+                   "rotate your token in @BotFather."),
             )
             return
         await bot.send_message(
             message.chat.id,
-            "🔐 Токен удалён из чата. Для подключения "
-            "откройте @vimipay_bot → Подключить бота.",
+            tr("🔐 Токен удалён из чата. Для подключения "
+               "откройте @vimipay_bot → Подключить бота.",
+               "🔐 Token removed from this chat. "
+               "To connect your bot, open @vimipay_bot → Connect bot."),
         )
 
     return router

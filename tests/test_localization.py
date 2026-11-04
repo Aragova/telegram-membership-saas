@@ -1,4 +1,5 @@
 """Locale selection stays per user and does not infer location."""
+from telegram_membership_saas import localization
 from telegram_membership_saas.localization import (
     _language,
     current_language,
@@ -46,3 +47,22 @@ def test_russian_buyer_fallback() -> None:
     assert "Подписки" in text
     assert keyboard.inline_keyboard[0][0].callback_data == "lng:menu"
     assert format_period(3, "month") == "3 месяца"
+
+
+
+async def test_recipient_locale_overrides_buyer_and_restores(monkeypatch) -> None:
+    async def read_language(_factory, telegram_id, telegram_hint):
+        assert telegram_hint == "ru"
+        return "en" if telegram_id == 200 else "ru"
+
+    monkeypatch.setattr(localization, "read_language", read_language)
+    token = _language.set("en")  # Buyer speaks English
+    try:
+        async with localization.recipient_language(object(), 100):
+            assert current_language() == "ru"  # Reviewer #1 uses Russian
+        assert current_language() == "en"  # Buyer scope is restored
+        async with localization.recipient_language(object(), 200):
+            assert current_language() == "en"  # Reviewer #2 chose English
+        assert current_language() == "en"
+    finally:
+        _language.reset(token)

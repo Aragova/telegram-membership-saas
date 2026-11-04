@@ -54,3 +54,14 @@ Do not assume migration and locale infrastructure alone translate every screen.
 
 Until those stages pass, the product must not claim that *all* UI text is
 already translated.
+
+
+- Stage 3 (this stage): connected owner setup screens for channels and groups,
+  published/draft plans and pricing, payment method lists and details,
+  manual review inbox, preview, contextual setup prompts, IANA timezone choices,
+  readiness checks and confirmation notices.
+- Stage 4: finish central retirement/obligations workflow and buyer-facing
+  payment and receipt notifications with per-recipient locale resolution.
+
+Existing user-entered channel/plan names and bank payment instructions are
+never translated. Test both languages for callbacks and admin-only authorization.

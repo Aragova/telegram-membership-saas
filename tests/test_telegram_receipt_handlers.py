@@ -192,6 +192,8 @@ async def test_receipt_is_copied_to_reviewer_without_persisting_file_data(
     submit = AsyncMock(return_value=submission)
     monkeypatch.setattr(receipt_handlers, "system_project_session_scope", _scope)
     monkeypatch.setattr(receipt_handlers, "submit_checkout_for_telegram_user", submit)
+    # Unit test uses no actual database session factory; locale is tested separately.
+    monkeypatch.setattr(receipt_handlers, "recipient_language", _scope)
     handler = _handler(
         receipt_handlers.create_telegram_commerce_router(None, project_id=project_id),
         "receipt_handler",
