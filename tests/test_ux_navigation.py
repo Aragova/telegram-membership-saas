@@ -96,14 +96,18 @@ async def test_central_platform_owner_override_uses_own_chat_only(monkeypatch):
         telegram_menus, "get_settings",
         lambda: SimpleNamespace(platform_owner_telegram_id=777),
     )
+    updated = AsyncMock()
+    monkeypatch.setattr(telegram_menus, "set_chat_commands", updated)
     await refresh_user_commands(
         bot, MagicMock(), chat_id=777, language="en",
     )
-    assert bot.set_my_commands.await_args.kwargs["commands"][0].command == "platform"
+    assert updated.await_args.kwargs["role"] == "platform"
+    assert updated.await_args.kwargs["language"] == "en"
     await refresh_user_commands(
         bot, MagicMock(), chat_id=778, language="ru",
     )
-    assert bot.set_my_commands.await_args.kwargs["commands"][0].command == "menu"
+    assert updated.await_args.kwargs["role"] == "central"
+    assert updated.await_args.kwargs["language"] == "ru"
 
 
 def test_empty_account_is_useful_and_never_shows_a_fake_subscription():
