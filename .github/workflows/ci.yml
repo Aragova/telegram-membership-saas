@@ -86,6 +86,10 @@ jobs:
                       "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public "
                       "TO membership_runtime"
                   )
+                  await connection.execute(
+                      "GRANT EXECUTE ON FUNCTION public.list_customer_bot_targets() "
+                      "TO membership_runtime"
+                  )
               finally:
                   await connection.close()
 
