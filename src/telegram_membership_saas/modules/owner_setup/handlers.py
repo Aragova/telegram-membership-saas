@@ -25,7 +25,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
-from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.db import (
+    system_project_session_scope,
+    tenant_session_scope,
+)
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -41,6 +44,12 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
     list_owner_obligations,
     retry_owner_access,
     revoke_owner_grant,
+)
+from telegram_membership_saas.modules.owner_setup.tenant_admin import (
+    attach_owner_method_currency,
+    change_owner_method_status,
+    get_owner_plan_info,
+    list_owner_methods,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
@@ -68,9 +77,16 @@ from telegram_membership_saas.modules.owner_setup.service import (
     verify_channel_and_add,
 )
 from telegram_membership_saas.modules.telegram_admin.service import change_project_timezone
+from telegram_membership_saas.modules.telegram_commerce.handlers import (
+    _review_keyboard,
+    _review_text,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
     encode_uuid,
+    format_amount,
+    format_period,
+    list_pending_reviews_for_actor,
 )
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -101,6 +117,19 @@ def _status(value: str) -> str:
         "archived": "📦 Архив",
         "deleting": "🟡 Удаляется",
     }.get(value, "Неизвестно")
+
+
+def _next_setup_step(snapshot) -> tuple[str, str] | None:
+    """One contextual action at a time, not an error-driven wizard."""
+    if not any(status == "active" for _, _, status in snapshot.resources):
+        return "📢 1. Подключить канал", "resources"
+    if not any(status == "active" for _, _, status in snapshot.methods):
+        return "💳 2. Настроить оплату", "methods"
+    if not any(status == "active" for _, _, status in snapshot.plans):
+        return "📦 3. Подготовить тариф", "plans"
+    if not snapshot.sales_configured:
+        return "📋 4. Проверить настройки", "readiness"
+    return None
 
 
 def _private(message: Message) -> bool:
@@ -244,6 +273,7 @@ def create_owner_setup_router(
                 [_button("❔ Как это работает", "help")],
             ]
         else:
+            next_step = _next_setup_step(data)
             text = (
                 "✦ <b>Панель администратора</b>\n"
                 f"<b>{escape(data.project_name)}</b>\n"
@@ -251,22 +281,26 @@ def create_owner_setup_router(
                 + "\n".join(_progress(data))
                 + "\n\n"
                 + (
-                    "✅ Приём подписок настроен."
-                    if data.sales_configured else
-                    "Начните с канала и способа оплаты.\n"
-                    "Покупки откроются после публикации тарифа."
+                    "✅ Продажи готовы. Управляйте тарифами и заявками."
+                    if data.sales_configured
+                    else "Настройте продажи по порядку. Уже сохранённые "
+                    "данные останутся на месте."
                 )
             )
-            rows = [
+            rows = []
+            if next_step is not None:
+                label, action = next_step
+                rows.append([_button(label, action, "success")])
+            rows.extend([
+                [_button("📢 Каналы", "resources"),
+                 _button("💳 Оплата", "methods")],
                 [_button("📦 Тарифы", "plans"),
-                 _button("📢 Каналы / группы", "resources")],
-                [_button("💳 Оплата", "methods"),
                  _button("📋 Заявки", "reviews")],
-                [_button("🌍 TimeZone", "timezone"),
-                 _button("📋 Готовность", "readiness")],
+                [_button("📋 Готовность", "readiness"),
+                 _button("🌍 TimeZone", "timezone")],
                 [_button("👀 Смотреть гостем", "preview")],
                 [_button("❔ Помощь", "help")],
-            ]
+            ])
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
         )
