@@ -20,6 +20,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
 from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     attach_owner_method_currency,
     change_owner_method_status,
+    get_owner_method_info,
     get_owner_plan_info,
     list_owner_methods,
 )
@@ -84,10 +85,19 @@ async def test_owner_links_multiple_currencies_and_cross_tenant_is_denied():
             factory, actor_id=owner, project_id=project,
         ))[0].currencies
         assert currencies == ("RUB", "USD")
+        record = await get_owner_method_info(
+            factory, actor_id=owner, project_id=project, method_id=method.id,
+        )
+        assert record.currencies == ("RUB", "USD")
         with pytest.raises((TenantAccessDenied, PermissionError, ValueError)):
             await attach_owner_method_currency(
                 factory, actor_id=outsider, project_id=other,
                 method_id=method.id, currency_code="EUR",
+            )
+        with pytest.raises((TenantAccessDenied, PermissionError, ValueError)):
+            await get_owner_method_info(
+                factory, actor_id=outsider, project_id=other,
+                method_id=method.id,
             )
         with pytest.raises((TenantAccessDenied, PermissionError)):
             await change_owner_method_status(
