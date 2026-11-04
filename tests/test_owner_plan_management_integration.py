@@ -113,7 +113,7 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
         with pytest.raises((TenantAccessDenied, PermissionError)):
             await archive_owner_plan(
                 factory, actor_id=outsider, project_id=project,
-                plan_id=plan,
+                plan_id=plan, expected_revision=info.revision,
             )
         with pytest.raises((TenantAccessDenied, PermissionError)):
             await rename_owner_plan(
