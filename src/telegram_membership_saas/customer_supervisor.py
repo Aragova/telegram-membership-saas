@@ -212,9 +212,14 @@ class CustomerBotSupervisor:
 
         for pid, current in list(self.workers.items()):
             if current.task.done():
+                was_cancelled = current.task.cancelled()
                 await asyncio.gather(current.task, return_exceptions=True)
                 del self.workers[pid]
-                self.retry_after[pid] = monotonic() + FAILURE_BACKOFF_SECONDS
+                if was_cancelled:
+                    # Config changes and token rotations should restart promptly.
+                    self.retry_after.pop(pid, None)
+                else:
+                    self.retry_after[pid] = monotonic() + FAILURE_BACKOFF_SECONDS
             elif pid not in ready or ready[pid] != current.target:
                 current.task.cancel()
 
