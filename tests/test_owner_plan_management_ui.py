@@ -161,7 +161,7 @@ async def test_archive_requires_confirm_and_preserves_history(monkeypatch):
     await cb(query, bot)
     archive.assert_not_awaited()
     assert any(x.startswith("own:plarchok:") for _, x in _buttons(bot))
-    assert "Existing subscriptions" in bot.send_message.await_args.args[1]
+    assert "Существующие подписки" in bot.send_message.await_args.args[1]
     query.data = "own:plarchok:" + encode_uuid(plan)
     await cb(query, bot)
     archive.assert_awaited_once()
