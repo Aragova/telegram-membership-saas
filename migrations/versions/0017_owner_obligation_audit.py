@@ -21,14 +21,25 @@ def upgrade() -> None:
     op.create_table(
         "owner_obligation_audit",
         sa.Column("id", sa.Uuid(), primary_key=True, nullable=False),
-        sa.Column("project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("actor_id", sa.Uuid(), sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column(
+            "project_id", sa.Uuid(),
+            sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False,
+        ),
+        sa.Column(
+            "actor_id", sa.Uuid(),
+            sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False,
+        ),
         sa.Column("action", sa.String(40), nullable=False),
         sa.Column("target_id", sa.Uuid(), nullable=False),
         sa.Column("reason", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True),
+            server_default=sa.text("now()"), nullable=False,
+        ),
     )
-    op.create_index("ix_owner_obligation_audit_project_id", "owner_obligation_audit", ["project_id"])
+    op.create_index(
+        "ix_owner_obligation_audit_project_id", "owner_obligation_audit", ["project_id"],
+    )
     op.execute("ALTER TABLE owner_obligation_audit ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE owner_obligation_audit FORCE ROW LEVEL SECURITY")
     op.execute(f"""
