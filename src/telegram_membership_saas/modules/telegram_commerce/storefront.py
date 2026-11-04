@@ -234,11 +234,11 @@ def offer_screen(
     period = format_period(option.duration_value, option.duration_unit)
     text = (
         tr("✦ <b>Оформление подписки</b>\n\n", "✦ <b>Subscription checkout</b>\n\n")
-        "📢 " + escape(current.resource_label) + "\n"
+        + "📢 " + escape(current.resource_label) + "\n"
         "💎 <b>" + escape(option.plan_name) + "</b>\n"
         "⏳ " + escape(period) + "\n"
         "💰 <b>" + escape(price + " " + option.currency_code) + "</b>\n\n"
-        tr("Выберите удобный способ оплаты:", "Choose a payment method:")
+        + tr("Выберите удобный способ оплаты:", "Choose a payment method:")
     )
     for method in current.methods:
         rows.append([InlineKeyboardButton(

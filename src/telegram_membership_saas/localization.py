@@ -6,8 +6,9 @@ bots. A language code must never be interpreted as geographic location/timezone.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
