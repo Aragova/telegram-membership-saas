@@ -130,6 +130,19 @@ async def _load_subscription_for_update(
     )
 
 
+def renewal_period_start(
+    subscription: Subscription | None, approved_at: datetime,
+) -> datetime:
+    """A cancelled plan must never defer a newly paid period."""
+    if (
+        subscription is None
+        or subscription.status != SubscriptionStatus.ACTIVE.value
+        or subscription.current_period_end is None
+    ):
+        return approved_at
+    return max(approved_at, subscription.current_period_end)
+
+
 async def approve_payment_request(
     session: AsyncSession,
     *,
@@ -220,13 +233,7 @@ async def approve_payment_request(
         subscription.status = SubscriptionStatus.ACTIVE.value
         subscription.last_payment_id = payment.id
     else:
-        previous_end = (
-            subscription.current_period_end
-            if subscription is not None
-            and subscription.status == SubscriptionStatus.ACTIVE.value
-            else None
-        )
-        grant_start = previous_end if previous_end is not None and previous_end > moment else moment
+        grant_start = renewal_period_start(subscription, moment)
         grant_end = calculate_period_end(
             grant_start,
             timezone_name=project.timezone,
