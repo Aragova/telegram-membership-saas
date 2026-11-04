@@ -14,7 +14,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
-from telegram_membership_saas.modules.owner_setup.plan_management import plan_has_history
+from telegram_membership_saas.modules.owner_setup.plan_management import (
+    plan_has_history,
+    plan_revision,
+)
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
 )
@@ -61,6 +64,7 @@ class PlanInfo:
     resource_name: str | None
     prices: tuple[PriceInfo, ...]
     has_history: bool = False
+    revision: str = ""
 
 
 METHOD_PAGE_SIZE = 8
@@ -283,6 +287,7 @@ async def get_owner_plan_info(
             duration_value=plan.duration_value, duration_unit=plan.duration_unit,
             resource_name=resource_name,
             has_history=has_history,
+            revision=plan_revision(plan),
             prices=tuple(
                 PriceInfo(
                     currency=code, amount=amount, precision=precision,

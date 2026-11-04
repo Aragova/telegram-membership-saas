@@ -6,9 +6,10 @@ references the plan; database FK constraints remain the final safety net.
 """
 from __future__ import annotations
 
+from hashlib import blake2s
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -20,6 +21,15 @@ from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
+
+
+def plan_revision(plan: Plan) -> str:
+    """Short change token for old Telegram confirmations."""
+    if plan.updated_at is None:
+        raise ValueError("Тариф изменился. Откройте карточку заново.")
+    return blake2s(
+        plan.updated_at.isoformat().encode("utf-8"), digest_size=6,
+    ).hexdigest()
 
 
 async def plan_has_history(
@@ -126,12 +136,15 @@ async def edit_owner_draft_resource(
         session.add(PlanResource(
             project_id=project_id, plan_id=plan_id, resource_id=resource_id,
         ))
+        # PlanResource writes alone do not bump Plan.updated_at.
+        plan.updated_at = func.clock_timestamp()
         await session.flush()
 
 
 async def archive_owner_plan(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, plan_id: UUID,
+    expected_revision: str,
 ) -> str:
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
@@ -144,6 +157,8 @@ async def archive_owner_plan(
         )
         if plan.status != PlanStatus.ACTIVE.value:
             raise ValueError("Снять с продажи можно только активный тариф")
+        if plan_revision(plan) != expected_revision:
+            raise ValueError("Тариф изменился. Откройте карточку заново.")
         plan.status = PlanStatus.ARCHIVED.value
         await session.flush()
         return plan.name
@@ -152,9 +167,9 @@ async def archive_owner_plan(
 async def delete_unused_owner_plan(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, plan_id: UUID,
-    expected_status: str,
+    expected_status: str, expected_revision: str,
 ) -> str:
-    """Permanent deletion only after explicit same-status confirmation."""
+    """Permanent deletion requires the exact state and revision."""
     if expected_status not in (
         PlanStatus.ACTIVE.value,
         PlanStatus.DRAFT.value,
@@ -168,7 +183,8 @@ async def delete_unused_owner_plan(
         plan = await _plan_for_owner(
             session, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
         )
-        if plan.status != expected_status:
+        if (plan.status != expected_status
+                or plan_revision(plan) != expected_revision):
             raise ValueError("Тариф изменился. Откройте карточку заново.")
         if await plan_has_history(
             session, project_id=project_id, plan_id=plan_id,
