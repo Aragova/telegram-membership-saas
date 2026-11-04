@@ -80,3 +80,15 @@ never translated. Test both languages for callbacks and admin-only authorization
   fallback. No geographic location or timezone can be derived from this hint.
 - Migrations \`0021\` and \`0022\` are required on staging before deploying these
   revisions; deploy both central and all connected bot processes together.
+
+
+- Stage 5 (PR #40): owner-only bot removal, outstanding payment/subscription
+  obligations, action confirmations and the customer notifications that accompany
+  legitimate owner decisions, plus legacy central owner/admin routes. The
+  retirement/payment/audit code remains identical in RU and EN. Existing
+  Russian ForceReply bot-token prompts remain valid alongside English ones.
+  Buyer notice language is resolved for the buyer independently of the owner.
+- The existing explicit manual language choice and stored Telegram language hint
+  are shared across central and customer bots. Changing display language
+  does not change money, entitlements, project timezone, transaction IDs,
+  or any user-authored payment instructions.

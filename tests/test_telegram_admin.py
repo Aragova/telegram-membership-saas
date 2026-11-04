@@ -77,6 +77,7 @@ def test_admin_menu_has_no_dead_buttons_and_escapes_project_name():
         "adm:bots",
         "adm:reviews",
         "adm:client",
+        "lng:menu",
     ]
     assert "&amp;" in handlers._screen_text("resources", snapshot)
 
