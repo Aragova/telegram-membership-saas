@@ -29,6 +29,8 @@ from telegram_membership_saas.modules.bots.service import (
 )
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
+    SetupFlow,
+    advance_flow,
     bind_prompt,
     choose_project,
     consume_button_flow,
@@ -161,10 +163,17 @@ def create_owner_setup_router(
     async def prompt(
         bot: Bot, user_id: int, actor_id: UUID,
         *, step: str, text: str, payload: dict | None = None,
+        source_flow: SetupFlow | None = None,
     ) -> None:
-        generation = await set_flow(
-            factory, actor_id=actor_id, step=step, payload=payload
-        )
+        if source_flow is None:
+            generation = await set_flow(
+                factory, actor_id=actor_id, step=step, payload=payload
+            )
+        else:
+            generation = await advance_flow(
+                factory, actor_id=actor_id, source=source_flow,
+                step=step, payload=payload or {},
+            )
         sent = await bot.send_message(
             user_id, text, parse_mode="HTML",
             reply_markup=ForceReply(
@@ -408,6 +417,8 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id,
                     expected_step="plan_duration", generation=generation,
                 )
+                if flow.project_id != project_id:
+                    raise ValueError("Проект изменился. Повторите действие.")
                 value, unit, _ = DURATIONS[key]
                 data = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id
@@ -425,8 +436,9 @@ def create_owner_setup_router(
                     )
                     await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
                 else:
-                    generation = await set_flow(
-                        factory, actor_id=actor_id, step="plan_resource",
+                    generation = await advance_flow(
+                        factory, actor_id=actor_id, source=flow,
+                        step="plan_resource",
                         payload={"name": flow.payload["name"], "value": value, "unit": unit},
                     )
                     rows = [
@@ -443,6 +455,8 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id,
                     expected_step="plan_resource", generation=generation,
                 )
+                if flow.project_id != project_id:
+                    raise ValueError("Проект изменился. Повторите действие.")
                 plan_id = await create_owner_plan(
                     factory, actor_id=actor_id, project_id=project_id,
                     name=flow.payload["name"], duration_value=flow.payload["value"],
@@ -494,7 +508,7 @@ def create_owner_setup_router(
                 )
             elif action == "timezone":
                 rows = [
-                    [_button(zone, "tz:" + zone)]
+                    [_button(zone, "tz:" + zone + ":" + project_id.hex)]
                     for zone in (
                         "Europe/Moscow", "Europe/Amsterdam",
                         "Europe/London", "Asia/Bangkok", "Asia/Dubai"
@@ -511,7 +525,9 @@ def create_owner_setup_router(
                     text="🌍 Отправьте часовой пояс IANA, например Europe/Moscow.",
                 )
             elif action.startswith("tz:"):
-                value = action.split(":", 1)[1]
+                _, value, origin_hex = action.split(":", 2)
+                if UUID(hex=origin_hex) != project_id:
+                    raise ValueError("Это меню другого проекта. Откройте настройки заново.")
                 await change_project_timezone(
                     factory, project_id=project_id,
                     actor_telegram_user_id=user_id, timezone_name=value,
@@ -667,8 +683,8 @@ def create_owner_setup_router(
             elif flow.step == "plan_name":
                 if not 2 <= len(text) <= 120:
                     raise ValueError("Название тарифа: от 2 до 120 символов")
-                generation = await set_flow(
-                    factory, actor_id=actor_id,
+                generation = await advance_flow(
+                    factory, actor_id=actor_id, source=flow,
                     step="plan_duration", payload={"name": text},
                 )
                 await bot.send_message(
@@ -694,6 +710,7 @@ def create_owner_setup_router(
                 await prompt(
                     bot, message.chat.id, actor_id,
                     step="method_instruction",
+                    source_flow=flow,
                     payload={"currency": flow.payload["currency"], "name": text},
                     text=(
                         "💳 Отправьте инструкцию покупателю: куда и как переводить "
