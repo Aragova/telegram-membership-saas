@@ -35,7 +35,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("project_id"),
         sa.CheckConstraint(
-            "state IN ('setup_needed', 'starting', 'running', 'stopped', 'error')",
+            "state IN ('setup_needed', 'queued', 'starting', 'running', 'stopped', 'error')",
             name="ck_customer_bot_runtime_health_state",
         ),
     )
