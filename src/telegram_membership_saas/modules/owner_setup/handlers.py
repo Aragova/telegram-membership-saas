@@ -9,6 +9,7 @@ from uuid import UUID
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
+from cryptography.fernet import InvalidToken
 from aiogram.types import (
     CallbackQuery,
     ForceReply,
@@ -391,7 +392,7 @@ def create_owner_setup_router(
                 )
             finally:
                 await customer_bot.session.close()
-        except (AiogramError, ValueError):
+        except (AiogramError, ValueError, RuntimeError, InvalidToken):
             await central_bot.send_message(
                 owner_tg_id,
                 "⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
