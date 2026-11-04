@@ -27,7 +27,8 @@ in central, and must not be weakened or hide active subscriber obligations.
 One physical Telegram bot hosts two **separate permission-checked modes**:
 
 1. Verified tenant owner/authorized collaborator `/start` opens a polished
-   administration menu: channels/groups; tariffs; payment methods; subscribers;
+   administration menu: channels/groups; tariffs (including rename, draft-only
+   terms/channel edits, archive/restore and history-safe deletion); payment methods; subscribers;
    payment requests; statistics; timezone; notifications; bot status; settings;
    support; **View as guest**.
 2. Buyer `/start` opens only the public catalog, selectable currencies, plans

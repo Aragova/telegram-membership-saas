@@ -190,7 +190,8 @@ async def test_plan_card_shows_price_and_missing_payment_method(monkeypatch):
         for b in row
     ]
     assert "own:newmethod" in callbacks
-    assert "own:publish:" + plan.hex in callbacks
+    assert any(value.startswith("own:publish:")
+               for value in callbacks)
 
 
 async def test_owner_review_inbox_uses_original_approved_payment_buttons(monkeypatch):

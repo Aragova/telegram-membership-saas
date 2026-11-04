@@ -61,6 +61,13 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
     retry_owner_access,
     revoke_owner_grant,
 )
+from telegram_membership_saas.modules.owner_setup.plan_management import (
+    archive_owner_plan,
+    delete_unused_owner_plan,
+    edit_owner_draft_duration,
+    edit_owner_draft_resource,
+    rename_owner_plan,
+)
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
     SetupFlow,
@@ -716,16 +723,116 @@ def create_owner_setup_router(
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
             ])
+        token = encode_uuid(plan_id)
+        lines.append("")
+        lines.append(tr("<b>Управление тарифом</b>", "<b>Manage plan</b>"))
+        rows.append([_button(
+            tr("✏️ Изменить название", "✏️ Rename plan"),
+            "plrename:" + token,
+        )])
         if data.status == "draft":
             rows.append([
-                _button("✅ Опубликовать тариф", "publish:" + plan_id.hex, "success"),
+                _button(
+                    tr("⏳ Изменить срок", "⏳ Change duration"),
+                    "plduration:" + token,
+                ),
+                _button(
+                    tr("📢 Изменить канал", "📢 Change channel"),
+                    "plresource:" + token,
+                ),
             ])
+            rows.append([
+                _button(
+                    "✅ Опубликовать тариф",
+                    "publish:" + token + ":" + data.revision, "success",
+                ),
+            ])
+        elif data.status == "active":
+            rows.append([_button(
+                tr("⏸️ Снять с продажи", "⏸️ Stop new sales"),
+                "plarchive:" + token,
+            )])
+        elif data.status == "archived":
+            rows.append([_button(
+                tr("▶️ Вернуть в продажу", "▶️ Resume sales"),
+                "plrestore:" + token, "success",
+            )])
+        if not getattr(data, "has_history", False):
+            rows.append([_button(
+                tr("🗑 Удалить тариф", "🗑 Delete plan"),
+                "pldelete:" + token, "danger",
+            )])
+        else:
+            lines.append(tr(
+                "<i>Удаление недоступно: по тарифу есть история покупок. "
+                "Снятие с продажи сохраняет подписки и платежи.</i>",
+                "<i>Deletion is unavailable: this plan has purchase history. "
+                "Archiving keeps subscriptions and payments intact.</i>",
+            ))
         rows.append([_button("⬅️ Все тарифы", "plans")])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
         )
 
+
+    async def show_plan_duration_editor(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, plan_id: UUID,
+    ) -> None:
+        data = await get_owner_plan_info(
+            factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
+        )
+        if data.status != "draft":
+            raise ValueError("Срок можно изменить только у неопубликованного тарифа")
+        token = encode_uuid(plan_id)
+        rows = [
+            [_button(
+                tr(label, format_period(value, unit)),
+                "plsetperiod:" + token + ":" + key,
+            )]
+            for key, (value, unit, label) in DURATIONS.items()
+        ]
+        rows.append([_button(
+            tr("⬅️ К тарифу", "⬅️ Back to plan"), "plan:" + plan_id.hex,
+        )])
+        await bot.send_message(
+            user_id, tr(
+                "⏳ <b>Изменить срок черновика</b>\n\n"
+                "Выберите новый срок. Существующие цены сохранятся.",
+                "⏳ <b>Change draft duration</b>\n\n"
+                "Choose the new duration. Existing prices are retained.",
+            ), parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_plan_resource_editor(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, plan_id: UUID,
+    ) -> None:
+        data = await get_owner_plan_info(
+            factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
+        )
+        if data.status != "draft":
+            raise ValueError("Канал можно изменить только у неопубликованного тарифа")
+        snapshot = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        token = encode_uuid(plan_id)
+        rows = [
+            [_button(
+                "📢 " + name[:45], "plsetres:" + token + ":" + encode_uuid(rid),
+            )]
+            for rid, name, status in snapshot.resources if status == "active"
+        ]
+        rows.append([_button(
+            tr("⬅️ К тарифу", "⬅️ Back to plan"), "plan:" + plan_id.hex,
+        )])
+        await bot.send_message(
+            user_id, tr(
+                "📢 <b>Изменить канал черновика</b>\n\n"
+                "Выберите канал или группу, доступ к которым даст тариф.",
+                "📢 <b>Change draft channel</b>\n\n"
+                "Select the channel or group this plan will grant access to.",
+            ), parse_mode="HTML", reply_markup=_markup(rows),
+        )
 
     async def show_methods(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -1103,7 +1210,7 @@ def create_owner_setup_router(
             )
         if prior.step in ("plan_name", "plan_duration", "plan_resource"):
             await show_plans(bot, message.chat.id, actor_id, project_id)
-        elif prior.step == "price_amount":
+        elif prior.step in ("price_amount", "plan_rename"):
             try:
                 plan_id = UUID(hex=prior.payload["plan_id"])
             except (KeyError, TypeError, ValueError, AttributeError):
@@ -1682,6 +1789,194 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     UUID(hex=action.split(":", 1)[1]),
                 )
+            elif action.startswith("plrename:"):
+                plan_id = decode_uuid(action.split(":", 1)[1])
+                data = await get_owner_plan_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id,
+                )
+                warning = tr(
+                    "\n⚠️ Новое название также будет видно в истории покупок.",
+                    "\n⚠️ The new name will also appear in purchase history.",
+                ) if data.has_history else ""
+                await prompt(
+                    bot, user_id, actor_id, step="plan_rename",
+                    payload={"plan_id": plan_id.hex},
+                    text=tr(
+                        "✏️ <b>Переименовать тариф</b>\n\n"
+                        "Введите новое название (2–120 символов).",
+                        "✏️ <b>Rename plan</b>\n\n"
+                        "Enter the new name (2–120 characters).",
+                    ) + warning,
+                )
+            elif action.startswith("plduration:"):
+                plan_id = decode_uuid(action.split(":", 1)[1])
+                await show_plan_duration_editor(
+                    bot, user_id, actor_id, project_id, plan_id,
+                )
+            elif action.startswith("plsetperiod:"):
+                _, token, key = action.split(":", 2)
+                if key not in DURATIONS:
+                    raise ValueError(tr("Недопустимый срок", "Invalid duration"))
+                plan_id = decode_uuid(token)
+                value, unit, _ = DURATIONS[key]
+                await edit_owner_draft_duration(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id, duration_value=value, duration_unit=unit,
+                )
+                await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
+            elif action.startswith("plresource:"):
+                plan_id = decode_uuid(action.split(":", 1)[1])
+                await show_plan_resource_editor(
+                    bot, user_id, actor_id, project_id, plan_id,
+                )
+            elif action.startswith("plsetres:"):
+                _, plan_token, resource_token = action.split(":", 2)
+                plan_id = decode_uuid(plan_token)
+                await edit_owner_draft_resource(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id, resource_id=decode_uuid(resource_token),
+                )
+                await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
+            elif action.startswith("plarchive:"):
+                plan_id = decode_uuid(action.split(":", 1)[1])
+                info = await get_owner_plan_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id,
+                )
+                if info.status != "active":
+                    raise ValueError("Снять с продажи можно только активный тариф")
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "⏸️ <b>Снять тариф с продажи?</b>\n\n"
+                        "Покупатели больше не смогут выбрать его для новых заявок. "
+                        "Существующие подписки, уже созданные заявки и "
+                        "история платежей останутся без изменений.",
+                        "⏸️ <b>Stop selling this plan?</b>\n\n"
+                        "Buyers will no longer be able to select it for new "
+                        "requests. Existing subscriptions, payment requests "
+                        "and payment history will remain unchanged.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            tr("⏸️ Да, снять с продажи", "⏸️ Confirm stop"),
+                            "plarchok:" + encode_uuid(plan_id) + ":" + info.revision,
+                            "danger",
+                        )],
+                        [_button(
+                            tr("⬅️ Оставить тариф", "⬅️ Keep plan"),
+                            "plan:" + plan_id.hex,
+                        )],
+                    ]),
+                )
+            elif action.startswith("plarchok:"):
+                _, token, revision = action.split(":", 2)
+                plan_id = decode_uuid(token)
+                await archive_owner_plan(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id, expected_revision=revision,
+                )
+                await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
+            elif action.startswith("plrestore:"):
+                plan_id = decode_uuid(action.split(":", 1)[1])
+                info = await get_owner_plan_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id,
+                )
+                if info.status != "archived":
+                    raise ValueError("Тариф изменился. Откройте карточку заново.")
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "▶️ <b>Вернуть тариф в продажу?</b>\n\n"
+                        "Он снова появится в каталоге, если цены и оплата настроены.",
+                        "▶️ <b>Resume selling this plan?</b>\n\n"
+                        "It will reappear in the catalog if prices and payments are ready.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            tr("✅ Возобновить продажи", "✅ Resume sales"),
+                            "plrestoreok:" + encode_uuid(plan_id) + ":" + info.revision,
+                            "success",
+                        )],
+                        [_button(
+                            tr("⬅️ Оставить в архиве", "⬅️ Keep archived"),
+                            "plan:" + plan_id.hex,
+                        )],
+                    ]),
+                )
+            elif action.startswith("plrestoreok:"):
+                _, token, revision = action.split(":", 2)
+                plan_id = decode_uuid(token)
+                await publish_owner_plan(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id, expected_status="archived",
+                    expected_revision=revision,
+                )
+                await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
+            elif action.startswith("pldelete:"):
+                plan_id = decode_uuid(action.split(":", 1)[1])
+                info = await get_owner_plan_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id,
+                )
+                if info.has_history:
+                    raise ValueError(
+                        "Тариф имеет историю заявок или подписок. "
+                        "Удаление запрещено — снимите его с продажи."
+                    )
+                status_code = {"draft": "d", "active": "a", "archived": "r"}[
+                    info.status
+                ]
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "🗑 <b>Удалить тариф навсегда?</b>\n\n",
+                        "🗑 <b>Delete this plan permanently?</b>\n\n",
+                    )
+                    + "<b>" + escape(info.name) + "</b>\n\n"
+                    + tr(
+                        "Будут удалены настройки цен и привязка к каналу. "
+                        "Это возможно только если по тарифу никогда не было "
+                        "заявок и подписок.",
+                        "Its prices and channel assignment will be removed. "
+                        "Deletion is allowed only if there have never been "
+                        "payment requests or subscriptions for this plan.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            tr("🗑 Да, удалить тариф", "🗑 Yes, delete plan"),
+                            "pldelok:" + encode_uuid(plan_id) + ":" + status_code
+                            + ":" + info.revision,
+                            "danger",
+                        )],
+                        [_button(
+                            tr("⬅️ Отмена", "⬅️ Cancel"),
+                            "plan:" + plan_id.hex,
+                        )],
+                    ]),
+                )
+            elif action.startswith("pldelok:"):
+                _, token, code, revision = action.split(":", 3)
+                expected = {"d": "draft", "a": "active", "r": "archived"}.get(
+                    code
+                )
+                if expected is None:
+                    raise ValueError("Тариф изменился. Откройте карточку заново.")
+                await delete_unused_owner_plan(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=decode_uuid(token), expected_status=expected,
+                    expected_revision=revision,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr("✅ Тариф удалён.", "✅ Plan deleted."),
+                )
+                await show_plans(bot, user_id, actor_id, project_id)
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
                 if currency not in ALLOWED_CURRENCIES:
@@ -1695,11 +1990,15 @@ def create_owner_setup_router(
                     ),
                 )
             elif action.startswith("publish:"):
-                plan_id = UUID(hex=action.split(":", 1)[1])
+                # Old pre-management publish buttons are intentionally stale:
+                # publication requires the draft's current plan revision.
+                _, token, revision = action.split(":", 2)
+                plan_id = decode_uuid(token)
                 try:
                     name = await publish_owner_plan(
                         factory, actor_id=actor_id, project_id=project_id,
-                        plan_id=plan_id,
+                        plan_id=plan_id, expected_status="draft",
+                        expected_revision=revision,
                     )
                 except ValueError as exc:
                     if "Добавьте действующий способ оплаты" not in str(exc):
@@ -2155,6 +2454,23 @@ def create_owner_setup_router(
                 await show_duration_picker(
                     bot, message.chat.id, generation,
                 )
+            elif flow.step == "plan_rename":
+                plan_id = UUID(hex=flow.payload["plan_id"])
+                name = await rename_owner_plan(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id, name=text,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr(
+                        f"✅ Тариф переименован в «{escape(name)}».",
+                        f"✅ Plan renamed to “{escape(name)}”.",
+                    ),
+                    parse_mode="HTML",
+                )
+                await show_plan_card(
+                    bot, message.chat.id, actor_id, project_id, plan_id,
+                )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
                 await save_owner_price(
@@ -2218,7 +2534,7 @@ def create_owner_setup_router(
                 "new_bot_token": "projects",
                 "bot_token": "bots",
             }.get(flow.step, "dashboard")
-            if flow.step == "price_amount":
+            if flow.step in ("price_amount", "plan_rename"):
                 plan_hex = flow.payload.get("plan_id")
                 try:
                     destination = "plan:" + UUID(hex=plan_hex).hex

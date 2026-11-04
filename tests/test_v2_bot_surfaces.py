@@ -247,7 +247,8 @@ async def test_publish_without_payment_offers_direct_fix_not_an_alert(monkeypatc
         MagicMock(), fixed_project_id=project_id,
     )
     bot = _bot()
-    query = _callback("publish:" + plan_id.hex)
+    from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+    query = _callback("publish:" + encode_uuid(plan_id) + ":abcd1234abcd")
     await _handler(router, "owner_callback")(query, bot)
     publish.assert_awaited_once()
     outgoing = bot.send_message.await_args

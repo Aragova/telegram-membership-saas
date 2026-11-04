@@ -10,7 +10,7 @@ from uuid import UUID
 from aiogram import Bot
 from cryptography.fernet import InvalidToken
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -740,6 +740,12 @@ async def save_owner_price(
             session, project_id=project_id, plan_id=plan_id,
             currency_code=currency_code, amount=amount,
         )
+        # Editing a price invalidates earlier permanent-delete confirmations.
+        await session.execute(
+            update(Plan).where(
+                Plan.id == plan_id, Plan.project_id == project_id,
+            ).values(updated_at=func.clock_timestamp())
+        )
 
 
 async def create_owner_payment_method(
@@ -764,6 +770,8 @@ async def create_owner_payment_method(
 async def publish_owner_plan(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, plan_id: UUID,
+    expected_status: str = "draft",
+    expected_revision: str | None = None,
 ) -> str:
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
@@ -776,6 +784,14 @@ async def publish_owner_plan(
         ).with_for_update())
         if plan is None:
             raise ValueError("Тариф не принадлежит выбранному проекту")
+        if plan.status != expected_status:
+            raise ValueError("Тариф изменился. Откройте карточку заново.")
+        if expected_revision is not None:
+            from telegram_membership_saas.modules.owner_setup.plan_management import (
+                plan_revision,
+            )
+            if plan_revision(plan) != expected_revision:
+                raise ValueError("Тариф изменился. Откройте карточку заново.")
         linked = await session.scalar(select(PlanResource.resource_id).join(
             Resource, PlanResource.resource_id == Resource.id
         ).where(

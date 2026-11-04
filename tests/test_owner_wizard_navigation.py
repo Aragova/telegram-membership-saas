@@ -183,6 +183,7 @@ async def test_back_command_routes_to_price_plan_without_modifying_price(monkeyp
     monkeypatch.setattr(ui, "get_owner_plan_info", AsyncMock(return_value=SimpleNamespace(
         name="Premium", status="draft", duration_value=1,
         duration_unit="month", resource_name="Channel", prices=(),
+        revision="abcd1234abcd",
     )))
     monkeypatch.setattr(ui, "owner_available_currencies", AsyncMock(return_value=("RUB",)))
     save = AsyncMock()

@@ -103,6 +103,19 @@ _ERROR_EN = {
         "Plan not found in this project.",
     "Проверяйте заявки в собственном боте":
         "Review payment requests inside your connected bot.",
+    "Срок можно изменить только у неопубликованного тарифа":
+        "The duration can only be changed for an unpublished draft.",
+    "Канал можно изменить только у неопубликованного тарифа":
+        "The channel can only be changed for an unpublished draft.",
+    "Снять с продажи можно только активный тариф":
+        "Only an active plan can be removed from sale.",
+    "Тариф изменился. Откройте карточку заново.":
+        "This plan has changed. Open the plan details again.",
+    "Тариф имеет историю заявок или подписок. Удаление запрещено — снимите его с продажи.":
+        "This plan has payment or subscription history. Archive it instead of deleting.",
+    "Тариф связан с покупками или доступом. Удаление запрещено.":
+        "This plan has purchase or access history and cannot be deleted.",
+
 }
 
 # Public English strings already produced by tr(...) at handler boundaries.
@@ -129,6 +142,7 @@ _KNOWN_EN_ERRORS = frozenset(_ERROR_EN.values()) | {
     "You cannot change another bot's settings",
     "Invalid token format. Get a token from @BotFather.",
     "Invalid token format. Get it from BotFather.",
+    "Invalid duration",
     "Plan name must be 2–120 characters",
     "Payment method name must be 2–120 characters",
 }
