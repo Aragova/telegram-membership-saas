@@ -86,6 +86,10 @@ async def test_trusted_global_discovery_returns_only_metadata_and_rls_hides_ciph
         )
         await write_bot_health(
             factory, project_id=project_id, bot_id=bot_id,
+            instance_id=worker_a, state="queued",
+        )
+        await write_bot_health(
+            factory, project_id=project_id, bot_id=bot_id,
             instance_id=worker_a, state="stopped",
         )
         async with tenant_session_scope(
