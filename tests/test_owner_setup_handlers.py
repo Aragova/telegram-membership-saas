@@ -1,4 +1,4 @@
-"""Contract tests for central ViMi Pay's owner-only setup UX."""
+"""Contract tests for the approved v2 central registrar and owner surfaces."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -63,12 +63,13 @@ def test_management_dispatcher_routes_owner_first_buyer_separately():
         MagicMock(), project_id=uuid4(), enable_access=False
     )
     customer = create_customer_dispatcher(MagicMock(), project_id=uuid4())
-    assert central.sub_routers[0].name == "owner-setup"
-    assert "owner-setup" not in [r.name for r in customer.sub_routers]
+    assert central.sub_routers[0].name == "central-registrar"
+    assert "owner-tenant" in [r.name for r in customer.sub_routers]
+    assert "telegram-admin" not in [r.name for r in central.sub_routers]
     assert "telegram-commerce" not in [r.name for r in central.sub_routers]
 
 
-async def test_first_start_has_real_create_project_button(monkeypatch):
+async def test_first_start_has_direct_bot_connection_button(monkeypatch):
     uid = uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
     monkeypatch.setattr(
@@ -77,11 +78,13 @@ async def test_first_start_has_real_create_project_button(monkeypatch):
     bot = _bot()
     await _handler("home_message")(_message(), bot)
     sent = bot.send_message.await_args
-    assert "Создайте первый проект" in sent.args[1]
-    assert "Создать проект" in sent.kwargs["reply_markup"].inline_keyboard[-1][0].text
+    assert "Подключите собственного Telegram-бота" in sent.args[1]
+    assert "Подключить бота подписок" in (
+        sent.kwargs["reply_markup"].inline_keyboard[-1][0].text
+    )
 
 
-async def test_owner_start_shows_configuration_progress_without_raw_uuids(monkeypatch):
+async def test_central_start_shows_connection_registry_without_raw_uuids(monkeypatch):
     uid, project_id = uuid4(), uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
     monkeypatch.setattr(
@@ -95,8 +98,8 @@ async def test_owner_start_shows_configuration_progress_without_raw_uuids(monkey
     bot = _bot()
     await _handler("home_message")(_message(), bot)
     sent = bot.send_message.await_args
-    assert "Панель владельца" in sent.args[1]
-    assert "✅ Собственный бот" in sent.args[1]
+    assert "Ваши подключения" in sent.args[1]
+    assert "Настройте" not in sent.args[1]
     assert project_id.hex not in sent.args[1]
     assert str(project_id) not in sent.args[1]
     assert "runtime" not in sent.args[1]
@@ -123,6 +126,9 @@ async def test_token_is_deleted_before_registering(monkeypatch):
         AsyncMock(return_value=SetupFlow("bot_token", project_id, {}, 999)),
     )
     monkeypatch.setattr(ui, "register_customer_bot", register)
+    monkeypatch.setattr(
+        ui, "set_default_project_name_from_bot", AsyncMock(),
+    )
     monkeypatch.setattr(
         ui, "get_settings",
         lambda: SimpleNamespace(bot_token_encryption_key="key"),
