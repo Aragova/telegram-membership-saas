@@ -27,7 +27,6 @@ from telegram_membership_saas.modules.telegram_access.service import (
 )
 from telegram_membership_saas.tenant_context import TenantContext
 
-
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"), reason="Requires PostgreSQL RLS integration",
 )
