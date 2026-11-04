@@ -129,8 +129,10 @@ def _audit(
 
 async def list_owner_obligations(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID, project_id: UUID,
+    actor_id: UUID, project_id: UUID, page: int = 0,
 ) -> OwnerObligations:
+    if page < 0 or page > 200:
+        raise ValueError("Недопустимая страница")
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:
@@ -146,7 +148,7 @@ async def list_owner_obligations(
             .join(TelegramUser, TelegramUser.id == ProjectCustomer.user_id)
             .where(PaymentRequest.project_id == project_id,
                    PaymentRequest.status.in_(OPEN_STATUSES))
-            .order_by(PaymentRequest.created_at, PaymentRequest.id).limit(10)
+            .order_by(PaymentRequest.created_at, PaymentRequest.id).offset(page * 5).limit(5)
         )).all()
         subscriptions = (await session.execute(
             select(Subscription, Plan.name, TelegramUser.telegram_user_id, TelegramUser.username)
@@ -161,7 +163,7 @@ async def list_owner_obligations(
                    Subscription.status == SubscriptionStatus.ACTIVE.value,
                    or_(Subscription.current_period_end.is_(None),
                        Subscription.current_period_end > now))
-            .order_by(Subscription.created_at, Subscription.id).limit(10)
+            .order_by(Subscription.created_at, Subscription.id).offset(page * 5).limit(5)
         )).all()
         grants = (await session.execute(
             select(EntitlementGrant, TelegramUser.telegram_user_id)
@@ -174,14 +176,14 @@ async def list_owner_obligations(
                    EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
                    or_(EntitlementGrant.valid_until.is_(None),
                        EntitlementGrant.valid_until > now))
-            .order_by(EntitlementGrant.created_at, EntitlementGrant.id).limit(10)
+            .order_by(EntitlementGrant.created_at, EntitlementGrant.id).offset(page * 5).limit(5)
         )).all()
         access = (await session.scalars(
             select(AccessState)
             .where(AccessState.project_id == project_id,
                    or_(AccessState.desired_access.is_(True),
                        AccessState.actual_state == "granted"))
-            .order_by(AccessState.created_at, AccessState.id).limit(12)
+            .order_by(AccessState.created_at, AccessState.id).offset(page * 5).limit(5)
         )).all()
         return OwnerObligations(
             blockers=blockers,
