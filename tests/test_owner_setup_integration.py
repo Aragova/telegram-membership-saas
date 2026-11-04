@@ -104,6 +104,27 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
         )
         assert current.payload["name"] == "Current plan"
 
+        # A finished prompt must not reattach to a different project after
+        # a project switch or a new wizard has superseded the previous one.
+        first = await setup.set_flow(
+            sf, actor_id=actor_id, step="plan_name", payload={}
+        )
+        await setup.bind_prompt(
+            sf, actor_id=actor_id, step="plan_name",
+            message_id=1001, generation=first,
+        )
+        ended = await setup.consume_flow(
+            sf, actor_id=actor_id, reply_message_id=1001
+        )
+        await setup.set_flow(
+            sf, actor_id=actor_id, step="method_name", payload={"currency": "RUB"}
+        )
+        with pytest.raises(ValueError, match="Проект или шаг"):
+            await setup.advance_flow(
+                sf, actor_id=actor_id, source=ended,
+                step="plan_duration", payload={"name": "No stale plan"},
+            )
+
         async with tenant_session_scope(
             sf, TenantContext(user_id=actor_id, project_id=project_id)
         ) as session:
