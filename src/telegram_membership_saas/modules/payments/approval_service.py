@@ -30,12 +30,12 @@ from telegram_membership_saas.modules.payments.request_service import (
 )
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.projects import Permission
-from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.modules.subscriptions import (
     Subscription,
     SubscriptionStatus,
     calculate_period_end,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
 
 @dataclass(frozen=True, slots=True)
