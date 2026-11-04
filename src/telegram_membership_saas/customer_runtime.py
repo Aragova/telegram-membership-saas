@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
 from aiogram import Bot
+from aiogram.methods import GetUpdates
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -28,10 +30,28 @@ from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
+from telegram_membership_saas.project_worker_lock import project_worker_lock
+from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
+
+
+class ObservedCustomerBot(Bot):
+    """Report only successful getUpdates responses, even when there are no updates."""
+
+    def __init__(
+        self, *, token: str, on_poll_response: Callable[[], None] | None = None
+    ) -> None:
+        super().__init__(token=token)
+        self._poll_response = on_poll_response
+
+    async def __call__(self, method, request_timeout=None):
+        result = await super().__call__(method, request_timeout=request_timeout)
+        if isinstance(method, GetUpdates) and self._poll_response is not None:
+            self._poll_response()
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,7 +132,9 @@ async def verify_resource_permissions(
             )
         )).all())
     if not resources:
-        raise RuntimeError("Customer bot project has no active channel/group")
+        # Still run the entitlement worker: subscriptions issued for a
+        # previously disabled channel may require expiry/revocation.
+        return
 
     for resource in resources:
         try:
@@ -134,7 +156,99 @@ async def verify_resource_permissions(
             ) from None
 
 
+async def run_customer_bot_instance(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    project_id: UUID,
+    telegram_bot_id: int,
+    settings: Settings,
+    on_started: Callable[[], Awaitable[None]] | None = None,
+    on_poll_response: Callable[[], None] | None = None,
+) -> None:
+    """Start exactly one verified buyer-only poller within an acquired project lease."""
+    bot: Bot | None = None
+    worker: asyncio.Task[None] | None = None
+    polling: asyncio.Task[None] | None = None
+    dispatcher = None
+    try:
+        config = await load_customer_bot(
+            session_factory,
+            project_id=project_id,
+            telegram_bot_id=telegram_bot_id,
+            settings=settings,
+        )
+        try:
+            bot = ObservedCustomerBot(
+                token=config.token, on_poll_response=on_poll_response
+            )
+        except Exception:
+            raise RuntimeError("Customer bot credential is invalid") from None
+
+        await check_customer_bot_identity(bot, config.telegram_bot_id)
+        await verify_resource_permissions(
+            session_factory, project_id=project_id, bot=bot
+        )
+        dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
+        worker = asyncio.create_task(
+            run_project_runtime_loop(
+                session_factory,
+                project_id=project_id,
+                adapter=TelegramAccessAdapter(bot),
+                poll_seconds=settings.telegram_worker_poll_seconds,
+            )
+        )
+        if on_started is not None:
+            await on_started()
+        logger.info("Customer bot ready for project %s", project_id)
+        # The supervisor can run many independent dispatchers inside one
+        # process; only the top-level app should own OS signals.
+        polling = asyncio.create_task(
+            dispatcher.start_polling(
+                bot,
+                handle_signals=False,
+                close_bot_session=False,
+                handle_as_tasks=False,
+            )
+        )
+        # Never propagate cancellation to aiogram's start_polling task directly.
+        # It manages an internal GetUpdates task that must be stopped gracefully.
+        await asyncio.shield(polling)
+    finally:
+        async def shutdown() -> None:
+            try:
+                if polling is not None:
+                    if not polling.done() and dispatcher is not None:
+                        # Stop aiogram's internally managed GetUpdates reader
+                        # gracefully; cancellation could otherwise orphan it.
+                        await asyncio.sleep(0)
+                        try:
+                            if not polling.done():
+                                await dispatcher.stop_polling()
+                        except RuntimeError:
+                            cancel_once(polling)
+                        except Exception:
+                            cancel_once(polling)
+                    await asyncio.gather(polling, return_exceptions=True)
+            finally:
+                # Access maintenance must also finish before the caller is
+                # permitted to release its per-project advisory lock.
+                try:
+                    if worker is not None:
+                        cancel_once(worker)
+                        await asyncio.gather(worker, return_exceptions=True)
+                finally:
+                    if bot is not None:
+                        await bot.session.close()
+
+        await complete_cleanup(shutdown())
+
+
 async def run_customer_bot(settings: Settings | None = None) -> None:
+    """Legacy one-bot command remains protected by the same project lease."""
+    from telegram_membership_saas.project_worker_lock import (
+        confirm_project_lock,
+    )
+
     current = settings or get_settings()
     project_id = current.telegram_project_id
     bot_id = current.customer_telegram_bot_id
@@ -144,45 +258,36 @@ async def run_customer_bot(settings: Settings | None = None) -> None:
         )
 
     engine = build_engine(current)
-    session_factory = build_session_factory(engine)
-    bot: Bot | None = None
-    worker: asyncio.Task[None] | None = None
+    factory = build_session_factory(engine)
     try:
-        config = await load_customer_bot(
-            session_factory,
-            project_id=project_id,
-            telegram_bot_id=bot_id,
-            settings=current,
-        )
-        # The token remains confined to this process. It is never printed,
-        # returned to Telegram UI or passed to external project contexts.
-        try:
-            bot = Bot(token=config.token)
-        except Exception:
-            # Token validation exceptions may contain credential material.
-            raise RuntimeError("Customer bot credential is invalid") from None
-        await check_customer_bot_identity(bot, config.telegram_bot_id)
-        await verify_resource_permissions(
-            session_factory,
-            project_id=project_id,
-            bot=bot,
-        )
-
-        dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
-        worker = asyncio.create_task(
-            run_project_runtime_loop(
-                session_factory,
-                project_id=project_id,
-                adapter=TelegramAccessAdapter(bot),
-                poll_seconds=current.telegram_worker_poll_seconds,
+        async with project_worker_lock(engine, project_id) as lease:
+            polling = asyncio.create_task(
+                run_customer_bot_instance(
+                    factory, project_id=project_id,
+                    telegram_bot_id=bot_id, settings=current,
+                )
             )
-        )
-        logger.info("Customer bot runtime started for project %s", project_id)
-        await dispatcher.start_polling(bot)
+
+            async def heartbeat() -> None:
+                while True:
+                    await asyncio.sleep(3)
+                    await confirm_project_lock(lease, project_id)
+
+            watchdog = asyncio.create_task(heartbeat())
+            try:
+                done, _ = await asyncio.wait(
+                    (polling, watchdog), return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    task.result()
+            finally:
+                async def shutdown() -> None:
+                    cancel_once(polling)
+                    cancel_once(watchdog)
+                    await asyncio.gather(
+                        polling, watchdog, return_exceptions=True
+                    )
+
+                await complete_cleanup(shutdown())
     finally:
-        if worker is not None:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
-        if bot is not None:
-            await bot.session.close()
         await engine.dispose()

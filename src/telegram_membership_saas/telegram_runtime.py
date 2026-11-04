@@ -6,7 +6,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
@@ -28,6 +27,11 @@ from telegram_membership_saas.modules.telegram_access import (
     expire_due_join_tickets,
     run_one_telegram_access_action,
 )
+from telegram_membership_saas.project_worker_lock import (
+    confirm_project_lock,
+    project_worker_lock,
+)
+from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_bot, create_dispatcher
 
 logger = logging.getLogger(__name__)
@@ -176,32 +180,97 @@ async def run_project_runtime_loop(
 
 async def run_telegram_bot(settings: Settings | None = None) -> None:
     current = settings or get_settings()
-    if current.telegram_project_id is None:
-        raise RuntimeError("TMS_TELEGRAM_PROJECT_ID is required to start the Telegram bot")
+    if current.telegram_central_access_enabled and current.telegram_project_id is None:
+        raise RuntimeError(
+            "TMS_TELEGRAM_PROJECT_ID is required while legacy central access is enabled"
+        )
 
     engine = build_engine(current)
-    session_factory = build_session_factory(engine)
-    bot: Bot = create_bot(current)
+    factory = build_session_factory(engine)
+    bot = create_bot(current)
     dispatcher = create_dispatcher(
-        session_factory,
+        factory,
         project_id=current.telegram_project_id,
         enable_access=current.telegram_central_access_enabled,
     )
-    runtime_task: asyncio.Task[None] | None = None
-    if current.telegram_central_access_enabled:
-        runtime_task = asyncio.create_task(
-            run_project_runtime_loop(
-                session_factory,
-                project_id=current.telegram_project_id,
-                adapter=TelegramAccessAdapter(bot),
-                poll_seconds=current.telegram_worker_poll_seconds,
-            )
-        )
+    worker: asyncio.Task[None] | None = None
+    polling: asyncio.Task[None] | None = None
+    guard: asyncio.Task[None] | None = None
+
+    async def stop_dispatcher() -> None:
+        if polling is not None:
+            if not polling.done():
+                await asyncio.sleep(0)
+                try:
+                    if not polling.done():
+                        await dispatcher.stop_polling()
+                except RuntimeError:
+                    cancel_once(polling)
+                except Exception:
+                    cancel_once(polling)
+            await asyncio.gather(polling, return_exceptions=True)
+
     try:
-        await dispatcher.start_polling(bot)
+        if not current.telegram_central_access_enabled:
+            # Central ViMi Pay must remain available for every new owner,
+            # without a per-owner project UUID in deployment settings.
+            polling = asyncio.create_task(
+                dispatcher.start_polling(
+                    bot, handle_signals=False, handle_as_tasks=False,
+                    close_bot_session=False,
+                )
+            )
+            try:
+                await asyncio.shield(polling)
+            finally:
+                await complete_cleanup(stop_dispatcher())
+        else:
+            project_id = current.telegram_project_id
+            assert project_id is not None
+            # Release the project lock only *after* polling and access-worker
+            # tasks have fully stopped. New workers can then safely take over.
+            async with project_worker_lock(engine, project_id) as lease:
+                try:
+                    worker = asyncio.create_task(run_project_runtime_loop(
+                        factory,
+                        project_id=project_id,
+                        adapter=TelegramAccessAdapter(bot),
+                        poll_seconds=current.telegram_worker_poll_seconds,
+                    ))
+
+                    async def heartbeat() -> None:
+                        while True:
+                            await asyncio.sleep(3)
+                            await confirm_project_lock(lease, project_id)
+
+                    guard = asyncio.create_task(heartbeat())
+                    polling = asyncio.create_task(
+                        dispatcher.start_polling(
+                            bot, handle_signals=False, handle_as_tasks=False,
+                            close_bot_session=False,
+                        )
+                    )
+                    done, _ = await asyncio.wait(
+                        (guard, polling), return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in done:
+                        task.result()
+                finally:
+                    # Repeated termination signals must not interrupt cleanup.
+                    # The lock is released only after both polling and access
+                    # have stopped and all in-flight handlers were awaited.
+                    async def shutdown() -> None:
+                        try:
+                            await stop_dispatcher()
+                        finally:
+                            cancel_once(guard)
+                            cancel_once(worker)
+                            await asyncio.gather(
+                                *(task for task in (worker, guard) if task is not None),
+                                return_exceptions=True,
+                            )
+
+                    await complete_cleanup(shutdown())
     finally:
-        if runtime_task is not None:
-            runtime_task.cancel()
-            await asyncio.gather(runtime_task, return_exceptions=True)
         await bot.session.close()
         await engine.dispose()
