@@ -34,8 +34,15 @@ One physical Telegram bot hosts two **separate permission-checked modes**:
    and compatible methods, purchases, payment confirmation, active subscriptions
    and access.
 
-Admins have a read-only guest preview that cannot generate fictitious access or
-bypass payment. Owner payment reviews, Telegram receipt forwarding and buyer
+Admins have an **interactive, read-only guest preview** that reuses the
+real buyer's checkout-eligible catalog. Owners can inspect currency switching,
+plan details, matching payment methods and rendered manual instructions, but
+preview callbacks are owner-scoped and **cannot create PaymentRequests, payment
+receipts, subscriptions, financial events, access grants or invitations**.
+Preview must not include non-purchasable draft plans or unavailable prices.
+Owner-entered plan names remain verbatim; the canonical duration and payment
+labels are localized. Buyer /start continues to use the actual checkout flow.
+Owner payment reviews, Telegram receipt forwarding and buyer
 notifications run in **that same bot**, not in central. The current trusted
 domain core is reused (Project, Plan, PaymentRequest, Payment, Subscription,
 EntitlementGrant, EffectiveAccess, Outbox, Worker, Telegram adapter).
