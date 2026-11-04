@@ -9,7 +9,6 @@ from uuid import UUID
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
-from cryptography.fernet import InvalidToken
 from aiogram.types import (
     CallbackQuery,
     ForceReply,
@@ -21,6 +20,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
