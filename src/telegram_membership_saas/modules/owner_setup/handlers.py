@@ -1056,7 +1056,7 @@ def create_owner_setup_router(
                 if len(parts) not in (4, 5) or parts[1] not in (
                     "pay", "sub", "grant", "sync"
                 ):
-                    raise ValueError("Неизвестное действие")
+                    raise ValueError(tr("Неизвестное действие", "Unknown action"))
                 verb, kind, project_ref, object_ref = parts[:4]
                 page = int(parts[4]) if len(parts) == 5 else 0
                 if decode_uuid(project_ref) != project_id:
@@ -1490,15 +1490,19 @@ def create_owner_setup_router(
                 )])
                 await bot.send_message(
                     user_id,
-                    "📋 <b>Готовность к продажам</b>\n\n"
+                    tr("📋 <b>Готовность к продажам</b>\n\n",
+                       "📋 <b>Sales readiness</b>\n\n")
                     + "\n".join(_progress(data))
-                    + "\n\n🤖 " + escape(data.bot_runtime_label)
+                    + "\n\n🤖 " + escape(owner_runtime_label(data.bot_runtime_label))
                     + "\n\n"
                     + (
-                        "✅ Тарифы доступны для покупки."
+                        tr("✅ Тарифы доступны для покупки.",
+                           "✅ Plans are available to buyers.")
                         if data.sales_configured
-                        else "Бот уже может принимать настройки. "
-                        "Покупатели увидят тарифы после завершения шагов."
+                        else tr("Бот уже может принимать настройки. "
+                                "Покупатели увидят тарифы после завершения шагов.",
+                                "The bot is ready for configuration. "
+                                "Buyers will see plans after setup is complete.")
                     ),
                     parse_mode="HTML",
                     reply_markup=_markup(rows),
@@ -1506,17 +1510,26 @@ def create_owner_setup_router(
             elif action == "help":
                 await bot.send_message(
                     user_id,
-                    "❔ <b>Как запустить подписки</b>\n\n"
-                    "1. Подключите токен в @vimipay_bot.\n"
-                    "2. Откройте собственный бот и добавьте его в канал.\n"
-                    "3. Настройте валюты и способы оплаты.\n"
-                    "4. Создайте тариф, цену и опубликуйте.\n\n"
-                    "Ваши чеки ViMi Pay не хранит — поступления "
-                    "проверяются администратором в банке.",
+                    tr(
+                        "❔ <b>Как запустить подписки</b>\n\n"
+                        "1. Подключите токен в @vimipay_bot.\n"
+                        "2. Откройте собственный бот и добавьте его в канал.\n"
+                        "3. Настройте валюты и способы оплаты.\n"
+                        "4. Создайте тариф, цену и опубликуйте.\n\n"
+                        "Ваши чеки ViMi Pay не хранит — поступления "
+                        "проверяются администратором в банке.",
+                        "❔ <b>How to launch subscriptions</b>\n\n"
+                        "1. Connect a bot token in @vimipay_bot.\n"
+                        "2. Open your bot and add it to your channel.\n"
+                        "3. Set up currencies and payment methods.\n"
+                        "4. Create, price and publish a plan.\n\n"
+                        "ViMi Pay does not retain receipts. "
+                        "Channel admins verify transfers in their banks.",
+                    ),
                     parse_mode="HTML",
                 )
             else:
-                raise ValueError("Неизвестное действие")
+                raise ValueError(tr("Неизвестное действие", "Unknown action"))
         except (ValueError, PermissionError) as exc:
             await query.answer(str(exc)[:180], show_alert=True)
             return
@@ -1538,7 +1551,8 @@ def create_owner_setup_router(
                 bot_scope_id=bot.id,
             )
             if flow.project_id != fixed_project_id:
-                raise ValueError("Настройка другого бота недоступна")
+                raise ValueError(tr("Настройка другого бота недоступна",
+                                    "You cannot change another bot's settings"))
             chat = await verify_channel_and_add(
                 factory, actor_id=actor_id,
                 actor_telegram_id=message.from_user.id,
@@ -1553,7 +1567,8 @@ def create_owner_setup_router(
             return
         await bot.send_message(
             message.chat.id,
-            "✅ Канал «" + escape(chat.name) + "» подключён.",
+            tr("✅ Канал «" + escape(chat.name) + "» подключён.",
+                       "✅ Channel “" + escape(chat.name) + "” connected."),
             parse_mode="HTML", reply_markup=ReplyKeyboardRemove(),
         )
         await show_resources(bot, message.chat.id, actor_id, flow.project_id)
@@ -1699,7 +1714,8 @@ def create_owner_setup_router(
             if project_id is None or (
                 fixed_project_id is not None and project_id != fixed_project_id
             ):
-                raise ValueError("Настройка другого бота недоступна")
+                raise ValueError(tr("Настройка другого бота недоступна",
+                                    "You cannot change another bot's settings"))
             if flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(tr("Неверный формат токена. Получите его в BotFather.",
@@ -1716,7 +1732,8 @@ def create_owner_setup_router(
                 )
                 await bot.send_message(
                     message.chat.id,
-                    f"✅ Канал «{escape(resource.name)}» подключён.",
+                    tr(f"✅ Канал «{escape(resource.name)}» подключён.",
+                       f"✅ Channel “{escape(resource.name)}” connected."),
                     parse_mode="HTML",
                 )
                 await show_resources(bot, message.chat.id, actor_id, project_id)
