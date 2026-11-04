@@ -156,5 +156,10 @@ for arbitrary user-interface queries**.
 | E. Metering and SaaS-ready foundation | Append-only usage events, distinctions between tenant GMV and platform revenue, reconciliation and observability; no charges until product approval. |
 | F. Full staging acceptance | Delete/reconnect from zero, owner channel/payment/plan setup, buyer checkout, Telegram proof, admin bank approval, subscription, invitations, expiry/revoke and control-plane metrics. |
 
+Stage E implementation details:
+[PLATFORM_USAGE_METERING.md](PLATFORM_USAGE_METERING.md). The immutable
+event ledger is not an invoice or platform payment system. Deletions before
+migration cannot be inferred retroactively from nonexistent records.
+
 This file is the **authoritative behavioral contract** if older docs or
 existing code disagree. Update old documents and tests alongside each stage.
