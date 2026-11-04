@@ -84,7 +84,11 @@ async def test_owner_sees_remediation_links_and_warning(monkeypatch):
         bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
         for b in row if b.callback_data
     ]
-    assert "own:obok:sub:" + encode_uuid(project_id) + ":" + encode_uuid(subscription_id) in confirm_buttons
+    expected = (
+        "own:obok:sub:" + encode_uuid(project_id)
+        + ":" + encode_uuid(subscription_id)
+    )
+    assert expected in confirm_buttons
 
 
 async def test_foreign_project_confirmation_does_not_mutate(monkeypatch):
@@ -124,7 +128,7 @@ async def test_confirm_payment_uses_tenant_scoped_service(monkeypatch):
 
 
 async def test_stale_payment_confirmation_fails_closed(monkeypatch):
-    actor, project, payment, subscription = uuid4(), uuid4(), uuid4(), uuid4()
+    actor, project, payment = uuid4(), uuid4(), uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor))
     monkeypatch.setattr(ui, "get_selected_project", AsyncMock(return_value=project))
     monkeypatch.setattr(
