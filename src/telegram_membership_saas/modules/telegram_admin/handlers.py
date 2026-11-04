@@ -344,7 +344,13 @@ def create_telegram_admin_router(
                         "⛔ Project management access denied."),
             )
         except ValueError as exc:
-            await bot.send_message(chat_id=message.from_user.id, text=str(exc))
+            await bot.send_message(
+                chat_id=message.from_user.id,
+                text=tr(
+                    str(exc),
+                    "Invalid timezone. Use IANA Region/City, e.g. Europe/Amsterdam.",
+                ),
+            )
 
     @router.callback_query(F.data.startswith("adm:"))
     async def admin_navigation_handler(callback: CallbackQuery, bot: Bot) -> None:

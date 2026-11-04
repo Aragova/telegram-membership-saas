@@ -43,6 +43,7 @@ from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
 )
+from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -1612,7 +1613,7 @@ def create_owner_setup_router(
             detail = (
                 obligation_error(str(exc))
                 if action.startswith(("ob:", "obok:", "obpage:"))
-                else str(exc)
+                else owner_error(str(exc))
             )
             await query.answer(detail[:180], show_alert=True)
             return
@@ -1644,7 +1645,7 @@ def create_owner_setup_router(
             )
         except (ValueError, PermissionError) as exc:
             await bot.send_message(
-                message.chat.id, "⚠️ " + str(exc),
+                message.chat.id, "⚠️ " + owner_error(str(exc)),
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -1895,7 +1896,7 @@ def create_owner_setup_router(
         except (ValueError, PermissionError, RuntimeError) as exc:
             await bot.send_message(
                 message.chat.id,
-                "⚠️ " + str(exc)[:220]
+                "⚠️ " + owner_error(str(exc))[:220]
                 + tr("\nОткройте нужный раздел и повторите.",
                      "\nReopen the relevant section and try again."),
             )
