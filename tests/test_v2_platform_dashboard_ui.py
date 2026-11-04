@@ -8,6 +8,7 @@ import pytest
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.modules import platform_dashboard_handlers as ui
+from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 from telegram_membership_saas.modules.platform_dashboard import (
     PlatformSnapshot,
     fmt_turnover,
@@ -27,6 +28,9 @@ def _settings(owner=7777):
     )
 
 
+BOT_INSTANCE_ID = uuid4()
+
+
 def _snapshot(period="30", page=0):
     return PlatformSnapshot(
         period=period, page=page, pages=1,
@@ -39,6 +43,7 @@ def _snapshot(period="30", page=0):
             "subscriptions_new_period": 2, "payments_period": 3,
         },
         bots=({
+            "bot_instance_id": str(BOT_INSTANCE_ID),
             "username": "my_premium_bot", "project_name": "My channel",
             "status": "registered", "runtime_state": "running",
             "resources": 1, "plans": 2, "subscriptions": 3,
@@ -171,10 +176,11 @@ async def test_operator_navigation_periods_and_per_bot_details(monkeypatch):
     callback=_callback("plat:bots:7:0")
     await _callback_handler(router)(callback,bot)
     assert "my_premium_bot" in bot.send_message.await_args.args[1]
-    assert "plat:detail:7:0:0" in [
+    stable = "plat:detail:7:0:0:" + encode_uuid(BOT_INSTANCE_ID)
+    assert stable in [
         b.callback_data for b in _buttons(bot)
     ]
-    callback=_callback("plat:detail:7:0:0")
+    callback=_callback(stable)
     await _callback_handler(router)(callback,bot)
     assert "Статистика бота" in bot.send_message.await_args.args[1]
     assert "17.5" in bot.send_message.await_args.args[1]
@@ -184,7 +190,9 @@ async def test_stale_platform_detail_fails_closed(monkeypatch):
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
     monkeypatch.setattr(ui, "platform_report", AsyncMock(return_value=_snapshot()))
     router=ui.create_platform_dashboard_router(MagicMock(),settings=_settings())
-    callback=_callback("plat:detail:7:0:5")
+    callback=_callback(
+        "plat:detail:7:0:5:" + encode_uuid(uuid4())
+    )
     await _callback_handler(router)(callback,_bot())
     assert callback.answer.await_args.kwargs["show_alert"] is True
 
@@ -197,3 +205,26 @@ def test_moscow_day_boundary_and_fixed_timezones():
     with pytest.raises(ValueError):
         period_start("wrong",settings=_settings(),now=now)
     assert fmt_turnover("1000.000000000000") == "1000"
+
+
+async def test_bot_detail_rejects_stale_list_row_after_reordering(monkeypatch):
+    from dataclasses import replace
+
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    shifted = _snapshot()
+    other = dict(shifted.bots[0])
+    other["bot_instance_id"] = str(uuid4())
+    other["username"] = "another_customer_bot"
+    monkeypatch.setattr(
+        ui, "platform_report",
+        AsyncMock(return_value=replace(shifted, bots=(other,))),
+    )
+    router = ui.create_platform_dashboard_router(
+        MagicMock(), settings=_settings(),
+    )
+    bot = _bot()
+    original = "plat:detail:30:0:0:" + encode_uuid(BOT_INSTANCE_ID)
+    callback = _callback(original)
+    await _callback_handler(router)(callback, bot)
+    bot.send_message.assert_not_awaited()
+    assert callback.answer.await_args.kwargs["show_alert"] is True
