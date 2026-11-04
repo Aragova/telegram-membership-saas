@@ -64,8 +64,8 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
     SetupFlow,
-    back_owner_flow,
     advance_flow,
+    back_owner_flow,
     bind_prompt,
     can_manage_project,
     cancel_owner_flow,
