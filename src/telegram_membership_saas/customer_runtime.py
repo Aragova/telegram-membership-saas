@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -28,6 +29,7 @@ from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
+from telegram_membership_saas.project_worker_lock import project_worker_lock
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
@@ -134,7 +136,64 @@ async def verify_resource_permissions(
             ) from None
 
 
+async def run_customer_bot_instance(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    project_id: UUID,
+    telegram_bot_id: int,
+    settings: Settings,
+    on_started: Callable[[], Awaitable[None]] | None = None,
+) -> None:
+    """Start exactly one verified buyer-only poller within an acquired project lease."""
+    bot: Bot | None = None
+    worker: asyncio.Task[None] | None = None
+    try:
+        config = await load_customer_bot(
+            session_factory,
+            project_id=project_id,
+            telegram_bot_id=telegram_bot_id,
+            settings=settings,
+        )
+        try:
+            bot = Bot(token=config.token)
+        except Exception:
+            raise RuntimeError("Customer bot credential is invalid") from None
+
+        await check_customer_bot_identity(bot, config.telegram_bot_id)
+        await verify_resource_permissions(
+            session_factory, project_id=project_id, bot=bot
+        )
+        dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
+        worker = asyncio.create_task(
+            run_project_runtime_loop(
+                session_factory,
+                project_id=project_id,
+                adapter=TelegramAccessAdapter(bot),
+                poll_seconds=settings.telegram_worker_poll_seconds,
+            )
+        )
+        if on_started is not None:
+            await on_started()
+        logger.info("Customer bot ready for project %s", project_id)
+        # The supervisor can run many independent dispatchers inside one
+        # process; only the top-level app should own OS signals.
+        await dispatcher.start_polling(
+            bot, handle_signals=False, close_bot_session=False
+        )
+    finally:
+        if worker is not None:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+        if bot is not None:
+            await bot.session.close()
+
+
 async def run_customer_bot(settings: Settings | None = None) -> None:
+    """Legacy one-bot command remains protected by the same project lease."""
+    from telegram_membership_saas.project_worker_lock import (
+        confirm_project_lock,
+    )
+
     current = settings or get_settings()
     project_id = current.telegram_project_id
     bot_id = current.customer_telegram_bot_id
@@ -144,45 +203,31 @@ async def run_customer_bot(settings: Settings | None = None) -> None:
         )
 
     engine = build_engine(current)
-    session_factory = build_session_factory(engine)
-    bot: Bot | None = None
-    worker: asyncio.Task[None] | None = None
+    factory = build_session_factory(engine)
     try:
-        config = await load_customer_bot(
-            session_factory,
-            project_id=project_id,
-            telegram_bot_id=bot_id,
-            settings=current,
-        )
-        # The token remains confined to this process. It is never printed,
-        # returned to Telegram UI or passed to external project contexts.
-        try:
-            bot = Bot(token=config.token)
-        except Exception:
-            # Token validation exceptions may contain credential material.
-            raise RuntimeError("Customer bot credential is invalid") from None
-        await check_customer_bot_identity(bot, config.telegram_bot_id)
-        await verify_resource_permissions(
-            session_factory,
-            project_id=project_id,
-            bot=bot,
-        )
-
-        dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
-        worker = asyncio.create_task(
-            run_project_runtime_loop(
-                session_factory,
-                project_id=project_id,
-                adapter=TelegramAccessAdapter(bot),
-                poll_seconds=current.telegram_worker_poll_seconds,
+        async with project_worker_lock(engine, project_id) as lease:
+            polling = asyncio.create_task(
+                run_customer_bot_instance(
+                    factory, project_id=project_id,
+                    telegram_bot_id=bot_id, settings=current,
+                )
             )
-        )
-        logger.info("Customer bot runtime started for project %s", project_id)
-        await dispatcher.start_polling(bot)
+
+            async def heartbeat() -> None:
+                while True:
+                    await asyncio.sleep(3)
+                    await confirm_project_lock(lease, project_id)
+
+            watchdog = asyncio.create_task(heartbeat())
+            try:
+                done, _ = await asyncio.wait(
+                    (polling, watchdog), return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    task.result()
+            finally:
+                polling.cancel()
+                watchdog.cancel()
+                await asyncio.gather(polling, watchdog, return_exceptions=True)
     finally:
-        if worker is not None:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
-        if bot is not None:
-            await bot.session.close()
         await engine.dispose()
