@@ -20,7 +20,6 @@ from telegram_membership_saas.db import (
 from telegram_membership_saas.modules.access import AccessState, EffectiveAccess
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
-    count_retirement_blockers,
     request_bot_retirement,
 )
 from telegram_membership_saas.modules.owner_setup.obligations import list_owner_obligations
