@@ -162,7 +162,9 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         *, step: str, text: str, payload: dict | None = None,
     ) -> None:
-        await set_flow(factory, actor_id=actor_id, step=step, payload=payload)
+        generation = await set_flow(
+            factory, actor_id=actor_id, step=step, payload=payload
+        )
         sent = await bot.send_message(
             user_id, text, parse_mode="HTML",
             reply_markup=ForceReply(
@@ -170,7 +172,8 @@ def create_owner_setup_router(
             ),
         )
         await bind_prompt(
-            factory, actor_id=actor_id, step=step, message_id=sent.message_id,
+            factory, actor_id=actor_id, step=step,
+            message_id=sent.message_id, generation=generation,
         )
 
     async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
@@ -398,11 +401,12 @@ def create_owner_setup_router(
                     text="📦 Как назвать новый тариф?\nНапример: Premium",
                 )
             elif action.startswith("duration:"):
-                key = action.split(":", 1)[1]
+                _, key, generation = action.split(":", 2)
                 if key not in DURATIONS:
                     raise ValueError("Неподдерживаемый срок")
                 flow = await consume_button_flow(
-                    factory, actor_id=actor_id, expected_step="plan_duration"
+                    factory, actor_id=actor_id,
+                    expected_step="plan_duration", generation=generation,
                 )
                 value, unit, _ = DURATIONS[key]
                 data = await setup_overview(
@@ -421,12 +425,12 @@ def create_owner_setup_router(
                     )
                     await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
                 else:
-                    await set_flow(
+                    generation = await set_flow(
                         factory, actor_id=actor_id, step="plan_resource",
                         payload={"name": flow.payload["name"], "value": value, "unit": unit},
                     )
                     rows = [
-                        [_button(name[:45], "use:" + rid.hex)]
+                        [_button(name[:45], "use:" + rid.hex + ":" + generation)]
                         for rid, name, status in data.resources if status == "active"
                     ]
                     await bot.send_message(
@@ -434,14 +438,16 @@ def create_owner_setup_router(
                         reply_markup=_markup(rows),
                     )
             elif action.startswith("use:"):
+                _, resource_hex, generation = action.split(":", 2)
                 flow = await consume_button_flow(
-                    factory, actor_id=actor_id, expected_step="plan_resource"
+                    factory, actor_id=actor_id,
+                    expected_step="plan_resource", generation=generation,
                 )
                 plan_id = await create_owner_plan(
                     factory, actor_id=actor_id, project_id=project_id,
                     name=flow.payload["name"], duration_value=flow.payload["value"],
                     duration_unit=flow.payload["unit"],
-                    resource_id=UUID(hex=action.split(":", 1)[1]),
+                    resource_id=UUID(hex=resource_hex),
                 )
                 await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
             elif action.startswith("plan:"):
@@ -594,7 +600,10 @@ def create_owner_setup_router(
             return
         # Always delete BotFather credential messages before validating or storing
         # anything, even if the credential was typed incorrectly.
-        if flow.step == "bot_token" or TOKEN_PATTERN.fullmatch(text):
+        unexpected_secret = bool(
+            flow.step != "bot_token" and TOKEN_PATTERN.fullmatch(text)
+        )
+        if flow.step == "bot_token" or unexpected_secret:
             try:
                 deleted = await bot.delete_message(
                     message.chat.id, message.message_id
@@ -605,6 +614,13 @@ def create_owner_setup_router(
                 await bot.send_message(
                     message.chat.id,
                     "⚠️ Не удалось удалить токен. Смените его в BotFather.",
+                )
+                return
+            if unexpected_secret:
+                await bot.send_message(
+                    message.chat.id,
+                    "⚠️ Вы прислали токен вместо запрошенных данных. "
+                    "Для безопасности смените токен в BotFather и повторите шаг.",
                 )
                 return
         try:
@@ -651,7 +667,7 @@ def create_owner_setup_router(
             elif flow.step == "plan_name":
                 if not 2 <= len(text) <= 120:
                     raise ValueError("Название тарифа: от 2 до 120 символов")
-                await set_flow(
+                generation = await set_flow(
                     factory, actor_id=actor_id,
                     step="plan_duration", payload={"name": text},
                 )
@@ -659,7 +675,7 @@ def create_owner_setup_router(
                     message.chat.id,
                     "⏳ Выберите срок действия:",
                     reply_markup=_markup([
-                        [_button(value[2], "duration:" + key)]
+                        [_button(value[2], "duration:" + key + ":" + generation)]
                         for key, value in DURATIONS.items()
                     ]),
                 )
