@@ -29,7 +29,7 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
-from telegram_membership_saas.localization import tr
+from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -38,6 +38,11 @@ from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
     decrypt_token,
     register_customer_bot,
+)
+from telegram_membership_saas.modules.owner_setup.obligation_locale import (
+    obligation_error,
+    obligation_message,
+    obligation_status,
 )
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
@@ -443,47 +448,59 @@ def create_owner_setup_router(
         )
         counts = snapshot.blockers
         lines = [
-            "🧾 <b>Обязательства перед отключением</b>",
-            "Страница " + str(page + 1) + " · до 5 записей каждого типа",
+            tr("🧾 <b>Обязательства перед отключением</b>",
+               "🧾 <b>Outstanding obligations before removal</b>"),
+            tr("Страница ", "Page ") + str(page + 1)
+            + tr(" · до 5 записей каждого типа", " · up to 5 records per category"),
             "",
-            "Заявки: " + str(counts.requests)
-            + " · Подписки: " + str(counts.subscriptions)
-            + " · Права: " + str(counts.grants),
-            "Доступы: " + str(counts.access)
-            + " · Действия: " + str(counts.access_actions)
-            + " · Приглашения: " + str(counts.join_tickets),
+            tr("Заявки: ", "Payment requests: ") + str(counts.requests)
+            + tr(" · Подписки: ", " · Subscriptions: ") + str(counts.subscriptions)
+            + tr(" · Права: ", " · Grants: ") + str(counts.grants),
+            tr("Доступы: ", "Access states: ") + str(counts.access)
+            + tr(" · Действия: ", " · Actions: ") + str(counts.access_actions)
+            + tr(" · Приглашения: ", " · Invites: ") + str(counts.join_tickets),
             "",
-            "Все действия выполняются отдельно с подтверждением. "
-            "Оплаченный доступ нельзя отключать без урегулирования "
-            "обязательств перед покупателем.",
+            tr(
+                "Все действия выполняются отдельно с подтверждением. "
+                "Оплаченный доступ нельзя отключать без урегулирования "
+                "обязательств перед покупателем.",
+                "Each action requires individual confirmation. "
+                "Do not remove paid access without resolving your "
+                "obligations to customers.",
+            ),
         ]
         rows: list[list[InlineKeyboardButton]] = []
         project_ref = encode_uuid(project_id)
         for item in snapshot.payments:
             label = (
-                "Отклонить" if item.status == "waiting_review" else "Закрыть"
+                tr("Отклонить", "Reject")
+                if item.status == "waiting_review"
+                else tr("Закрыть", "Close")
             )
             lines.append(
                 "💳 " + escape(item.username or str(item.telegram_user_id))
                 + " · " + escape(item.amount + " " + item.currency)
-                + " · " + escape(item.status)
+                + " · " + escape(obligation_status(item.status))
             )
             rows.append([_button(
-                "💳 " + label + " заявку " + str(item.telegram_user_id),
+                "💳 " + label + tr(" заявку ", " request ")
+                + str(item.telegram_user_id),
                 "ob:pay:" + project_ref + ":" + encode_uuid(item.id)
                 + (":" + str(page) if page else ""), "danger",
             )])
         for item in snapshot.subscriptions:
             end = (
-                item.period_end.strftime("%d.%m.%Y") if item.period_end else "бессрочно"
+                item.period_end.strftime("%d.%m.%Y")
+                if item.period_end else tr("бессрочно", "lifetime")
             )
             lines.append(
                 "📦 " + escape(item.plan_name) + " · "
                 + escape(item.username or str(item.telegram_user_id))
-                + " · до " + end
+                + tr(" · до ", " · until ") + end
             )
             rows.append([_button(
-                "📦 Завершить подписку " + str(item.telegram_user_id),
+                tr("📦 Завершить подписку ", "📦 End subscription ")
+                + str(item.telegram_user_id),
                 "ob:sub:" + project_ref + ":" + encode_uuid(item.id)
                 + (":" + str(page) if page else ""), "danger",
             )])
@@ -494,28 +511,37 @@ def create_owner_setup_router(
                 "🔑 " + escape(item.source) + " · " + str(item.telegram_user_id)
             )
             rows.append([_button(
-                "🔑 Отозвать " + item.source[:12] + " · " + str(item.telegram_user_id),
+                tr("🔑 Отозвать ", "🔑 Revoke ")
+                + item.source[:12] + " · " + str(item.telegram_user_id),
                 "ob:grant:" + project_ref + ":" + encode_uuid(item.id)
                 + (":" + str(page) if page else ""), "danger",
             )])
         if snapshot.access:
-            lines.append(
+            lines.append(tr(
                 "🔄 Доступы требуют подтверждения фактического отзыва в Telegram. "
-                "Они не очищаются принудительно."
-            )
+                "Они не очищаются принудительно.",
+                "🔄 Access revocations must be confirmed in Telegram. "
+                "Access states are never forcibly cleared.",
+            ))
             for item in snapshot.access[:12]:
                 rows.append([_button(
-                    "🔄 Синхронизировать доступ · " + item.actual,
+                    tr("🔄 Синхронизировать доступ · ", "🔄 Sync access · ")
+                    + obligation_status(item.actual),
                     "ob:sync:" + project_ref + ":" + encode_uuid(item.id)
                     + (":" + str(page) if page else ""),
                 )])
         if counts.access_actions or counts.join_tickets:
-            lines.append(
+            lines.append(tr(
                 "⏳ Действия доступа и приглашения обрабатывает клиентский бот; "
-                "проверьте состояние после завершения."
-            )
+                "проверьте состояние после завершения.",
+                "⏳ The connected bot processes access actions and invitations. "
+                "Check the status again when processing completes.",
+            ))
         if not counts.has_blockers:
-            lines.append("\n✅ Блокировок больше нет. Можно вернуться к удалению.")
+            lines.append(tr(
+                "\n✅ Блокировок больше нет. Можно вернуться к удалению.",
+                "\n✅ No outstanding blockers. You can return to bot removal.",
+            ))
         nav = []
         if page > 0:
             nav.append(_button(
@@ -541,6 +567,7 @@ def create_owner_setup_router(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
         )
+
 
     async def notify_buyer(
         central_bot: Bot, owner_tg_id: int, actor_id: UUID,
