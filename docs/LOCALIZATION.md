@@ -65,3 +65,18 @@ already translated.
 
 Existing user-entered channel/plan names and bank payment instructions are
 never translated. Test both languages for callbacks and admin-only authorization.
+
+
+- Stage 4 (PR #39): buyer checkout, receipt prompt/retry, cancellation,
+  approval/rejection, role-specific outgoing payment decisions, access invitations
+  and join-request approval notices. The receipt reply recognizer accepts both
+  legacy Russian and new English headers, but only in verified bot-authored
+  private ForceReply prompts. Callback data and payment state transitions remain
+  language-independent.
+- New migration \`0022_detected_user_language\` stores only the normalized RU/EN
+  language last seen on an incoming Telegram update, without overriding a user's
+  explicit \`preferred_language\`. Outgoing notifications choose explicit language
+  first, then the last observed hint, then Russian as the backward-compatible
+  fallback. No geographic location or timezone can be derived from this hint.
+- Migrations \`0021\` and \`0022\` are required on staging before deploying these
+  revisions; deploy both central and all connected bot processes together.
