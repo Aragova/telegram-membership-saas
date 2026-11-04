@@ -37,6 +37,34 @@ just green unit tests.
   explicitly configured later; until then, explain how to reach the relevant
   channel administration without inventing a contact.
 
+## Existing plan management — required contract
+
+The plan card is the single admin location for prices **and** plan lifecycle;
+there is no separate hidden settings menu. An owner can:
+
+- Rename any existing plan (2–120 chars). A rename changes the label also
+  shown on historical purchase screens; amounts, dates and access stay intact.
+- Change duration and linked channel **on drafts only**. Changing terms or
+  entitlements of an already sold plan silently is unsafe; for a different
+  active offering, archive the old plan and create a new one.
+- Edit prices by currency via the existing **versioned** price service.
+- Archive an active plan with confirmation: it disappears from new buyer
+  checkouts and preview; existing requests, payments and entitlements
+  remain, and may still be reviewed and fulfilled.
+- Restore an archived plan after the same readiness checks as publishing
+  (active resource, currency price, matching enabled payment method).
+- Permanently delete only a plan with **no historical** payment requests,
+  payments or subscriptions, after a separate confirmation. This may
+  include an unpublished or active-but-never-bought test plan. Existing price
+  and resource links cascade with deletion; FK restrictions are a final
+  safety barrier against missing checks.
+- Plan buttons revalidate project membership and plan status on action.
+  A stale confirmation must not delete a plan that changed state.
+
+Keep these actions inside `Plans → Plan card`; the native Telegram Menu
+remains **exactly three commands**, even for administrators. All text and
+controls are RU/EN except owner-entered plan names.
+
 ## Navigation audit: 2026-11-04
 
 | Role | Current flow / dead end | Required UX | Priority |
