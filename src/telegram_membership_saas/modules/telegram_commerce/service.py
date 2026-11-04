@@ -10,6 +10,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
@@ -39,6 +40,7 @@ from telegram_membership_saas.modules.projects import (
     ProjectMember,
     ProjectStatus,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +206,17 @@ async def _require_active_project(session: AsyncSession, project_id: UUID) -> Pr
     return project
 
 
+async def _ensure_bot_not_retiring(
+    session: AsyncSession, project_id: UUID,
+) -> None:
+    removing = await session.scalar(select(BotInstance.id).where(
+        BotInstance.project_id == project_id,
+        BotInstance.status == BotInstanceStatus.DELETING.value,
+    ).limit(1))
+    if removing is not None:
+        raise ValueError("Бот отключается. Создание новых оплат временно недоступно")
+
+
 def _catalog_statement(project_id: UUID):
     return (
         select(
@@ -273,6 +286,8 @@ async def list_checkout_options(
     project_id: UUID,
 ) -> tuple[CheckoutOption, ...]:
     await _require_active_project(session, project_id)
+    # Catalog inspection is needed by the owner dashboard even while a bot
+    # is deleting; only *new checkout creation* must be blocked.
     rows = (await session.execute(_catalog_statement(project_id))).all()
     return tuple(_option_from_row(row) for row in rows)
 
@@ -307,7 +322,12 @@ async def create_checkout_for_telegram_user(
     plan_price_id: UUID,
     payment_method_id: UUID,
 ) -> CheckoutResult:
+    # A checkout already in progress must commit before an owner can
+    # transition this bot to deleting. This advisory transaction key is
+    # different from the worker's long-lived polling lease key.
+    await checkout_retirement_lock(session, project_id)
     await _require_active_project(session, project_id)
+    await _ensure_bot_not_retiring(session, project_id)
     option = await _load_checkout_option(
         session,
         project_id=project_id,

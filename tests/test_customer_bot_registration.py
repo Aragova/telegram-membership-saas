@@ -271,7 +271,7 @@ async def test_second_registered_bot_is_rejected_without_database_write(monkeypa
         AsyncMock(return_value=bots.VerifiedBot(3333, "SecondBot", "Second")),
     )
     session = MagicMock()
-    session.scalar = AsyncMock(side_effect=[None, uuid4()])
+    session.scalar = AsyncMock(side_effect=[None, None, uuid4()])
     session.add = MagicMock()
     session.flush = AsyncMock()
 
@@ -303,7 +303,7 @@ async def test_existing_bot_token_can_be_refreshed_without_duplicate(monkeypatch
         token_ciphertext="gAAAAAplaceholder", status="registered",
     )
     session = MagicMock()
-    session.scalar = AsyncMock(side_effect=[existing, None])
+    session.scalar = AsyncMock(side_effect=[None, existing, None])
     session.add = MagicMock()
     session.flush = AsyncMock()
 

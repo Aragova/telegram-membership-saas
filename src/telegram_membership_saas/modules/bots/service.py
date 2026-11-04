@@ -162,6 +162,17 @@ async def register_customer_bot(
             await _require_owner(
                 session, project_id=project_id, actor_id=actor_id, lock=True
             )
+            retiring = await session.scalar(
+                select(BotInstance.id).where(
+                    BotInstance.project_id == project_id,
+                    BotInstance.status == BotInstanceStatus.DELETING.value,
+                ).limit(1)
+            )
+            if retiring is not None:
+                raise ValueError(
+                    "Предыдущий бот ещё удаляется. Дождитесь завершения "
+                    "и подключите бота повторно."
+                )
             existing = await session.scalar(
                 select(BotInstance).where(
                     BotInstance.project_id == project_id,

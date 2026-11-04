@@ -23,6 +23,9 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.modules.bots.deletion_service import (
+    request_bot_retirement,
+)
 from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
     register_customer_bot,
@@ -50,6 +53,10 @@ from telegram_membership_saas.modules.owner_setup.service import (
     verify_channel_and_add,
 )
 from telegram_membership_saas.modules.telegram_admin.service import change_project_timezone
+from telegram_membership_saas.modules.telegram_commerce.service import (
+    decode_uuid,
+    encode_uuid,
+)
 
 DURATIONS = {
     "week": (1, "week", "7 дней"),
@@ -76,6 +83,7 @@ def _status(value: str) -> str:
         "draft": "📝 Черновик",
         "disabled": "⚪ Отключено",
         "archived": "📦 Архив",
+        "deleting": "🟡 Удаляется",
     }.get(value, "Неизвестно")
 
 
@@ -159,7 +167,11 @@ def create_owner_setup_router(
             f"🌍 {escape(data.timezone)}\n\n"
             + "\n".join(_progress(data))
             + "\n\n🤖 " + escape(data.bot_runtime_label)
-            + "\n\nНастройте проект в удобном порядке."
+            + (
+                "\n\n✅ Проект настроен. Управляйте ботом и подписками."
+                if data.live_bot_username else
+                "\n\nПродолжайте настройку проекта через меню."
+            )
         )
         rows = [
             [_button("🤖 Мой бот", "bots"), _button("📢 Каналы", "resources")],
@@ -205,12 +217,16 @@ def create_owner_setup_router(
         for username, status in data.bots:
             lines.append(
                 f"• <b>@{escape(username)}</b> — "
-                + ("токен проверен" if status == "registered" else "отключён")
+                + ("токен проверен" if status == "registered" else _status(status))
             )
+        retiring = any(status == "deleting" for _, _, status in data.bot_instances)
         lines.append(
-            "\n" + escape(data.bot_runtime_label)
-            + "\n\nПосле настройки канала, опубликованного тарифа "
-            "и оплаты система запускает вашего бота автоматически."
+            "\n" + (
+                "⏳ Бот отключается. Нажмите «Обновить статус» после завершения."
+                if retiring else escape(data.bot_runtime_label)
+                + "\n\nПосле настройки канала, опубликованного тарифа "
+                "и оплаты система запускает вашего бота автоматически."
+            )
         )
         rows = []
         if data.live_bot_username:
@@ -221,9 +237,22 @@ def create_owner_setup_router(
                     style="success",
                 )
             ])
+        rows.append([_button("🔄 Обновить статус", "bots")])
+        if not retiring:
+            rows.append([_button("➕ Подключить / обновить токен", "connect")])
+        if data.can_delete_bot:
+            for instance_id, username, status in data.bot_instances:
+                if status != "deleting":
+                    rows.append([
+                        _button(
+                            "🗑 Удалить @" + username[:35],
+                            "drop:" + encode_uuid(project_id)
+                            + ":" + encode_uuid(instance_id),
+                            "danger",
+                        )
+                    ])
         rows.extend([
-            [_button("🔄 Обновить статус", "bots")],
-            [_button("➕ Подключить / обновить токен", "connect")],
+            [_button("➕ Новый проект с нуля", "new")],
             [_button("⬅️ Панель управления", "dashboard")],
         ])
         await bot.send_message(
@@ -371,6 +400,69 @@ def create_owner_setup_router(
                 raise ValueError("Сначала создайте или выберите проект")
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action.startswith("drop:"):
+                _, project_ref, instance_ref = action.split(":", 2)
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError("Меню другого проекта. Откройте «Мои боты» снова.")
+                instance_id = decode_uuid(instance_ref)
+                data = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id
+                )
+                name = next((
+                    username for bot_id, username, status in data.bot_instances
+                    if bot_id == instance_id and status != "deleting"
+                ), None)
+                if name is None or not data.can_delete_bot:
+                    raise PermissionError("Этот бот не доступен для удаления")
+                await bot.send_message(
+                    user_id,
+                    "🗑 <b>Удалить @" + escape(name) + "?</b>\n\n"
+                    "ViMi Pay отключит обработку покупателей, затем удалит "
+                    "подключение, сохранённый токен и состояние запуска.\n\n"
+                    "Настройки проекта и история платежей останутся: они "
+                    "не принадлежат токену бота. Повторно подключить этот "
+                    "Telegram-бот можно после завершения удаления.\n\n"
+                    "При незавершённых оплатах или действующих подписках "
+                    "удаление не начнётся, чтобы не оставить людей без "
+                    "управления доступом.",
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            "🗑 Да, удалить бота",
+                            "dropok:" + project_ref + ":" + instance_ref,
+                            "danger",
+                        )],
+                        [_button("Отмена", "bots")],
+                    ]),
+                )
+            elif action.startswith("dropok:"):
+                _, project_ref, instance_ref = action.split(":", 2)
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError("Проект изменился. Откройте «Мои боты» снова.")
+                try:
+                    requested = await request_bot_retirement(
+                        factory, actor_id=actor_id,
+                        project_id=project_id,
+                        bot_instance_id=decode_uuid(instance_ref),
+                    )
+                except ValueError as exc:
+                    # Include the entire safety explanation; Telegram alert
+                    # callbacks are limited in length and would truncate it.
+                    await bot.send_message(user_id, "⚠️ " + str(exc))
+                    await query.answer("Удаление пока недоступно", show_alert=True)
+                    return
+                await bot.send_message(
+                    user_id,
+                    "✅ Удаление запрошено. Бот прекратит обработку покупателей, "
+                    "а после безопасной остановки ViMi Pay удалит его "
+                    "данные подключения.\n\n"
+                    "Нажмите «🔄 Обновить статус» в разделе «Мои боты». "
+                    "Когда бот исчезнет из списка, его можно подключить "
+                    "заново или создать новый проект с нуля."
+                    if requested else
+                    "Этот бот уже не подключён. Обновите список.",
+                )
+                await show_bots(bot, user_id, actor_id, project_id)
             elif action == "bots":
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "connect":

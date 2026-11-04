@@ -97,6 +97,7 @@ async def test_supervisor_keeps_enforcement_for_all_registered_projects(monkeypa
         await never_ends.wait()
 
     monkeypatch.setattr(runtime, "discover_targets", discover)
+    monkeypatch.setattr(runtime, "discover_removal_targets", AsyncMock(return_value=()))
     monkeypatch.setattr(runtime, "run_target", run)
 
     supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
@@ -272,6 +273,7 @@ async def test_supervisor_does_not_send_second_cancel_to_stopping_worker(monkeyp
             await finish_shutdown.wait()
 
     monkeypatch.setattr(runtime, "discover_targets", discovery)
+    monkeypatch.setattr(runtime, "discover_removal_targets", AsyncMock(return_value=()))
     monkeypatch.setattr(runtime, "run_target", slow_worker)
     supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
     await supervisor.reconcile_once()
@@ -329,6 +331,7 @@ async def test_worker_admission_limit_preserves_operational_capacity(monkeypatch
 
     statuses = AsyncMock()
     monkeypatch.setattr(runtime, "discover_targets", discover)
+    monkeypatch.setattr(runtime, "discover_removal_targets", AsyncMock(return_value=()))
     monkeypatch.setattr(runtime, "run_target", worker)
     monkeypatch.setattr(runtime, "write_bot_health", statuses)
 

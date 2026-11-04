@@ -13,7 +13,7 @@ from hashlib import sha256
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
 
 class ProjectWorkerBusy(RuntimeError):
@@ -23,6 +23,22 @@ class ProjectWorkerBusy(RuntimeError):
 def project_lock_key(project_id: UUID) -> int:
     digest = sha256(b"vimi-telegram-access-v1:" + project_id.bytes).digest()
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+async def checkout_retirement_lock(
+    session: AsyncSession, project_id: UUID,
+) -> None:
+    """Serialize new checkouts with owner bot-retirement requests.
+
+    Uses a distinct advisory key from the **session-scoped** running bot
+    worker lease, so payments never block behind healthy customer pollers.
+    The transaction-scoped lock is released automatically at commit.
+    """
+    digest = sha256(b"vimi-checkout-retirement-v1:" + project_id.bytes).digest()
+    key = int.from_bytes(digest[:8], byteorder="big", signed=True)
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"), {"key": key},
+    )
 
 
 async def confirm_project_lock(conn: AsyncConnection, project_id: UUID) -> None:
