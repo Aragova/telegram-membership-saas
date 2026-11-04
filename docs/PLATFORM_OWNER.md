@@ -67,6 +67,17 @@ historical deleted-bot counts and billable usage metrics belong to the
 subsequent append-only usage/metering stage (E). Do not claim the current
 snapshot can report historical deletions.
 
+## Immutable activity history — Stage E
+
+The Platform Owner interface adds `📊 Использование и история`.
+Usage events are recorded transactionally by database triggers, retain deleted
+bot identity, and are reported by a second audited PostgreSQL function.
+See [PLATFORM_USAGE_METERING.md](PLATFORM_USAGE_METERING.md).
+
+After migration 0020, rerun the existing privileged `platform_bootstrap`
+to grant runtime EXECUTE on the new fixed read-only report function.
+There are **no platform billing charges** in Stage E.
+
 ## Database authorization and audit
 
 Alembic 0019 introduces `platform_operators` (owner/admin/support schema,
