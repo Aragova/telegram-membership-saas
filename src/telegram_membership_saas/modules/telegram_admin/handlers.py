@@ -142,7 +142,13 @@ def _render_entries(title: str, entries: tuple[AdminEntry, ...]) -> str:
             STATUS_LABELS.get(entry.status, escape(entry.status)),
             STATUS_LABELS_EN.get(entry.status, escape(entry.status)),
         )
-        suffix = f" · {escape(entry.details)}" if entry.details else ""
+        details_en = {
+            "Канал": "Channel",
+            "Группа": "Group",
+            "ожидает запуска": "waiting to start",
+        }
+        details = tr(entry.details, details_en.get(entry.details, entry.details))
+        suffix = f" · {escape(details)}" if details else ""
         lines.append(f"• <b>{escape(entry.name)}</b>{suffix}\n  {state}")
     if len(entries) > 15:
         lines.append(tr(f"\nПоказаны первые 15 из {len(entries)}.",

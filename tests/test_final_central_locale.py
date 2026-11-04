@@ -47,6 +47,7 @@ def test_legacy_admin_english_screen_and_stable_callback_ids():
             "resources", _legacy_snapshot(),
         )
         assert "Active" in legacy_ui._screen_text("resources", _legacy_snapshot())
+        assert "Channel" in legacy_ui._screen_text("resources", _legacy_snapshot())
         buttons = [
             b for row in legacy_ui._keyboard("main", _legacy_snapshot()).inline_keyboard
             for b in row
