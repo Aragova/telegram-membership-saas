@@ -1118,6 +1118,36 @@ def create_owner_setup_router(
         )
         await show_resources(bot, message.chat.id, actor_id, flow.project_id)
 
+    async def finish_bot_connection(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, token: str,
+    ) -> None:
+        result = await register_customer_bot(
+            factory, project_id=project_id,
+            actor_telegram_user_id=user_id, token=token,
+            encryption_key=get_settings().bot_token_encryption_key,
+            central_bot_id=bot.id,
+        )
+        await set_default_project_name_from_bot(
+            factory, actor_id=actor_id, project_id=project_id,
+            username=result.username,
+        )
+        await bot.send_message(
+            user_id,
+            f"✅ <b>@{escape(result.username)} подключён</b>\n\n"
+            "Настройка в ViMi Pay завершена.\n"
+            "Перейдите в свой бот и добавьте канал, "
+            "способы оплаты и тарифы.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🚀 Перейти к своему боту",
+                    url="https://t.me/" + result.username,
+                    style="success",
+                ),
+            ]]),
+        )
+        await show_bots(bot, user_id, actor_id, project_id)
+
     @router.message(SetupReplyFilter(factory, fixed_project_id))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:
         if not _private(message) or message.reply_to_message is None:
@@ -1163,6 +1193,18 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if flow.step == "new_bot_token":
+                if not TOKEN_PATTERN.fullmatch(text):
+                    raise ValueError(
+                        "Неверный формат токена. Получите токен в @BotFather."
+                    )
+                project_id = await create_owner_project(
+                    factory, actor_id=actor_id, name="Подключение бота",
+                )
+                await finish_bot_connection(
+                    bot, message.chat.id, actor_id, project_id, text,
+                )
+                return
             if flow.step == "project_name":
                 await create_owner_project(factory, actor_id=actor_id, name=text)
                 await bot.send_message(
@@ -1179,28 +1221,9 @@ def create_owner_setup_router(
             if flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError("Неверный формат токена. Получите его в BotFather.")
-                result = await register_customer_bot(
-                    factory, project_id=project_id,
-                    actor_telegram_user_id=message.from_user.id, token=text,
-                    encryption_key=get_settings().bot_token_encryption_key,
-                    central_bot_id=bot.id,
+                await finish_bot_connection(
+                    bot, message.chat.id, actor_id, project_id, text,
                 )
-                await bot.send_message(
-                    message.chat.id,
-                    f"✅ Бот @{escape(result.username)} подключён.\n"
-                    "Настройка в ViMi Pay завершена.\n"
-                    "Откройте собственный бот, чтобы добавить канал, "
-                    "оплату и тарифы.",
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                        InlineKeyboardButton(
-                            text="🚀 Перейти к своему боту",
-                            url="https://t.me/" + result.username,
-                            style="success",
-                        ),
-                    ]]),
-                )
-                await show_bots(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "resource_reference":
                 reference: str | int = int(text) if text.lstrip("-").isdigit() else text
                 resource = await verify_channel_and_add(
