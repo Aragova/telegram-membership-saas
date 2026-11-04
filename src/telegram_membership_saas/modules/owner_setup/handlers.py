@@ -231,6 +231,17 @@ def create_owner_setup_router(
             username=user.username, first_name=user.first_name,
         )
 
+    def platform_navigation(user_id: int) -> list[InlineKeyboardButton]:
+        """Switch roles only on central and only for configured owner."""
+        if (
+            fixed_project_id is None
+            and getattr(get_settings(), "platform_owner_telegram_id", None) == user_id
+        ):
+            return [InlineKeyboardButton(
+                text="👑 Панель платформы", callback_data="plat:home",
+            )]
+        return []
+
     async def show_home(bot: Bot, user_id: int, actor_id: UUID) -> None:
         home = await owner_home(
             factory, actor_id=actor_id,
@@ -252,6 +263,8 @@ def create_owner_setup_router(
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
         rows.append([_button("➕ Подключить бота подписок", "new", "success")])
+        if platform_navigation(user_id):
+            rows.append(platform_navigation(user_id))
         await bot.send_message(
             user_id, "\n".join(lines),
             parse_mode="HTML", reply_markup=_markup(rows),
@@ -277,6 +290,8 @@ def create_owner_setup_router(
                 [_button("📁 Все подключения", "projects")],
                 [_button("❔ Как это работает", "help")],
             ]
+            if platform_navigation(user_id):
+                rows.append(platform_navigation(user_id))
         else:
             next_step = _next_setup_step(data)
             text = (
@@ -389,6 +404,8 @@ def create_owner_setup_router(
             [_button("➕ Подключить другого бота", "new")],
             [_button("⬅️ Мои подключения", "dashboard")],
         ])
+        if platform_navigation(user_id):
+            rows.append(platform_navigation(user_id))
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
@@ -867,7 +884,9 @@ def create_owner_setup_router(
                     for pid, name in home.projects[:20]
                 ]
                 rows.append([_button("➕ Подключить бота", "new", "success")])
-                await bot.send_message(user_id, "📁 Мои проекты", reply_markup=_markup(rows))
+                if platform_navigation(user_id):
+                    rows.append(platform_navigation(user_id))
+                await bot.send_message(user_id, "📁 Мои боты", reply_markup=_markup(rows))
                 await query.answer()
                 return
             if action.startswith("select:"):

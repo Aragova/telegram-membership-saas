@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     telegram_worker_poll_seconds: float = 1.0
     customer_supervisor_max_bots: int = Field(default=10, ge=1, le=32)
     default_project_timezone: str = "Europe/Moscow"
+    platform_owner_telegram_id: int | None = None
+    platform_timezone: str = "Europe/Moscow"
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -41,6 +43,29 @@ class Settings(BaseSettings):
     def normalize_empty_telegram_project_id(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("platform_owner_telegram_id", mode="before")
+    @classmethod
+    def normalize_empty_platform_owner_id(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("platform_owner_telegram_id")
+    @classmethod
+    def validate_platform_owner_id(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("Platform owner Telegram ID must be positive")
+        return value
+
+    @field_validator("platform_timezone")
+    @classmethod
+    def validate_platform_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Unknown IANA timezone: {value}") from exc
         return value
 
     @field_validator("default_project_timezone")
