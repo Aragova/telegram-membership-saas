@@ -26,33 +26,29 @@ logger = logging.getLogger(__name__)
 # command, Russian description, English description. Only implemented commands
 # are listed; role-specific commands remain server permission checked.
 ROLE_COMMANDS = {
+    # Exactly three commands in connected bots. Contextual actions remain
+    # available on the existing inline screens and by typing commands.
     "buyer": (
-        ("menu", "🏠 Главное меню и тарифы", "🏠 Home and plans"),
-        ("subscriptions", "🧾 Мои покупки и подписки", "🧾 My purchases and subscriptions"),
-        ("support", "🛟 Помощь с подпиской", "🛟 Subscription help"),
-        ("language", "🌐 Язык интерфейса", "🌐 Interface language"),
-        ("cancel", "⬅️ Выйти в меню", "⬅️ Return to menu"),
+        ("menu", "🏠 Главное меню", "🏠 Main menu"),
+        ("subscription", "🧾 Мои подписки", "🧾 My subscriptions"),
+        ("support", "🛟 Поддержка", "🛟 Support"),
     ),
     "owner": (
-        ("menu", "🏠 Панель управления", "🏠 Admin dashboard"),
-        ("plans", "📦 Управление тарифами", "📦 Manage plans"),
-        ("payments", "🧾 Заявки на оплату", "🧾 Payment reviews"),
-        ("help", "❔ Помощь с настройкой", "❔ Setup help"),
-        ("language", "🌐 Язык интерфейса", "🌐 Interface language"),
-        ("cancel", "✖️ Отменить настройку", "✖️ Cancel setup"),
+        ("menu", "🏠 Главное меню", "🏠 Main menu"),
+        ("subscription", "🧾 Мои подписки", "🧾 My subscriptions"),
+        ("support", "🛟 Поддержка", "🛟 Support"),
     ),
+    # The central bot has no buyer subscriptions; show only three relevant,
+    # implemented commands instead of exposing a fake subscriptions shortcut.
     "central": (
         ("menu", "🏠 Главное меню", "🏠 Main menu"),
-        ("bots", "🤖 Мои подключённые боты", "🤖 My connected bots"),
-        ("help", "❔ Как это работает", "❔ How it works"),
-        ("language", "🌐 Язык интерфейса", "🌐 Interface language"),
+        ("bots", "🤖 Мои боты", "🤖 My bots"),
+        ("help", "🛟 Помощь", "🛟 Help"),
     ),
     "platform": (
-        ("platform", "👑 Панель платформы", "👑 Platform dashboard"),
-        ("menu", "🏠 Личный режим", "🏠 Personal mode"),
-        ("bots", "🤖 Мои подключённые боты", "🤖 My connected bots"),
-        ("help", "❔ Помощь", "❔ Help"),
-        ("language", "🌐 Язык интерфейса", "🌐 Interface language"),
+        ("menu", "🏠 Главное меню", "🏠 Main menu"),
+        ("bots", "🤖 Мои боты", "🤖 My bots"),
+        ("help", "🛟 Помощь", "🛟 Help"),
     ),
 }
 

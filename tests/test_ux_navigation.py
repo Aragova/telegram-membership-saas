@@ -42,21 +42,27 @@ def _bot():
     return bot
 
 
-def test_roles_offer_real_commands_and_localized_descriptions():
-    customer = commands_for("buyer", "en")
-    assert [c.command for c in customer] == [
-        "menu", "subscriptions", "support", "language", "cancel",
-    ]
-    assert "My purchases" in customer[1].description
-    assert "Мои покупки" in commands_for("buyer", "ru")[1].description
-    assert [c.command for c in commands_for("owner", "en")] == [
-        "menu", "plans", "payments", "help", "language", "cancel",
-    ]
-    assert [c.command for c in commands_for("central", "en")] == [
-        "menu", "bots", "help", "language",
-    ]
-    assert commands_for("platform", "en")[0].command == "platform"
-    assert all(not c.command.startswith("/") for c in customer)
+def test_roles_offer_three_useful_commands_without_duplicates():
+    expected_connected = ["menu", "subscription", "support"]
+    expected_central = ["menu", "bots", "help"]
+    for role in ("buyer", "owner"):
+        for language in ("ru", "en"):
+            commands = commands_for(role, language)
+            assert [command.command for command in commands] == expected_connected
+            assert len({command.command for command in commands}) == 3
+    for role in ("central", "platform"):
+        for language in ("ru", "en"):
+            commands = commands_for(role, language)
+            assert [command.command for command in commands] == expected_central
+            assert len({command.command for command in commands}) == 3
+    assert commands_for("buyer", "en")[1].description == "🧾 My subscriptions"
+    assert commands_for("owner", "ru")[1].description == "🧾 Мои подписки"
+    assert commands_for("buyer", "ru")[2].description == "🛟 Поддержка"
+    assert all(
+        not command.command.startswith("/")
+        for role in ("buyer", "owner", "central", "platform")
+        for command in commands_for(role, "en")
+    )
 
 
 async def test_native_menu_default_and_language_specific_chat_override():
@@ -65,16 +71,21 @@ async def test_native_menu_default_and_language_specific_chat_override():
     assert bot.set_my_commands.await_count == 2
     first, second = bot.set_my_commands.await_args_list
     assert first.kwargs["scope"].type == "all_private_chats"
-    assert first.kwargs["commands"][0].description == "🏠 Home and plans"
+    assert [c.command for c in first.kwargs["commands"]] == [
+        "menu", "subscription", "support",
+    ]
+    assert first.kwargs["commands"][0].description == "🏠 Main menu"
     assert second.kwargs["language_code"] == "ru"
-    assert second.kwargs["commands"][0].description == "🏠 Главное меню и тарифы"
+    assert second.kwargs["commands"][0].description == "🏠 Главное меню"
 
     await set_chat_commands(bot, chat_id=711, role="owner", language="en")
     command = bot.set_my_commands.await_args
     assert command.kwargs["scope"].type == "chat"
     assert command.kwargs["scope"].chat_id == 711
-    assert command.kwargs["commands"][1].command == "plans"
-    assert "Manage plans" in command.kwargs["commands"][1].description
+    assert [c.command for c in command.kwargs["commands"]] == [
+        "menu", "subscription", "support",
+    ]
+    assert command.kwargs["commands"][1].description == "🧾 My subscriptions"
 
 
 async def test_central_platform_owner_override_uses_own_chat_only(monkeypatch):
@@ -85,14 +96,18 @@ async def test_central_platform_owner_override_uses_own_chat_only(monkeypatch):
         telegram_menus, "get_settings",
         lambda: SimpleNamespace(platform_owner_telegram_id=777),
     )
+    updated = AsyncMock()
+    monkeypatch.setattr(telegram_menus, "set_chat_commands", updated)
     await refresh_user_commands(
         bot, MagicMock(), chat_id=777, language="en",
     )
-    assert bot.set_my_commands.await_args.kwargs["commands"][0].command == "platform"
+    assert updated.await_args.kwargs["role"] == "platform"
+    assert updated.await_args.kwargs["language"] == "en"
     await refresh_user_commands(
         bot, MagicMock(), chat_id=778, language="ru",
     )
-    assert bot.set_my_commands.await_args.kwargs["commands"][0].command == "menu"
+    assert updated.await_args.kwargs["role"] == "central"
+    assert updated.await_args.kwargs["language"] == "ru"
 
 
 def test_empty_account_is_useful_and_never_shows_a_fake_subscription():

@@ -48,7 +48,7 @@ just green unit tests.
 | Buyer | Receipt submitted or rejected/approved notification is plain text | Return to Account or Plans; show request/subscription state | P0 |
 | Buyer | No `/subscriptions` handler | Read-only account, active/expired access and payment-request states | P0 |
 | Buyer | No `/support` route | Help entry, no fake support link; future explicit contact setting | P1 |
-| Tenant owner | `/start` dashboard, but native menu absent | `/menu`, plans, payment reviews, help, language, cancel | P0 |
+| Tenant owner | `/start` dashboard, but native menu absent | Only three native shortcuts: main menu, my subscriptions, support; all other actions stay inline | P0 |
 | Tenant owner | ForceReply token/channel/price/method/timezone | Inline Cancel + safe flow reset, Back to parent after each outcome | P0 |
 | Tenant owner | Duration selection, resource assignment | Back and Cancel, invalidate stale wizard callbacks | P0 |
 | Tenant owner | Chat picker opens ReplyKeyboard and waits | Clean keyboard on Cancel/finish/error; return to channels | P0 |
@@ -59,19 +59,33 @@ just green unit tests.
 | Both bots | Selecting language advises typing /start | Return to previously selected role home / dashboard | P1 |
 | All | Old callbacks show only alert | Refresh/current-section button where safe | P2 |
 
-## User-visible command menus (no fake commands)
+## Telegram native menu: exactly three commands (UX decision)
 
-- Customer: `menu`, `subscriptions`, `support`, `language`, `cancel`.
-- Tenant administrator: `menu`, `plans`, `payments`, `help`,
-  `language`, `cancel`.
-- Central registrar: `menu`, `bots`, `help`, `language`.
-- Platform Owner: `platform`, `menu`, `bots`, `help`, `language`.
+Do not copy the full inline dashboard into the Telegram command Menu.
+After user feedback, the **connected bot** has exactly these shortcuts for
+both buyers and tenant owners, in RU/EN:
 
-The command menu can use a `BotCommandScopeChat` override per user so an
-English-speaking admin sees English descriptions even if their Telegram app
-language remains Russian. Public scope defaults to English with Russian
-language-specific descriptions. A revoked owner's formerly visible command
-must still fail server-side authorization.
+- `/menu` — Главная / Main menu. Buyers see catalog; owners see admin panel.
+- `/subscription` — Мои подписки / My subscriptions. Opens the real
+  buyer account, including historical payment requests (not a fake screen).
+- `/support` — Поддержка / Support. Buyers see membership support;
+  owners see the project setup/help screen.
+
+For the **central bot**, which has no buyer subscriptions, use exactly three
+working shortcuts: `/menu`, `/bots`, `/help`. Platform reporting remains
+accessible from the central screen or `/platform` typed manually, not
+duplicated in Telegram Menu.
+
+All other commands (`/start`, `/plans`, `/payments`, `/language`,
+`/cancel`, `/platform`, etc.) **continue to work** when entered manually;
+important actions remain on the inline admin/buyer screens. The menu is a
+compact navigation aid, not a complete sitemap. Do not add command rows
+just because a screen or command exists.
+
+Existing per-chat Telegram command scopes are refreshed upon the next
+`/start` or `/menu`, and after explicit language selection; users may
+need to reopen Telegram Menu to see the changed set.
+
 
 ## Acceptance
 
