@@ -22,6 +22,7 @@ __all__ = [
     "AccessAction",
     "AccessState",
     "BotInstance",
+    "CustomerBotRuntimeHealth",
     "OwnerSetupSession",
     "CurrencyAsset",
     "EffectiveAccess",
