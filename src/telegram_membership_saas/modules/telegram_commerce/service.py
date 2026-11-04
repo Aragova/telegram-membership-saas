@@ -10,6 +10,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.localization import current_language
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import (
@@ -122,9 +123,20 @@ def format_amount(amount: Decimal, precision: int) -> str:
 
 def format_period(duration_value: int | None, duration_unit: str) -> str:
     if duration_unit == DurationUnit.LIFETIME.value:
-        return "навсегда"
+        return "навсегда" if current_language() == "ru" else "Lifetime"
     if duration_value is None or duration_value <= 0:
         raise ValueError("Finite plan duration must be positive")
+    if current_language() == "en":
+        units = {
+            DurationUnit.DAY.value: "day",
+            DurationUnit.WEEK.value: "week",
+            DurationUnit.MONTH.value: "month",
+            DurationUnit.YEAR.value: "year",
+        }
+        unit = units.get(duration_unit)
+        if unit is None:
+            raise ValueError("Unsupported plan duration unit")
+        return f"{duration_value} {unit}{'' if duration_value == 1 else 's'}"
 
     labels = {
         DurationUnit.DAY.value: ("день", "дня", "дней"),

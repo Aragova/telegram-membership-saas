@@ -8,6 +8,7 @@ from telegram_membership_saas.modules.owner_setup.handlers import create_owner_s
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     create_platform_dashboard_router,
 )
+from telegram_membership_saas.localization import LanguageMiddleware, create_language_router
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
@@ -22,6 +23,8 @@ def create_dispatcher(
 ) -> Dispatcher:
     dispatcher = Dispatcher()
     if session_factory is not None:
+        dispatcher.update.outer_middleware(LanguageMiddleware(session_factory))
+        dispatcher.include_router(create_language_router(session_factory))
         if get_settings().platform_owner_telegram_id is not None:
             # Only the configured central control bot gets the platform panel;
             # connected buyer bots never include these routes.
@@ -57,6 +60,8 @@ def create_customer_dispatcher(
 ) -> Dispatcher:
     """Owner admin and buyer storefront in one project-bound BotInstance."""
     dispatcher = Dispatcher()
+    dispatcher.update.outer_middleware(LanguageMiddleware(session_factory))
+    dispatcher.include_router(create_language_router(session_factory))
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
     dispatcher.include_router(
