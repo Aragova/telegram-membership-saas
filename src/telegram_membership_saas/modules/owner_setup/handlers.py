@@ -995,7 +995,10 @@ def create_owner_setup_router(
         if not _private(message):
             return
         actor_id = await actor(message.from_user)
-        command = (getattr(message, "text", None) or "/start").split(maxsplit=1)[0].split("@")[0].lower()
+        command = (
+            (getattr(message, "text", None) or "/start")
+            .split(maxsplit=1)[0].split("@")[0].lower()
+        )
         role = (
             "owner" if fixed_project_id is not None
             else "platform" if message.from_user.id == get_settings().platform_owner_telegram_id
