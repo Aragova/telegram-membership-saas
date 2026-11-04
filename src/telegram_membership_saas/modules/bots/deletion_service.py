@@ -15,7 +15,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
-from telegram_membership_saas.modules.access.models import AccessAction, AccessState, EffectiveAccess
+from telegram_membership_saas.modules.access.models import (
+    AccessAction,
+    AccessState,
+    EffectiveAccess,
+)
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.entitlements.models import EntitlementGrant
 from telegram_membership_saas.modules.payments.models import PaymentRequest, PaymentRequestStatus
