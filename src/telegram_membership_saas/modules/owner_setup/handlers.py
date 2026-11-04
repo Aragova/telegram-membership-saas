@@ -49,13 +49,6 @@ from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
 )
-from telegram_membership_saas.modules.owner_setup.plan_management import (
-    archive_owner_plan,
-    delete_unused_owner_plan,
-    edit_owner_draft_duration,
-    edit_owner_draft_resource,
-    rename_owner_plan,
-)
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -67,6 +60,13 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
     list_owner_obligations,
     retry_owner_access,
     revoke_owner_grant,
+)
+from telegram_membership_saas.modules.owner_setup.plan_management import (
+    archive_owner_plan,
+    delete_unused_owner_plan,
+    edit_owner_draft_duration,
+    edit_owner_draft_resource,
+    rename_owner_plan,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
@@ -754,7 +754,7 @@ def create_owner_setup_router(
                 tr("▶️ Вернуть в продажу", "▶️ Resume sales"),
                 "plrestore:" + token, "success",
             )])
-        if not data.has_history:
+        if not getattr(data, "has_history", False):
             rows.append([_button(
                 tr("🗑 Удалить тариф", "🗑 Delete plan"),
                 "pldelete:" + token, "danger",
