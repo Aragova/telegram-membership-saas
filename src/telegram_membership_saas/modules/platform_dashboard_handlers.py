@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
-from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
     PERIOD_LABELS,
@@ -29,6 +28,7 @@ from telegram_membership_saas.modules.platform_dashboard import (
     is_configured_platform_owner,
     platform_report,
 )
+from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
 
 class PlatformOwnerStartFilter(BaseFilter):
