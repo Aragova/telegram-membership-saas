@@ -1,94 +1,61 @@
-# ViMi Pay — RU/EN localization contract
+# ViMi Pay — RU/EN localization contract and release status
 
-## How language is chosen
+## User-facing language
 
-All Telegram control-plane, owner/admin and buyer UI is to support Russian and English.
-On each incoming Telegram update, use the caller's optional `from_user.language_code`
-(ISO/IETF language tag): explicit `ru` → Russian; everything else or missing → English.
-A user's explicit choice via `/language` or the `🌐 Language` button overrides
-Telegram auto-detection and applies in both the central bot and connected bots.
-Store this on the global TelegramUser identity, **not** on a Project or checkout.
-No buyer can change another user's preference through a callback.
-Keep callback payloads/commands stable and language-independent.
+ViMi Pay supports Russian and English in **both** central
+`@vimipay_bot` and connected customer/owner bots. Telegram supplies the
+optional `User.language_code` on incoming updates: `ru*` selects Russian;
+other languages and absent hints default to English on incoming updates.
+The explicit `/language` setting overrides automatic selection, is saved
+per global Telegram user, and applies across all bots.
 
-Use a shared `tr(ru, en)` helper at the presentation layer. All UI, including
-prompts, moderation, receipts, subscription statuses, validation errors, admin
-screens, platform reports and buyer purchasing, needs translation; never
-translate user-authored plan names, bank details, chat names or payment instructions
-without owner's explicit action. Keep the underlying money, access and RLS
-operations identical in every language. BotFather descriptions/commands may be
-localized with Telegram's language-specific APIs in a later operational step.
+The last normalized Telegram hint (`detected_language`) is stored so
+background notifications can use the **recipient's** own language:
+`preferred_language` → `detected_language` → historical RU fallback.
+Owner, reviewer and buyer events must never share mutable language state.
+Bot callback payloads, commands, UUIDs and state transitions are
+language-independent; changing UI language must not change authorization,
+tenant isolation, prices, payment approval or entitlements.
 
-## Timezone and location
+Store owner-entered channel names, plans, bank details and payment instructions
+verbatim. Do not translate customer-provided text or infer location/timezone
+from language. The Bot API does **not** disclose a user's IANA timezone.
+Default project timezone is `Europe/Moscow`, editable by the owner; database
+instants remain UTC. BotFather localized bot descriptions may follow separately.
 
-Telegram Bot API does **not** send a trustworthy geographical location or
-the user's IANA timezone in ordinary `User` objects. `language_code=en`
-does not tell whether someone is in London, Amsterdam or New York.
-Never infer timezone from language or silently rewrite a channel's timezone.
-A new Project starts at `Europe/Moscow` and the authorized channel owner
-can edit timezone in the connected bot via its existing timezone settings.
-All database instants remain UTC. If a future Mini App obtains a browser
-timezone, explicitly ask before applying it to a project.
+## Implemented slices
+
+| PR | Scope |
+| --- | --- |
+| #36 | Preference persistence, Telegram auto-selection, shared `/language`, initial buyer catalog |
+| #37 | Platform Owner reports, history, bot registry and central onboarding |
+| #38 | Connected owner channels, tariffs, payments, reviews and configuration |
+| #39 | Buyer checkout, receipts, approvals, invitations and recipient language hints |
+| #40 | Central bot removal, paid obligations, legacy administration and owner-initiated notices |
+| Final audit | Owner-service error boundaries and old central command redirects; rollout guide |
+
+The RU/EN rollout is **not accepted solely by merged code**; staging must
+apply the schema changes, rebuild both types of runtimes and pass the
+Telegram-language E2E checks below.
+
+## Schema compatibility
+
+- `0021_user_language`: optional `telegram_users.preferred_language`
+  (`ru`/`en`), set only by the user.
+- `0022_detected_user_language`: optional
+  `telegram_users.detected_language`, updated from incoming Telegram hints.
+- Existing payment requests, subscriptions, grants, financial figures,
+  and project timezone are not rewritten by these migrations.
+- Apply **both** before restarting any upgraded bot. Do not downgrade
+  columns just to roll back the code.
 
 ## Deployment and acceptance
 
-The first migration adds a nullable `preferred_language` column to
-`telegram_users` without rewriting any existing preferences or projects.
-Apply Alembic before restarting upgraded bots. Verify English and Russian
-users separately; switch language, restart and switch between central and
-connected bots, ensure language stays selected. Verify buyer receipts and
-moderation have the recipient's own language and no cross-user state leaks.
-Do not assume migration and locale infrastructure alone translate every screen.
+See [STAGING_LOCALIZATION_ROLLOUT.md](STAGING_LOCALIZATION_ROLLOUT.md)
+for staging backup, exact HEAD, Alembic, Docker Compose restart, acceptance
+and recovery commands. Validate at least Russian and English Telegram
+accounts in central/connected bot flows and paid-review notifications,
+including recipient-language isolation and old Russian ForceReply receipts.
 
-
-## Delivery sequence
-
-- Stage 1 (PR #36): Telegram language detection, persistent per-user preference,
-  `/language`, bilingual buyer catalog / duration / payment choice.
-- Stage 2 (this stage): bilingual Platform Owner reporting, bot timeline,
-  connected bot list, central welcome and initial token registration.
-  All business and authorization decisions remain server-side.
-- Next stages: complete central removal/obligation flow, connected owner
-  setup, buyer payment confirmation and notifications, error states and
-  end-to-end language consistency.
-
-Until those stages pass, the product must not claim that *all* UI text is
-already translated.
-
-
-- Stage 3 (this stage): connected owner setup screens for channels and groups,
-  published/draft plans and pricing, payment method lists and details,
-  manual review inbox, preview, contextual setup prompts, IANA timezone choices,
-  readiness checks and confirmation notices.
-- Stage 4: finish central retirement/obligations workflow and buyer-facing
-  payment and receipt notifications with per-recipient locale resolution.
-
-Existing user-entered channel/plan names and bank payment instructions are
-never translated. Test both languages for callbacks and admin-only authorization.
-
-
-- Stage 4 (PR #39): buyer checkout, receipt prompt/retry, cancellation,
-  approval/rejection, role-specific outgoing payment decisions, access invitations
-  and join-request approval notices. The receipt reply recognizer accepts both
-  legacy Russian and new English headers, but only in verified bot-authored
-  private ForceReply prompts. Callback data and payment state transitions remain
-  language-independent.
-- New migration \`0022_detected_user_language\` stores only the normalized RU/EN
-  language last seen on an incoming Telegram update, without overriding a user's
-  explicit \`preferred_language\`. Outgoing notifications choose explicit language
-  first, then the last observed hint, then Russian as the backward-compatible
-  fallback. No geographic location or timezone can be derived from this hint.
-- Migrations \`0021\` and \`0022\` are required on staging before deploying these
-  revisions; deploy both central and all connected bot processes together.
-
-
-- Stage 5 (PR #40): owner-only bot removal, outstanding payment/subscription
-  obligations, action confirmations and the customer notifications that accompany
-  legitimate owner decisions, plus legacy central owner/admin routes. The
-  retirement/payment/audit code remains identical in RU and EN. Existing
-  Russian ForceReply bot-token prompts remain valid alongside English ones.
-  Buyer notice language is resolved for the buyer independently of the owner.
-- The existing explicit manual language choice and stored Telegram language hint
-  are shared across central and customer bots. Changing display language
-  does not change money, entitlements, project timezone, transaction IDs,
-  or any user-authored payment instructions.
+Critical defects affecting money, access, security, locale mixing or English
+navigation block release. Cosmetic wording may be scheduled separately.
