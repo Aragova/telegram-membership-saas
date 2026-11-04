@@ -206,11 +206,12 @@ async def test_resource_permissions_pass_with_both_required_rights(monkeypatch):
     bot.get_chat_member.assert_awaited_once_with(chat_id="-1001", user_id=123456)
 
 
-async def test_empty_resources_do_not_allow_runtime(monkeypatch):
+async def test_empty_resources_preserve_access_maintenance(monkeypatch):
     _sf(monkeypatch, bots=[])
     bot = MagicMock()
-    with pytest.raises(RuntimeError, match="no active channel"):
-        await verify_resource_permissions(None, project_id=uuid4(), bot=bot)
+    bot.get_chat_member = AsyncMock()
+    await verify_resource_permissions(None, project_id=uuid4(), bot=bot)
+    bot.get_chat_member.assert_not_awaited()
 
 
 def test_customer_bot_config_and_blank_id(monkeypatch):
