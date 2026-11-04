@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
+from telegram_membership_saas.modules.owner_setup.handlers import create_owner_setup_router
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
@@ -18,6 +19,7 @@ def create_dispatcher(
 ) -> Dispatcher:
     dispatcher = Dispatcher()
     if session_factory is not None:
+        dispatcher.include_router(create_owner_setup_router(session_factory))
         if enable_access:
             dispatcher.include_router(create_telegram_access_router(session_factory))
         if project_id is not None:

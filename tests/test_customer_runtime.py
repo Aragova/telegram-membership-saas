@@ -60,14 +60,14 @@ def test_customer_dispatcher_does_not_expose_admin_routes():
 def test_central_can_drop_buyer_routes_for_cutover():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
     assert [r.name for r in dispatcher.sub_routers] == [
-        "telegram-admin", "central-buyer-redirect"
+        "owner-setup", "telegram-admin", "central-buyer-redirect"
     ]
 
 
 def test_central_default_preserves_old_staging_path():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "telegram-access", "telegram-admin", "telegram-commerce"
+        "owner-setup", "telegram-access", "telegram-admin", "telegram-commerce"
     ]
 
 

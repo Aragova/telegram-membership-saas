@@ -260,3 +260,65 @@ async def test_stray_token_is_deleted_not_registered(monkeypatch):
     bot.delete_message.assert_awaited_once_with(chat_id=123, message_id=55)
     register.assert_not_awaited()
     assert TEST_TOKEN not in bot.send_message.await_args.kwargs["text"]
+
+
+async def test_second_registered_bot_is_rejected_without_database_write(monkeypatch):
+    monkeypatch.setattr(bots, "require_bot_owner", AsyncMock())
+    monkeypatch.setattr(bots, "_actor_user_id", AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(bots, "_require_owner", AsyncMock())
+    monkeypatch.setattr(
+        bots, "verify_telegram_bot",
+        AsyncMock(return_value=bots.VerifiedBot(3333, "SecondBot", "Second")),
+    )
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=[None, uuid4()])
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield session
+
+    monkeypatch.setattr(bots, "tenant_session_scope", scope)
+    with pytest.raises(ValueError, match="один бот на проект"):
+        await bots.register_customer_bot(
+            None, project_id=uuid4(), actor_telegram_user_id=1,
+            token=TEST_TOKEN, encryption_key=_key(), central_bot_id=987,
+        )
+    session.add.assert_not_called()
+    session.flush.assert_not_awaited()
+
+
+async def test_existing_bot_token_can_be_refreshed_without_duplicate(monkeypatch):
+    monkeypatch.setattr(bots, "require_bot_owner", AsyncMock())
+    monkeypatch.setattr(bots, "_actor_user_id", AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(bots, "_require_owner", AsyncMock())
+    monkeypatch.setattr(
+        bots, "verify_telegram_bot",
+        AsyncMock(return_value=bots.VerifiedBot(2222, "OwnerBot", "Owner")),
+    )
+    existing = BotInstance(
+        project_id=uuid4(), telegram_bot_id=2222,
+        username="OldUsername", display_name="Old",
+        token_ciphertext="gAAAAAplaceholder", status="registered",
+    )
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=[existing, None])
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield session
+
+    monkeypatch.setattr(bots, "tenant_session_scope", scope)
+    result = await bots.register_customer_bot(
+        None, project_id=existing.project_id, actor_telegram_user_id=1,
+        token=TEST_TOKEN, encryption_key=_key(), central_bot_id=987,
+    )
+    assert result.updated is True
+    assert existing.username == "OwnerBot"
+    assert existing.status == "registered"
+    assert TEST_TOKEN not in existing.token_ciphertext
+    session.add.assert_not_called()
+    session.flush.assert_awaited_once()
