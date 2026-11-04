@@ -1192,6 +1192,25 @@ def create_owner_setup_router(
                     "Для безопасности смените токен в BotFather и повторите шаг.",
                 )
                 return
+        # Old central setup prompts remain in Telegram after a deployment.
+        # Do not permit completing tenant settings via stale central messages.
+        if fixed_project_id is None and flow.step not in (
+            "new_bot_token", "bot_token",
+        ):
+            await bot.send_message(
+                message.chat.id,
+                "Настройка перенесена в вашего бота. "
+                "Откройте его через «Мои боты».",
+            )
+            return
+        if fixed_project_id is not None and flow.step in (
+            "new_bot_token", "bot_token", "project_name",
+        ):
+            await bot.send_message(
+                message.chat.id,
+                "Подключение токена доступно только в @vimipay_bot.",
+            )
+            return
         try:
             if flow.step == "new_bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
