@@ -935,8 +935,8 @@ def create_owner_setup_router(
             tr("⬅️ Все способы оплаты", "⬅️ All payment methods"), "methods",
         )])
         history_note = tr(
-            "\\nУдаление недоступно: есть история покупок.",
-            "\\nDeletion unavailable: purchase history exists.",
+            "\nУдаление недоступно: есть история покупок.",
+            "\nDeletion unavailable: purchase history exists.",
         ) if method.has_history else ""
         instruction_preview = (
             method.instruction[:350]
@@ -944,11 +944,11 @@ def create_owner_setup_router(
         )
         await bot.send_message(
             user_id,
-            "💳 <b>" + escape(method.name) + "</b>\\n"
+            "💳 <b>" + escape(method.name) + "</b>\n"
             + tr("Статус: ", "Status: ") + _status(method.status)
-            + tr("\\nВалюты: ", "\\nCurrencies: ")
+            + tr("\nВалюты: ", "\nCurrencies: ")
             + escape(", ".join(method.currencies) or tr("не выбраны", "none selected"))
-            + tr("\\n\\nИнструкция покупателю:\\n", "\\n\\nBuyer instructions:\\n")
+            + tr("\n\nИнструкция покупателю:\n", "\n\nBuyer instructions:\n")
             + escape(instruction_preview)
             + history_note,
             parse_mode="HTML",
@@ -2154,9 +2154,9 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, step="method_rename",
                     payload={"method_id": method_id.hex},
                     text=tr(
-                        "✏️ <b>Новое название способа оплаты</b>\\n"
+                        "✏️ <b>Новое название способа оплаты</b>\n"
                         "От 2 до 120 символов.",
-                        "✏️ <b>Rename payment method</b>\\n"
+                        "✏️ <b>Rename payment method</b>\n"
                         "Enter 2–120 characters.",
                     ),
                 )
@@ -2170,11 +2170,11 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, step="method_edit",
                     payload={"method_id": method_id.hex},
                     text=tr(
-                        "📝 <b>Новые реквизиты и инструкция</b>\\n"
-                        "Допускаются {amount}, {currency}, {plan}, {period}.\\n"
+                        "📝 <b>Новые реквизиты и инструкция</b>\n"
+                        "Допускаются {amount}, {currency}, {plan}, {period}.\n"
                         "Новые инструкции увидят покупатели при открытии оплаты.",
-                        "📝 <b>New payment instructions</b>\\n"
-                        "Allowed: {amount}, {currency}, {plan}, {period}.\\n"
+                        "📝 <b>New payment instructions</b>\n"
+                        "Allowed: {amount}, {currency}, {plan}, {period}.\n"
                         "Buyers will see the new text when opening payment.",
                     ),
                 )
@@ -2231,13 +2231,13 @@ def create_owner_setup_router(
                     ))
                 await bot.send_message(
                     user_id,
-                    tr("🗑 <b>Удалить способ оплаты навсегда?</b>\\n\\n",
-                       "🗑 <b>Permanently delete payment method?</b>\\n\\n")
+                    tr("🗑 <b>Удалить способ оплаты навсегда?</b>\n\n",
+                       "🗑 <b>Permanently delete payment method?</b>\n\n")
                     + escape(method.name)
                     + tr(
-                        "\\n\\nНастройки и валюты будут удалены. "
+                        "\n\nНастройки и валюты будут удалены. "
                         "Удаление возможно только без истории заявок и платежей.",
-                        "\\n\\nSettings and currency links will be deleted. "
+                        "\n\nSettings and currency links will be deleted. "
                         "Only methods with no request or payment history can be removed.",
                     ),
                     parse_mode="HTML",
@@ -2275,10 +2275,10 @@ def create_owner_setup_router(
                 await bot.send_message(
                     user_id,
                     tr(
-                        "⏸️ <b>Отключить способ оплаты?</b>\\n\\n"
+                        "⏸️ <b>Отключить способ оплаты?</b>\n\n"
                         "Он исчезнет из новых покупок. Уже полученные "
                         "заявки и история платежей сохранятся.",
-                        "⏸️ <b>Disable this payment method?</b>\\n\\n"
+                        "⏸️ <b>Disable this payment method?</b>\n\n"
                         "It will no longer be offered for new purchases. "
                         "Existing payment requests and history are preserved.",
                     ),
