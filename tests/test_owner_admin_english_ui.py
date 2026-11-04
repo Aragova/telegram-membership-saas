@@ -1,4 +1,5 @@
 """Connected owner administration renders translated screens with stable actions."""
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -116,7 +117,7 @@ def test_payment_review_english_with_same_callbacks():
     item = ReviewItem(
         request_id=uuid4(), customer_telegram_user_id=12345,
         customer_username="demo", plan_name="Named by Owner",
-        amount="10", currency_code="USD", payment_method_name="Bank transfer",
+        amount=Decimal("10"), currency_code="USD", payment_method_name="Bank transfer",
         status="waiting_review",
     )
     token = _language.set("en")
