@@ -100,6 +100,9 @@ async def test_owner_method_screen_shows_associated_currencies(monkeypatch):
     monkeypatch.setattr(
         ui, "list_owner_methods", AsyncMock(return_value=(info,)),
     )
+    monkeypatch.setattr(
+        ui, "get_owner_method_info", AsyncMock(return_value=info),
+    )
     bot = _bot()
     await _callback(project)(_query("methods"), bot)
     sent = bot.send_message.await_args
@@ -126,9 +129,9 @@ async def test_owner_can_attach_currency_without_changing_other_links(monkeypatc
     project, method = uuid4(), uuid4()
     actor = _auth(monkeypatch, project)
     monkeypatch.setattr(
-        ui, "list_owner_methods",
-        AsyncMock(return_value=(
-            MethodInfo(method, "PayPal", "active", ("EUR", "USD")),
+        ui, "get_owner_method_info",
+        AsyncMock(return_value=MethodInfo(
+            method, "PayPal", "active", ("EUR", "USD"),
         )),
     )
     attach = AsyncMock(return_value=True)
@@ -260,3 +263,41 @@ async def test_incompatible_published_currency_guides_owner_back_to_payment(monk
     ]
     assert "own:methods" in callbacks
     assert "own:readiness" not in callbacks
+
+
+async def test_method_list_paginates_and_deep_link_opens_offscreen_item(monkeypatch):
+    project = uuid4()
+    actor = _auth(monkeypatch, project)
+    first = tuple(
+        MethodInfo(uuid4(), "Old method " + str(n), "disabled", ("RUB",))
+        for n in range(8)
+    )
+    latest = MethodInfo(uuid4(), "New method", "active", ("USD",))
+    listing = AsyncMock(side_effect=[
+        first, (latest,),
+    ])
+    monkeypatch.setattr(ui, "list_owner_methods", listing)
+    lookup = AsyncMock(return_value=latest)
+    monkeypatch.setattr(ui, "get_owner_method_info", lookup)
+    bot = _bot()
+    handler = _callback(project)
+    await handler(_query("methods"), bot)
+    controls = [
+        b.callback_data for row in
+        bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert "own:methodpage:1" in controls
+    await handler(_query("methodpage:1"), bot)
+    controls = [
+        b.callback_data for row in
+        bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert "own:method:" + latest.id.hex in controls
+    await handler(_query("method:" + latest.id.hex), bot)
+    assert lookup.await_args.kwargs == {
+        "actor_id": actor, "project_id": project,
+        "method_id": latest.id,
+    }
+    assert "New method" in bot.send_message.await_args.args[1]
