@@ -33,6 +33,7 @@ from telegram_membership_saas.project_worker_lock import (
 )
 from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_bot, create_dispatcher
+from telegram_membership_saas.telegram_menus import install_public_commands
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,7 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
             await asyncio.gather(polling, return_exceptions=True)
 
     try:
+        await install_public_commands(bot, customer=False)
         if not current.telegram_central_access_enabled:
             # Central ViMi Pay must remain available for every new owner,
             # without a per-owner project UUID in deployment settings.

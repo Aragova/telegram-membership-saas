@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any
+from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
@@ -142,7 +143,9 @@ class LanguageMiddleware(BaseMiddleware):
             _language.reset(token)
 
 
-def create_language_router(factory: async_sessionmaker[AsyncSession]) -> Router:
+def create_language_router(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID | None = None,
+) -> Router:
     router = Router(name="vimi-language")
 
     @router.message(Command("language"))
@@ -198,11 +201,20 @@ def create_language_router(factory: async_sessionmaker[AsyncSession]) -> Router:
                 )
         token = _language.set(choice)
         try:
+            from telegram_membership_saas.telegram_menus import refresh_user_commands
+
+            try:
+                await refresh_user_commands(
+                    bot, factory, chat_id=user.id, language=choice,
+                    project_id=project_id,
+                )
+            except (SQLAlchemyError, PermissionError):
+                logger.warning("Could not refresh Telegram native command menu")
             await bot.send_message(
                 user.id,
                 tr(
-                    "✅ Язык сохранён: Русский. Откройте /start, чтобы обновить меню.",
-                    "✅ Language saved: English. Open /start to refresh the menu.",
+                    "✅ Язык сохранён: Русский. Меню Telegram обновлено.",
+                    "✅ Language saved: English. Telegram menu updated.",
                 ),
             )
             await query.answer()
