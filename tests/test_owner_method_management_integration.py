@@ -7,7 +7,9 @@ from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
-    build_engine, build_session_factory, system_project_session_scope,
+    build_engine,
+    build_session_factory,
+    system_project_session_scope,
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.owner_setup.method_management import (
@@ -18,19 +20,27 @@ from telegram_membership_saas.modules.owner_setup.method_management import (
     rename_owner_method,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
-    create_owner_payment_method, create_owner_plan, create_owner_project,
-    ensure_telegram_actor, publish_owner_plan, save_owner_price,
+    create_owner_payment_method,
+    create_owner_plan,
+    create_owner_project,
+    ensure_telegram_actor,
+    publish_owner_plan,
+    save_owner_price,
 )
 from telegram_membership_saas.modules.owner_setup.tenant_admin import (
-    attach_owner_method_currency, get_owner_method_info, list_owner_methods,
+    attach_owner_method_currency,
+    get_owner_method_info,
+    list_owner_methods,
 )
 from telegram_membership_saas.modules.payments import PaymentMethod
 from telegram_membership_saas.modules.resources import Resource, ResourceType
 from telegram_membership_saas.modules.telegram_commerce import (
-    create_checkout_for_telegram_user, list_checkout_options,
+    create_checkout_for_telegram_user,
+    list_checkout_options,
 )
 from telegram_membership_saas.tenant_context import (
-    TenantAccessDenied, TenantContext,
+    TenantAccessDenied,
+    TenantContext,
 )
 
 pytestmark = pytest.mark.skipif(
