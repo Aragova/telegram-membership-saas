@@ -205,6 +205,35 @@ async def consume_flow(
         return saved
 
 
+async def consume_button_flow(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID,
+    expected_step: str,
+    request_id: int | None = None,
+) -> SetupFlow:
+    async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
+        state = await _current_session(session, actor_id)
+        if (
+            state.step != expected_step
+            or state.expires_at <= datetime.now(UTC)
+            or (
+                request_id is not None
+                and state.payload.get("request_id") != request_id
+            )
+        ):
+            raise ValueError("Шаг устарел. Откройте нужный раздел заново.")
+        flow = SetupFlow(
+            step=state.step,
+            project_id=state.selected_project_id,
+            payload=state.payload or {},
+            prompt_message_id=state.prompt_message_id,
+        )
+        state.step = None
+        state.payload = {}
+        state.prompt_message_id = None
+        return flow
+
+
 async def get_selected_project(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
