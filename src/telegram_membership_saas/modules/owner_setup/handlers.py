@@ -1794,14 +1794,20 @@ def create_owner_setup_router(
                     name=flow.payload["name"],
                     currency_code=flow.payload["currency"], instruction=text,
                 )
-                await bot.send_message(message.chat.id, tr("✅ Способ оплаты добавлен.", "✅ Payment method added."))
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Способ оплаты добавлен.", "✅ Payment method added."),
+                )
                 await show_methods(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "timezone":
                 await change_project_timezone(
                     factory, project_id=project_id,
                     actor_telegram_user_id=message.from_user.id, timezone_name=text,
                 )
-                await bot.send_message(message.chat.id, tr("✅ Часовой пояс обновлён.", "✅ Timezone updated."))
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Часовой пояс обновлён.", "✅ Timezone updated."),
+                )
                 await show_dashboard(bot, message.chat.id, actor_id, project_id)
         except (ValueError, PermissionError, RuntimeError) as exc:
             await bot.send_message(
