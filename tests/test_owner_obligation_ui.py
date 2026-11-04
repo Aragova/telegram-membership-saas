@@ -144,3 +144,59 @@ async def test_stale_payment_confirmation_fails_closed(monkeypatch):
     await _handler()(query, _bot())
     close.assert_not_awaited()
     assert query.answer.await_args.kwargs["show_alert"] is True
+
+
+async def test_paginated_owner_obligations_preserve_page_in_confirmation(monkeypatch):
+    actor, project = uuid4(), uuid4()
+    payments = tuple(
+        OwnerPayment(
+            uuid4(), 900 + i, "x" * 64,
+            "waiting_review", "9" * 35, "RUB",
+        )
+        for i in range(5)
+    )
+    snapshot = OwnerObligations(
+        blockers=RetirementBlockers(requests=12),
+        payments=payments,
+        subscriptions=(), grants=(), access=(),
+    )
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor))
+    monkeypatch.setattr(ui, "get_selected_project", AsyncMock(return_value=project))
+    listing = AsyncMock(return_value=snapshot)
+    monkeypatch.setattr(ui, "list_owner_obligations", listing)
+    bot = _bot()
+    await _handler()(_callback("oblist"), bot)
+    first = bot.send_message.await_args
+    assert len(first.args[1]) < 4096
+    controls = [
+        b.callback_data for row in first.kwargs["reply_markup"].inline_keyboard
+        for b in row if b.callback_data
+    ]
+    assert "own:obpage:" + encode_uuid(project) + ":1" in controls
+
+    await _handler()(
+        _callback("obpage:" + encode_uuid(project) + ":1"), bot,
+    )
+    sent = bot.send_message.await_args
+    assert "Страница 2" in sent.args[1]
+    controls = [
+        b.callback_data for row in sent.kwargs["reply_markup"].inline_keyboard
+        for b in row if b.callback_data
+    ]
+    entry = (
+        "own:ob:pay:" + encode_uuid(project)
+        + ":" + encode_uuid(payments[0].id) + ":1"
+    )
+    assert entry in controls
+    assert all(len(item.encode()) <= 64 for item in controls)
+
+    await _handler()(_callback(entry.removeprefix("own:")), bot)
+    confirm = bot.send_message.await_args
+    confirm_controls = [
+        b.callback_data for row in confirm.kwargs["reply_markup"].inline_keyboard
+        for b in row if b.callback_data
+    ]
+    assert (
+        "own:obok:pay:" + encode_uuid(project)
+        + ":" + encode_uuid(payments[0].id) + ":1"
+    ) in confirm_controls
