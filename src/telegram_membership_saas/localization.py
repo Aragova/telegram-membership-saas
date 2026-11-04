@@ -6,7 +6,8 @@ bots. A language code must never be interpreted as geographic location/timezone.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import Any
 
@@ -60,6 +61,25 @@ async def read_language(
         # An unavailable preference store must not disable a functioning bot.
         logger.warning("Could not read UI language preference")
     return telegram_language(telegram_hint)
+
+
+@asynccontextmanager
+async def recipient_language(
+    factory: async_sessionmaker[AsyncSession],
+    telegram_id: int,
+) -> AsyncIterator[None]:
+    """Use recipient preference for unsolicited messages, never sender's locale.
+
+    Telegram does not provide a user's live language for an outgoing message.
+    Use the recipient's saved explicit choice; without one, keep the historical
+    Russian default until an automatic Telegram language hint is available.
+    """
+    language = await read_language(factory, telegram_id, "ru")
+    token = _language.set(language)
+    try:
+        yield
+    finally:
+        _language.reset(token)
 
 
 class LanguageMiddleware(BaseMiddleware):

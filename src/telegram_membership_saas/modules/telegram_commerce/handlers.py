@@ -19,7 +19,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
-from telegram_membership_saas.localization import tr
+from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -459,12 +459,13 @@ def create_telegram_commerce_router(
                     message_id=message.message_id,
                 )
                 # Reply to this exact receipt so concurrent submissions cannot be mixed up.
-                await bot.send_message(
-                    chat_id=reviewer_id,
-                    text=_review_text(submission.item),
-                    reply_markup=_review_keyboard(submission.request.id),
-                    reply_parameters=ReplyParameters(message_id=copied.message_id),
-                )
+                async with recipient_language(session_factory, reviewer_id):
+                    await bot.send_message(
+                        chat_id=reviewer_id,
+                        text=_review_text(submission.item),
+                        reply_markup=_review_keyboard(submission.request.id),
+                        reply_parameters=ReplyParameters(message_id=copied.message_id),
+                    )
                 delivered += 1
             except AiogramError:
                 # The buyer can reply with the same proof again. /payments recovers
