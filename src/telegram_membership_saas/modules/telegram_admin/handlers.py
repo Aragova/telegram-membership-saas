@@ -48,7 +48,7 @@ TIMEZONE_CHOICES = (
     "America/New_York",
 )
 SCREENS = frozenset({"main", "resources", "plans", "methods", "settings", "timezone", "bots"})
-CONNECT_PROMPT_PREFIX = "Подключение собственного бота: "
+CONNECT_PROMPT_PREFIX = "Подключение собственного бота"
 STATUS_LABELS = {
     "active": "🟢 Активно",
     "disabled": "⚪ Отключено",
@@ -308,7 +308,7 @@ def create_telegram_admin_router(
                         "2. Ответьте на ЭТО сообщение полученным токеном.\n"
                         "3. ViMi Pay проверит бота и удалит сообщение с токеном.\n\n"
                         "Важно: бот будет зарегистрирован, но запустится "
-                        "для покупателей только после подключения runtime."
+                        "для покупателей после настройки и запуска продаж."
                     ),
                     reply_markup=ForceReply(
                         selective=True,
@@ -443,7 +443,7 @@ def create_telegram_admin_router(
             chat_id=message.chat.id,
             text=(
                 f"✅ Бот <b>@{escape(result.username)}</b> зарегистрирован.\n\n"
-                "Токен зашифрован. Запуск продаж в собственном боте "
+                "Бот подключён. Запуск продаж в собственном боте "
                 "будет доступен после подключения runtime.\n"
                 "Откройте /start для просмотра своих ботов."
             ),
