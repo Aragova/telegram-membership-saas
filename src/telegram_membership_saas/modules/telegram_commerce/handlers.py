@@ -19,11 +19,6 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
-from telegram_membership_saas.modules.telegram_commerce.storefront import (
-    catalog_screen,
-    list_buyer_offers,
-    offer_screen,
-)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -38,6 +33,11 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     require_awaiting_receipt_for_telegram_user,
     review_payment_request_from_telegram,
     submit_checkout_for_telegram_user,
+)
+from telegram_membership_saas.modules.telegram_commerce.storefront import (
+    catalog_screen,
+    list_buyer_offers,
+    offer_screen,
 )
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
