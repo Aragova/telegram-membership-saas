@@ -6,7 +6,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
@@ -22,15 +21,15 @@ from telegram_membership_saas.modules.outbox import (
     mark_outbox_event_failed,
     process_claimed_access_recalculate_event,
 )
-from telegram_membership_saas.project_worker_lock import (
-    confirm_project_lock,
-    project_worker_lock,
-)
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessAdapter,
     ensure_owner_service_for_project,
     expire_due_join_tickets,
     run_one_telegram_access_action,
+)
+from telegram_membership_saas.project_worker_lock import (
+    confirm_project_lock,
+    project_worker_lock,
 )
 from telegram_membership_saas.telegram_adapter import create_bot, create_dispatcher
 
