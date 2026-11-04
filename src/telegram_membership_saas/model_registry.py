@@ -21,6 +21,7 @@ __all__ = [
     "AccessAction",
     "AccessState",
     "BotInstance",
+    "OwnerSetupSession",
     "CurrencyAsset",
     "EffectiveAccess",
     "EntitlementGrant",
