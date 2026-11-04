@@ -14,7 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.payments.models import (
-    Payment, PaymentMethod, PaymentMethodCurrency, PaymentRequest,
+    Payment,
+    PaymentMethod,
+    PaymentMethodCurrency,
+    PaymentRequest,
 )
 from telegram_membership_saas.modules.payments.service import (
     _validate_instruction_template,
