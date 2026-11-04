@@ -23,19 +23,17 @@ def create_dispatcher(
         if enable_access:
             dispatcher.include_router(create_telegram_access_router(session_factory))
         if project_id is not None:
-            dispatcher.include_router(
-                create_telegram_admin_router(
-                    session_factory,
-                    project_id=project_id,
-                )
-            )
-            # After traffic is moved to the branded customer bot,
-            # the central management bot must not accept new purchases.
             if enable_access:
+                # Legacy single-project local mode only; never expose this
+                # tenant administration router in cutover/central-only mode.
+                dispatcher.include_router(
+                    create_telegram_admin_router(
+                        session_factory, project_id=project_id,
+                    )
+                )
                 dispatcher.include_router(
                     create_telegram_commerce_router(
-                        session_factory,
-                        project_id=project_id,
+                        session_factory, project_id=project_id,
                     )
                 )
             else:
