@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from secrets import token_urlsafe
 from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 from uuid import UUID
 
 from aiogram import Bot
