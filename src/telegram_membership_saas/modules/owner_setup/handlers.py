@@ -1081,10 +1081,17 @@ def create_owner_setup_router(
             factory, actor_id=actor_id,
             bot_scope_id=bot.id if fixed_project_id else 0,
         )
-        if prior is None or prior.project_id is None:
-            await show_home(bot, message.chat.id, actor_id)
-            return
-        if fixed_project_id is not None and prior.project_id != fixed_project_id:
+        if (
+            prior is None or prior.project_id is None
+            or (fixed_project_id is not None and prior.project_id != fixed_project_id)
+        ):
+            # Also clear a stale chat-picker keyboard after the 15-minute TTL.
+            # The expired flow no longer has a reliable step to inspect.
+            await bot.send_message(
+                message.chat.id,
+                tr("↩️ Возврат в главное меню.", "↩️ Back to the main menu."),
+                reply_markup=ReplyKeyboardRemove(),
+            )
             await show_home(bot, message.chat.id, actor_id)
             return
         project_id = prior.project_id
