@@ -227,8 +227,8 @@ async def set_flow(
             await _require_project_manager(
                 session, project_id=chosen, actor_user_id=actor_id
             )
-        elif step != "project_name":
-            raise PermissionError("Сначала создайте проект")
+        elif step not in ("project_name", "new_bot_token"):
+            raise PermissionError("Сначала подключите бота")
         state.selected_project_id = chosen
         state.step = step
         state.payload = payload or {}
@@ -389,6 +389,26 @@ async def create_owner_project(
         state.generation = None
         state.payload = {}
         return project.id
+
+
+async def set_default_project_name_from_bot(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, username: str,
+) -> None:
+    """Name an automatically created project after its verified Telegram bot."""
+    if not username or len(username) > 32:
+        raise ValueError("Некорректное имя бота")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id)
+    ) as session:
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        project = await session.scalar(
+            select(Project).where(Project.id == project_id).with_for_update()
+        )
+        if project is not None and project.name == "Подключение бота":
+            project.name = "@" + username
 
 
 async def setup_overview(
