@@ -22,7 +22,6 @@ from telegram_membership_saas.modules.platform_dashboard import (
 )
 from telegram_membership_saas.tenant_context import TenantContext
 
-
 EVENT_LABELS = {
     "bot_connected": "Подключений ботов",
     "bot_removed": "Удалений ботов",
