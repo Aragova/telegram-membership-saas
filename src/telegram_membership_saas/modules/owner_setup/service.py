@@ -31,7 +31,14 @@ from telegram_membership_saas.modules.pricing import (
     PlanPriceStatus,
     replace_active_plan_price,
 )
-from telegram_membership_saas.modules.projects import Project
+from telegram_membership_saas.modules.projects import (
+    Permission,
+    Project,
+    ProjectMember,
+    ProjectMemberRole,
+    ProjectStatus,
+    has_permission,
+)
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.tenant_context import TenantContext
@@ -107,9 +114,27 @@ async def owner_home(
     actor_id: UUID,
 ) -> OwnerHome:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        projects = list(
-            (await session.scalars(select(Project).order_by(Project.created_at, Project.id))).all()
+        visible = list(
+            (await session.scalars(
+                select(Project).order_by(Project.created_at, Project.id)
+            )).all()
         )
+        roles = dict((await session.execute(
+            select(ProjectMember.project_id, ProjectMember.role).where(
+                ProjectMember.user_id == actor_id
+            )
+        )).all())
+        projects = [
+            p for p in visible if p.status == ProjectStatus.ACTIVE.value
+            and (
+                p.owner_user_id == actor_id
+                or (
+                    p.id in roles and has_permission(
+                        ProjectMemberRole(roles[p.id]), Permission.PROJECT_MANAGE
+                    )
+                )
+            )
+        ]
         state = await _current_session(session, actor_id)
         ids = {p.id for p in projects}
         selected = state.selected_project_id
