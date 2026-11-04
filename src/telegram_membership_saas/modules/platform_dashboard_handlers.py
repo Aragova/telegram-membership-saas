@@ -5,8 +5,10 @@ but each button performs a fresh server-side role check.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from html import escape
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.filters import BaseFilter, Command
@@ -27,6 +29,11 @@ from telegram_membership_saas.modules.platform_dashboard import (
     fmt_turnover,
     is_configured_platform_owner,
     platform_report,
+)
+from telegram_membership_saas.modules.platform_usage import (
+    BOT_EVENT_LABELS,
+    EVENT_LABELS,
+    platform_usage_report,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
@@ -158,6 +165,52 @@ def _bot_details(bot: dict, *, period: str) -> str:
     )
 
 
+def _usage_text(snapshot, *, timezone: str) -> str:
+    lines = [
+        "✦ <b>ViMi Pay · Использование</b>",
+        "Журнал работы платформы",
+        "",
+        "<b>" + escape(PERIOD_LABELS[snapshot.period]) + "</b>",
+        "Событий: " + str(snapshot.event_total),
+    ]
+    for kind, label in EVENT_LABELS.items():
+        count = snapshot.counts.get(kind, 0)
+        lines.append("• " + label + ": " + str(count))
+    lines.extend(["", "💳 <b>Платежи клиентов по валютам</b>"])
+    if snapshot.turnover:
+        for item in snapshot.turnover:
+            lines.append(
+                "• " + escape(item["currency"]) + " — "
+                + escape(fmt_turnover(str(item["amount"])))
+                + " (подтверждений: " + str(item["count"]) + ")"
+            )
+    else:
+        lines.append("Нет подтверждённых платежей за период.")
+    lines.extend(["", "🤖 <b>История подключений и удалений</b>"])
+    for item in snapshot.history:
+        occurred = datetime.fromisoformat(item["occurred_at"])
+        timestamp = occurred.astimezone(ZoneInfo(timezone)).strftime("%d.%m %H:%M")
+        lines.append(
+            "• " + timestamp + " — @"
+            + escape(item["bot_username"] or "unknown") + ": "
+            + escape(BOT_EVENT_LABELS.get(item["event_type"], "событие"))
+        )
+    if not snapshot.history:
+        lines.append("На этой странице нет событий.")
+    if snapshot.pages > 1:
+        lines.append(
+            "\nСтраница " + str(snapshot.page + 1)
+            + " из " + str(snapshot.pages)
+        )
+    lines.extend([
+        "",
+        "<i>Журнал сохраняет удалённые подключения. Метрики "
+        "не являются выставленными счетами ViMi Pay. "
+        "Платежи подтверждены администраторами каналов.</i>",
+    ])
+    return "\n".join(lines)
+
+
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
@@ -182,6 +235,7 @@ def create_platform_dashboard_router(
         rows = _period_rows(period, section="home")
         rows.extend([
             [_button("🤖 Все подключённые боты", f"bots:{period}:0")],
+            [_button("📊 Использование и история", f"usage:{period}:0")],
             [InlineKeyboardButton(
                 text="🤖 Мои боты · личный режим",
                 callback_data="own:projects",
@@ -226,6 +280,44 @@ def create_platform_dashboard_router(
                     raise ValueError("Некорректный период")
                 await send_platform_home(
                     bot, query.from_user, period=period,
+                )
+            elif len(tokens) == 4 and tokens[1] == "usage":
+                _, _, period, page_token = tokens
+                if period not in PERIODS or (
+                    not page_token.isascii()
+                    or not page_token.isdecimal()
+                ):
+                    raise ValueError("Некорректный период использования")
+                page = int(page_token)
+                if page > 100000:
+                    raise ValueError("Страница недоступна")
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_usage_report(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    period=period, page=page, settings=config,
+                )
+                rows = _period_rows(period, section="usage")
+                nav = []
+                if page > 0:
+                    nav.append(_button(
+                        "⬅️ Предыдущие", f"usage:{period}:{page - 1}",
+                    ))
+                if page + 1 < report.pages:
+                    nav.append(_button(
+                        "Следующие ➡️", f"usage:{period}:{page + 1}",
+                    ))
+                if nav:
+                    rows.append(nav)
+                rows.append([_button("⬅️ Платформа", f"home:{period}:0")])
+                await bot.send_message(
+                    query.from_user.id,
+                    _usage_text(report, timezone=config.platform_timezone),
+                    parse_mode="HTML", reply_markup=_keyboard(rows),
                 )
             elif len(tokens) == 4 and tokens[1] == "bots":
                 _, _, period, page_token = tokens
