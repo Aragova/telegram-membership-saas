@@ -90,6 +90,7 @@ def _progress(snapshot) -> tuple[str, ...]:
         ("Канал / группа", any(s == "active" for _, _, s in snapshot.resources)),
         ("Тариф", any(s == "active" for _, _, s in snapshot.plans)),
         ("Способ оплаты", any(s == "active" for _, _, s in snapshot.methods)),
+        ("Бот принимает покупателей", bool(snapshot.live_bot_username)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
 
@@ -157,6 +158,7 @@ def create_owner_setup_router(
             f"📁 <b>{escape(data.project_name)}</b>\n"
             f"🌍 {escape(data.timezone)}\n\n"
             + "\n".join(_progress(data))
+            + "\n\n🤖 " + escape(data.bot_runtime_label)
             + "\n\nНастройте проект в удобном порядке."
         )
         rows = [
@@ -206,15 +208,27 @@ def create_owner_setup_router(
                 + ("токен проверен" if status == "registered" else "отключён")
             )
         lines.append(
-            "\nПодключение сохраняет бота в системе. Начало продаж "
-            "проверяется отдельно — после настройки канала, тарифа и оплаты."
+            "\n" + escape(data.bot_runtime_label)
+            + "\n\nПосле настройки канала, опубликованного тарифа "
+            "и оплаты система запускает вашего бота автоматически."
         )
+        rows = []
+        if data.live_bot_username:
+            rows.append([
+                InlineKeyboardButton(
+                    text="🟢 Открыть моего бота",
+                    url="https://t.me/" + data.live_bot_username,
+                    style="success",
+                )
+            ])
+        rows.extend([
+            [_button("🔄 Обновить статус", "bots")],
+            [_button("➕ Подключить / обновить токен", "connect")],
+            [_button("⬅️ Панель управления", "dashboard")],
+        ])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
-            reply_markup=_markup([
-                [_button("➕ Подключить / обновить токен", "connect", "success")],
-                [_button("⬅️ Панель управления", "dashboard")],
-            ]),
+            reply_markup=_markup(rows),
         )
 
     async def show_resources(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
@@ -551,9 +565,10 @@ def create_owner_setup_router(
                     user_id,
                     "📋 <b>Подготовка к запуску</b>\n\n"
                     + "\n".join(_progress(data))
-                    + "\n\nРегистрация бота не означает, что он принимает "
-                    "покупателей. Запуск продаж требует отдельной проверки "
-                    "обработки сообщений и управления доступом.",
+                    + "\n\n🤖 " + escape(data.bot_runtime_label)
+                    + "\n\nПосле завершения настроек бот запускается "
+                    "автоматически. Покупателям можно давать ссылку только "
+                    "после статуса «Работает».",
                     parse_mode="HTML",
                 )
             elif action == "help":
