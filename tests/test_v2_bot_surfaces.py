@@ -191,7 +191,7 @@ async def test_token_first_connection_deletes_secret_and_links_owner_bot(monkeyp
 
     async def register(*_args, **_kwargs):
         order.append("register")
-        return SimpleNamespace(username="rus_chan_prem_bot")
+        return project_id, SimpleNamespace(username="rus_chan_prem_bot")
 
     bot = _bot()
     bot.delete_message = AsyncMock(side_effect=delete)
@@ -204,11 +204,7 @@ async def test_token_first_connection_deletes_secret_and_links_owner_bot(monkeyp
         ui, "get_settings",
         lambda: SimpleNamespace(bot_token_encryption_key="configured"),
     )
-    monkeypatch.setattr(
-        ui, "create_owner_project", AsyncMock(return_value=project_id),
-    )
-    monkeypatch.setattr(ui, "register_customer_bot", AsyncMock(side_effect=register))
-    monkeypatch.setattr(ui, "set_default_project_name_from_bot", AsyncMock())
+    monkeypatch.setattr(ui, "register_new_owner_bot", AsyncMock(side_effect=register))
     monkeypatch.setattr(
         ui, "setup_overview", AsyncMock(return_value=_overview(project_id)),
     )
