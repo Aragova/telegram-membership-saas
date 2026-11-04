@@ -1589,6 +1589,7 @@ def create_owner_setup_router(
                     ),
                     generation=generation,
                     bot_scope_id=bot.id if fixed_project_id else 0,
+                    discard=(target == "plans"),
                 )
                 if flow.project_id != project_id:
                     raise ValueError(tr(
@@ -1596,10 +1597,8 @@ def create_owner_setup_router(
                         "Project changed. Please retry.",
                     ))
                 if target == "plans":
-                    await cancel_owner_flow(
-                        factory, actor_id=actor_id,
-                        bot_scope_id=bot.id if fixed_project_id else 0,
-                    )
+                    # The button step and generation are already invalidated
+                    # atomically by consume_button_flow(discard=True).
                     await show_plans(bot, user_id, actor_id, project_id)
                 else:
                     fresh = await advance_flow(

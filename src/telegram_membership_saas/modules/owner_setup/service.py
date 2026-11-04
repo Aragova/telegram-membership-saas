@@ -365,7 +365,13 @@ async def consume_button_flow(
     request_id: int | None = None,
     generation: str | None = None,
     bot_scope_id: int = 0,
+    discard: bool = False,
 ) -> SetupFlow:
+    """Consume a button step; optionally discard it atomically on Back.
+
+    A terminal Back must invalidate generation under the SAME row lock that
+    verified it. A second unconditional cancel could wipe a newer wizard.
+    """
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         state = await _current_session(session, actor_id, bot_scope_id)
         if (
@@ -388,6 +394,9 @@ async def consume_button_flow(
         state.step = None
         state.payload = {}
         state.prompt_message_id = None
+        if discard:
+            state.generation = None
+            state.expires_at = datetime.now(UTC)
         return flow
 
 
