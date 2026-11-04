@@ -40,6 +40,8 @@ services:
       TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
       TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://membership:membership@postgres:5432/membership
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
+      TMS_PLATFORM_OWNER_TELEGRAM_ID: ${TMS_PLATFORM_OWNER_TELEGRAM_ID:-}
+      TMS_PLATFORM_TIMEZONE: ${TMS_PLATFORM_TIMEZONE:-Europe/Moscow}
       TMS_TELEGRAM_BOT_TOKEN: ${TMS_TELEGRAM_BOT_TOKEN:-}
       TMS_BOT_TOKEN_ENCRYPTION_KEY: ${TMS_BOT_TOKEN_ENCRYPTION_KEY:-}
       TMS_TELEGRAM_PROJECT_ID: ${TMS_TELEGRAM_PROJECT_ID:-}
