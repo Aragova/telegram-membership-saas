@@ -289,8 +289,8 @@ def test_checkout_has_return_navigation_and_no_implicit_cancel():
     request_id = uuid4()
     keyboard = commerce._checkout_keyboard(request_id)
     labels = _buttons(keyboard)
-    assert ("🧾 Мои покупки", "account:home") in labels
-    assert ("💎 К тарифам", "account:catalog") in labels
+    assert ("🧾 Мои покупки", "checkoutnav:home") in labels
+    assert ("💎 К тарифам", "checkoutnav:catalog") in labels
     assert labels[1][0] == "Отменить заявку"
 
 
@@ -321,3 +321,88 @@ def test_multiple_receipt_buttons_identify_matching_requests():
         assert all(len(label) <= 64 for label, _ in labels)
     finally:
         _language.reset(language)
+
+
+
+async def test_checkout_navigation_preserves_original_payment_message(monkeypatch):
+    """Entering account or catalog never overwrites payment instructions."""
+    @asynccontextmanager
+    async def read_scope(*_args, **_kwargs):
+        yield object()
+
+    monkeypatch.setattr(commerce, "system_project_session_scope", read_scope)
+    reader = AsyncMock(return_value=BuyerAccount())
+    monkeypatch.setattr(commerce, "load_buyer_account", reader)
+    catalog = AsyncMock(return_value=True)
+    monkeypatch.setattr(commerce, "_send_catalog", catalog)
+
+    bot = _bot()
+    query = SimpleNamespace(
+        data="checkoutnav:home",
+        message=SimpleNamespace(
+            chat=SimpleNamespace(type="private", id=200), message_id=777,
+            text="Checkout: 550 RUB\nPay to ...",
+        ),
+        from_user=SimpleNamespace(id=200),
+        answer=AsyncMock(),
+    )
+    router = commerce.create_telegram_commerce_router(None, project_id=uuid4())
+    handler = next(
+        x.callback for x in router.callback_query.handlers
+        if x.callback.__name__ == "checkout_navigation_callback"
+    )
+    await handler(query, bot)
+    assert "Мои покупки" in bot.send_message.await_args.kwargs["text"]
+    assert bot.edit_message_text.await_count == 0
+    assert reader.await_count == 1
+    query.answer.assert_awaited_once()
+
+    query.data = "checkoutnav:catalog"
+    await handler(query, bot)
+    assert catalog.await_count == 1
+    assert "message_id" not in catalog.await_args.kwargs
+    assert bot.edit_message_text.await_count == 0
+
+    query.message.chat.id = 999  # forged/forwarded callback
+    reader.reset_mock()
+    catalog.reset_mock()
+    await handler(query, bot)
+    assert query.answer.await_args.kwargs["show_alert"] is True
+    reader.assert_not_awaited()
+    catalog.assert_not_awaited()
+
+
+async def test_buyer_account_commands_keep_owner_menu_when_authorized(monkeypatch):
+    @asynccontextmanager
+    async def read_scope(*_args, **_kwargs):
+        yield object()
+
+    monkeypatch.setattr(commerce, "system_project_session_scope", read_scope)
+    monkeypatch.setattr(commerce, "load_buyer_account",
+                        AsyncMock(return_value=BuyerAccount()))
+    refresh = AsyncMock()
+    monkeypatch.setattr(commerce, "refresh_user_commands", refresh)
+    bot = _bot()
+    router = commerce.create_telegram_commerce_router(
+        MagicMock(), project_id=uuid4(),
+    )
+    commands = {item.callback.__name__: item.callback
+                for item in router.message.handlers}
+    owner = SimpleNamespace(
+        from_user=SimpleNamespace(id=100),
+        chat=SimpleNamespace(type="private", id=100),
+    )
+    token = _language.set("en")
+    try:
+        await commands["subscriptions_command"](owner, bot)
+        refresh.assert_awaited_once()
+        assert refresh.await_args.kwargs["project_id"] is not None
+        assert refresh.await_args.kwargs["language"] == "en"
+        refresh.reset_mock()
+        await commands["support_command"](owner, bot)
+        refresh.assert_awaited_once()
+        refresh.reset_mock()
+        await commands["buyer_exit_command"](owner, bot)
+        refresh.assert_awaited_once()
+    finally:
+        _language.reset(token)
