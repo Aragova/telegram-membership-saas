@@ -78,6 +78,31 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
             sf, actor_id=actor_id, reply_message_id=123
         ) is None
 
+        old = await setup.set_flow(
+            sf, actor_id=actor_id, step="plan_duration",
+            payload={"name": "Old plan"},
+        )
+        new = await setup.set_flow(
+            sf, actor_id=actor_id, step="plan_duration",
+            payload={"name": "Current plan"},
+        )
+        assert old != new
+        with pytest.raises(ValueError, match="заменён"):
+            await setup.bind_prompt(
+                sf, actor_id=actor_id, step="plan_duration",
+                message_id=900, generation=old,
+            )
+        with pytest.raises(ValueError, match="устарел"):
+            await setup.consume_button_flow(
+                sf, actor_id=actor_id, expected_step="plan_duration",
+                generation=old,
+            )
+        current = await setup.consume_button_flow(
+            sf, actor_id=actor_id, expected_step="plan_duration",
+            generation=new,
+        )
+        assert current.payload["name"] == "Current plan"
+
         async with tenant_session_scope(
             sf, TenantContext(user_id=actor_id, project_id=project_id)
         ) as session:
