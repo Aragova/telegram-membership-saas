@@ -12,11 +12,28 @@
 
 Это не одноразовый single-channel bot и не копия UnionBot один-в-один. Мы строим modular SaaS core с возможностью позже добавить Telegram Stars, Stripe, YooKassa, PayPal, crypto providers, web dashboard, API, white-label bots, multi-resource plans и другие access providers.
 
+## ОБЯЗАТЕЛЬНО: ViMi Pay v2.0 (утверждено 04.11.2026)
+
+Прочитать [VIMI_PAY_V2.md](VIMI_PAY_V2.md) **перед изменением кода**.
+Это основной продуктовый контракт: центральный `@vimipay_bot` служит
+для подключения, ротации и удаления ботов; ВСЯ настройка каналов, методов
+оплаты, тарифов и заявок находится в собственном боте владельца.
+Подключённый бот разделяет владельца/покупателя по серверным правам.
+В центральном имеется отдельный закрытый Platform Owner режим глобальной
+аналитики, а для платформенного владельца — переключатель в обычный
+«Мои боты». Разделяем оборот владельцев и доход SaaS; закладываем usage
+events, не вводя неутверждённый биллинг.
+
+Разработка — вертикальными, законченными логическими частями с CI и
+Codex exact-head; косметику не превращать в блокер, критические риски
+платежей/прав доступа не пропускать. Интерфейс сразу лаконичный и
+премиальный; никаких технических идентификаторов в пользовательском UX.
+
 ## Базовые продуктовые решения
 
 - Один Owner может иметь несколько Projects.
 - Project содержит BotInstance, Resources, Plans, Prices, Payment Methods, Customers, Subscriptions и Settings.
-- BotInstance credentials are encrypted at rest using a dedicated server secret; bot identity is globally unique, linked to one Project. Registration and runtime readiness are distinct states. The central ViMi Pay bot manages owners while connected customer bots will expose their own branded catalog. The multi-bot runtime is still pending after credential registration.
+- BotInstance credentials are encrypted at rest using a dedicated server secret; bot identity is globally unique, linked to one Project. Registration and runtime readiness are distinct states. The central ViMi Pay bot is ONLY a token/connection registry for ordinary tenants (plus a restricted global Platform Owner dashboard). Each connected owner bot hosts BOTH project administration and buyer checkout. The multi-bot supervisor is already implemented; bot registration starts setup mode without a published catalog.
 - Resource в MVP: `TELEGRAM_CHANNEL` или `TELEGRAM_GROUP`; модель должна быть расширяемой.
 - У Plan нет основной валюты и основной цены.
 - Все созданные пары `currency + price` равноправны.
