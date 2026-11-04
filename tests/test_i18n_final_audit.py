@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from telegram_membership_saas.localization import _language
+from telegram_membership_saas.modules.bots import service as bot_service
 from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.obligation_locale import obligation_error
@@ -191,3 +192,55 @@ def test_untrusted_price_error_variants_remain_redacted_in_english() -> None:
             assert owner_error(unknown) == "Action unavailable. Reopen the section."
     finally:
         _language.reset(token)
+
+async def test_rejected_bot_token_keeps_safe_actionable_english_error(
+    monkeypatch,
+) -> None:
+    token_value = "123456:" + "A" * 35
+    leaked = "https://api.telegram.org/bot" + token_value + "/getMe"
+    candidate = SimpleNamespace(
+        get_me=AsyncMock(side_effect=RuntimeError(leaked)),
+        session=SimpleNamespace(close=AsyncMock()),
+    )
+    monkeypatch.setattr(bot_service, "Bot", lambda token: candidate)
+    with pytest.raises(ValueError, match="Telegram не подтвердил токен бота") as exc:
+        await bot_service.verify_telegram_bot(token_value)
+    assert str(exc.value) == "Telegram не подтвердил токен бота"
+    candidate.session.close.assert_awaited_once()
+    language = _language.set("en")
+    try:
+        message = owner_error(str(exc.value))
+        assert message == (
+            "Telegram rejected the bot token. "
+            "Check or regenerate it in @BotFather."
+        )
+        assert token_value not in message
+        assert "getMe" not in message
+    finally:
+        _language.reset(language)
+    assert owner_error(str(exc.value)) == "Telegram не подтвердил токен бота"
+
+
+@pytest.mark.parametrize(
+    ("russian", "english_fragment"),
+    [
+        ("Неверный формат токена Telegram-бота", "token format"),
+        ("Не удалось проверить токен Telegram-бота", "Could not verify"),
+        ("Telegram не вернул корректную учётную запись бота", "valid bot identity"),
+        ("Предыдущий бот ещё удаляется. Дождитесь завершения "
+         "и подключите бота повторно.", "still being removed"),
+        ("Этот Telegram-бот уже привязан к другому проекту", "another project"),
+        ("Добавьте действующий способ оплаты для валюты тарифа", "payment method"),
+    ],
+)
+def test_known_bot_setup_errors_are_translated_but_unknown_redacted(
+    russian: str, english_fragment: str,
+) -> None:
+    language = _language.set("en")
+    try:
+        assert english_fragment in owner_error(russian)
+        assert owner_error(russian + " + secret") == (
+            "Action unavailable. Reopen the section."
+        )
+    finally:
+        _language.reset(language)

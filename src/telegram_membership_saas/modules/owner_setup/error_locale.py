@@ -9,6 +9,37 @@ import re
 from telegram_membership_saas.localization import tr
 
 _ERROR_EN = {
+    # Explicit, token-safe public errors from modules/bots/service.py.
+    "Шифрование токенов ещё не настроено на сервере":
+        "Bot token encryption is not configured. Contact platform support.",
+    "Ключ шифрования ботов настроен некорректно":
+        "Bot token encryption is misconfigured. Contact platform support.",
+    "Подключение ботов доступно только владельцу проекта":
+        "Only the project owner can connect bots.",
+    "Неверный формат токена Telegram-бота":
+        "Invalid Telegram bot token format. Get a token from @BotFather.",
+    "Не удалось проверить токен Telegram-бота":
+        "Could not verify your bot token. Request a new one from @BotFather.",
+    "Telegram не подтвердил токен бота":
+        "Telegram rejected the bot token. Check or regenerate it in @BotFather.",
+    "Telegram не вернул корректную учётную запись бота":
+        "Telegram did not return a valid bot identity.",
+    "Нельзя подключить управляющего бота ViMi Pay как клиентского":
+        "You cannot connect the ViMi Pay platform bot as a customer bot.",
+    "Предыдущий бот ещё удаляется. Дождитесь завершения "
+    "и подключите бота повторно.":
+        "The previous bot is still being removed. Reconnect after removal completes.",
+    "В этом проекте уже подключён другой бот. "
+    "Пока поддерживается один бот на проект. "
+    "Для другого бота создайте отдельный проект; "
+    "токен текущего бота можно обновить здесь.":
+        "Another bot is already connected to this project. "
+        "Only one bot per project is supported; create a separate project "
+        "or rotate the current bot's token here.",
+    "Этот Telegram-бот уже привязан к другому проекту":
+        "This Telegram bot is already linked to another project.",
+    "Добавьте действующий способ оплаты для валюты тарифа":
+        "Add an active payment method supporting the plan currency.",
     "Нет прав на управление этим ботом": "You cannot manage this bot.",
     "Сначала подключите бота": "Connect your bot first.",
     "Этот шаг уже заменён другим запросом":
