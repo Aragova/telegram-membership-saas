@@ -64,11 +64,11 @@ from telegram_membership_saas.modules.owner_setup.service import (
     verify_channel_and_add,
 )
 from telegram_membership_saas.modules.telegram_admin.service import change_project_timezone
-from telegram_membership_saas.tenant_context import TenantContext
 from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
     encode_uuid,
 )
+from telegram_membership_saas.tenant_context import TenantContext
 
 DURATIONS = {
     "week": (1, "week", "7 дней"),
