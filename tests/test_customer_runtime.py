@@ -1,16 +1,21 @@
 """Contract tests for project-scoped customer bot startup and routing."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from aiogram import Bot
+from aiogram.methods import GetUpdates
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 
+from telegram_membership_saas import customer_runtime as runtime
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.customer_runtime import (
+    ObservedCustomerBot,
     check_customer_bot_identity,
     load_customer_bot,
     verify_resource_permissions,
@@ -250,3 +255,65 @@ async def test_central_payment_command_directs_to_customer_bot():
     await handler(message, bot)
     assert "подключённого бота" in bot.send_message.await_args.kwargs["text"]
     assert "/payments" in bot.send_message.await_args.kwargs["text"]
+
+
+async def test_get_updates_success_reports_health_even_without_updates(monkeypatch):
+    observed = []
+    monkeypatch.setattr(Bot, "__call__", AsyncMock(return_value=[]))
+    bot = ObservedCustomerBot(
+        token=TEST_TOKEN, on_poll_response=lambda: observed.append(True)
+    )
+    try:
+        assert await bot(GetUpdates(timeout=1)) == []
+        assert observed == [True]
+    finally:
+        await bot.session.close()
+
+
+async def test_cancel_drains_aiogram_before_access_worker_exits(monkeypatch):
+    project_id = uuid4()
+    polling_stopped = asyncio.Event()
+    polling_started = asyncio.Event()
+    access_stopped = asyncio.Event()
+
+    class DispatcherStub:
+        async def start_polling(self, *_args, **_kwargs):
+            polling_started.set()
+            await polling_stopped.wait()
+
+        async def stop_polling(self):
+            polling_stopped.set()
+
+    dispatcher = DispatcherStub()
+    mock_bot = MagicMock()
+    mock_bot.session.close = AsyncMock()
+
+    async def maintain_access(*_args, **_kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            access_stopped.set()
+
+    monkeypatch.setattr(
+        runtime, "load_customer_bot",
+        AsyncMock(return_value=SimpleNamespace(token=TEST_TOKEN, telegram_bot_id=123456)),
+    )
+    monkeypatch.setattr(
+        runtime, "ObservedCustomerBot", MagicMock(return_value=mock_bot)
+    )
+    monkeypatch.setattr(runtime, "check_customer_bot_identity", AsyncMock())
+    monkeypatch.setattr(runtime, "verify_resource_permissions", AsyncMock())
+    monkeypatch.setattr(runtime, "create_customer_dispatcher", lambda *_a, **_kw: dispatcher)
+    monkeypatch.setattr(runtime, "run_project_runtime_loop", maintain_access)
+
+    task = asyncio.create_task(runtime.run_customer_bot_instance(
+        MagicMock(), project_id=project_id, telegram_bot_id=123456,
+        settings=_settings(),
+    ))
+    await asyncio.wait_for(polling_started.wait(), timeout=2)
+    task.cancel()
+    result = await asyncio.gather(task, return_exceptions=True)
+    assert isinstance(result[0], asyncio.CancelledError)
+    assert polling_stopped.is_set()
+    assert access_stopped.is_set()
+    mock_bot.session.close.assert_awaited_once()
