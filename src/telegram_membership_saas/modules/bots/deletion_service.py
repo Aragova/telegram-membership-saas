@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.access.models import (
 )
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.entitlements.models import EntitlementGrant
+from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments.models import PaymentRequest, PaymentRequestStatus
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions.models import Subscription
@@ -64,6 +65,43 @@ async def _count(session: AsyncSession, model, *conditions) -> int:
     )) or 0)
 
 
+def owner_self_managed_access_predicate():
+    """Owner's own membership may outlive bot credentials.
+
+    Telegram bots cannot ban channel creators or administrators. This only
+    exempts the actual *project owner's* membership after all desired access
+    and projected entitlements for that target are gone. It does not change
+    actual_state, bypass paid grants, or exempt any customer.
+    """
+    owner_without_entitlement = (
+        select(1)
+        .select_from(ProjectCustomer)
+        .join(
+            Project,
+            and_(
+                Project.id == ProjectCustomer.project_id,
+                Project.owner_user_id == ProjectCustomer.user_id,
+            ),
+        )
+        .join(
+            EffectiveAccess,
+            and_(
+                EffectiveAccess.project_id == ProjectCustomer.project_id,
+                EffectiveAccess.customer_id == ProjectCustomer.id,
+                EffectiveAccess.resource_id == AccessState.resource_id,
+            ),
+        )
+        .where(
+            ProjectCustomer.project_id == AccessState.project_id,
+            ProjectCustomer.id == AccessState.customer_id,
+            EffectiveAccess.has_access.is_(False),
+        )
+        .correlate(AccessState)
+        .exists()
+    )
+    return and_(AccessState.desired_access.is_(False), owner_without_entitlement)
+
+
 async def count_retirement_blockers(
     session: AsyncSession, *, project_id: UUID,
 ) -> RetirementBlockers:
@@ -102,6 +140,7 @@ async def count_retirement_blockers(
                 AccessState.desired_access.is_(True),
                 AccessState.actual_state == "granted",
             ),
+            ~owner_self_managed_access_predicate(),
         ) + await _count(
             session, EffectiveAccess,
             EffectiveAccess.project_id == project_id,
