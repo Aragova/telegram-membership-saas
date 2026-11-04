@@ -2,7 +2,6 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -14,14 +13,11 @@ from telegram_membership_saas.config import Settings
 from telegram_membership_saas.customer_supervisor import (
     BotTarget,
     CustomerBotSupervisor,
-    discover_targets,
-    project_has_checkout,
     run_customer_supervisor,
     safe_error_code,
 )
 from telegram_membership_saas.modules.bots.health_service import (
     public_health_label,
-    write_bot_health,
 )
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 from telegram_membership_saas.project_worker_lock import (
@@ -118,7 +114,9 @@ async def test_supervisor_only_launches_ready_projects_and_stops_removed(monkeyp
         current = [_target(pid, a.credential_version + timedelta(seconds=1))]
         await supervisor.reconcile_once()
         assert supervisor.workers[pid].task.cancelling()
-        await asyncio.sleep(0)
+        await asyncio.gather(
+            supervisor.workers[pid].task, return_exceptions=True
+        )
         await supervisor.reconcile_once()
         assert pid not in supervisor.workers
         assert pid not in supervisor.retry_after
