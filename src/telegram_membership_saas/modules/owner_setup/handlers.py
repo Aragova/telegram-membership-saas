@@ -1609,7 +1609,12 @@ def create_owner_setup_router(
             else:
                 raise ValueError(tr("Неизвестное действие", "Unknown action"))
         except (ValueError, PermissionError) as exc:
-            await query.answer(str(exc)[:180], show_alert=True)
+            detail = (
+                obligation_error(str(exc))
+                if action.startswith(("ob:", "obok:", "obpage:"))
+                else str(exc)
+            )
+            await query.answer(detail[:180], show_alert=True)
             return
         await query.answer()
 
