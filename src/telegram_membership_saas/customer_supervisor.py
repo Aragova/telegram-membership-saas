@@ -26,6 +26,7 @@ from telegram_membership_saas.project_worker_lock import (
     confirm_project_lock,
     project_worker_lock,
 )
+from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 
 logger = logging.getLogger(__name__)
 SCAN_SECONDS = 10
@@ -139,9 +140,16 @@ async def run_target(
                 error_code = "worker_stopped"
                 status = "error"
             finally:
-                customer.cancel()
-                guard.cancel()
-                await asyncio.gather(customer, guard, return_exceptions=True)
+                async def shutdown() -> None:
+                    cancel_once(customer)
+                    cancel_once(guard)
+                    await asyncio.gather(
+                        customer, guard, return_exceptions=True
+                    )
+
+                # Do not release the lease even if the supervisor cancels this
+                # target again while aiogram is draining its GetUpdates task.
+                await complete_cleanup(shutdown())
     except asyncio.CancelledError:
         # Configuration switch, token rotation or graceful shutdown.
         status = "stopped"
@@ -199,7 +207,7 @@ class CustomerBotSupervisor:
                 else:
                     self.retry_after[pid] = monotonic() + FAILURE_BACKOFF_SECONDS
             elif pid not in ready or ready[pid] != current.target:
-                current.task.cancel()
+                cancel_once(current.task)
 
         for pid, target in ready.items():
             if pid in self.workers or monotonic() < self.retry_after.get(pid, 0):
@@ -221,12 +229,16 @@ class CustomerBotSupervisor:
                     logger.warning("Customer supervisor discovery failed; retrying")
                 await asyncio.sleep(SCAN_SECONDS)
         finally:
-            for worker in self.workers.values():
-                worker.task.cancel()
-            await asyncio.gather(
-                *(w.task for w in self.workers.values()), return_exceptions=True
-            )
-            self.workers.clear()
+            async def shutdown() -> None:
+                for worker in self.workers.values():
+                    cancel_once(worker.task)
+                await asyncio.gather(
+                    *(w.task for w in self.workers.values()),
+                    return_exceptions=True,
+                )
+                self.workers.clear()
+
+            await complete_cleanup(shutdown())
 
 
 async def run_customer_supervisor(settings: Settings | None = None) -> None:
