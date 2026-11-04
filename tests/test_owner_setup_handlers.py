@@ -200,3 +200,26 @@ async def test_token_sent_as_project_name_is_deleted_not_persisted(monkeypatch):
     assert raw_token not in str(bot.send_message.await_args)
 
 
+
+
+async def test_stale_timezone_button_cannot_change_another_project(monkeypatch):
+    actor_id, origin, selected = uuid4(), uuid4(), uuid4()
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id)
+    )
+    monkeypatch.setattr(
+        ui, "get_selected_project", AsyncMock(return_value=selected)
+    )
+    change = AsyncMock()
+    monkeypatch.setattr(ui, "change_project_timezone", change)
+    bot = _bot()
+    callback = SimpleNamespace(
+        from_user=_user(), data=f"own:tz:Europe/Moscow:{origin.hex}",
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        answer=AsyncMock(),
+    )
+    await _handler("owner_callback", callback=True)(callback, bot)
+    change.assert_not_awaited()
+    assert callback.answer.await_args.kwargs["show_alert"] is True
+
+
