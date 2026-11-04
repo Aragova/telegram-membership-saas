@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
@@ -17,6 +17,50 @@ ERROR_CODES = frozenset({
     "startup_failed", "invalid_credentials", "telegram_check_failed",
     "missing_admin_rights", "worker_stopped", "lock_lost",
 })
+
+
+async def claim_bot_health(
+    lease: AsyncConnection,
+    *,
+    project_id: UUID,
+    bot_id: int,
+    instance_id: UUID,
+) -> None:
+    """Claim startup state on the *same connection* holding the project lease.
+
+    Every new owner must finish this write before releasing its advisory lock.
+    A delayed old claim cannot run after a replacement acquires the lock.
+    Other heartbeats cannot seize ownership; they update only their own ID.
+    The lease connection is dedicated and returned only after worker teardown.
+    """
+    # Advisory-lease connections run AUTOCOMMIT, so this context must be
+    # session-scoped instead of SET LOCAL. The connection is invalidated on
+    # release and is never reused for another owner's project.
+    await lease.execute(
+        text("SELECT set_config('app.current_project_id', :project, false)"),
+        {"project": str(project_id)},
+    )
+    now = datetime.now(UTC)
+    stmt = insert(CustomerBotRuntimeHealth).values(
+        project_id=project_id,
+        telegram_bot_id=bot_id,
+        instance_id=instance_id,
+        state="starting",
+        last_heartbeat=now,
+        error_code=None,
+    )
+    await lease.execute(
+        stmt.on_conflict_do_update(
+            index_elements=[CustomerBotRuntimeHealth.project_id],
+            set_={
+                "telegram_bot_id": stmt.excluded.telegram_bot_id,
+                "instance_id": stmt.excluded.instance_id,
+                "state": stmt.excluded.state,
+                "last_heartbeat": stmt.excluded.last_heartbeat,
+                "error_code": stmt.excluded.error_code,
+            },
+        )
+    )
 
 
 async def write_bot_health(
@@ -49,13 +93,10 @@ async def write_bot_health(
                 index_elements=[CustomerBotRuntimeHealth.project_id],
             )
         else:
-            # A finishing old worker cannot overwrite a different worker's
-            # status. A new startup takes ownership only *after* its caller
-            # has acquired the project lease.
-            allowed = (
-                True if state in {"starting", "setup_needed"} else
-                CustomerBotRuntimeHealth.instance_id == instance_id
-            )
+            # Even "starting" heartbeats must not seize another instance's
+            # row. Ownership changes ONLY in claim_bot_health(), which uses
+            # the project's actual advisory-lock connection.
+            allowed = CustomerBotRuntimeHealth.instance_id == instance_id
             stmt = stmt.on_conflict_do_update(
                 index_elements=[CustomerBotRuntimeHealth.project_id],
                 set_={
