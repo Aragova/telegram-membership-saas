@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
-from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.db import apply_tenant_context, tenant_session_scope
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.health_service import (
     public_health_label,
@@ -428,6 +428,11 @@ async def register_new_owner_bot(
             )
             session.add(project)
             await session.flush()
+            # Project exists in this transaction: bind tenant RLS before
+            # writing the credential, while keeping the insert atomic.
+            await apply_tenant_context(
+                session, TenantContext(user_id=actor_id, project_id=project.id),
+            )
             session.add(BotInstance(
                 project_id=project.id,
                 telegram_bot_id=verified.telegram_bot_id,
