@@ -289,7 +289,8 @@ async def list_checkout_options(
     project_id: UUID,
 ) -> tuple[CheckoutOption, ...]:
     await _require_active_project(session, project_id)
-    await _ensure_bot_not_retiring(session, project_id)
+    # Catalog inspection is needed by the owner dashboard even while a bot
+    # is deleting; only *new checkout creation* must be blocked.
     rows = (await session.execute(_catalog_statement(project_id))).all()
     return tuple(_option_from_row(row) for row in rows)
 
