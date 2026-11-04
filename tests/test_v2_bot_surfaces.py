@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from telegram_membership_saas.modules.owner_setup import handlers as ui
-from telegram_membership_saas.modules.owner_setup.service import SetupOverview
+from telegram_membership_saas.modules.owner_setup.service import (
+    SetupFlow,
+    SetupOverview,
+)
 from telegram_membership_saas.telegram_adapter import (
     create_customer_dispatcher,
 )
@@ -33,7 +36,10 @@ def _callback(action):
 def _bot():
     bot = MagicMock()
     bot.id = 987654321
-    bot.send_message = AsyncMock()
+    bot.send_message = AsyncMock(
+        return_value=SimpleNamespace(message_id=101),
+    )
+    bot.delete_message = AsyncMock(return_value=True)
     return bot
 
 
@@ -151,3 +157,80 @@ async def test_central_registered_bot_links_to_setup_before_sales_ready(monkeypa
     deep_links = [b.url for b in buttons if b.url]
     assert deep_links == ["https://t.me/rus_chan_prem_bot"]
     assert "own:plans" not in [b.callback_data for b in buttons]
+
+
+async def test_central_new_bot_flow_prompts_for_token_not_project_name(monkeypatch):
+    owner_id = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner_id))
+    monkeypatch.setattr(
+        ui, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="configured"),
+    )
+    set_flow = AsyncMock(return_value="session-generation")
+    bind = AsyncMock()
+    monkeypatch.setattr(ui, "set_flow", set_flow)
+    monkeypatch.setattr(ui, "bind_prompt", bind)
+    bot = _bot()
+    await _handler(
+        ui.create_owner_setup_router(MagicMock()), "owner_callback",
+    )(_callback("new"), bot)
+    assert set_flow.await_args.kwargs["step"] == "new_bot_token"
+    assert "BotFather" in bot.send_message.await_args.args[1]
+    assert "название проекта" not in bot.send_message.await_args.args[1].lower()
+    bind.assert_awaited_once()
+
+
+async def test_token_first_connection_deletes_secret_and_links_owner_bot(monkeypatch):
+    owner_id, project_id = uuid4(), uuid4()
+    token = "123456:" + "A" * 35
+    order = []
+
+    async def delete(*_args):
+        order.append("delete")
+        return True
+
+    async def register(*_args, **_kwargs):
+        order.append("register")
+        return SimpleNamespace(username="rus_chan_prem_bot")
+
+    bot = _bot()
+    bot.delete_message = AsyncMock(side_effect=delete)
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner_id))
+    monkeypatch.setattr(
+        ui, "consume_flow",
+        AsyncMock(return_value=SetupFlow("new_bot_token", None, {}, 99)),
+    )
+    monkeypatch.setattr(
+        ui, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="configured"),
+    )
+    monkeypatch.setattr(
+        ui, "create_owner_project", AsyncMock(return_value=project_id),
+    )
+    monkeypatch.setattr(ui, "register_customer_bot", AsyncMock(side_effect=register))
+    monkeypatch.setattr(ui, "set_default_project_name_from_bot", AsyncMock())
+    monkeypatch.setattr(
+        ui, "setup_overview", AsyncMock(return_value=_overview(project_id)),
+    )
+    message = _message()
+    message.text = token
+    message.message_id = 199
+    message.reply_to_message = SimpleNamespace(
+        from_user=SimpleNamespace(id=bot.id), message_id=99,
+    )
+    router = ui.create_owner_setup_router(MagicMock())
+    reply = next(
+        item.callback for item in router.message.handlers
+        if item.callback.__name__ == "owner_reply_handler"
+    )
+    await reply(message, bot)
+    assert order == ["delete", "register"]
+    all_messages = bot.send_message.await_args_list
+    assert all(token not in str(call) for call in all_messages)
+    first = all_messages[0]
+    buttons = [
+        b for row in first.kwargs["reply_markup"].inline_keyboard for b in row
+    ]
+    assert [b.url for b in buttons if b.url] == [
+        "https://t.me/rus_chan_prem_bot",
+    ]
