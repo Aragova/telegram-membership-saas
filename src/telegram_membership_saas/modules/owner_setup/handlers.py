@@ -988,7 +988,7 @@ def create_owner_setup_router(
         )
 
     @router.message(
-        Command("start", "menu", "bots", "plans", "help"),
+        Command("start", "menu", "bots", "plans", "help", "support"),
         OwnerHomeFilter(factory, fixed_project_id),
     )
     async def home_message(message: Message, bot: Bot) -> None:
@@ -1008,7 +1008,7 @@ def create_owner_setup_router(
             bot, chat_id=message.from_user.id, role=role,
             language=current_language(),
         )
-        if command == "/help":
+        if command in ("/help", "/support"):
             await show_help(bot, message.chat.id)
         elif command == "/plans" and fixed_project_id is not None:
             await show_plans(bot, message.chat.id, actor_id, fixed_project_id)
