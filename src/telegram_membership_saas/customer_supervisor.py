@@ -24,7 +24,10 @@ from telegram_membership_saas.db import (
     build_lease_engine,
     build_session_factory,
 )
-from telegram_membership_saas.modules.bots.health_service import write_bot_health
+from telegram_membership_saas.modules.bots.health_service import (
+    claim_bot_health,
+    write_bot_health,
+)
 from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
     confirm_project_lock,
@@ -98,9 +101,9 @@ async def run_target(
         async with project_worker_lock(engine, project_id) as lease:
             acquired = True
             status = "starting"
-            await write_bot_health(
-                factory, project_id=project_id, bot_id=bot_id,
-                instance_id=instance_id, state="starting",
+            await claim_bot_health(
+                lease, project_id=project_id, bot_id=bot_id,
+                instance_id=instance_id,
             )
             # Aiogram retries getUpdates errors internally without ending the
             # polling task. Only successful getUpdates, including empty
