@@ -45,12 +45,6 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
     retry_owner_access,
     revoke_owner_grant,
 )
-from telegram_membership_saas.modules.owner_setup.tenant_admin import (
-    attach_owner_method_currency,
-    change_owner_method_status,
-    get_owner_plan_info,
-    list_owner_methods,
-)
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
     SetupFlow,
@@ -75,6 +69,12 @@ from telegram_membership_saas.modules.owner_setup.service import (
     set_flow,
     setup_overview,
     verify_channel_and_add,
+)
+from telegram_membership_saas.modules.owner_setup.tenant_admin import (
+    attach_owner_method_currency,
+    change_owner_method_status,
+    get_owner_plan_info,
+    list_owner_methods,
 )
 from telegram_membership_saas.modules.telegram_admin.service import change_project_timezone
 from telegram_membership_saas.modules.telegram_commerce.handlers import (
