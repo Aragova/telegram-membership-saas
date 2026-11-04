@@ -173,6 +173,7 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(monkeypatc
         events.append(kwargs["state"])
 
     monkeypatch.setattr(runtime, "project_worker_lock", lease)
+    monkeypatch.setattr(runtime, "claim_bot_health", AsyncMock())
     monkeypatch.setattr(runtime, "confirm_project_lock", AsyncMock())
     monkeypatch.setattr(runtime, "run_customer_bot_instance", fake_customer)
     monkeypatch.setattr(runtime, "write_bot_health", health)
@@ -221,6 +222,7 @@ async def test_repeated_cancel_never_releases_lease_before_slow_customer_teardow
             events.append("customer_cleanup_complete")
 
     monkeypatch.setattr(runtime, "project_worker_lock", lease)
+    monkeypatch.setattr(runtime, "claim_bot_health", AsyncMock())
     monkeypatch.setattr(runtime, "confirm_project_lock", AsyncMock())
     monkeypatch.setattr(runtime, "run_customer_bot_instance", slow_customer)
     monkeypatch.setattr(runtime, "write_bot_health", AsyncMock())
