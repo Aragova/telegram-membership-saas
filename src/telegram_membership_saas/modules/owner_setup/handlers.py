@@ -594,7 +594,7 @@ def create_owner_setup_router(
             return
         # Always delete BotFather credential messages before validating or storing
         # anything, even if the credential was typed incorrectly.
-        if flow.step == "bot_token":
+        if flow.step == "bot_token" or TOKEN_PATTERN.fullmatch(text):
             try:
                 deleted = await bot.delete_message(
                     message.chat.id, message.message_id
