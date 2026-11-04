@@ -217,6 +217,37 @@ async def choose_project(
         state.generation = None
 
 
+async def back_owner_flow(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, bot_scope_id: int = 0,
+) -> SetupFlow | None:
+    """Atomically exit one in-progress wizard and return its prior context.
+
+    Back is navigation only: no plan/payment/subscription data is touched.
+    The old generation and ForceReply become invalid immediately.
+    """
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id),
+    ) as session:
+        state = await session.get(
+            OwnerSetupSession, (actor_id, bot_scope_id), with_for_update=True,
+        )
+        if state is None:
+            return None
+        current = SetupFlow(
+            step=state.step, project_id=state.selected_project_id,
+            payload=dict(state.payload or {}),
+            prompt_message_id=state.prompt_message_id,
+            generation=state.generation,
+        ) if state.step and state.expires_at > datetime.now(UTC) else None
+        state.step = None
+        state.payload = {}
+        state.prompt_message_id = None
+        state.generation = None
+        state.expires_at = datetime.now(UTC)
+        return current
+
+
 async def cancel_owner_flow(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, bot_scope_id: int = 0,
