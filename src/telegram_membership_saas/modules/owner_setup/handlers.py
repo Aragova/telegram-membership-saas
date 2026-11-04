@@ -49,6 +49,13 @@ from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
 )
+from telegram_membership_saas.modules.owner_setup.method_management import (
+    change_owner_method_status_guarded,
+    delete_unused_owner_method,
+    detach_owner_method_currency,
+    edit_owner_method_instructions,
+    rename_owner_method,
+)
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -60,13 +67,6 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
     list_owner_obligations,
     retry_owner_access,
     revoke_owner_grant,
-)
-from telegram_membership_saas.modules.owner_setup.method_management import (
-    change_owner_method_status_guarded,
-    delete_unused_owner_method,
-    detach_owner_method_currency,
-    edit_owner_method_instructions,
-    rename_owner_method,
 )
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     archive_owner_plan,
