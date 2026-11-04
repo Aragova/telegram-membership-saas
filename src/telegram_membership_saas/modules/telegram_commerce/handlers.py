@@ -19,6 +19,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -116,12 +117,12 @@ def _review_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Подтвердить",
+                    text=tr("✅ Подтвердить", "✅ Approve"),
                     style="success",
                     callback_data=f"approve:{token}",
                 ),
                 InlineKeyboardButton(
-                    text="Отклонить",
+                    text=tr("Отклонить", "Reject"),
                     style="danger",
                     callback_data=f"reject:{token}",
                 ),
@@ -131,16 +132,26 @@ def _review_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
 
 
 def _review_text(item: ReviewItem) -> str:
-    username = f"@{item.customer_username}" if item.customer_username else "без username"
+    username = (f"@{item.customer_username}" if item.customer_username
+                else tr("без username", "no username"))
     amount = format_amount(item.amount, 18)
     return (
-        "🧾 Заявка на подтверждение\n\n"
-        f"👤 Покупатель: {username}\n"
-        f"📦 Тариф: {item.plan_name}\n"
-        f"💳 Оплата: {amount} {item.currency_code}\n"
-        f"Способ: {item.payment_method_name}\n"
-        f"🔖 Заявка: {item.request_id}\n\n"
-        "Проверьте поступление средств в банке, затем примите решение."
+        tr(
+            "🧾 Заявка на подтверждение\n\n"
+            f"👤 Покупатель: {username}\n"
+            f"📦 Тариф: {item.plan_name}\n"
+            f"💳 Оплата: {amount} {item.currency_code}\n"
+            f"Способ: {item.payment_method_name}\n"
+            f"🔖 Заявка: {item.request_id}\n\n"
+            "Проверьте поступление средств в банке, затем примите решение.",
+            "🧾 Payment pending review\n\n"
+            f"👤 Customer: {username}\n"
+            f"📦 Plan: {item.plan_name}\n"
+            f"💳 Amount: {amount} {item.currency_code}\n"
+            f"Method: {item.payment_method_name}\n"
+            f"🔖 Request: {item.request_id}\n\n"
+            "Confirm the bank transfer before approving the payment.",
+        )
     )
 
 

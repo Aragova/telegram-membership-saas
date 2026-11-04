@@ -1650,14 +1650,17 @@ def create_owner_setup_router(
             if not deleted:
                 await bot.send_message(
                     message.chat.id,
-                    "⚠️ Не удалось удалить токен. Смените его в BotFather.",
+                    tr("⚠️ Не удалось удалить токен. Смените его в BotFather.",
+                       "⚠️ Could not delete your bot token. Rotate it in BotFather."),
                 )
                 return
             if unexpected_secret:
                 await bot.send_message(
                     message.chat.id,
-                    "⚠️ Вы прислали токен вместо запрошенных данных. "
-                    "Для безопасности смените токен в BotFather и повторите шаг.",
+                    tr("⚠️ Вы прислали токен вместо запрошенных данных. "
+                       "Для безопасности смените токен в BotFather и повторите шаг.",
+                       "⚠️ You sent a bot token instead of the requested information. "
+                       "Rotate your token in BotFather and retry."),
                 )
                 return
         # Old central setup prompts remain in Telegram after a deployment.
@@ -1739,7 +1742,8 @@ def create_owner_setup_router(
                 await show_resources(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "plan_name":
                 if not 2 <= len(text) <= 120:
-                    raise ValueError("Название тарифа: от 2 до 120 символов")
+                    raise ValueError(tr("Название тарифа: от 2 до 120 символов",
+                                        "Plan name must be 2–120 characters"))
                 generation = await advance_flow(
                     factory, actor_id=actor_id, source=flow,
                     step="plan_duration", payload={"name": text},
@@ -1747,7 +1751,7 @@ def create_owner_setup_router(
                 )
                 await bot.send_message(
                     message.chat.id,
-                    "⏳ Выберите срок действия:",
+                    tr("⏳ Выберите срок действия:", "⏳ Choose plan duration:"),
                     reply_markup=_markup([
                         [_button(tr(value[2], format_period(value[0], value[1])),
                                   "duration:" + key + ":" + generation)]
@@ -1761,21 +1765,27 @@ def create_owner_setup_router(
                     plan_id=plan_id,
                     currency_code=flow.payload["currency"], amount=text,
                 )
-                await bot.send_message(message.chat.id, "✅ Цена сохранена.")
+                await bot.send_message(message.chat.id, tr("✅ Цена сохранена.", "✅ Price saved."))
                 await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
             elif flow.step == "method_name":
                 if not 2 <= len(text) <= 120:
-                    raise ValueError("Название способа оплаты: от 2 до 120 символов")
+                    raise ValueError(tr("Название способа оплаты: от 2 до 120 символов",
+                                        "Payment method name must be 2–120 characters"))
                 await prompt(
                     bot, message.chat.id, actor_id,
                     step="method_instruction",
                     source_flow=flow,
                     payload={"currency": flow.payload["currency"], "name": text},
                     text=(
-                        "💳 Отправьте инструкцию покупателю: куда и как переводить "
-                        "деньги.\n\nМожно использовать {amount}, {currency}, "
-                        "{plan}, {period}.\n"
-                        "Например: Переведите {amount} {currency} по СБП на ..."
+                        tr(
+                            "💳 Отправьте инструкцию покупателю: куда и как переводить "
+                            "деньги.\n\nМожно использовать {amount}, {currency}, "
+                            "{plan}, {period}.\n"
+                            "Например: Переведите {amount} {currency} по СБП на ...",
+                            "💳 Send the instructions that buyers should follow.\n\n"
+                            "You can use {amount}, {currency}, {plan}, {period}.\n"
+                            "For example: Transfer {amount} {currency} to ...",
+                        )
                     ),
                 )
             elif flow.step == "method_instruction":
@@ -1784,19 +1794,21 @@ def create_owner_setup_router(
                     name=flow.payload["name"],
                     currency_code=flow.payload["currency"], instruction=text,
                 )
-                await bot.send_message(message.chat.id, "✅ Способ оплаты добавлен.")
+                await bot.send_message(message.chat.id, tr("✅ Способ оплаты добавлен.", "✅ Payment method added."))
                 await show_methods(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "timezone":
                 await change_project_timezone(
                     factory, project_id=project_id,
                     actor_telegram_user_id=message.from_user.id, timezone_name=text,
                 )
-                await bot.send_message(message.chat.id, "✅ Часовой пояс обновлён.")
+                await bot.send_message(message.chat.id, tr("✅ Часовой пояс обновлён.", "✅ Timezone updated."))
                 await show_dashboard(bot, message.chat.id, actor_id, project_id)
         except (ValueError, PermissionError, RuntimeError) as exc:
             await bot.send_message(
                 message.chat.id,
-                "⚠️ " + str(exc)[:220] + "\nОткройте нужный раздел и повторите.",
+                "⚠️ " + str(exc)[:220]
+                + tr("\nОткройте нужный раздел и повторите.",
+                     "\nReopen the relevant section and try again."),
             )
 
     @router.message(StrayBotTokenFilter())
@@ -1811,14 +1823,18 @@ def create_owner_setup_router(
         if not removed:
             await bot.send_message(
                 message.chat.id,
-                "⚠️ Не удалось удалить токен. Удалите сообщение и "
-                "смените токен в @BotFather.",
+                tr("⚠️ Не удалось удалить токен. Удалите сообщение и "
+                   "смените токен в @BotFather.",
+                   "⚠️ Could not delete the token. Delete the message and "
+                   "rotate your token in @BotFather."),
             )
             return
         await bot.send_message(
             message.chat.id,
-            "🔐 Токен удалён из чата. Для подключения "
-            "откройте @vimipay_bot → Подключить бота.",
+            tr("🔐 Токен удалён из чата. Для подключения "
+               "откройте @vimipay_bot → Подключить бота.",
+               "🔐 Token removed from this chat. "
+               "To connect your bot, open @vimipay_bot → Connect bot."),
         )
 
     return router
