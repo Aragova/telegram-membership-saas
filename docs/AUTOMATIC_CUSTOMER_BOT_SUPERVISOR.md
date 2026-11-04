@@ -36,8 +36,10 @@ is needed after the platform operator deploys the supervisor **once**.
   liveness/state and safe error codes. No tokens or Telegram error URLs stored.
 - PostgreSQL session-scoped advisory lock per project protects **both** new
   automatically managed workers and the old central/single-customer pollers.
-  A dedicated connection retains the lock; 3-second verification detects
-  connection-loss and cancels polling if another process owns it.
+  The supervisor uses a **separate SQLAlchemy NullPool lease engine**, so
+  long-lived locks can never occupy the bounded operational pool reserved for
+  payments, access reconciliation, subscriber expiry and liveness.
+  A dedicated lease connection verifies ownership every 3 seconds.
 - One eligible registered bot per project; multiple independent projects
   supported by a single supervisor process. Multiple supervisor replicas
   cannot simultaneously hold the same project's advisory lock.
@@ -49,6 +51,17 @@ is needed after the platform operator deploys the supervisor **once**.
   45-second backoff after a genuine worker failure, and promptly restarts
   after planned token rotation/configuration changes. Telegram getUpdates
   responses must remain fresh; database heartbeat alone is insufficient.
+- Active project admission is bounded by
+  `TMS_CUSTOMER_SUPERVISOR_MAX_BOTS` (default 10; validated maximum 32).
+  Excess registrations show `🟡 В очереди на запуск` and are admitted when
+  capacity is freed. Queue updates cannot overwrite another replica's fresh
+  running status. Size PostgreSQL connection limits and scale supervisor
+  replicas before increasing the cap.
+- Docker `SIGTERM` and `SIGINT` are translated into a single root
+  cancellation; a cancellation-resistant shutdown drains Telegram polling
+  and access handlers before releasing advisory locks. All three Telegram
+  containers have a 60-second Docker stop grace period. This is exercised
+  by an actual SIGTERM subprocess regression test.
 - Access, checkout and payment proofs use existing RLS and state transitions.
   Receipts are not stored; owner verifies actual bank settlement manually.
 
@@ -66,7 +79,9 @@ is needed after the platform operator deploys the supervisor **once**.
    central `/start` remains owner-only; avoid advertising legacy buyer links.
 5. Start `docker compose --profile supervisor up -d --build customer-supervisor`.
    The supervisor has the same Fernet key and database role but no global
-   Telegram token or per-owner project ID.
+   Telegram token or per-owner project ID. Set
+   `TMS_CUSTOMER_SUPERVISOR_MAX_BOTS` only after reviewing the VM and
+   PostgreSQL connection budget.
 6. Observe startup of registered projects and the *actual* owner-menu
    heartbeat; verify Telegram `getMe`, permissions and catalog readiness.
 7. Only after the full setup path works, conduct **one complete final owner
@@ -77,10 +92,11 @@ is needed after the platform operator deploys the supervisor **once**.
 
 ## Non-goals / constraints
 
-- Running any number of customer projects is architecturally supported, but
-  this single-process version holds one PostgreSQL connection per running
-  project for advisory locking. Capacity planning/pooling must be added before
-  high-density SaaS deployment.
+- Multiple independent customer projects are supported, but a process has a
+  deliberate maximum concurrency (10 by default). One **independently pooled**
+  PostgreSQL lease session is held per running project. High-density
+  deployment needs capacity planning, database connection budgeting and
+  scale-out orchestration; this revision is not an unlimited-capacity worker.
 - Multi-bot-per-**project** access routing remains explicitly unsupported
   until access actions identify BotInstance.
 - Health is checked when owner reopens/refreshed the bot view; no background
