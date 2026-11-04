@@ -86,6 +86,15 @@ Telegram poller/worker per BotInstance/project, no second worker from central.
 - Payment proof is delivered through Telegram to the appropriate channel
   owner; do not store, OCR, analyze or archive receipts.
 
+## 4. Platform owner analytics — separately authorized control plane
+
+Implementation and staging activation:
+[PLATFORM_OWNER.md](PLATFORM_OWNER.md). The operator is selected by a
+trusted numeric Telegram ID on the central bot, explicitly provisioned by a
+privileged migration credential, and cross-project reports use only a fixed,
+audited, authorization-gated aggregate database function. Bot registration,
+personal bot administration, and platform analytics remain separate contexts.
+
 ## 4. Platform owner analytics — later independent workstream
 
 Closed platform dashboard provides counts/trends for connected, operating,
