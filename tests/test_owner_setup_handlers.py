@@ -176,3 +176,27 @@ async def test_help_does_not_show_technical_runtime_terms(monkeypatch):
     assert "runtime" not in message
     assert str(project_id) not in message
     query.answer.assert_awaited_once()
+
+
+async def test_token_sent_as_project_name_is_deleted_not_persisted(monkeypatch):
+    uid = uuid4()
+    raw_token = "123456:" + "A" * 35
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
+    monkeypatch.setattr(
+        ui, "consume_flow",
+        AsyncMock(return_value=SetupFlow("project_name", None, {}, 999)),
+    )
+    create_project = AsyncMock()
+    monkeypatch.setattr(ui, "create_owner_project", create_project)
+    bot = _bot()
+    reply = _message(text=raw_token)
+    reply.message_id = 50
+    reply.reply_to_message = SimpleNamespace(
+        message_id=999, from_user=SimpleNamespace(id=bot.id),
+    )
+    await _handler("owner_reply_handler")(reply, bot)
+    bot.delete_message.assert_awaited_once()
+    create_project.assert_not_awaited()
+    assert raw_token not in str(bot.send_message.await_args)
+
+
