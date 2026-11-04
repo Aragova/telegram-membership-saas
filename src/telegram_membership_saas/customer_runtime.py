@@ -31,6 +31,7 @@ from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
 from telegram_membership_saas.project_worker_lock import project_worker_lock
+from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
@@ -213,23 +214,33 @@ async def run_customer_bot_instance(
         # It manages an internal GetUpdates task that must be stopped gracefully.
         await asyncio.shield(polling)
     finally:
-        if polling is not None:
-            if not polling.done() and dispatcher is not None:
-                # Let start_polling acquire its internal lock before stopping;
-                # if it never started, cancelling it cannot leave GetUpdates alive.
-                await asyncio.sleep(0)
+        async def shutdown() -> None:
+            try:
+                if polling is not None:
+                    if not polling.done() and dispatcher is not None:
+                        # Stop aiogram's internally managed GetUpdates reader
+                        # gracefully; cancellation could otherwise orphan it.
+                        await asyncio.sleep(0)
+                        try:
+                            if not polling.done():
+                                await dispatcher.stop_polling()
+                        except RuntimeError:
+                            cancel_once(polling)
+                        except Exception:
+                            cancel_once(polling)
+                    await asyncio.gather(polling, return_exceptions=True)
+            finally:
+                # Access maintenance must also finish before the caller is
+                # permitted to release its per-project advisory lock.
                 try:
-                    if not polling.done():
-                        await dispatcher.stop_polling()
-                except RuntimeError:
-                    polling.cancel()
-            await asyncio.gather(polling, return_exceptions=True)
-        # The per-project access worker must not outlive Telegram polling.
-        if worker is not None:
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
-        if bot is not None:
-            await bot.session.close()
+                    if worker is not None:
+                        cancel_once(worker)
+                        await asyncio.gather(worker, return_exceptions=True)
+                finally:
+                    if bot is not None:
+                        await bot.session.close()
+
+        await complete_cleanup(shutdown())
 
 
 async def run_customer_bot(settings: Settings | None = None) -> None:
@@ -270,8 +281,13 @@ async def run_customer_bot(settings: Settings | None = None) -> None:
                 for task in done:
                     task.result()
             finally:
-                polling.cancel()
-                watchdog.cancel()
-                await asyncio.gather(polling, watchdog, return_exceptions=True)
+                async def shutdown() -> None:
+                    cancel_once(polling)
+                    cancel_once(watchdog)
+                    await asyncio.gather(
+                        polling, watchdog, return_exceptions=True
+                    )
+
+                await complete_cleanup(shutdown())
     finally:
         await engine.dispose()
