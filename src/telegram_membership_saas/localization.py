@@ -47,19 +47,52 @@ def _language_keyboard() -> InlineKeyboardMarkup:
 
 
 async def read_language(
-    factory: async_sessionmaker[AsyncSession], telegram_id: int, telegram_hint: str | None,
+    factory: async_sessionmaker[AsyncSession],
+    telegram_id: int,
+    telegram_hint: str | None,
+    *,
+    remember_hint: bool = False,
 ) -> str:
+    """Manual preference wins, then the last observed Telegram language hint.
+
+    The Bot API only sends the hint on incoming updates. Recording the hint lets
+    outbound payment/access notifications select the recipient's own language.
+    An explicit RU/EN override is never rewritten by auto-detection.
+    """
+    observed = telegram_language(telegram_hint) if telegram_hint else None
     try:
         async with factory() as session:
-            explicit = await session.scalar(
-                select(TelegramUser.preferred_language)
-                .where(TelegramUser.telegram_user_id == telegram_id)
-            )
+            row = (
+                await session.execute(
+                    select(
+                        TelegramUser.preferred_language,
+                        TelegramUser.detected_language,
+                    ).where(TelegramUser.telegram_user_id == telegram_id)
+                )
+            ).first()
+            explicit, detected = row if row else (None, None)
+            if remember_hint and observed is not None and detected != observed:
+                await session.execute(
+                    insert(TelegramUser)
+                    .values(
+                        telegram_user_id=telegram_id,
+                        detected_language=observed,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[TelegramUser.telegram_user_id],
+                        set_={"detected_language": observed},
+                    )
+                )
+                await session.commit()
         if explicit in ("ru", "en"):
             return explicit
+        if remember_hint and observed is not None:
+            return observed
+        if detected in ("ru", "en"):
+            return detected
     except SQLAlchemyError:
-        # An unavailable preference store must not disable a functioning bot.
-        logger.warning("Could not read UI language preference")
+        # No localization failure must block purchases, access or admin actions.
+        logger.warning("Could not read or store UI language preference")
     return telegram_language(telegram_hint)
 
 
@@ -71,8 +104,8 @@ async def recipient_language(
     """Use recipient preference for unsolicited messages, never sender's locale.
 
     Telegram does not provide a user's live language for an outgoing message.
-    Use the recipient's saved explicit choice; without one, keep the historical
-    Russian default until an automatic Telegram language hint is available.
+    Use the recipient's explicit choice or last observed Telegram language.
+    Without either, keep the historical Russian default.
     """
     language = await read_language(factory, telegram_id, "ru")
     token = _language.set(language)
@@ -95,7 +128,9 @@ class LanguageMiddleware(BaseMiddleware):
         source = event.event
         user = getattr(source, "from_user", None)
         language = (
-            await read_language(self.factory, user.id, user.language_code)
+            await read_language(
+                self.factory, user.id, user.language_code, remember_hint=True,
+            )
             if user is not None
             else "en"
         )

@@ -15,6 +15,7 @@ class TelegramUser(Base):
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     preferred_language: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    detected_language: Mapped[str | None] = mapped_column(String(2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
