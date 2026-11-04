@@ -10,6 +10,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
@@ -192,16 +193,31 @@ async def upsert_telegram_user(
     return user
 
 
-async def _require_active_project(session: AsyncSession, project_id: UUID) -> Project:
-    project = await session.scalar(
-        select(Project).where(
-            Project.id == project_id,
-            Project.status == ProjectStatus.ACTIVE.value,
-        )
+async def _require_active_project(
+    session: AsyncSession, project_id: UUID, *, lock_for_checkout: bool = False,
+) -> Project:
+    statement = select(Project).where(
+        Project.id == project_id, Project.status == ProjectStatus.ACTIVE.value,
     )
+    if lock_for_checkout:
+        # Owner retirement takes Project FOR UPDATE, so a checkout already
+        # in progress must finish before the deletion guard is evaluated.
+        statement = statement.with_for_update(read=True)
+    project = await session.scalar(statement)
     if project is None:
         raise ValueError("Project is not active or accessible")
     return project
+
+
+async def _ensure_bot_not_retiring(
+    session: AsyncSession, project_id: UUID,
+) -> None:
+    removing = await session.scalar(select(BotInstance.id).where(
+        BotInstance.project_id == project_id,
+        BotInstance.status == BotInstanceStatus.DELETING.value,
+    ).limit(1))
+    if removing is not None:
+        raise ValueError("Бот отключается. Создание новых оплат временно недоступно")
 
 
 def _catalog_statement(project_id: UUID):
@@ -273,6 +289,7 @@ async def list_checkout_options(
     project_id: UUID,
 ) -> tuple[CheckoutOption, ...]:
     await _require_active_project(session, project_id)
+    await _ensure_bot_not_retiring(session, project_id)
     rows = (await session.execute(_catalog_statement(project_id))).all()
     return tuple(_option_from_row(row) for row in rows)
 
@@ -307,7 +324,8 @@ async def create_checkout_for_telegram_user(
     plan_price_id: UUID,
     payment_method_id: UUID,
 ) -> CheckoutResult:
-    await _require_active_project(session, project_id)
+    await _require_active_project(session, project_id, lock_for_checkout=True)
+    await _ensure_bot_not_retiring(session, project_id)
     option = await _load_checkout_option(
         session,
         project_id=project_id,
