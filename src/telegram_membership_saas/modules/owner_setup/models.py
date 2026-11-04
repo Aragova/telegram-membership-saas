@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, JSON, String, Uuid
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from telegram_membership_saas.db_base import Base
