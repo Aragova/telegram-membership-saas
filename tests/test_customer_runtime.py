@@ -317,3 +317,69 @@ async def test_cancel_drains_aiogram_before_access_worker_exits(monkeypatch):
     assert polling_stopped.is_set()
     assert access_stopped.is_set()
     mock_bot.session.close.assert_awaited_once()
+
+
+async def test_repeated_cancel_cannot_skip_slow_aiogram_shutdown(monkeypatch):
+    project_id = uuid4()
+    polling_started = asyncio.Event()
+    shutdown_started = asyncio.Event()
+    finish_shutdown = asyncio.Event()
+    access_finished = asyncio.Event()
+
+    class SlowDispatcher:
+        async def start_polling(self, *_args, **_kwargs):
+            polling_started.set()
+            await finish_shutdown.wait()
+
+        async def stop_polling(self):
+            shutdown_started.set()
+            await finish_shutdown.wait()
+
+    bot = MagicMock()
+    bot.session.close = AsyncMock()
+
+    async def access_worker(*_args, **_kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            access_finished.set()
+
+    monkeypatch.setattr(
+        runtime, "load_customer_bot",
+        AsyncMock(return_value=SimpleNamespace(
+            token=TEST_TOKEN, telegram_bot_id=123456,
+        )),
+    )
+    monkeypatch.setattr(runtime, "ObservedCustomerBot", MagicMock(return_value=bot))
+    monkeypatch.setattr(runtime, "check_customer_bot_identity", AsyncMock())
+    monkeypatch.setattr(runtime, "verify_resource_permissions", AsyncMock())
+    monkeypatch.setattr(
+        runtime, "create_customer_dispatcher",
+        lambda *_args, **_kwargs: SlowDispatcher(),
+    )
+    monkeypatch.setattr(runtime, "run_project_runtime_loop", access_worker)
+
+    task = asyncio.create_task(runtime.run_customer_bot_instance(
+        MagicMock(), project_id=project_id, telegram_bot_id=123456,
+        settings=_settings(),
+    ))
+    try:
+        await asyncio.wait_for(polling_started.wait(), timeout=2)
+        task.cancel()
+        await asyncio.wait_for(shutdown_started.wait(), timeout=2)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not access_finished.is_set()
+        bot.session.close.assert_not_awaited()
+
+        finish_shutdown.set()
+        await asyncio.wait_for(
+            asyncio.gather(task, return_exceptions=True), timeout=2,
+        )
+        assert access_finished.is_set()
+        bot.session.close.assert_awaited_once()
+    finally:
+        finish_shutdown.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
