@@ -37,6 +37,37 @@ customer notifications through the wrong bot. No payment is changed by
 these old buttons. The legacy combined central bot remains the default
 until staging explicitly performs the cutover.
 
+## Buyer-facing storefront — ViMi Pay v2 stage C
+
+The connected bot's buyer `/start` and `/plans` open the same Telegram-native
+currency/plan catalog. Each offered currency is sourced exclusively from the
+current **active PlanPrice + active PaymentMethodCurrency + active PaymentMethod**
+combination: no base currency, FX conversion, synthetic prices or hardcoded
+bank-provider mappings. A price with several compatible methods appears
+**once** in the list, with method selection on a separate offer screen.
+
+- Select a currency tab at the top: redraw the **same Telegram message**
+  (fallback to a new message only when editing is impossible).
+- See eligible subscription durations and prices, grouped by the linked active
+  channel/group name when available. Large catalogs are paginated; no unbounded
+  Telegram keyboards.
+- Select an offer: see its resource, duration, currency/price and only compatible
+  active methods; changing currency within an offer preserves the plan.
+- Only choosing the payment method creates a checkout request. The existing
+  transactional `create_checkout_for_telegram_user` checks current
+  price/method/project validity again. Old `buy:` callbacks remain compatible.
+- On missing or disabled offers, show a clear stale-offer message rather than
+  creating a checkout. Do not create financial side effects on currency,
+  pagination or offer navigation.
+- Payment proof, owner approval, subscriptions and invitations continue through
+  the existing owner-bot commerce handlers; no second poller or separate DB.
+
+The implementation is server-rendered in Telegram: `storefront.py` prepares
+display-only view models/inline buttons; `service.py` remains authoritative
+for offer eligibility and purchase revalidation. Run the full real Telegram
+E2E in staging **after authorized merge and deployment**, including two
+currencies and methods, one disabled method and an expired callback.
+
 ## Important limitations
 
 This first slice handles **one registered customer bot per project**;
