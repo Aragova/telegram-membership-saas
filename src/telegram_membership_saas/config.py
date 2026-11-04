@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     customer_telegram_bot_id: int | None = None
     telegram_central_access_enabled: bool = True
     telegram_worker_poll_seconds: float = 1.0
+    customer_supervisor_max_bots: int = Field(default=10, ge=1, le=32)
     default_project_timezone: str = "Europe/Moscow"
 
     model_config = SettingsConfigDict(
