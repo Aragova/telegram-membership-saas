@@ -742,7 +742,10 @@ def create_owner_setup_router(
                 ),
             ])
             rows.append([
-                _button("✅ Опубликовать тариф", "publish:" + plan_id.hex, "success"),
+                _button(
+                    "✅ Опубликовать тариф",
+                    "publish:" + token + ":" + data.revision, "success",
+                ),
             ])
         elif data.status == "active":
             rows.append([_button(
@@ -1859,7 +1862,8 @@ def create_owner_setup_router(
                     reply_markup=_markup([
                         [_button(
                             tr("⏸️ Да, снять с продажи", "⏸️ Confirm stop"),
-                            "plarchok:" + encode_uuid(plan_id), "danger",
+                            "plarchok:" + encode_uuid(plan_id) + ":" + info.revision,
+                            "danger",
                         )],
                         [_button(
                             tr("⬅️ Оставить тариф", "⬅️ Keep plan"),
@@ -1868,10 +1872,11 @@ def create_owner_setup_router(
                     ]),
                 )
             elif action.startswith("plarchok:"):
-                plan_id = decode_uuid(action.split(":", 1)[1])
+                _, token, revision = action.split(":", 2)
+                plan_id = decode_uuid(token)
                 await archive_owner_plan(
                     factory, actor_id=actor_id, project_id=project_id,
-                    plan_id=plan_id,
+                    plan_id=plan_id, expected_revision=revision,
                 )
                 await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
             elif action.startswith("plrestore:"):
@@ -1894,7 +1899,8 @@ def create_owner_setup_router(
                     reply_markup=_markup([
                         [_button(
                             tr("✅ Возобновить продажи", "✅ Resume sales"),
-                            "plrestoreok:" + encode_uuid(plan_id), "success",
+                            "plrestoreok:" + encode_uuid(plan_id) + ":" + info.revision,
+                            "success",
                         )],
                         [_button(
                             tr("⬅️ Оставить в архиве", "⬅️ Keep archived"),
@@ -1903,16 +1909,12 @@ def create_owner_setup_router(
                     ]),
                 )
             elif action.startswith("plrestoreok:"):
-                plan_id = decode_uuid(action.split(":", 1)[1])
-                info = await get_owner_plan_info(
-                    factory, actor_id=actor_id, project_id=project_id,
-                    plan_id=plan_id,
-                )
-                if info.status != "archived":
-                    raise ValueError("Тариф изменился. Откройте карточку заново.")
+                _, token, revision = action.split(":", 2)
+                plan_id = decode_uuid(token)
                 await publish_owner_plan(
                     factory, actor_id=actor_id, project_id=project_id,
-                    plan_id=plan_id,
+                    plan_id=plan_id, expected_status="archived",
+                    expected_revision=revision,
                 )
                 await show_plan_card(bot, user_id, actor_id, project_id, plan_id)
             elif action.startswith("pldelete:"):
@@ -1948,7 +1950,8 @@ def create_owner_setup_router(
                     reply_markup=_markup([
                         [_button(
                             tr("🗑 Да, удалить тариф", "🗑 Yes, delete plan"),
-                            "pldelok:" + encode_uuid(plan_id) + ":" + status_code,
+                            "pldelok:" + encode_uuid(plan_id) + ":" + status_code
+                            + ":" + info.revision,
                             "danger",
                         )],
                         [_button(
@@ -1958,7 +1961,7 @@ def create_owner_setup_router(
                     ]),
                 )
             elif action.startswith("pldelok:"):
-                _, token, code = action.split(":", 2)
+                _, token, code, revision = action.split(":", 3)
                 expected = {"d": "draft", "a": "active", "r": "archived"}.get(
                     code
                 )
@@ -1967,6 +1970,7 @@ def create_owner_setup_router(
                 await delete_unused_owner_plan(
                     factory, actor_id=actor_id, project_id=project_id,
                     plan_id=decode_uuid(token), expected_status=expected,
+                    expected_revision=revision,
                 )
                 await bot.send_message(
                     user_id,
@@ -1986,11 +1990,15 @@ def create_owner_setup_router(
                     ),
                 )
             elif action.startswith("publish:"):
-                plan_id = UUID(hex=action.split(":", 1)[1])
+                # Old pre-management publish buttons are intentionally stale:
+                # publication requires the draft's current plan revision.
+                _, token, revision = action.split(":", 2)
+                plan_id = decode_uuid(token)
                 try:
                     name = await publish_owner_plan(
                         factory, actor_id=actor_id, project_id=project_id,
-                        plan_id=plan_id,
+                        plan_id=plan_id, expected_status="draft",
+                        expected_revision=revision,
                     )
                 except ValueError as exc:
                     if "Добавьте действующий способ оплаты" not in str(exc):
