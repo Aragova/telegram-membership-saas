@@ -1,5 +1,6 @@
 from telegram_membership_saas.modules.access import AccessAction, AccessState, EffectiveAccess
 from telegram_membership_saas.modules.bots import BotInstance
+from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.outbox import OutboxEvent
