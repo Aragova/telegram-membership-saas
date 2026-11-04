@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 
-STATES = frozenset({"setup_needed", "starting", "running", "stopped", "error"})
+STATES = frozenset({"setup_needed", "queued", "starting", "running", "stopped", "error"})
 ERROR_CODES = frozenset({
     "startup_failed", "invalid_credentials", "telegram_check_failed",
     "missing_admin_rights", "worker_stopped", "lock_lost",
@@ -42,10 +42,18 @@ async def write_bot_health(
         stmt = insert(CustomerBotRuntimeHealth).values(**values)
         # A finishing old worker cannot overwrite a different worker's status.
         # A new startup (after obtaining the advisory lock) may take ownership.
-        allowed = (
-            True if state in {"starting", "setup_needed"} else
-            CustomerBotRuntimeHealth.instance_id == instance_id
-        )
+        if state == "queued":
+            # Other supervisor replicas may already be running the project.
+            # Never overwrite their recent live heartbeat with 'queued'.
+            allowed = (
+                CustomerBotRuntimeHealth.last_heartbeat
+                < datetime.now(UTC) - timedelta(seconds=45)
+            )
+        else:
+            allowed = (
+                True if state in {"starting", "setup_needed"} else
+                CustomerBotRuntimeHealth.instance_id == instance_id
+            )
         stmt = stmt.on_conflict_do_update(
             index_elements=[CustomerBotRuntimeHealth.project_id],
             set_={
@@ -88,6 +96,8 @@ def public_health_label(
         return "🟢 Работает", True
     if health.state == "starting":
         return "🟡 Запускается", False
+    if health.state == "queued":
+        return "🟡 В очереди на запуск", False
     if health.state == "setup_needed":
         return "🟡 Требуется настройка", False
     if health.state == "error":
