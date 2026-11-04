@@ -179,6 +179,20 @@ async def bind_prompt(
         state.prompt_message_id = message_id
 
 
+async def is_expected_prompt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, reply_message_id: int,
+) -> bool:
+    async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
+        state = await session.get(OwnerSetupSession, actor_id)
+        return bool(
+            state is not None
+            and state.step
+            and state.prompt_message_id == reply_message_id
+            and state.expires_at > datetime.now(UTC)
+        )
+
+
 async def consume_flow(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
