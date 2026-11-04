@@ -19,7 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.customer_runtime import run_customer_bot_instance
-from telegram_membership_saas.db import build_engine, build_session_factory
+from telegram_membership_saas.db import (
+    build_engine,
+    build_lease_engine,
+    build_session_factory,
+)
 from telegram_membership_saas.modules.bots.health_service import write_bot_health
 from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
@@ -188,6 +192,7 @@ class CustomerBotSupervisor:
         self.settings = settings
         self.workers: dict[UUID, RunningTarget] = {}
         self.retry_after: dict[UUID, float] = {}
+        self._supervisor_id = uuid4()
 
     async def reconcile_once(self) -> None:
         targets = {t.project_id: t for t in await discover_targets(self.factory)}
@@ -209,8 +214,20 @@ class CustomerBotSupervisor:
             elif pid not in ready or ready[pid] != current.target:
                 cancel_once(current.task)
 
-        for pid, target in ready.items():
+        # Each running project consumes one dedicated PostgreSQL advisory-lock
+        # connection. Never admit more than the configured safe DB capacity.
+        for pid, target in sorted(ready.items(), key=lambda item: item[0].int):
             if pid in self.workers or monotonic() < self.retry_after.get(pid, 0):
+                continue
+            if len(self.workers) >= self.settings.customer_supervisor_max_bots:
+                # Do not overwrite a healthy status owned by another replica.
+                await write_bot_health(
+                    self.factory,
+                    project_id=pid,
+                    bot_id=target.telegram_bot_id,
+                    instance_id=self._supervisor_id,
+                    state="queued",
+                )
                 continue
             task = asyncio.create_task(
                 run_target(self.engine, self.factory, target, settings=self.settings)
@@ -252,11 +269,22 @@ async def run_customer_supervisor(settings: Settings | None = None) -> None:
         raise RuntimeError(
             "Disable the legacy central customer access worker before launching supervisor"
         )
-    engine = build_engine(current)
+    # Isolation is essential: the long-lived advisory-lock connections must
+    # never consume the pool used by payments, access revocation or discovery.
+    operational_engine = build_engine(current)
+    lease_engine = build_lease_engine(current)
     try:
         supervisor = CustomerBotSupervisor(
-            engine, build_session_factory(engine), current,
+            lease_engine,
+            build_session_factory(operational_engine),
+            current,
         )
         await supervisor.run()
     finally:
-        await engine.dispose()
+        async def shutdown_engines() -> None:
+            try:
+                await lease_engine.dispose()
+            finally:
+                await operational_engine.dispose()
+
+        await complete_cleanup(shutdown_engines())
