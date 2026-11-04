@@ -31,6 +31,7 @@ from telegram_membership_saas.project_worker_lock import (
     confirm_project_lock,
     project_worker_lock,
 )
+from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_bot, create_dispatcher
 
 logger = logging.getLogger(__name__)
@@ -204,7 +205,9 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
                     if not polling.done():
                         await dispatcher.stop_polling()
                 except RuntimeError:
-                    polling.cancel()
+                    cancel_once(polling)
+                except Exception:
+                    cancel_once(polling)
             await asyncio.gather(polling, return_exceptions=True)
 
     try:
@@ -220,7 +223,7 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
             try:
                 await asyncio.shield(polling)
             finally:
-                await stop_dispatcher()
+                await complete_cleanup(stop_dispatcher())
         else:
             project_id = current.telegram_project_id
             assert project_id is not None
@@ -253,17 +256,21 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
                     for task in done:
                         task.result()
                 finally:
-                    # Order matters: both Telegram polling and access queue
-                    # maintenance must be drained before releasing DB lock.
-                    await stop_dispatcher()
-                    if guard is not None:
-                        guard.cancel()
-                    if worker is not None:
-                        worker.cancel()
-                    await asyncio.gather(
-                        *(task for task in (worker, guard) if task is not None),
-                        return_exceptions=True,
-                    )
+                    # Repeated termination signals must not interrupt cleanup.
+                    # The lock is released only after both polling and access
+                    # have stopped and all in-flight handlers were awaited.
+                    async def shutdown() -> None:
+                        try:
+                            await stop_dispatcher()
+                        finally:
+                            cancel_once(guard)
+                            cancel_once(worker)
+                            await asyncio.gather(
+                                *(task for task in (worker, guard) if task is not None),
+                                return_exceptions=True,
+                            )
+
+                    await complete_cleanup(shutdown())
     finally:
         await bot.session.close()
         await engine.dispose()
