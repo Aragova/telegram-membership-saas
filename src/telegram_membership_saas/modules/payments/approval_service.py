@@ -30,6 +30,7 @@ from telegram_membership_saas.modules.payments.request_service import (
 )
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.projects import Permission
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.modules.subscriptions import (
     Subscription,
     SubscriptionStatus,
@@ -137,6 +138,8 @@ async def approve_payment_request(
     reviewer_user_id: UUID,
     reviewed_at: datetime | None = None,
 ) -> ApprovalResult:
+    # Serialize paid grants with owner retirement and early subscription end.
+    await checkout_retirement_lock(session, project_id)
     project = await require_payment_permission(
         session,
         project_id=project_id,
