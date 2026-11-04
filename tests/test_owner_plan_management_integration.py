@@ -230,22 +230,58 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
             name="Delete me", duration_value=1, duration_unit="week",
             resource_id=first_id,
         )
+        old_unused = await get_owner_plan_info(
+            factory, actor_id=owner, project_id=project, plan_id=unused,
+        )
         await save_owner_price(
             factory, actor_id=owner, project_id=project,
-            plan_id=unused, currency_code="USD", amount="9",
+            plan_id=unused, currency_code="RUB", amount="9",
         )
+        # Even with unchanged draft status, a price edit invalidates old delete.
+        with pytest.raises(ValueError, match="изменился"):
+            await delete_unused_owner_plan(
+                factory, actor_id=owner, project_id=project,
+                plan_id=unused, expected_status="draft",
+                expected_revision=old_unused.revision,
+            )
         with pytest.raises((TenantAccessDenied, PermissionError)):
             await delete_unused_owner_plan(
                 factory, actor_id=outsider, project_id=project,
                 plan_id=unused, expected_status="draft",
                 expected_revision="old-confirmation",
             )
+        await publish_owner_plan(
+            factory, actor_id=owner, project_id=project, plan_id=unused,
+        )
+        active_info = await get_owner_plan_info(
+            factory, actor_id=owner, project_id=project, plan_id=unused,
+        )
+        await archive_owner_plan(
+            factory, actor_id=owner, project_id=project, plan_id=unused,
+            expected_revision=active_info.revision,
+        )
+        archived_info = await get_owner_plan_info(
+            factory, actor_id=owner, project_id=project, plan_id=unused,
+        )
+        await publish_owner_plan(
+            factory, actor_id=owner, project_id=project, plan_id=unused,
+            expected_status="archived",
+            expected_revision=archived_info.revision,
+        )
+        # Archived + restored has the SAME status as the stale confirmation,
+        # but it must still fail after the intervening lifecycle changes.
+        with pytest.raises(ValueError, match="изменился"):
+            await delete_unused_owner_plan(
+                factory, actor_id=owner, project_id=project,
+                plan_id=unused, expected_status="active",
+                expected_revision=active_info.revision,
+            )
         unused_info = await get_owner_plan_info(
             factory, actor_id=owner, project_id=project, plan_id=unused,
         )
         deleted = await delete_unused_owner_plan(
             factory, actor_id=owner, project_id=project,
-            plan_id=unused, expected_status="draft",
+            plan_id=unused, expected_status="active",
             expected_revision=unused_info.revision,
         )
         assert deleted == "Delete me"
