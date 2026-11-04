@@ -182,7 +182,12 @@ async def finalize_bot_retirement(
         # visible after the owner clicked confirm.
         blockers = await count_retirement_blockers(session, project_id=project_id)
         if blockers.has_blockers:
-            raise ValueError("Retirement obligations appeared during shutdown")
+            # A checkout already in flight might have committed after the
+            # request. Restore this bot so ongoing access work can continue;
+            # the owner can retry after all obligations are settled.
+            bot.status = BotInstanceStatus.REGISTERED.value
+            await session.flush()
+            return False
         await session.delete(bot)
         await session.flush()
         return True
