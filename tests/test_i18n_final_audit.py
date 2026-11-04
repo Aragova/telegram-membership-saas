@@ -1,19 +1,19 @@
 """Final bilingual UI audit: service errors and central legacy redirects."""
 from decimal import Decimal
 from types import SimpleNamespace
-
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
+import pytest
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.obligation_locale import obligation_error
+from telegram_membership_saas.modules.pricing.service import _normalize_amount
 from telegram_membership_saas.modules.telegram_admin.redirects import (
     create_central_cutover_router,
 )
-from telegram_membership_saas.modules.pricing.service import _normalize_amount
 
 
 def test_owner_service_errors_are_localized_without_changing_service_text() -> None:
