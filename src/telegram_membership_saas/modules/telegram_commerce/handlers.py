@@ -606,6 +606,12 @@ def create_telegram_commerce_router(
                      "Reply to this message with a receipt photo or a document "
                      "(PDF/JPG/PNG/WEBP). Your payment will not be sent for review "
                      "until the attachment is received.")
+                + tr(
+                    "\n\nМожно выйти через /menu. Заявка останется "
+                    "в разделе /subscriptions.",
+                    "\n\nYou can leave via /menu. Your pending request "
+                    "stays in /subscriptions.",
+                )
             ),
             reply_markup=ForceReply(
                 selective=True,
@@ -630,6 +636,7 @@ def create_telegram_commerce_router(
                        "A receipt photo or PDF/JPG/PNG/WEBP document is required. "
                        "Reply to the payment request with an attachment.")
                 ),
+                reply_markup=_account_navigation_keyboard(),
             )
             return
 
@@ -678,6 +685,7 @@ def create_telegram_commerce_router(
                        "The administrator will verify your payment and notify you.")
                 ),
                 parse_mode="HTML",
+                reply_markup=_account_navigation_keyboard(),
             )
         else:
             await bot.send_message(
@@ -688,6 +696,7 @@ def create_telegram_commerce_router(
                        "Your payment request was recorded, but the receipt could not be "
                        "delivered to the administrator. Reply with the attachment again.")
                 ),
+                reply_markup=_account_navigation_keyboard(),
             )
 
     @router.callback_query(F.data.startswith("cancel:"))
@@ -710,6 +719,7 @@ def create_telegram_commerce_router(
         await bot.send_message(
             chat_id=callback.from_user.id,
             text=tr("Заявка на оплату отменена.", "Your payment request was canceled."),
+            reply_markup=_account_navigation_keyboard(),
         )
 
     async def _review_callback(
@@ -773,6 +783,7 @@ def create_telegram_commerce_router(
                 result.item.customer_telegram_user_id,
                 _customer_review_result_text(result, approve=approve),
                 parse_mode="HTML",
+                reply_markup=_account_navigation_keyboard(),
             )
 
     @router.callback_query(F.data.startswith("approve:"))
