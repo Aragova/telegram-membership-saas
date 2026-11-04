@@ -72,7 +72,37 @@ _ERROR_EN = {
         "Review payment requests inside your connected bot.",
 }
 
+# Public English strings already produced by tr(...) at handler boundaries.
+# Keep only known, static UI strings: never leak arbitrary exception contents.
+_KNOWN_EN_ERRORS = frozenset(_ERROR_EN.values()) | {
+    "Bot connections are unavailable",
+    "Create or select a connection first",
+    "Another project menu. Reopen My bots.",
+    "This bot cannot be removed.",
+    "Project changed. Reopen My bots.",
+    "Another project menu is open.",
+    "Unknown action",
+    "Another project menu. Refresh obligations.",
+    "Action is stale. Refresh obligations.",
+    "Action was completed or has expired.",
+    "Bot connections are temporarily unavailable",
+    "Unsupported chat type",
+    "Connect an active channel or group first",
+    "Unsupported duration",
+    "Project changed. Please retry.",
+    "Connect a channel first",
+    "Unsupported currency",
+    "This menu belongs to another project. Reopen settings.",
+    "You cannot change another bot's settings",
+    "Invalid token format. Get a token from @BotFather.",
+    "Invalid token format. Get it from BotFather.",
+    "Plan name must be 2–120 characters",
+    "Payment method name must be 2–120 characters",
+}
+
 
 def owner_error(message: str) -> str:
-    """A bounded public message; never leak unexpected internals in English."""
+    """Preserve safe, already localized errors; redact unknown English exceptions."""
+    if message in _KNOWN_EN_ERRORS:
+        return message
     return tr(message, _ERROR_EN.get(message, "Action unavailable. Reopen the section."))

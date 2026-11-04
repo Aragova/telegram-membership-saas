@@ -6,6 +6,7 @@ from uuid import uuid4
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
+from telegram_membership_saas.modules.owner_setup.obligation_locale import obligation_error
 from telegram_membership_saas.modules.telegram_admin.redirects import (
     create_central_cutover_router,
 )
@@ -23,6 +24,15 @@ def test_owner_service_errors_are_localized_without_changing_service_text() -> N
         )
         assert "4,000" in owner_error(
             "Инструкция слишком длинная (максимум 4000 символов)"
+        )
+        assert owner_error("Invalid token format. Get it from BotFather.") == (
+            "Invalid token format. Get it from BotFather."
+        )
+        assert owner_error("Plan name must be 2–120 characters") == (
+            "Plan name must be 2–120 characters"
+        )
+        assert owner_error("Payment method name must be 2–120 characters") == (
+            "Payment method name must be 2–120 characters"
         )
         assert owner_error("internal-db-identifier-123") == (
             "Action unavailable. Reopen the section."
@@ -107,5 +117,21 @@ async def test_connected_owner_error_callback_stays_authorized_and_english(
         )
         setup.assert_awaited_once()
         bot.send_message.assert_not_awaited()
+    finally:
+        _language.reset(token)
+
+
+def test_obligation_errors_preserve_safe_english_only() -> None:
+    token = _language.set("en")
+    try:
+        assert obligation_error("Action is stale. Refresh obligations.") == (
+            "Action is stale. Refresh obligations."
+        )
+        assert obligation_error("Действие доступно только владельцу проекта") == (
+            "Only the project owner can perform this action."
+        )
+        assert obligation_error("raw-driver-error-with-ids") == (
+            "Action unavailable. Refresh the list."
+        )
     finally:
         _language.reset(token)
