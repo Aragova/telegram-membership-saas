@@ -65,6 +65,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
     SetupFlow,
     advance_flow,
+    back_owner_flow,
     bind_prompt,
     can_manage_project,
     cancel_owner_flow,
@@ -378,8 +379,8 @@ def create_owner_setup_router(
         sent = await bot.send_message(
             user_id,
             text + tr(
-                "\n\nДля отмены настройки отправьте /cancel.",
-                "\n\nTo cancel setup, send /cancel.",
+                "\n\n↩ /back — назад · /cancel — в меню.",
+                "\n\n↩ /back — back · /cancel — main menu.",
             ),
             parse_mode="HTML",
             reply_markup=ForceReply(
@@ -969,6 +970,26 @@ def create_owner_setup_router(
         )
 
 
+    async def show_duration_picker(
+        bot: Bot, user_id: int, generation: str,
+    ) -> None:
+        """Provide a safe Back action tied to this exact wizard generation."""
+        rows = [
+            [_button(
+                tr(label, format_period(value, unit)),
+                "duration:" + key + ":" + generation,
+            )]
+            for key, (value, unit, label) in DURATIONS.items()
+        ]
+        rows.append([_button(
+            tr("⬅️ Все тарифы", "⬅️ All plans"),
+            "flowback:plans:" + generation,
+        )])
+        await bot.send_message(
+            user_id, tr("⏳ Выберите срок действия:", "⏳ Choose plan duration:"),
+            reply_markup=_markup(rows),
+        )
+
     async def currency_picker(
         bot: Bot, user_id: int, actor_id: UUID, *,
         mode: str, plan_id: UUID | None = None,
@@ -981,7 +1002,10 @@ def create_owner_setup_router(
             )]
             for code in codes
         ]
-        rows.append([_button("⬅️ Панель управления", "dashboard")])
+        rows.append([_button(
+            tr("⬅️ К способам оплаты", "⬅️ Payment methods"),
+            "methods",
+        )])
         await bot.send_message(
             user_id, tr("💱 Выберите валюту:", "💱 Choose a currency:"),
             reply_markup=_markup(rows),
@@ -1046,6 +1070,54 @@ def create_owner_setup_router(
             reply_markup=ReplyKeyboardRemove(),
         )
         await show_home(bot, message.chat.id, actor_id)
+
+    @router.message(Command("back"), OwnerHomeFilter(factory, fixed_project_id))
+    async def back_setup_message(message: Message, bot: Bot) -> None:
+        """Return to the parent section, clearing only this unfinished wizard."""
+        if not _private(message):
+            return
+        actor_id = await actor(message.from_user)
+        prior = await back_owner_flow(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+        )
+        if (
+            prior is None or prior.project_id is None
+            or (fixed_project_id is not None and prior.project_id != fixed_project_id)
+        ):
+            # Also clear a stale chat-picker keyboard after the 15-minute TTL.
+            # The expired flow no longer has a reliable step to inspect.
+            await bot.send_message(
+                message.chat.id,
+                tr("↩️ Возврат в главное меню.", "↩️ Back to the main menu."),
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            await show_home(bot, message.chat.id, actor_id)
+            return
+        project_id = prior.project_id
+        if prior.step == "chat_picker":
+            await bot.send_message(
+                message.chat.id,
+                tr("Выбор чата закрыт.", "Chat selection closed."),
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        if prior.step in ("plan_name", "plan_duration", "plan_resource"):
+            await show_plans(bot, message.chat.id, actor_id, project_id)
+        elif prior.step == "price_amount":
+            try:
+                plan_id = UUID(hex=prior.payload["plan_id"])
+            except (KeyError, TypeError, ValueError, AttributeError):
+                await show_plans(bot, message.chat.id, actor_id, project_id)
+            else:
+                await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+        elif prior.step in ("method_name", "method_instruction"):
+            await show_methods(bot, message.chat.id, actor_id, project_id)
+        elif prior.step in ("chat_picker", "resource_reference"):
+            await show_resources(bot, message.chat.id, actor_id, project_id)
+        elif prior.step == "bot_token" and fixed_project_id is None:
+            await show_bots(bot, message.chat.id, actor_id, project_id)
+        else:
+            await show_dashboard(bot, message.chat.id, actor_id, project_id)
 
     @router.callback_query(F.data.startswith("own:"))
     async def owner_callback(query: CallbackQuery, bot: Bot) -> None:
@@ -1504,6 +1576,38 @@ def create_owner_setup_router(
                     text=tr("📦 Как назвать новый тариф?\nНапример: Premium",
                              "📦 What is the new plan's name?\nFor example: Premium"),
                 )
+            elif action.startswith("flowback:"):
+                # A stale keyboard must never reset a newer wizard.
+                _, target, generation = action.split(":", 2)
+                if target not in ("plans", "duration"):
+                    raise ValueError(tr("Шаг настройки устарел",
+                                        "This setup step has expired"))
+                flow = await consume_button_flow(
+                    factory, actor_id=actor_id,
+                    expected_step=(
+                        "plan_duration" if target == "plans" else "plan_resource"
+                    ),
+                    generation=generation,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
+                    discard=(target == "plans"),
+                )
+                if flow.project_id != project_id:
+                    raise ValueError(tr(
+                        "Проект изменился. Повторите действие.",
+                        "Project changed. Please retry.",
+                    ))
+                if target == "plans":
+                    # The button step and generation are already invalidated
+                    # atomically by consume_button_flow(discard=True).
+                    await show_plans(bot, user_id, actor_id, project_id)
+                else:
+                    fresh = await advance_flow(
+                        factory, actor_id=actor_id, source=flow,
+                        step="plan_duration",
+                        payload={"name": flow.payload["name"]},
+                        bot_scope_id=bot.id if fixed_project_id else 0,
+                    )
+                    await show_duration_picker(bot, user_id, fresh)
             elif action.startswith("duration:"):
                 _, key, generation = action.split(":", 2)
                 if key not in DURATIONS:
@@ -1547,7 +1651,13 @@ def create_owner_setup_router(
                         user_id, tr("📢 Какой канал откроет этот тариф?",
                                      "📢 Which channel does this plan unlock?"),
                         reply_markup=_markup(
-                            rows + [[_button("✖️ Отмена", "cancel")]],
+                            rows + [
+                                [_button(
+                                    tr("⬅️ Выбор срока", "⬅️ Choose duration"),
+                                    "flowback:duration:" + generation,
+                                )],
+                                [_button("✖️ Отмена", "cancel")],
+                            ],
                         ),
                     )
             elif action.startswith("use:"):
@@ -1656,6 +1766,10 @@ def create_owner_setup_router(
                     await bot.send_message(
                         user_id, tr("Все доступные валюты уже подключены.",
                                      "All available currencies are already enabled."),
+                        reply_markup=_markup([[_button(
+                            tr("⬅️ К способу оплаты", "⬅️ Payment method"),
+                            "method:" + method_id.hex,
+                        )]]),
                     )
                 else:
                     rows.append([
@@ -1741,6 +1855,10 @@ def create_owner_setup_router(
                     )
                 ]
                 rows.append([_button("✍️ Указать другой", "tzcustom")])
+                rows.append([_button(
+                    tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
+                    "dashboard",
+                )])
                 await bot.send_message(
                     user_id, tr("🌍 Выберите часовой пояс:", "🌍 Choose a timezone:"),
                     reply_markup=_markup(rows),
@@ -1839,6 +1957,15 @@ def create_owner_setup_router(
             await bot.send_message(
                 message.chat.id, "⚠️ " + owner_error(str(exc)),
                 reply_markup=ReplyKeyboardRemove(),
+            )
+            await bot.send_message(
+                message.chat.id,
+                tr("Вернуться к управлению каналами",
+                   "Return to channel management"),
+                reply_markup=_markup([[_button(
+                    tr("⬅️ Каналы и группы", "⬅️ Channels and groups"),
+                    "resources",
+                )]]),
             )
             return
         await bot.send_message(
@@ -2025,14 +2152,8 @@ def create_owner_setup_router(
                     step="plan_duration", payload={"name": text},
                     bot_scope_id=bot.id if fixed_project_id else 0,
                 )
-                await bot.send_message(
-                    message.chat.id,
-                    tr("⏳ Выберите срок действия:", "⏳ Choose plan duration:"),
-                    reply_markup=_markup([
-                        [_button(tr(value[2], format_period(value[0], value[1])),
-                                  "duration:" + key + ":" + generation)]
-                        for key, value in DURATIONS.items()
-                    ] + [[_button("✖️ Отмена", "cancel")]]),
+                await show_duration_picker(
+                    bot, message.chat.id, generation,
                 )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
@@ -2086,11 +2207,32 @@ def create_owner_setup_router(
                 )
                 await show_dashboard(bot, message.chat.id, actor_id, project_id)
         except (ValueError, PermissionError, RuntimeError) as exc:
+            destination = {
+                "plan_name": "plans",
+                "plan_duration": "plans",
+                "plan_resource": "plans",
+                "resource_reference": "resources",
+                "method_name": "methods",
+                "method_instruction": "methods",
+                "timezone": "dashboard",
+                "new_bot_token": "projects",
+                "bot_token": "bots",
+            }.get(flow.step, "dashboard")
+            if flow.step == "price_amount":
+                plan_hex = flow.payload.get("plan_id")
+                try:
+                    destination = "plan:" + UUID(hex=plan_hex).hex
+                except (TypeError, ValueError, AttributeError):
+                    destination = "plans"
             await bot.send_message(
                 message.chat.id,
                 "⚠️ " + owner_error(str(exc))[:220]
-                + tr("\nОткройте нужный раздел и повторите.",
-                     "\nReopen the relevant section and try again."),
+                + tr("\nИсправьте данные и повторите действие.",
+                     "\nCorrect the input and try again."),
+                reply_markup=_markup([[_button(
+                    tr("⬅️ Вернуться в раздел", "⬅️ Back to section"),
+                    destination,
+                )]]),
             )
 
     @router.message(StrayBotTokenFilter())
