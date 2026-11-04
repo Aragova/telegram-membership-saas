@@ -21,6 +21,7 @@ class OwnerSetupSession(Base):
         ForeignKey("projects.id", ondelete="SET NULL"), Uuid(as_uuid=True)
     )
     step: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    prompt_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
