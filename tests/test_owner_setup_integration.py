@@ -59,8 +59,13 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
         assert home.selected == project_id
         assert home.projects == ((project_id, "My Paid Channel"),)
 
-        await setup.set_flow(sf, actor_id=actor_id, step="plan_name")
-        await setup.bind_prompt(sf, actor_id=actor_id, step="plan_name", message_id=123)
+        generation = await setup.set_flow(
+            sf, actor_id=actor_id, step="plan_name"
+        )
+        await setup.bind_prompt(
+            sf, actor_id=actor_id, step="plan_name",
+            message_id=123, generation=generation,
+        )
         assert await setup.consume_flow(
             sf, actor_id=actor_id, reply_message_id=777
         ) is None
