@@ -8,7 +8,7 @@ from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
-from aiogram.filters import Command
+from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
     ForceReply,
@@ -38,6 +38,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
     get_selected_project,
+    is_expected_prompt,
     owner_available_currencies,
     owner_home,
     publish_owner_plan,
@@ -79,6 +80,27 @@ def _progress(snapshot) -> tuple[str, ...]:
         ("Способ оплаты", bool(snapshot.methods)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
+
+
+class SetupReplyFilter(BaseFilter):
+    def __init__(self, factory: async_sessionmaker[AsyncSession]) -> None:
+        self.factory = factory
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if not _private(message) or message.reply_to_message is None:
+            return False
+        origin = message.reply_to_message
+        if origin.from_user is None or origin.from_user.id != bot.id:
+            return False
+        user = message.from_user
+        actor_id = await ensure_telegram_actor(
+            self.factory, telegram_id=user.id,
+            username=user.username, first_name=user.first_name,
+        )
+        return await is_expected_prompt(
+            self.factory, actor_id=actor_id,
+            reply_message_id=origin.message_id,
+        )
 
 
 def create_owner_setup_router(
@@ -142,7 +164,7 @@ def create_owner_setup_router(
     ) -> None:
         await set_flow(factory, actor_id=actor_id, step=step, payload=payload)
         sent = await bot.send_message(
-            user_id, text,
+            user_id, text, parse_mode="HTML",
             reply_markup=ForceReply(
                 selective=True, input_field_placeholder="Введите ответ"
             ),
@@ -553,7 +575,7 @@ def create_owner_setup_router(
         )
         await show_resources(bot, message.chat.id, actor_id, flow.project_id)
 
-    @router.message(F.reply_to_message)
+    @router.message(SetupReplyFilter(factory))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:
         if not _private(message) or message.reply_to_message is None:
             return
@@ -564,23 +586,27 @@ def create_owner_setup_router(
             return
         actor_id = await actor(message.from_user)
         text = (message.text or "").strip()
-        # No bot credential is ever echoed, logged, or stored in wizard state.
-        if TOKEN_PATTERN.fullmatch(text):
-            try:
-                if not await bot.delete_message(message.chat.id, message.message_id):
-                    return
-            except AiogramError:
-                await bot.send_message(
-                    message.chat.id,
-                    "⚠️ Удалите сообщение с токеном и смените его в BotFather.",
-                )
-                return
         flow = await consume_flow(
             factory, actor_id=actor_id,
             reply_message_id=message.reply_to_message.message_id,
         )
         if flow is None:
             return
+        # Always delete BotFather credential messages before validating or storing
+        # anything, even if the credential was typed incorrectly.
+        if flow.step == "bot_token":
+            try:
+                deleted = await bot.delete_message(
+                    message.chat.id, message.message_id
+                )
+            except AiogramError:
+                deleted = False
+            if not deleted:
+                await bot.send_message(
+                    message.chat.id,
+                    "⚠️ Не удалось удалить токен. Смените его в BotFather.",
+                )
+                return
         try:
             if flow.step == "project_name":
                 await create_owner_project(factory, actor_id=actor_id, name=text)
