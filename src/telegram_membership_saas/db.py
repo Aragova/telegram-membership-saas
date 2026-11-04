@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -22,6 +23,22 @@ from telegram_membership_saas.tenant_context import (
 def build_engine(settings: Settings | None = None) -> AsyncEngine:
     current = settings or get_settings()
     return create_async_engine(current.database_url, pool_pre_ping=True)
+
+
+def build_lease_engine(settings: Settings | None = None) -> AsyncEngine:
+    """Keep long-lived advisory leases off the operational database pool.
+
+    Each running project holds a PostgreSQL session for its whole lifetime.
+    The dedicated NullPool makes that session independent of the pool used
+    for payments, Telegram updates, expiry/revocations and heartbeat writes.
+    The supervisor also caps concurrent projects to preserve database slots.
+    """
+    current = settings or get_settings()
+    return create_async_engine(
+        current.database_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+    )
 
 
 def build_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
