@@ -49,13 +49,25 @@ _OBLIGATION_ERRORS_EN = {
     "Доступ не найден в этом проекте": "Access state not found in this project.",
 }
 
+# Errors raised by already localized owner callbacks are safe UI text, not
+# arbitrary service exception details. Unknown English strings remain redacted.
+_KNOWN_EN_ERRORS = frozenset(_OBLIGATION_ERRORS_EN.values()) | {
+    "Unknown action",
+    "Another project menu. Refresh obligations.",
+    "Action is stale. Refresh obligations.",
+    "Action was completed or has expired.",
+    "Another project menu is open.",
+}
+
 
 def obligation_message(message: str) -> str:
     return tr(message, _OBLIGATION_MESSAGES_EN.get(message, message))
 
 
 def obligation_error(message: str) -> str:
-    """Do not expose unrecognized internals to English-facing Telegram alerts."""
+    """Keep known English validation messages; redact unknown internals."""
+    if message in _KNOWN_EN_ERRORS:
+        return message
     return tr(message, _OBLIGATION_ERRORS_EN.get(message, "Action unavailable. Refresh the list."))
 
 

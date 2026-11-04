@@ -147,6 +147,9 @@ for arbitrary user-interface queries**.
 
 ## Localization
 
+Deployment and end-to-end acceptance procedure:
+[STAGING_LOCALIZATION_ROLLOUT.md](STAGING_LOCALIZATION_ROLLOUT.md).
+
 ViMi Pay supports RU/EN user-facing Telegram UI. Language auto-detection uses Telegram's optional `language_code`, with a persistent per-user manual switch; it is not derived from timezone. All central, connected admin, platform and buyer screens should be translated before declaring the feature complete. See [LOCALIZATION.md](LOCALIZATION.md). The Bot API does not reveal the user's actual IANA timezone, so the channel timezone remains an explicit owner preference (default Europe/Moscow).
 
 ## 6. Implementation stages (dependency order)
