@@ -134,7 +134,7 @@ def _screen_text(screen: str, snapshot: AdminProjectSnapshot) -> str:
         return (
             _render_entries("🤖 Мои боты", snapshot.bots)
             + "\n\nЗарегистрированные боты ещё не принимают покупателей. "
-            "Запуск и маршрутизация будут подключены следующим этапом."
+            "после настройки каналов, тарифов и способов оплаты и проверки запуска."
         )
     if screen == "resources":
         return _render_entries("📢 Каналы / группы", snapshot.resources)
@@ -303,7 +303,7 @@ def create_telegram_admin_router(
                 await bot.send_message(
                     chat_id=user_id,
                     text=(
-                        f"{CONNECT_PROMPT_PREFIX}{project_id}\n\n"
+                        f"{CONNECT_PROMPT_PREFIX}\n\n"
                         "1. Создайте бота через @BotFather.\n"
                         "2. Ответьте на ЭТО сообщение полученным токеном.\n"
                         "3. ViMi Pay проверит бота и удалит сообщение с токеном.\n\n"
@@ -444,7 +444,7 @@ def create_telegram_admin_router(
             text=(
                 f"✅ Бот <b>@{escape(result.username)}</b> зарегистрирован.\n\n"
                 "Бот подключён. Запуск продаж в собственном боте "
-                "будет доступен после подключения runtime.\n"
+                "будет доступен после настройки проекта и запуска продаж.\n"
                 "Откройте /start для просмотра своих ботов."
             ),
             parse_mode="HTML",
