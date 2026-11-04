@@ -995,10 +995,31 @@ def create_owner_setup_router(
                     text=f"💰 Укажите цену в {currency} (например, 499 или 9.99):",
                 )
             elif action.startswith("publish:"):
-                name = await publish_owner_plan(
-                    factory, actor_id=actor_id, project_id=project_id,
-                    plan_id=UUID(hex=action.split(":", 1)[1]),
-                )
+                plan_id = UUID(hex=action.split(":", 1)[1])
+                try:
+                    name = await publish_owner_plan(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=plan_id,
+                    )
+                except ValueError as exc:
+                    if "Добавьте действующий способ оплаты" not in str(exc):
+                        raise
+                    await bot.send_message(
+                        user_id,
+                        "💳 <b>Остался один шаг</b>\n\n"
+                        "Добавьте способ оплаты, который поддерживает "
+                        "валюту тарифа. Черновик и цены сохранены.",
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                "➕ Настроить способ оплаты",
+                                "newmethod", "success",
+                            )],
+                            [_button("⬅️ Вернуться к тарифу", "plan:" + plan_id.hex)],
+                        ]),
+                    )
+                    await query.answer()
+                    return
                 await bot.send_message(
                     user_id, f"✅ Тариф «{escape(name)}» опубликован.",
                     parse_mode="HTML",
