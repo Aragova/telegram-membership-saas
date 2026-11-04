@@ -122,7 +122,7 @@ async def request_bot_retirement(
     *,
     actor_id: UUID,
     project_id: UUID,
-    telegram_bot_id: int,
+    bot_instance_id: UUID,
 ) -> bool:
     """Mark for worker drain only after ownership/obligations are verified.
 
@@ -140,7 +140,7 @@ async def request_bot_retirement(
         bot = await session.scalar(
             select(BotInstance).where(
                 BotInstance.project_id == project_id,
-                BotInstance.telegram_bot_id == telegram_bot_id,
+                BotInstance.id == bot_instance_id,
             ).with_for_update()
         )
         if bot is None:
