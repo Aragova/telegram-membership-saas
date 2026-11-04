@@ -1,4 +1,4 @@
-"""Tenant-safe, durable setup operations for the central ViMi Pay owner console."""
+"""Tenant-safe owner setup operations for each connected bot and central registrar."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ from telegram_membership_saas.modules.projects import (
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.modules.telegram_commerce.service import list_checkout_options
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
 ALLOWED_CURRENCIES = ("RUB", "USD", "EUR", "USDT", "TON", "KZT", "AED")
@@ -111,10 +111,16 @@ async def ensure_telegram_actor(
             return result.scalar_one()
 
 
-async def _current_session(session: AsyncSession, actor_id: UUID) -> OwnerSetupSession:
-    state = await session.get(OwnerSetupSession, actor_id, with_for_update=True)
+async def _current_session(
+    session: AsyncSession, actor_id: UUID, bot_scope_id: int = 0,
+) -> OwnerSetupSession:
+    state = await session.get(
+        OwnerSetupSession, (actor_id, bot_scope_id), with_for_update=True,
+    )
     if state is None:
-        state = OwnerSetupSession(user_id=actor_id, payload={})
+        state = OwnerSetupSession(
+            user_id=actor_id, bot_scope_id=bot_scope_id, payload={},
+        )
         session.add(state)
         await session.flush()
     return state
@@ -122,7 +128,8 @@ async def _current_session(session: AsyncSession, actor_id: UUID) -> OwnerSetupS
 
 async def owner_home(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID,
+    actor_id: UUID, bot_scope_id: int = 0,
+    fixed_project_id: UUID | None = None,
 ) -> OwnerHome:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         visible = list(
@@ -146,11 +153,18 @@ async def owner_home(
                 )
             )
         ]
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         ids = {p.id for p in projects}
+        if fixed_project_id is not None and fixed_project_id not in ids:
+            raise PermissionError("Нет прав на управление этим ботом")
         selected = state.selected_project_id
-        if selected not in ids:
-            selected = projects[0].id if len(projects) == 1 else None
+        expected = (
+            fixed_project_id if fixed_project_id is not None
+            else selected if selected in ids
+            else projects[0].id if len(projects) == 1 else None
+        )
+        if selected != expected:
+            selected = expected
             state.selected_project_id = selected
             state.step = None
             state.prompt_message_id = None
@@ -162,16 +176,33 @@ async def owner_home(
         )
 
 
+async def can_manage_project(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID,
+) -> bool:
+    """Authorize tenant owner/manager without modifying central wizard state."""
+    try:
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id, project_id=project_id)
+        ) as session:
+            await _require_project_manager(
+                session, project_id=project_id, actor_user_id=actor_id,
+            )
+            return True
+    except (PermissionError, TenantAccessDenied):
+        return False
+
+
 async def choose_project(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
-    project_id: UUID,
+    project_id: UUID, bot_scope_id: int = 0,
 ) -> None:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         await _require_project_manager(
             session, project_id=project_id, actor_user_id=actor_id
         )
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         state.selected_project_id = project_id
         state.step = None
         state.payload = {}
@@ -185,11 +216,12 @@ async def set_flow(
     step: str,
     payload: dict | None = None,
     project_id: UUID | None = None,
+    bot_scope_id: int = 0,
 ) -> str:
     if len(step) > 48:
         raise ValueError("Invalid flow")
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         chosen = project_id if project_id is not None else state.selected_project_id
         if chosen is not None:
             await _require_project_manager(
@@ -212,9 +244,10 @@ async def bind_prompt(
     step: str,
     message_id: int,
     generation: str,
+    bot_scope_id: int = 0,
 ) -> None:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if state.step != step or state.generation != generation:
             raise ValueError("Этот шаг уже заменён другим запросом")
         state.prompt_message_id = message_id
@@ -223,9 +256,10 @@ async def bind_prompt(
 async def is_expected_prompt(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, reply_message_id: int,
+    bot_scope_id: int = 0,
 ) -> bool:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await session.get(OwnerSetupSession, actor_id)
+        state = await session.get(OwnerSetupSession, (actor_id, bot_scope_id))
         return bool(
             state is not None
             and state.step
@@ -238,11 +272,12 @@ async def consume_flow(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
     reply_message_id: int | None,
+    bot_scope_id: int = 0,
 ) -> SetupFlow | None:
     if reply_message_id is None:
         return None
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if (
             not state.step or state.prompt_message_id != reply_message_id
             or state.expires_at <= datetime.now(UTC)
@@ -267,9 +302,10 @@ async def consume_button_flow(
     expected_step: str,
     request_id: int | None = None,
     generation: str | None = None,
+    bot_scope_id: int = 0,
 ) -> SetupFlow:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if (
             state.step != expected_step
             or state.expires_at <= datetime.now(UTC)
@@ -299,12 +335,13 @@ async def advance_flow(
     source: SetupFlow,
     step: str,
     payload: dict,
+    bot_scope_id: int = 0,
 ) -> str:
     """Continue only the exact consumed flow and project, atomically."""
     if source.generation is None:
         raise ValueError("Шаг настройки устарел")
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        state = await _current_session(session, actor_id)
+        state = await _current_session(session, actor_id, bot_scope_id)
         if (
             state.step is not None
             or state.selected_project_id != source.project_id
@@ -325,9 +362,13 @@ async def advance_flow(
 
 async def get_selected_project(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID,
+    actor_id: UUID, bot_scope_id: int = 0,
+    fixed_project_id: UUID | None = None,
 ) -> UUID | None:
-    home = await owner_home(factory, actor_id=actor_id)
+    home = await owner_home(
+        factory, actor_id=actor_id, bot_scope_id=bot_scope_id,
+        fixed_project_id=fixed_project_id,
+    )
     return home.selected
 
 
