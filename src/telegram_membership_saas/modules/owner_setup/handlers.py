@@ -844,7 +844,8 @@ def create_owner_setup_router(
     @router.callback_query(F.data.startswith("own:"))
     async def owner_callback(query: CallbackQuery, bot: Bot) -> None:
         if query.message is None or query.message.chat.type != "private":
-            await query.answer("Откройте личный чат с ViMi Pay", show_alert=True)
+            await query.answer(tr("Откройте личный чат с ViMi Pay",
+                              "Open your private chat with ViMi Pay"), show_alert=True)
             return
         user_id = query.from_user.id
         actor_id = await actor(query.from_user)
@@ -852,7 +853,8 @@ def create_owner_setup_router(
         if fixed_project_id is not None and not await can_manage_project(
             factory, actor_id=actor_id, project_id=fixed_project_id,
         ):
-            await query.answer("Нет доступа к управлению ботом", show_alert=True)
+            await query.answer(tr("Нет доступа к управлению ботом",
+                              "You cannot manage this bot"), show_alert=True)
             return
         if fixed_project_id is None:
             is_registry_action = action in {
@@ -863,7 +865,8 @@ def create_owner_setup_router(
             ))
             if not is_registry_action:
                 await query.answer(
-                    "Настройте продажи в своём подключённом боте",
+                    tr("Настройте продажи в своём подключённом боте",
+                       "Set up sales inside your connected bot"),
                     show_alert=True,
                 )
                 return
@@ -874,24 +877,35 @@ def create_owner_setup_router(
                 ))
             ):
                 await query.answer(
-                    "Управляйте подключением через @vimipay_bot",
+                    tr("Управляйте подключением через @vimipay_bot",
+                       "Manage bot connections in @vimipay_bot"),
                     show_alert=True,
                 )
                 return
         try:
             if action == "new":
                 if get_settings().bot_token_encryption_key is None:
-                    raise ValueError("Подключение ботов пока недоступно")
+                    raise ValueError(tr("Подключение ботов пока недоступно",
+                                        "Bot connections are unavailable"))
                 await prompt(
                     bot, user_id, actor_id, step="new_bot_token",
                     text=(
-                        "✦ <b>Подключение бота подписок</b>\n\n"
-                        "1. Создайте бота в @BotFather или получите новый "
-                        "токен существующего.\n"
-                        "2. Ответьте на это сообщение токеном.\n"
-                        "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
-                        "После проверки откройте своего бота и "
-                        "настройте каналы, оплату и тарифы."
+                        tr(
+                            "✦ <b>Подключение бота подписок</b>\n\n"
+                            "1. Создайте бота в @BotFather или получите новый "
+                            "токен существующего.\n"
+                            "2. Ответьте на это сообщение токеном.\n"
+                            "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
+                            "После проверки откройте своего бота и "
+                            "настройте каналы, оплату и тарифы.",
+                            "✦ <b>Connect a subscription bot</b>\n\n"
+                            "1. Create a bot in @BotFather or request a new token "
+                            "for an existing bot.\n"
+                            "2. Reply to this message with its token.\n"
+                            "3. We delete the token message immediately and "
+                            "verify the connection.\n\n"
+                            "Then open your bot to set up channels, payments and plans.",
+                        )
                     ),
                 )
                 await query.answer()
@@ -905,7 +919,8 @@ def create_owner_setup_router(
                 rows.append([_button("➕ Подключить бота", "new", "success")])
                 if platform_navigation(user_id):
                     rows.append(platform_navigation(user_id))
-                await bot.send_message(user_id, "📁 Мои боты", reply_markup=_markup(rows))
+                await bot.send_message(user_id, tr("📁 Мои боты", "📁 My bots"),
+                                       reply_markup=_markup(rows))
                 await query.answer()
                 return
             if action.startswith("select:"):
@@ -922,7 +937,8 @@ def create_owner_setup_router(
                 fixed_project_id=fixed_project_id,
             )
             if project_id is None:
-                raise ValueError("Сначала создайте или выберите проект")
+                raise ValueError(tr("Сначала создайте или выберите проект",
+                                    "Create or select a connection first"))
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action == "reviews":
@@ -1089,15 +1105,24 @@ def create_owner_setup_router(
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "connect":
                 if get_settings().bot_token_encryption_key is None:
-                    raise ValueError("Подключение ботов временно недоступно")
+                    raise ValueError(tr("Подключение ботов временно недоступно",
+                                        "Bot connections are temporarily unavailable"))
                 await prompt(
                     bot, user_id, actor_id, step="bot_token",
                     text=(
-                        "🤖 <b>Подключение вашего бота</b>\n\n"
-                        "1. Создайте бота в @BotFather.\n"
-                        "2. Ответьте на это сообщение токеном.\n"
-                        "3. ViMi Pay сразу удалит ваше сообщение и проверит токен.\n\n"
-                        "Бот пока не начнёт принимать покупателей."
+                        tr(
+                            "🤖 <b>Подключение вашего бота</b>\n\n"
+                            "1. Создайте бота в @BotFather.\n"
+                            "2. Ответьте на это сообщение токеном.\n"
+                            "3. ViMi Pay сразу удалит ваше сообщение и проверит токен.\n\n"
+                            "Бот пока не начнёт принимать покупателей.",
+                            "🤖 <b>Connect your bot</b>\n\n"
+                            "1. Create a bot in @BotFather.\n"
+                            "2. Reply to this message with its token.\n"
+                            "3. ViMi Pay deletes your message immediately and verifies "
+                            "the token.\n\n"
+                            "Buyers cannot purchase until setup is finished.",
+                        )
                     ),
                 )
             elif action == "resources":
@@ -1465,10 +1490,15 @@ def create_owner_setup_router(
     ) -> None:
         await bot.send_message(
             user_id,
-            f"✅ <b>@{escape(username)} подключён</b>\n\n"
-            "Настройка в ViMi Pay завершена.\n"
-            "Перейдите в свой бот и добавьте канал, "
-            "способы оплаты и тарифы.",
+            tr(
+                f"✅ <b>@{escape(username)} подключён</b>\n\n"
+                "Настройка в ViMi Pay завершена.\n"
+                "Перейдите в свой бот и добавьте канал, "
+                "способы оплаты и тарифы.",
+                f"✅ <b>@{escape(username)} connected</b>\n\n"
+                "Your bot is connected to ViMi Pay.\n"
+                "Open it to configure channels, payment methods and plans.",
+            ),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
@@ -1548,8 +1578,10 @@ def create_owner_setup_router(
         ):
             await bot.send_message(
                 message.chat.id,
-                "Настройка перенесена в вашего бота. "
-                "Откройте его через «Мои боты».",
+                tr("Настройка перенесена в вашего бота. "
+                   "Откройте его через «Мои боты».",
+                   "Setup has moved to your connected bot. "
+                   "Open it from My bots."),
             )
             return
         if fixed_project_id is not None and flow.step in (
@@ -1557,14 +1589,16 @@ def create_owner_setup_router(
         ):
             await bot.send_message(
                 message.chat.id,
-                "Подключение токена доступно только в @vimipay_bot.",
+                tr("Подключение токена доступно только в @vimipay_bot.",
+                   "Bot tokens can only be connected through @vimipay_bot."),
             )
             return
         try:
             if flow.step == "new_bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(
-                        "Неверный формат токена. Получите токен в @BotFather."
+                        tr("Неверный формат токена. Получите токен в @BotFather.",
+                           "Invalid token format. Get a token from @BotFather.")
                     )
                 project_id, registration = await register_new_owner_bot(
                     factory, actor_id=actor_id,
@@ -1582,7 +1616,8 @@ def create_owner_setup_router(
                 await create_owner_project(factory, actor_id=actor_id, name=text)
                 await bot.send_message(
                     message.chat.id,
-                    "✅ Проект создан. Часовой пояс — Москва (можно изменить).",
+                    tr("✅ Проект создан. Часовой пояс — Москва (можно изменить).",
+                       "✅ Project created. Default timezone: Moscow (editable)."),
                 )
                 await show_home(bot, message.chat.id, actor_id)
                 return
@@ -1593,7 +1628,8 @@ def create_owner_setup_router(
                 raise ValueError("Настройка другого бота недоступна")
             if flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
-                    raise ValueError("Неверный формат токена. Получите его в BotFather.")
+                    raise ValueError(tr("Неверный формат токена. Получите его в BotFather.",
+                                        "Invalid token format. Get it from BotFather."))
                 await finish_bot_connection(
                     bot, message.chat.id, actor_id, project_id, text,
                 )
