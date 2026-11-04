@@ -55,24 +55,25 @@ def _sf(monkeypatch, *, project_status="active", bots=()):
     return session
 
 
-def test_customer_dispatcher_does_not_expose_admin_routes():
+def test_connected_dispatcher_separates_tenant_admin_and_buyer_routes():
     dispatcher = create_customer_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "telegram-access", "telegram-commerce"
+        "owner-tenant", "telegram-access", "telegram-commerce"
     ]
 
 
 def test_central_can_drop_buyer_routes_for_cutover():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
     assert [r.name for r in dispatcher.sub_routers] == [
-        "owner-setup", "telegram-admin", "central-buyer-redirect"
+        "central-registrar", "central-buyer-redirect"
     ]
 
 
 def test_central_default_preserves_old_staging_path():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "owner-setup", "telegram-access", "telegram-admin", "telegram-commerce"
+        "central-registrar", "telegram-access", "telegram-admin",
+        "telegram-commerce"
     ]
 
 
