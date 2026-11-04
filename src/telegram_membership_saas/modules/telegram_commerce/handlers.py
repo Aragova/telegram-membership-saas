@@ -19,6 +19,11 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.modules.telegram_commerce.storefront import (
+    catalog_screen,
+    list_buyer_offers,
+    offer_screen,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -204,35 +209,48 @@ async def _send_catalog(
     chat_id: int,
     session_factory: async_sessionmaker[AsyncSession],
     project_id: UUID,
-) -> None:
+    currency: str | None = None,
+    page: int = 0,
+    message_id: int | None = None,
+    price_id: UUID | None = None,
+) -> bool:
+    """Build a fresh, project-isolated catalog and edit the current screen."""
     async with system_project_session_scope(session_factory, project_id) as session:
-        options = await list_checkout_options(session, project_id=project_id)
-
-    if not options:
-        await bot.send_message(
-            chat_id=chat_id,
-            text="Сейчас нет доступных тарифов. Попробуйте позже.",
+        offers = await list_buyer_offers(session, project_id=project_id)
+    if price_id is not None:
+        rendered = offer_screen(offers, price_id=price_id, page=page)
+        if rendered is None:
+            return False
+        text, keyboard = rendered
+    else:
+        text, keyboard = catalog_screen(
+            offers, currency=currency, page=page,
         )
-        return
-
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=_option_label(option),
-                style="primary",
-                callback_data=(
-                    f"buy:{encode_uuid(option.plan_price_id)}:"
-                    f"{encode_uuid(option.payment_method_id)}"
-                ),
+    if message_id is not None:
+        try:
+            await bot.edit_message_text(
+                text=text, chat_id=chat_id, message_id=message_id,
+                parse_mode="HTML", reply_markup=keyboard,
             )
-        ]
-        for option in options
-    ]
+            return True
+        except AiogramError as exc:
+            # Repeated tap of the selected currency changes no message.
+            if "message is not modified" in str(exc).lower():
+                return True
+            # Deleted/old Telegram messages may no longer be editable.
+            pass
     await bot.send_message(
-        chat_id=chat_id,
-        text="✨ <b>ViMi Pay · Подписки</b>\n\nВыберите подходящий тариф:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        chat_id=chat_id, text=text, parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+    return True
+
+
+def _buyer_screen_callback(callback: CallbackQuery) -> bool:
+    return bool(
+        callback.message is not None
+        and callback.message.chat.type == "private"
+        and callback.message.chat.id == callback.from_user.id
     )
 
 
@@ -253,6 +271,66 @@ def create_telegram_commerce_router(
             session_factory=session_factory,
             project_id=project_id,
         )
+
+    @router.callback_query(F.data.startswith("cat:"))
+    async def currency_handler(callback: CallbackQuery, bot: Bot) -> None:
+        if not _buyer_screen_callback(callback):
+            await callback.answer("Откройте личный чат с ботом", show_alert=True)
+            return
+        try:
+            _, currency, page_token = (callback.data or "").split(":", 2)
+            if not currency.isascii() or not currency.isalnum():
+                raise ValueError("Некорректная валюта")
+            if not page_token.isascii() or not page_token.isdecimal():
+                raise ValueError("Некорректная страница")
+            page = int(page_token)
+            if page > 10000:
+                raise ValueError("Некорректная страница")
+            await _send_catalog(
+                bot, chat_id=callback.from_user.id,
+                session_factory=session_factory, project_id=project_id,
+                currency=currency, page=page,
+                message_id=callback.message.message_id,
+            )
+        except ValueError:
+            await callback.answer(
+                "Список изменился. Откройте /plans заново.",
+                show_alert=True,
+            )
+            return
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("offer:"))
+    async def offer_handler(callback: CallbackQuery, bot: Bot) -> None:
+        if not _buyer_screen_callback(callback):
+            await callback.answer("Откройте личный чат с ботом", show_alert=True)
+            return
+        try:
+            _, price_token, page_token = (callback.data or "").split(":", 2)
+            if not page_token.isascii() or not page_token.isdecimal():
+                raise ValueError("Некорректная страница")
+            page = int(page_token)
+            if page > 10000:
+                raise ValueError("Некорректная страница")
+            matched = await _send_catalog(
+                bot, chat_id=callback.from_user.id,
+                session_factory=session_factory, project_id=project_id,
+                price_id=decode_uuid(price_token), page=page,
+                message_id=callback.message.message_id,
+            )
+            if not matched:
+                await callback.answer(
+                    "Тариф больше недоступен. Откройте /plans заново.",
+                    show_alert=True,
+                )
+                return
+        except ValueError:
+            await callback.answer(
+                "Тариф больше недоступен. Откройте /plans заново.",
+                show_alert=True,
+            )
+            return
+        await callback.answer()
 
     @router.callback_query(F.data.startswith("buy:"))
     async def buy_handler(callback: CallbackQuery, bot: Bot) -> None:
