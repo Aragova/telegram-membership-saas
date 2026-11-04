@@ -19,7 +19,11 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
-from telegram_membership_saas.localization import recipient_language, tr
+from telegram_membership_saas.localization import (
+    current_language,
+    recipient_language,
+    tr,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -42,6 +46,7 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
 )
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
+RECEIPT_REPLY_PREFIX_EN = "Payment confirmation for request: "
 ALLOWED_RECEIPT_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 )
@@ -55,12 +60,13 @@ def _receipt_request_id(message: Message, *, bot_id: int) -> UUID | None:
     if prompt is None or prompt.from_user is None or prompt.from_user.id != bot_id:
         return None
     header = (prompt.text or "").split("\n", 1)[0]
-    if not header.startswith(RECEIPT_REPLY_PREFIX):
-        return None
-    try:
-        return UUID(header[len(RECEIPT_REPLY_PREFIX) :])
-    except ValueError:
-        return None
+    for prefix in (RECEIPT_REPLY_PREFIX, RECEIPT_REPLY_PREFIX_EN):
+        if header.startswith(prefix):
+            try:
+                return UUID(header[len(prefix):])
+            except ValueError:
+                return None
+    return None
 
 
 class ReceiptReplyFilter(BaseFilter):
@@ -95,14 +101,14 @@ def _checkout_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Я оплатил",
+                    text=tr("✅ Я оплатил", "✅ I have paid"),
                     style="success",
                     callback_data=f"paid:{token}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="Отменить",
+                    text=tr("Отменить", "Cancel"),
                     style="danger",
                     callback_data=f"cancel:{token}",
                 )
@@ -157,8 +163,9 @@ def _review_text(item: ReviewItem) -> str:
 
 def _subscription_end_text(ends_at: datetime | None, timezone: str) -> str:
     if ends_at is None:
-        return "Бессрочно"
+        return tr("Бессрочно", "Lifetime")
     return f"{ends_at.astimezone(ZoneInfo(timezone)):%d.%m.%Y %H:%M} ({timezone})"
+
 
 
 def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
@@ -169,21 +176,26 @@ def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
     username = f"@{item.customer_username}" if item.customer_username else str(
         item.customer_telegram_user_id
     )
-    headline = "✅ <b>Оплата подтверждена</b>" if approve else "❌ <b>Оплата отклонена</b>"
+    headline = (
+        tr("✅ <b>Оплата подтверждена</b>", "✅ <b>Payment approved</b>")
+        if approve else tr("❌ <b>Оплата отклонена</b>", "❌ <b>Payment rejected</b>")
+    )
     details = (
-        f"👤 Покупатель: {escape(username)}\n"
-        f"📦 Тариф: {escape(item.plan_name)}\n"
-        f"💳 Сумма: {format_amount(item.amount, 18)} {escape(item.currency_code)}\n"
+        tr("👤 Покупатель: ", "👤 Customer: ") + escape(username) + "\n"
+        + tr("📦 Тариф: ", "📦 Plan: ") + escape(item.plan_name) + "\n"
+        + tr("💳 Сумма: ", "💳 Amount: ")
+        + f"{format_amount(item.amount, 18)} {escape(item.currency_code)}\n"
     )
     if approve:
         details += (
-            "🟢 Статус подписки: активна\n"
-            f"📅 Действует до: "
-            f"{expiration}\n\n"
-            "Бот автоматически предоставит доступ покупателю."
+            tr("🟢 Статус подписки: активна\n", "🟢 Subscription: active\n")
+            + tr("📅 Действует до: ", "📅 Valid until: ") + expiration + "\n\n"
+            + tr("Бот автоматически предоставит доступ покупателю.",
+                 "The bot will automatically grant the customer access.")
         )
     else:
-        details += "\nЗаявка закрыта. Подписка не активирована."
+        details += tr("\nЗаявка закрыта. Подписка не активирована.",
+                      "\nThe request is closed. No subscription was activated.")
     return f"{headline}\n\n{details}"
 
 
@@ -193,18 +205,40 @@ def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
     )
     if approve:
         return (
-            "✅ <b>Подписка активирована</b>\n\n"
-            f"📦 {escape(result.item.plan_name)}\n"
-            f"📅 До: "
-            f"{expiration}\n\n"
-            "🔐 Если вы ещё не в канале, бот пришлёт кнопку для вступления."
+            tr("✅ <b>Подписка активирована</b>\n\n",
+               "✅ <b>Subscription activated</b>\n\n")
+            + f"📦 {escape(result.item.plan_name)}\n"
+            + tr("📅 До: ", "📅 Until: ") + expiration + "\n\n"
+            + tr("🔐 Если вы ещё не в канале, бот пришлёт кнопку для вступления.",
+                 "🔐 If you are not in the channel yet, the bot will send a join button.")
         )
     return (
-        "❌ <b>Оплата отклонена</b>\n\n"
-        f"Тариф: {escape(result.item.plan_name)}\n"
-        "Если произошла ошибка, свяжитесь с администратором канала."
+        tr("❌ <b>Оплата отклонена</b>\n\n", "❌ <b>Payment rejected</b>\n\n")
+        + tr("Тариф: ", "Plan: ") + escape(result.item.plan_name) + "\n"
+        + tr("Если произошла ошибка, свяжитесь с администратором канала.",
+             "If you believe this is a mistake, contact the channel administrator.")
     )
 
+
+def _buyer_error(exc: Exception) -> str:
+    """Return safe English UI errors; do not expose unexpected service internals."""
+    if current_language() == "ru":
+        return str(exc)
+    translated = {
+        "Бот отключается. Создание новых оплат временно недоступно":
+            "This bot is shutting down; new purchases are temporarily unavailable.",
+        "Заявка уже отправлена или закрыта":
+            "This payment request has already been submitted or closed.",
+        "Selected plan price/payment method is no longer available":
+            "This plan or payment option is no longer available. Reopen /plans.",
+        "Payment request does not belong to this Telegram user":
+            "This payment request does not belong to your account.",
+        "Project is not active or accessible":
+            "This subscription service is currently unavailable.",
+        "Payment request is not accessible in the current project scope":
+            "This payment request is no longer accessible.",
+    }
+    return translated.get(str(exc), "Request unavailable. Please reopen /plans and retry.")
 
 async def _safe_send_message(bot: Bot, chat_id: int, text: str, **kwargs) -> None:
     try:
