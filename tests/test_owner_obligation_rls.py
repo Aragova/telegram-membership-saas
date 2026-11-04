@@ -24,7 +24,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
 )
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"),
@@ -54,7 +54,7 @@ async def test_owner_audit_is_visible_only_to_project_owner():
             factory, actor_id=alice, project_id=project,
         )
         assert not result.blockers.has_blockers
-        with pytest.raises(PermissionError):
+        with pytest.raises((PermissionError, TenantAccessDenied)):
             await list_owner_obligations(
                 factory, actor_id=bob, project_id=project,
             )
@@ -109,7 +109,7 @@ async def test_owner_actions_fail_closed_for_missing_targets_and_cross_tenant():
                 "subscription_id" if action is end_owner_subscription else
                 "state_id"
             )
-            with pytest.raises(PermissionError):
+            with pytest.raises((PermissionError, TenantAccessDenied)):
                 await action(
                     factory, actor_id=bob, project_id=project, **{key: target},
                 )
