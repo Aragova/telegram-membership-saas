@@ -63,7 +63,8 @@ def test_management_dispatcher_routes_owner_first_buyer_separately():
         MagicMock(), project_id=uuid4(), enable_access=False
     )
     customer = create_customer_dispatcher(MagicMock(), project_id=uuid4())
-    assert central.sub_routers[0].name == "central-registrar"
+    assert central.sub_routers[0].name == "vimi-language"
+    assert central.sub_routers[1].name == "central-registrar"
     assert "owner-tenant" in [r.name for r in customer.sub_routers]
     assert "telegram-admin" not in [r.name for r in central.sub_routers]
     assert "telegram-commerce" not in [r.name for r in central.sub_routers]
@@ -79,9 +80,12 @@ async def test_first_start_has_direct_bot_connection_button(monkeypatch):
     await _handler("home_message")(_message(), bot)
     sent = bot.send_message.await_args
     assert "Подключите собственного Telegram-бота" in sent.args[1]
-    assert "Подключить бота подписок" in (
-        sent.kwargs["reply_markup"].inline_keyboard[-1][0].text
-    )
+    buttons = [
+        button.text for row in sent.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert any("Подключить бота подписок" in text for text in buttons)
+    assert any("Language" in text for text in buttons)
 
 
 async def test_central_start_shows_connection_registry_without_raw_uuids(monkeypatch):

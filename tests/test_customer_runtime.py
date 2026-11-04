@@ -58,21 +58,21 @@ def _sf(monkeypatch, *, project_status="active", bots=()):
 def test_connected_dispatcher_separates_tenant_admin_and_buyer_routes():
     dispatcher = create_customer_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "owner-tenant", "telegram-access", "telegram-commerce"
+        "vimi-language", "owner-tenant", "telegram-access", "telegram-commerce"
     ]
 
 
 def test_central_can_drop_buyer_routes_for_cutover():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
     assert [r.name for r in dispatcher.sub_routers] == [
-        "central-registrar", "central-buyer-redirect"
+        "vimi-language", "central-registrar", "central-buyer-redirect"
     ]
 
 
 def test_central_default_preserves_old_staging_path():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "central-registrar", "telegram-access", "telegram-admin",
+        "vimi-language", "central-registrar", "telegram-access", "telegram-admin",
         "telegram-commerce"
     ]
 

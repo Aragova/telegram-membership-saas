@@ -14,6 +14,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.service import (
@@ -58,7 +59,7 @@ def build_buyer_offers(
             names[0] if len(names) == 1
             else " · ".join(names[:2]) + (" …" if len(names) > 2 else "")
             if names
-            else "Подписки"
+            else tr("Подписки", "Subscriptions")
         )
         result.append(BuyerOffer(
             option=option,
@@ -144,9 +145,15 @@ def catalog_screen(
     currencies = available_currencies(offers)
     if not currencies:
         return (
-            "✦ <b>Подписки</b>\n\n"
-            "Пока нет тарифов, доступных для покупки. Загляните позже.",
-            InlineKeyboardMarkup(inline_keyboard=[]),
+            tr(
+                "✦ <b>Подписки</b>\n\n"
+                "Пока нет тарифов, доступных для покупки. Загляните позже.",
+                "✦ <b>Subscriptions</b>\n\n"
+                "No plans are available for purchase yet. Please check back later.",
+            ),
+            InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu"),
+            ]]),
         )
     chosen = currency if currency in currencies else currencies[0]
     selected = [o for o in offers if o.option.currency_code == chosen]
@@ -157,10 +164,10 @@ def catalog_screen(
     ]
     rows = _currency_rows(currencies, chosen)
     lines = [
-        "✦ <b>Подписки</b>",
-        "Выберите срок и тариф.",
+        tr("✦ <b>Подписки</b>", "✦ <b>Subscriptions</b>"),
+        tr("Выберите срок и тариф.", "Choose a plan and duration."),
         "",
-        "Валюта: <b>" + escape(chosen) + "</b>",
+        tr("Валюта: <b>", "Currency: <b>") + escape(chosen) + "</b>",
     ]
     current_resource = None
     for item in visible:
@@ -187,17 +194,22 @@ def catalog_screen(
         nav = []
         if current_page > 0:
             nav.append(InlineKeyboardButton(
-                text="⬅️ Назад",
+                text=tr("⬅️ Назад", "⬅️ Back"),
                 callback_data=f"cat:{chosen}:{current_page - 1}",
             ))
         if current_page + 1 < total_pages:
             nav.append(InlineKeyboardButton(
-                text="Далее ➡️",
+                text=tr("Далее ➡️", "Next ➡️"),
                 callback_data=f"cat:{chosen}:{current_page + 1}",
             ))
         rows.append(nav)
-        lines.extend(["", f"Страница {current_page + 1} из {total_pages}"])
-    lines.extend(["", "Способ оплаты выберете на следующем шаге."])
+        lines.extend(["", tr(f"Страница {current_page + 1} из {total_pages}",
+                              f"Page {current_page + 1} of {total_pages}")])
+    lines.extend(["", tr("Способ оплаты выберете на следующем шаге.",
+                          "You will choose a payment method next.")])
+    rows.append([InlineKeyboardButton(
+        text="🌐 Language / Язык", callback_data="lng:menu",
+    )])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -221,12 +233,12 @@ def offer_screen(
     price = format_amount(option.amount, option.currency_precision)
     period = format_period(option.duration_value, option.duration_unit)
     text = (
-        "✦ <b>Оформление подписки</b>\n\n"
-        "📢 " + escape(current.resource_label) + "\n"
+        tr("✦ <b>Оформление подписки</b>\n\n", "✦ <b>Subscription checkout</b>\n\n")
+        + "📢 " + escape(current.resource_label) + "\n"
         "💎 <b>" + escape(option.plan_name) + "</b>\n"
         "⏳ " + escape(period) + "\n"
         "💰 <b>" + escape(price + " " + option.currency_code) + "</b>\n\n"
-        "Выберите удобный способ оплаты:"
+        + tr("Выберите удобный способ оплаты:", "Choose a payment method:")
     )
     for method in current.methods:
         rows.append([InlineKeyboardButton(
@@ -237,7 +249,10 @@ def offer_screen(
             ),
         )])
     rows.append([InlineKeyboardButton(
-        text="⬅️ Все тарифы",
+        text=tr("⬅️ Все тарифы", "⬅️ All plans"),
         callback_data=f"cat:{option.currency_code}:{page}",
+    )])
+    rows.append([InlineKeyboardButton(
+        text="🌐 Language / Язык", callback_data="lng:menu",
     )])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)

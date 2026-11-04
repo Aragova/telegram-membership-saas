@@ -263,6 +263,7 @@ def create_owner_setup_router(
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
         rows.append([_button("➕ Подключить бота подписок", "new", "success")])
+        rows.append([InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
         await bot.send_message(
@@ -289,6 +290,7 @@ def create_owner_setup_router(
                 [_button("🤖 Управление ботом", "bots", "success")],
                 [_button("📁 Все подключения", "projects")],
                 [_button("❔ Как это работает", "help")],
+                [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             ]
             if platform_navigation(user_id):
                 rows.append(platform_navigation(user_id))
@@ -320,6 +322,7 @@ def create_owner_setup_router(
                  _button("🌍 TimeZone", "timezone")],
                 [_button("👀 Смотреть гостем", "preview")],
                 [_button("❔ Помощь", "help")],
+                [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             ])
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),

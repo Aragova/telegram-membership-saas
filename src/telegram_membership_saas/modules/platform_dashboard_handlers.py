@@ -236,6 +236,7 @@ def create_platform_dashboard_router(
         rows.extend([
             [_button("🤖 Все подключённые боты", f"bots:{period}:0")],
             [_button("📊 Использование и история", f"usage:{period}:0")],
+            [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             [InlineKeyboardButton(
                 text="🤖 Мои боты · личный режим",
                 callback_data="own:projects",
