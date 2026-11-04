@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -78,7 +78,7 @@ async def test_supervisor_requires_management_only_central_runtime():
         ))
 
 
-async def test_supervisor_only_launches_ready_projects_and_stops_removed(monkeypatch):
+async def test_supervisor_keeps_enforcement_for_all_registered_projects(monkeypatch):
     from telegram_membership_saas import customer_supervisor as runtime
 
     pid, unready_pid = uuid4(), uuid4()
@@ -90,35 +90,32 @@ async def test_supervisor_only_launches_ready_projects_and_stops_removed(monkeyp
     async def discover(_factory):
         return tuple(current)
 
-    async def eligible(_factory, project_id):
-        return project_id == pid
-
     async def run(_engine, _factory, target, *, settings):
         await never_ends.wait()
 
     monkeypatch.setattr(runtime, "discover_targets", discover)
-    monkeypatch.setattr(runtime, "project_has_checkout", eligible)
     monkeypatch.setattr(runtime, "run_target", run)
-    health = AsyncMock()
-    monkeypatch.setattr(runtime, "write_bot_health", health)
 
     supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
     try:
         await supervisor.reconcile_once()
         await asyncio.sleep(0)
-        assert list(supervisor.workers) == [pid]
-        health.assert_awaited_once()
-        assert health.await_args.kwargs["state"] == "setup_needed"
+        # A project with no currently payable catalog still needs its
+        # subscription-expiration and access-revocation worker.
+        assert set(supervisor.workers) == {pid, unready_pid}
 
         # The original Telegram bot credentials rotate: old poller is cancelled.
         current = [_target(pid, a.credential_version + timedelta(seconds=1))]
         await supervisor.reconcile_once()
         assert supervisor.workers[pid].task.cancelling()
+        assert supervisor.workers[unready_pid].task.cancelling()
         await asyncio.gather(
-            supervisor.workers[pid].task, return_exceptions=True
+            *(w.task for w in supervisor.workers.values()),
+            return_exceptions=True,
         )
         await supervisor.reconcile_once()
         # Reconciliation immediately starts the rotated bot with fresh identity.
+        assert set(supervisor.workers) == {pid}
         assert supervisor.workers[pid].target == current[0]
         assert pid not in supervisor.retry_after
 
