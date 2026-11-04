@@ -9,8 +9,10 @@ from uuid import uuid4
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
+from sqlalchemy.pool import NullPool
 
 from telegram_membership_saas.config import Settings
+from telegram_membership_saas.db import build_engine, build_lease_engine
 from telegram_membership_saas.customer_supervisor import (
     BotTarget,
     CustomerBotSupervisor,
@@ -296,3 +298,63 @@ async def test_supervisor_does_not_send_second_cancel_to_stopping_worker(monkeyp
             *(x.task for x in supervisor.workers.values()),
             return_exceptions=True,
         )
+
+
+async def test_dedicated_advisory_engine_never_uses_operational_pool():
+    settings = _settings()
+    operational = build_engine(settings)
+    lease = build_lease_engine(settings)
+    try:
+        assert lease is not operational
+        assert isinstance(lease.pool, NullPool)
+        assert not isinstance(operational.pool, NullPool)
+    finally:
+        await lease.dispose()
+        await operational.dispose()
+
+
+async def test_worker_admission_limit_preserves_operational_capacity(monkeypatch):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    candidates = [_target() for _ in range(5)]
+    keep_alive = asyncio.Event()
+
+    async def discover(_factory):
+        return tuple(candidates)
+
+    async def worker(_engine, _factory, _target, *, settings):
+        await keep_alive.wait()
+
+    statuses = AsyncMock()
+    monkeypatch.setattr(runtime, "discover_targets", discover)
+    monkeypatch.setattr(runtime, "run_target", worker)
+    monkeypatch.setattr(runtime, "write_bot_health", statuses)
+
+    supervisor = CustomerBotSupervisor(
+        MagicMock(), MagicMock(), _settings(customer_supervisor_max_bots=2)
+    )
+    try:
+        await supervisor.reconcile_once()
+        await asyncio.sleep(0)
+        assert len(supervisor.workers) == 2
+        assert statuses.await_count == 3
+        assert all(call.kwargs["state"] == "queued"
+                   for call in statuses.await_args_list)
+
+        # A second reconcile must not schedule an unbounded number of tasks.
+        await supervisor.reconcile_once()
+        assert len(supervisor.workers) == 2
+    finally:
+        for running in supervisor.workers.values():
+            running.task.cancel()
+        await asyncio.gather(
+            *(x.task for x in supervisor.workers.values()),
+            return_exceptions=True,
+        )
+
+
+def test_supervisor_capacity_configuration_rejects_unbounded_values():
+    with pytest.raises(ValueError):
+        _settings(customer_supervisor_max_bots=0)
+    with pytest.raises(ValueError):
+        _settings(customer_supervisor_max_bots=1000)
