@@ -53,6 +53,11 @@ async def bootstrap_platform_owner() -> None:
                 "public.platform_report_snapshot(timestamptz, integer, integer) "
                 f"TO {quoted_role}"
             ))
+            await connection.execute(text(
+                "GRANT EXECUTE ON FUNCTION "
+                "public.platform_usage_snapshot(timestamptz, integer, integer) "
+                f"TO {quoted_role}"
+            ))
     finally:
         await engine.dispose()
 
