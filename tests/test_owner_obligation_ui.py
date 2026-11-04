@@ -119,8 +119,8 @@ async def test_confirm_payment_uses_tenant_scoped_service(monkeypatch):
         bot,
     )
     close.assert_awaited_once()
+    assert len(close.await_args.args) == 1
     assert close.await_args.kwargs == {
-        "factory": close.await_args.kwargs["factory"],
         "actor_id": actor, "project_id": project, "request_id": payment,
     }
     assert "Состояние сохранено" in bot.send_message.await_args_list[0].args[1]
