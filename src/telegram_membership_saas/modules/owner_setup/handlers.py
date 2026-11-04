@@ -400,6 +400,69 @@ def create_owner_setup_router(
                 raise ValueError("Сначала создайте или выберите проект")
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action.startswith("drop:"):
+                _, project_ref, instance_ref = action.split(":", 2)
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError("Меню другого проекта. Откройте «Мои боты» снова.")
+                instance_id = decode_uuid(instance_ref)
+                data = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id
+                )
+                name = next((
+                    username for bot_id, username, status in data.bot_instances
+                    if bot_id == instance_id and status != "deleting"
+                ), None)
+                if name is None or not data.can_delete_bot:
+                    raise PermissionError("Этот бот не доступен для удаления")
+                await bot.send_message(
+                    user_id,
+                    "🗑 <b>Удалить @" + escape(name) + "?</b>\n\n"
+                    "ViMi Pay отключит обработку покупателей, затем удалит "
+                    "подключение, сохранённый токен и состояние запуска.\n\n"
+                    "Настройки проекта и история платежей останутся: они "
+                    "не принадлежат токену бота. Повторно подключить этот "
+                    "Telegram-бот можно после завершения удаления.\n\n"
+                    "При незавершённых оплатах или действующих подписках "
+                    "удаление не начнётся, чтобы не оставить людей без "
+                    "управления доступом.",
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            "🗑 Да, удалить бота",
+                            "dropok:" + project_ref + ":" + instance_ref,
+                            "danger",
+                        )],
+                        [_button("Отмена", "bots")],
+                    ]),
+                )
+            elif action.startswith("dropok:"):
+                _, project_ref, instance_ref = action.split(":", 2)
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError("Проект изменился. Откройте «Мои боты» снова.")
+                try:
+                    requested = await request_bot_retirement(
+                        factory, actor_id=actor_id,
+                        project_id=project_id,
+                        bot_instance_id=decode_uuid(instance_ref),
+                    )
+                except ValueError as exc:
+                    # Include the entire safety explanation; Telegram alert
+                    # callbacks are limited in length and would truncate it.
+                    await bot.send_message(user_id, "⚠️ " + str(exc))
+                    await query.answer("Удаление пока недоступно", show_alert=True)
+                    return
+                await bot.send_message(
+                    user_id,
+                    "✅ Удаление запрошено. Бот прекратит обработку покупателей, "
+                    "а после безопасной остановки ViMi Pay удалит его "
+                    "данные подключения.\n\n"
+                    "Нажмите «🔄 Обновить статус» в разделе «Мои боты». "
+                    "Когда бот исчезнет из списка, его можно подключить "
+                    "заново или создать новый проект с нуля."
+                    if requested else
+                    "Этот бот уже не подключён. Обновите список.",
+                )
+                await show_bots(bot, user_id, actor_id, project_id)
             elif action == "bots":
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "connect":
