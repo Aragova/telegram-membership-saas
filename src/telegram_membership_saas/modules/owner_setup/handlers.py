@@ -39,11 +39,11 @@ from telegram_membership_saas.modules.bots.service import (
     decrypt_token,
     register_customer_bot,
 )
+from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
 )
-from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
