@@ -87,12 +87,30 @@ def preview_offer_screen(
     )
 
 
+def _instruction_pages(instruction: str, *, max_escaped: int) -> tuple[str, ...]:
+    """Split on characters BEFORE HTML escaping, never inside an entity."""
+    parts = []
+    current = []
+    current_len = 0
+    for character in instruction:
+        encoded = escape(character)
+        if current and current_len + len(encoded) > max_escaped:
+            parts.append("".join(current))
+            current = []
+            current_len = 0
+        current.append(encoded)
+        current_len += len(encoded)
+    if current:
+        parts.append("".join(current))
+    return tuple(parts) or ("",)
+
+
 def preview_method_screen(
     offers: tuple[BuyerOffer, ...], *, price_id: UUID,
     payment_method_id: UUID, instruction_template: str,
-    page: int = 0,
+    page: int = 0, instruction_page: int = 0,
 ) -> tuple[str, InlineKeyboardMarkup] | None:
-    """Render configured manual instructions without making a payment request."""
+    """Display the full manual instruction in bounded, safe preview pages."""
     offer = next(
         (item for item in offers if item.option.plan_price_id == price_id),
         None,
@@ -114,7 +132,7 @@ def preview_method_screen(
         amount=amount, currency=option.currency_code,
         plan=option.plan_name, period=period,
     )
-    text = (
+    heading = (
         _preview_title()
         + tr("💳 <b>Инструкция по оплате</b>\n\n",
              "💳 <b>Payment instructions</b>\n\n")
@@ -124,10 +142,41 @@ def preview_method_screen(
         + "💰 <b>" + escape(amount + " " + option.currency_code) + "</b>\n"
         + tr("Способ: ", "Method: ")
         + escape(selected.payment_method_name) + "\n\n"
-        + escape(instruction)
-        + _preview_disclaimer()
     )
-    return text, InlineKeyboardMarkup(inline_keyboard=[
+    footer = _preview_disclaimer()
+    # Telegram limits text to 4096 parsed characters. Count the longer
+    # HTML-escaped form, leaving room for page labels and Unicode characters.
+    budget = min(2500, max(128, 3850 - len(heading) - len(footer) - 80))
+    parts = _instruction_pages(instruction, max_escaped=budget)
+    if not 0 <= instruction_page < len(parts):
+        return None
+    text = heading + parts[instruction_page]
+    if len(parts) > 1:
+        text += tr(
+            f"\n\n<i>Инструкция · часть {instruction_page + 1}/{len(parts)}</i>",
+            f"\n\n<i>Instructions · part {instruction_page + 1}/{len(parts)}</i>",
+        )
+    text += footer
+
+    rows = []
+    if len(parts) > 1:
+        nav = []
+        prefix = (
+            f"own:pvi:{encode_uuid(price_id)}:"
+            f"{encode_uuid(payment_method_id)}:{page}:"
+        )
+        if instruction_page > 0:
+            nav.append(InlineKeyboardButton(
+                text=tr("⬅️ Назад", "⬅️ Previous"),
+                callback_data=prefix + str(instruction_page - 1),
+            ))
+        if instruction_page + 1 < len(parts):
+            nav.append(InlineKeyboardButton(
+                text=tr("Далее ➡️", "Next ➡️"),
+                callback_data=prefix + str(instruction_page + 1),
+            ))
+        rows.append(nav)
+    rows.extend([
         [InlineKeyboardButton(
             text=tr("⬅️ К тарифу", "⬅️ Back to plan"),
             callback_data=f"own:pvoffer:{encode_uuid(price_id)}:{page}",
@@ -141,3 +190,4 @@ def preview_method_screen(
             callback_data="own:dashboard",
         )],
     ])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
