@@ -230,14 +230,20 @@ async def close_owner_payment(
                 customer_id=request.customer_id,
             )
             action = "payment_cancel"
-            message = "Заявка на оплату закрыта владельцем. Если деньги были переведены, свяжитесь с владельцем канала."
+            message = (
+                "Заявка на оплату закрыта владельцем. "
+                "Если деньги были переведены, свяжитесь с владельцем канала."
+            )
         elif request.status == PaymentRequestStatus.WAITING_REVIEW.value:
             await reject_payment_request(
                 session, project_id=project_id, request_id=request_id,
                 reviewer_user_id=actor_id,
             )
             action = "payment_reject"
-            message = "Владелец отклонил заявку. Если вы уже перевели деньги, свяжитесь с владельцем канала."
+            message = (
+                "Владелец отклонил заявку. Если вы уже перевели деньги, "
+                "свяжитесь с владельцем канала."
+            )
         else:
             raise ValueError("Заявку уже обработали. Обновите список.")
         _audit(session, project_id, actor_id, action, request_id,
@@ -299,10 +305,14 @@ async def end_owner_subscription(
                 customer_id=sub.customer_id, resource_id=resource_id,
             )
         _audit(session, project_id, actor_id, "subscription_end", subscription_id,
-               "Владелец подтвердил досрочное прекращение; возврат денег урегулируется вне ViMi Pay")
+               "Владелец подтвердил досрочное прекращение; "
+               "возврат денег урегулируется вне ViMi Pay")
         return OwnerChange(
             True, await _telegram_id(session, project_id, sub.customer_id),
-            "Владелец завершил подписку. Оплаченный срок мог не закончиться; по вопросам возврата свяжитесь с владельцем.",
+            (
+                "Владелец завершил подписку. Оплаченный срок мог не закончиться; "
+                "по вопросам возврата свяжитесь с владельцем."
+            ),
         )
 
 
@@ -335,7 +345,10 @@ async def revoke_owner_grant(
                "Владелец отдельно подтвердил отзыв некоммерческого права доступа")
         return OwnerChange(
             True, await _telegram_id(session, project_id, grant.customer_id),
-            "Владелец отозвал доступ к ресурсу. Если остались другие действующие права, доступ сохраняется.",
+            (
+                "Владелец отозвал доступ к ресурсу. "
+                "Если остались другие действующие права, доступ сохраняется."
+            ),
         )
 
 
