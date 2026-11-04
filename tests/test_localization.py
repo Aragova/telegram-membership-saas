@@ -1,4 +1,6 @@
 """Locale selection stays per user and does not infer location."""
+from telegram_membership_saas.modules.telegram_commerce.service import format_period
+from telegram_membership_saas.modules.telegram_commerce.storefront import catalog_screen
 from telegram_membership_saas.localization import (
     _language,
     current_language,
@@ -24,3 +26,23 @@ def test_language_is_scoped() -> None:
     finally:
         _language.reset(token)
     assert tr("Настройки", "Settings") == "Настройки"
+
+
+def test_english_buyer_empty_catalog_and_period() -> None:
+    token = _language.set("en")
+    try:
+        text, keyboard = catalog_screen(())
+        assert "Subscriptions" in text
+        assert "No plans" in text
+        assert keyboard.inline_keyboard[0][0].callback_data == "lng:menu"
+        assert format_period(3, "month") == "3 months"
+        assert format_period(None, "lifetime") == "Lifetime"
+    finally:
+        _language.reset(token)
+
+
+def test_russian_buyer_fallback() -> None:
+    text, keyboard = catalog_screen(())
+    assert "Подписки" in text
+    assert keyboard.inline_keyboard[0][0].callback_data == "lng:menu"
+    assert format_period(3, "month") == "3 месяца"
