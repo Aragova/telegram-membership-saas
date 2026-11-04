@@ -1,10 +1,11 @@
 """Real PostgreSQL tests for safe discovery, liveness RLS and project fencing."""
 
 import os
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.customer_supervisor import discover_targets
@@ -98,6 +99,45 @@ async def test_trusted_global_discovery_returns_only_metadata_and_rls_hides_ciph
             health = await session.get(CustomerBotRuntimeHealth, project_id)
             assert health.state == "starting"
             assert health.instance_id == worker_b
+
+        # Simulate a lease holder with a delayed DB heartbeat. Another
+        # capacity-limited supervisor has no project lock and must NOT steal
+        # the health row, even if it has been stale for several minutes.
+        await write_bot_health(
+            factory, project_id=project_id, bot_id=bot_id,
+            instance_id=worker_b, state="running",
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id)
+        ) as session:
+            await session.execute(
+                update(CustomerBotRuntimeHealth)
+                .where(CustomerBotRuntimeHealth.project_id == project_id)
+                .values(last_heartbeat=datetime.now(UTC) - timedelta(minutes=3))
+            )
+        await write_bot_health(
+            factory, project_id=project_id, bot_id=bot_id,
+            instance_id=worker_a, state="queued",
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id)
+        ) as session:
+            stale_owner = await session.get(CustomerBotRuntimeHealth, project_id)
+            assert stale_owner.state == "running"
+            assert stale_owner.instance_id == worker_b
+        # Once the actual holder recovers, its next running update must
+        # still succeed; queued replicas have never changed ownership.
+        await write_bot_health(
+            factory, project_id=project_id, bot_id=bot_id,
+            instance_id=worker_b, state="running",
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id)
+        ) as session:
+            resumed = await session.get(CustomerBotRuntimeHealth, project_id)
+            assert resumed.instance_id == worker_b
+            assert resumed.state == "running"
+            assert resumed.last_heartbeat > datetime.now(UTC) - timedelta(seconds=15)
 
         stranger = await ensure_telegram_actor(
             factory,
