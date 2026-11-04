@@ -276,13 +276,15 @@ def create_owner_setup_router(
 
     async def show_obligations(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        page: int = 0,
     ) -> None:
         snapshot = await list_owner_obligations(
-            factory, actor_id=actor_id, project_id=project_id,
+            factory, actor_id=actor_id, project_id=project_id, page=page,
         )
         counts = snapshot.blockers
         lines = [
             "🧾 <b>Обязательства перед отключением</b>",
+            "Страница " + str(page + 1) + " · до 5 записей каждого типа",
             "",
             "Заявки: " + str(counts.requests)
             + " · Подписки: " + str(counts.subscriptions)
@@ -308,7 +310,8 @@ def create_owner_setup_router(
             )
             rows.append([_button(
                 "💳 " + label + " заявку " + str(item.telegram_user_id),
-                "ob:pay:" + project_ref + ":" + encode_uuid(item.id), "danger",
+                "ob:pay:" + project_ref + ":" + encode_uuid(item.id)
+                + (":" + str(page) if page else ""), "danger",
             )])
         for item in snapshot.subscriptions:
             end = (
@@ -321,7 +324,8 @@ def create_owner_setup_router(
             )
             rows.append([_button(
                 "📦 Завершить подписку " + str(item.telegram_user_id),
-                "ob:sub:" + project_ref + ":" + encode_uuid(item.id), "danger",
+                "ob:sub:" + project_ref + ":" + encode_uuid(item.id)
+                + (":" + str(page) if page else ""), "danger",
             )])
         for item in snapshot.grants:
             if item.source == "payment":
@@ -331,7 +335,8 @@ def create_owner_setup_router(
             )
             rows.append([_button(
                 "🔑 Отозвать " + item.source[:12] + " · " + str(item.telegram_user_id),
-                "ob:grant:" + project_ref + ":" + encode_uuid(item.id), "danger",
+                "ob:grant:" + project_ref + ":" + encode_uuid(item.id)
+                + (":" + str(page) if page else ""), "danger",
             )])
         if snapshot.access:
             lines.append(
@@ -341,7 +346,8 @@ def create_owner_setup_router(
             for item in snapshot.access[:12]:
                 rows.append([_button(
                     "🔄 Синхронизировать доступ · " + item.actual,
-                    "ob:sync:" + project_ref + ":" + encode_uuid(item.id),
+                    "ob:sync:" + project_ref + ":" + encode_uuid(item.id)
+                    + (":" + str(page) if page else ""),
                 )])
         if counts.access_actions or counts.join_tickets:
             lines.append(
@@ -350,6 +356,23 @@ def create_owner_setup_router(
             )
         if not counts.has_blockers:
             lines.append("\n✅ Блокировок больше нет. Можно вернуться к удалению.")
+        nav = []
+        if page > 0:
+            nav.append(_button(
+                "⬅️ Назад", "obpage:" + project_ref + ":" + str(page - 1),
+            ))
+        if page < 200 and any(
+            len(items) == 5
+            for items in (
+                snapshot.payments, snapshot.subscriptions,
+                snapshot.grants, snapshot.access,
+            )
+        ):
+            nav.append(_button(
+                "➡️ Далее", "obpage:" + project_ref + ":" + str(page + 1),
+            ))
+        if nav:
+            rows.append(nav)
         rows.extend([
             [_button("🔄 Обновить обязательства", "oblist")],
             [_button("⬅️ Мои боты", "bots")],
@@ -605,16 +628,27 @@ def create_owner_setup_router(
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "oblist":
                 await show_obligations(bot, user_id, actor_id, project_id)
+            elif action.startswith("obpage:"):
+                _, project_ref, page_number = action.split(":", 2)
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError("Открыто меню другого проекта")
+                await show_obligations(
+                    bot, user_id, actor_id, project_id, page=int(page_number),
+                )
             elif action.startswith(("ob:", "obok:")):
                 parts = action.split(":")
-                if len(parts) != 4 or parts[1] not in ("pay", "sub", "grant", "sync"):
+                if len(parts) not in (4, 5) or parts[1] not in (
+                    "pay", "sub", "grant", "sync"
+                ):
                     raise ValueError("Неизвестное действие")
-                verb, kind, project_ref, object_ref = parts
+                verb, kind, project_ref, object_ref = parts[:4]
+                page = int(parts[4]) if len(parts) == 5 else 0
                 if decode_uuid(project_ref) != project_id:
                     raise ValueError("Открыто меню другого проекта. Обновите обязательства.")
                 object_id = decode_uuid(object_ref)
                 snapshot = await list_owner_obligations(
                     factory, actor_id=actor_id, project_id=project_id,
+                    page=page,
                 )
                 active_ids = {
                     "pay": {item.id for item in snapshot.payments},
@@ -642,7 +676,8 @@ def create_owner_setup_router(
                         parse_mode="HTML", reply_markup=_markup([
                             [_button(
                                 "✅ Подтверждаю действие",
-                                "obok:" + kind + ":" + project_ref + ":" + object_ref,
+                                "obok:" + kind + ":" + project_ref + ":" + object_ref
+                                + (":" + str(page) if page else ""),
                                 "danger" if kind != "sync" else "success",
                             )],
                             [_button("Отмена", "oblist")],
