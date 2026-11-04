@@ -29,7 +29,7 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
-from telegram_membership_saas.localization import tr
+from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -42,6 +42,11 @@ from telegram_membership_saas.modules.bots.service import (
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
+)
+from telegram_membership_saas.modules.owner_setup.obligation_locale import (
+    obligation_error,
+    obligation_message,
+    obligation_status,
 )
 from telegram_membership_saas.modules.owner_setup.obligations import (
     close_owner_payment,
@@ -443,47 +448,59 @@ def create_owner_setup_router(
         )
         counts = snapshot.blockers
         lines = [
-            "🧾 <b>Обязательства перед отключением</b>",
-            "Страница " + str(page + 1) + " · до 5 записей каждого типа",
+            tr("🧾 <b>Обязательства перед отключением</b>",
+               "🧾 <b>Outstanding obligations before removal</b>"),
+            tr("Страница ", "Page ") + str(page + 1)
+            + tr(" · до 5 записей каждого типа", " · up to 5 records per category"),
             "",
-            "Заявки: " + str(counts.requests)
-            + " · Подписки: " + str(counts.subscriptions)
-            + " · Права: " + str(counts.grants),
-            "Доступы: " + str(counts.access)
-            + " · Действия: " + str(counts.access_actions)
-            + " · Приглашения: " + str(counts.join_tickets),
+            tr("Заявки: ", "Payment requests: ") + str(counts.requests)
+            + tr(" · Подписки: ", " · Subscriptions: ") + str(counts.subscriptions)
+            + tr(" · Права: ", " · Grants: ") + str(counts.grants),
+            tr("Доступы: ", "Access states: ") + str(counts.access)
+            + tr(" · Действия: ", " · Actions: ") + str(counts.access_actions)
+            + tr(" · Приглашения: ", " · Invites: ") + str(counts.join_tickets),
             "",
-            "Все действия выполняются отдельно с подтверждением. "
-            "Оплаченный доступ нельзя отключать без урегулирования "
-            "обязательств перед покупателем.",
+            tr(
+                "Все действия выполняются отдельно с подтверждением. "
+                "Оплаченный доступ нельзя отключать без урегулирования "
+                "обязательств перед покупателем.",
+                "Each action requires individual confirmation. "
+                "Do not remove paid access without resolving your "
+                "obligations to customers.",
+            ),
         ]
         rows: list[list[InlineKeyboardButton]] = []
         project_ref = encode_uuid(project_id)
         for item in snapshot.payments:
             label = (
-                "Отклонить" if item.status == "waiting_review" else "Закрыть"
+                tr("Отклонить", "Reject")
+                if item.status == "waiting_review"
+                else tr("Закрыть", "Close")
             )
             lines.append(
                 "💳 " + escape(item.username or str(item.telegram_user_id))
                 + " · " + escape(item.amount + " " + item.currency)
-                + " · " + escape(item.status)
+                + " · " + escape(obligation_status(item.status))
             )
             rows.append([_button(
-                "💳 " + label + " заявку " + str(item.telegram_user_id),
+                "💳 " + label + tr(" заявку ", " request ")
+                + str(item.telegram_user_id),
                 "ob:pay:" + project_ref + ":" + encode_uuid(item.id)
                 + (":" + str(page) if page else ""), "danger",
             )])
         for item in snapshot.subscriptions:
             end = (
-                item.period_end.strftime("%d.%m.%Y") if item.period_end else "бессрочно"
+                item.period_end.strftime("%d.%m.%Y")
+                if item.period_end else tr("бессрочно", "lifetime")
             )
             lines.append(
                 "📦 " + escape(item.plan_name) + " · "
                 + escape(item.username or str(item.telegram_user_id))
-                + " · до " + end
+                + tr(" · до ", " · until ") + end
             )
             rows.append([_button(
-                "📦 Завершить подписку " + str(item.telegram_user_id),
+                tr("📦 Завершить подписку ", "📦 End subscription ")
+                + str(item.telegram_user_id),
                 "ob:sub:" + project_ref + ":" + encode_uuid(item.id)
                 + (":" + str(page) if page else ""), "danger",
             )])
@@ -494,28 +511,37 @@ def create_owner_setup_router(
                 "🔑 " + escape(item.source) + " · " + str(item.telegram_user_id)
             )
             rows.append([_button(
-                "🔑 Отозвать " + item.source[:12] + " · " + str(item.telegram_user_id),
+                tr("🔑 Отозвать ", "🔑 Revoke ")
+                + item.source[:12] + " · " + str(item.telegram_user_id),
                 "ob:grant:" + project_ref + ":" + encode_uuid(item.id)
                 + (":" + str(page) if page else ""), "danger",
             )])
         if snapshot.access:
-            lines.append(
+            lines.append(tr(
                 "🔄 Доступы требуют подтверждения фактического отзыва в Telegram. "
-                "Они не очищаются принудительно."
-            )
+                "Они не очищаются принудительно.",
+                "🔄 Access revocations must be confirmed in Telegram. "
+                "Access states are never forcibly cleared.",
+            ))
             for item in snapshot.access[:12]:
                 rows.append([_button(
-                    "🔄 Синхронизировать доступ · " + item.actual,
+                    tr("🔄 Синхронизировать доступ · ", "🔄 Sync access · ")
+                    + obligation_status(item.actual),
                     "ob:sync:" + project_ref + ":" + encode_uuid(item.id)
                     + (":" + str(page) if page else ""),
                 )])
         if counts.access_actions or counts.join_tickets:
-            lines.append(
+            lines.append(tr(
                 "⏳ Действия доступа и приглашения обрабатывает клиентский бот; "
-                "проверьте состояние после завершения."
-            )
+                "проверьте состояние после завершения.",
+                "⏳ The connected bot processes access actions and invitations. "
+                "Check the status again when processing completes.",
+            ))
         if not counts.has_blockers:
-            lines.append("\n✅ Блокировок больше нет. Можно вернуться к удалению.")
+            lines.append(tr(
+                "\n✅ Блокировок больше нет. Можно вернуться к удалению.",
+                "\n✅ No outstanding blockers. You can return to bot removal.",
+            ))
         nav = []
         if page > 0:
             nav.append(_button(
@@ -542,6 +568,7 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+
     async def notify_buyer(
         central_bot: Bot, owner_tg_id: int, actor_id: UUID,
         project_id: UUID, change,
@@ -551,7 +578,8 @@ def create_owner_setup_router(
         key = get_settings().bot_token_encryption_key
         if not key:
             await central_bot.send_message(
-                owner_tg_id, "⚠️ Состояние сохранено, но уведомление покупателя недоступно.",
+                owner_tg_id, tr("⚠️ Состояние сохранено, но уведомление покупателя недоступно.",
+                                "⚠️ Change saved, but buyer notifications are unavailable."),
             )
             return
         async with tenant_session_scope(
@@ -564,21 +592,24 @@ def create_owner_setup_router(
             cipher = instance.token_ciphertext if instance else None
         if not cipher:
             await central_bot.send_message(
-                owner_tg_id, "⚠️ Изменение сохранено, но бот покупателя отключён.",
+                owner_tg_id, tr("⚠️ Изменение сохранено, но бот покупателя отключён.",
+                                "⚠️ Change saved, but the buyer bot is disconnected."),
             )
             return
         try:
             customer_bot = Bot(token=decrypt_token(cipher, key=key))
             try:
-                await customer_bot.send_message(
-                    change.telegram_user_id, change.message,
-                )
+                async with recipient_language(factory, change.telegram_user_id):
+                    await customer_bot.send_message(
+                        change.telegram_user_id, obligation_message(change.message),
+                    )
             finally:
                 await customer_bot.session.close()
         except (AiogramError, ValueError, RuntimeError, InvalidToken):
             await central_bot.send_message(
                 owner_tg_id,
-                "⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
+                tr("⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
+                   "⚠️ Change saved, but Telegram could not notify the buyer."),
             )
 
 
@@ -980,7 +1011,8 @@ def create_owner_setup_router(
             elif action.startswith("drop:"):
                 _, project_ref, instance_ref = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Меню другого проекта. Откройте «Мои боты» снова.")
+                    raise ValueError(tr("Меню другого проекта. Откройте «Мои боты» снова.",
+                                        "Another project menu. Reopen My bots."))
                 instance_id = decode_uuid(instance_ref)
                 data = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id
@@ -990,18 +1022,28 @@ def create_owner_setup_router(
                     if bot_id == instance_id and status != "deleting"
                 ), None)
                 if name is None or not data.can_delete_bot:
-                    raise PermissionError("Этот бот не доступен для удаления")
+                    raise PermissionError(tr("Этот бот не доступен для удаления",
+                                            "This bot cannot be removed."))
                 await bot.send_message(
                     user_id,
-                    "🗑 <b>Удалить @" + escape(name) + "?</b>\n\n"
-                    "ViMi Pay отключит обработку покупателей, затем удалит "
-                    "подключение, сохранённый токен и состояние запуска.\n\n"
-                    "Настройки проекта и история платежей останутся: они "
-                    "не принадлежат токену бота. Повторно подключить этот "
-                    "Telegram-бот можно после завершения удаления.\n\n"
-                    "При незавершённых оплатах или действующих подписках "
-                    "удаление не начнётся, чтобы не оставить людей без "
-                    "управления доступом.",
+                    tr("🗑 <b>Удалить @", "🗑 <b>Remove @") + escape(name)
+                    + "?</b>\n\n"
+                    + tr(
+                        "ViMi Pay отключит обработку покупателей, затем удалит "
+                        "подключение, сохранённый токен и состояние запуска.\n\n"
+                        "Настройки проекта и история платежей останутся: они "
+                        "не принадлежат токену бота. Повторно подключить этот "
+                        "Telegram-бот можно после завершения удаления.\n\n"
+                        "При незавершённых оплатах или действующих подписках "
+                        "удаление не начнётся, чтобы не оставить людей без "
+                        "управления доступом.",
+                        "ViMi Pay will stop serving buyers, then remove this "
+                        "connection, saved token and runtime state.\n\n"
+                        "Project settings and payment history are preserved. "
+                        "You can reconnect this Telegram bot after removal finishes.\n\n"
+                        "Removal will be blocked while payments or paid subscriptions "
+                        "remain unsettled, so buyers do not lose access management.",
+                    ),
                     parse_mode="HTML",
                     reply_markup=_markup([
                         [_button(
@@ -1016,7 +1058,8 @@ def create_owner_setup_router(
             elif action.startswith("dropok:"):
                 _, project_ref, instance_ref = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Проект изменился. Откройте «Мои боты» снова.")
+                    raise ValueError(tr("Проект изменился. Откройте «Мои боты» снова.",
+                                        "Project changed. Reopen My bots."))
                 try:
                     requested = await request_bot_retirement(
                         factory, actor_id=actor_id,
@@ -1026,20 +1069,34 @@ def create_owner_setup_router(
                 except ValueError as exc:
                     # Include the entire safety explanation; Telegram alert
                     # callbacks are limited in length and would truncate it.
-                    await bot.send_message(user_id, "⚠️ " + str(exc))
+                    await bot.send_message(user_id, tr(
+                        "⚠️ " + str(exc),
+                        "⚠️ Bot removal is blocked by outstanding obligations. "
+                        "Review and resolve each obligation below.",
+                    ))
                     await show_obligations(bot, user_id, actor_id, project_id)
-                    await query.answer("Удаление пока недоступно", show_alert=True)
+                    await query.answer(tr("Удаление пока недоступно",
+                                          "Bot removal is blocked"), show_alert=True)
                     return
                 await bot.send_message(
                     user_id,
-                    "✅ Удаление запрошено. Бот прекратит обработку покупателей, "
-                    "а после безопасной остановки ViMi Pay удалит его "
-                    "данные подключения.\n\n"
-                    "Нажмите «🔄 Обновить статус» в разделе «Мои боты». "
-                    "Когда бот исчезнет из списка, его можно подключить "
-                    "заново или создать новый проект с нуля."
-                    if requested else
-                    "Этот бот уже не подключён. Обновите список.",
+                    (
+                        tr(
+                            "✅ Удаление запрошено. Бот прекратит обработку покупателей, "
+                            "а после безопасной остановки ViMi Pay удалит его "
+                            "данные подключения.\n\n"
+                            "Нажмите «🔄 Обновить статус» в разделе «Мои боты». "
+                            "Когда бот исчезнет из списка, его можно подключить "
+                            "заново или создать новый проект с нуля.",
+                            "✅ Bot removal requested. Buyer processing will stop, "
+                            "then ViMi Pay will safely remove the connection.\n\n"
+                            "Use Refresh status in My bots. Once removed, "
+                            "you can reconnect it or start a new project.",
+                        ) if requested else tr(
+                            "Этот бот уже не подключён. Обновите список.",
+                            "This bot is already disconnected. Refresh the list.",
+                        )
+                    ),
                 )
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "oblist":
@@ -1047,7 +1104,8 @@ def create_owner_setup_router(
             elif action.startswith("obpage:"):
                 _, project_ref, page_number = action.split(":", 2)
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Открыто меню другого проекта")
+                    raise ValueError(tr("Открыто меню другого проекта",
+                                        "Another project menu is open."))
                 await show_obligations(
                     bot, user_id, actor_id, project_id, page=int(page_number),
                 )
@@ -1060,7 +1118,8 @@ def create_owner_setup_router(
                 verb, kind, project_ref, object_ref = parts[:4]
                 page = int(parts[4]) if len(parts) == 5 else 0
                 if decode_uuid(project_ref) != project_id:
-                    raise ValueError("Открыто меню другого проекта. Обновите обязательства.")
+                    raise ValueError(tr("Открыто меню другого проекта. Обновите обязательства.",
+                                        "Another project menu. Refresh obligations."))
                 object_id = decode_uuid(object_ref)
                 snapshot = await list_owner_obligations(
                     factory, actor_id=actor_id, project_id=project_id,
@@ -1074,20 +1133,38 @@ def create_owner_setup_router(
                 }
                 if verb == "ob":
                     if object_id not in active_ids[kind]:
-                        raise ValueError("Действие уже неактуально. Обновите обязательства.")
+                        raise ValueError(tr("Действие уже неактуально. Обновите обязательства.",
+                                        "Action is stale. Refresh obligations."))
                     warnings = {
-                        "pay": "Проверьте поступление денег в банке. "
-                        "Отклонение или отмена заявки не возвращает деньги.",
-                        "sub": "Вы досрочно закрываете оплаченный срок! "
-                        "Возврат денег ViMi Pay не выполняет. "
-                        "Урегулируйте вопрос с покупателем самостоятельно.",
-                        "grant": "Это отдельное право доступа. "
-                        "Проверьте, не является ли оно служебным или бессрочным.",
-                        "sync": "ViMi Pay перепроверит права и отправит действие "
-                        "в Telegram. Доступ не будет удалён при других действующих правах.",
+                        "pay": tr(
+                            "Проверьте поступление денег в банке. "
+                            "Отклонение или отмена заявки не возвращает деньги.",
+                            "Verify the bank transfer. Rejecting or closing "
+                            "a payment request does not refund money.",
+                        ),
+                        "sub": tr(
+                            "Вы досрочно закрываете оплаченный срок! "
+                            "Возврат денег ViMi Pay не выполняет. "
+                            "Урегулируйте вопрос с покупателем самостоятельно.",
+                            "You are ending a paid term early. ViMi Pay "
+                            "does not issue refunds. Resolve this with the buyer.",
+                        ),
+                        "grant": tr(
+                            "Это отдельное право доступа. "
+                            "Проверьте, не является ли оно служебным или бессрочным.",
+                            "This is a separate access grant. Check whether it "
+                            "is permanent or used for account management.",
+                        ),
+                        "sync": tr(
+                            "ViMi Pay перепроверит права и отправит действие "
+                            "в Telegram. Доступ не будет удалён при других действующих правах.",
+                            "ViMi Pay will recalculate access and send the action "
+                            "to Telegram. Other valid grants still preserve access.",
+                        ),
                     }
                     await bot.send_message(
-                        user_id, "⚠️ <b>Подтвердите действие</b>\n\n"
+                        user_id, tr("⚠️ <b>Подтвердите действие</b>\n\n",
+                                   "⚠️ <b>Confirm this action</b>\n\n")
                         + escape(warnings[kind]),
                         parse_mode="HTML", reply_markup=_markup([
                             [_button(
@@ -1101,7 +1178,8 @@ def create_owner_setup_router(
                     )
                 else:
                     if object_id not in active_ids[kind]:
-                        raise ValueError("Действие уже выполнено или устарело")
+                        raise ValueError(tr("Действие уже выполнено или устарело",
+                                        "Action was completed or has expired."))
                     if kind == "pay":
                         change = await close_owner_payment(
                             factory, actor_id=actor_id, project_id=project_id,
@@ -1122,13 +1200,13 @@ def create_owner_setup_router(
                             factory, actor_id=actor_id, project_id=project_id,
                             state_id=object_id,
                         )
-                        await bot.send_message(user_id, "🔄 " + message)
+                        await bot.send_message(user_id, "🔄 " + obligation_message(message))
                         change = None
                     if change is not None:
                         await bot.send_message(
                             user_id, "✅ " + (
-                                "Состояние сохранено" if change.changed
-                                else change.message
+                                tr("Состояние сохранено", "Change saved")
+                                if change.changed else obligation_message(change.message)
                             ),
                         )
                         await notify_buyer(bot, user_id, actor_id, project_id, change)
@@ -1531,7 +1609,12 @@ def create_owner_setup_router(
             else:
                 raise ValueError(tr("Неизвестное действие", "Unknown action"))
         except (ValueError, PermissionError) as exc:
-            await query.answer(str(exc)[:180], show_alert=True)
+            detail = (
+                obligation_error(str(exc))
+                if action.startswith(("ob:", "obok:", "obpage:"))
+                else str(exc)
+            )
+            await query.answer(detail[:180], show_alert=True)
             return
         await query.answer()
 

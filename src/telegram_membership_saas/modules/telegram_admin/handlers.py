@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
     register_customer_bot,
@@ -49,6 +50,7 @@ TIMEZONE_CHOICES = (
 )
 SCREENS = frozenset({"main", "resources", "plans", "methods", "settings", "timezone", "bots"})
 CONNECT_PROMPT_PREFIX = "Подключение собственного бота"
+CONNECT_PROMPT_PREFIX_EN = "Connect your own bot"
 STATUS_LABELS = {
     "active": "🟢 Активно",
     "disabled": "⚪ Отключено",
@@ -59,8 +61,33 @@ STATUS_LABELS = {
 }
 
 
+ADMIN_BUTTON_LABELS_EN = {
+    "📦 Тарифы": "📦 Plans",
+    "📢 Каналы / группы": "📢 Channels / groups",
+    "💳 Оплата": "💳 Payments",
+    "⚙️ Настройки": "⚙️ Settings",
+    "🤖 Мои боты": "🤖 My bots",
+    "🧾 Заявки": "🧾 Payment reviews",
+    "👁 Посмотреть как клиент": "👁 Buyer preview",
+    "➕ Подключить своего бота": "➕ Connect my bot",
+    "⬅️ Главное меню": "⬅️ Main menu",
+    "🌍 Изменить часовой пояс": "🌍 Change timezone",
+    "⬅️ Настройки": "⬅️ Settings",
+}
+STATUS_LABELS_EN = {
+    "active": "🟢 Active",
+    "disabled": "⚪ Disabled",
+    "archived": "📦 Archived",
+    "draft": "📝 Draft",
+    "registered": "⏳ Registered",
+}
+
+
 def _button(text: str, callback_data: str, *, style: str = "primary") -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, callback_data=callback_data, style=style)
+    return InlineKeyboardButton(
+        text=tr(text, ADMIN_BUTTON_LABELS_EN.get(text, text)),
+        callback_data=callback_data, style=style,
+    )
 
 
 def _keyboard(screen: str, snapshot: AdminProjectSnapshot) -> InlineKeyboardMarkup:
@@ -77,6 +104,7 @@ def _keyboard(screen: str, snapshot: AdminProjectSnapshot) -> InlineKeyboardMark
             [_button("🤖 Мои боты", "adm:bots")],
             [_button("🧾 Заявки", "adm:reviews")],
             [_button("👁 Посмотреть как клиент", "adm:client")],
+            [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
         ]
     elif screen == "bots":
         rows = [
@@ -107,59 +135,89 @@ def _keyboard(screen: str, snapshot: AdminProjectSnapshot) -> InlineKeyboardMark
 
 def _render_entries(title: str, entries: tuple[AdminEntry, ...]) -> str:
     if not entries:
-        return f"<b>{title}</b>\n\nЗаписей пока нет."
+        return f"<b>{title}</b>\n\n" + tr("Записей пока нет.", "No records yet.")
     lines = [f"<b>{title}</b>", ""]
     for entry in entries[:15]:
-        state = STATUS_LABELS.get(entry.status, escape(entry.status))
-        suffix = f" · {escape(entry.details)}" if entry.details else ""
+        state = tr(
+            STATUS_LABELS.get(entry.status, escape(entry.status)),
+            STATUS_LABELS_EN.get(entry.status, escape(entry.status)),
+        )
+        details_en = {
+            "Канал": "Channel",
+            "Группа": "Group",
+            "ожидает запуска": "waiting to start",
+        }
+        details = tr(entry.details, details_en.get(entry.details, entry.details))
+        suffix = f" · {escape(details)}" if details else ""
         lines.append(f"• <b>{escape(entry.name)}</b>{suffix}\n  {state}")
     if len(entries) > 15:
-        lines.append(f"\nПоказаны первые 15 из {len(entries)}.")
+        lines.append(tr(f"\nПоказаны первые 15 из {len(entries)}.",
+                        f"\nShowing the first 15 of {len(entries)}."))
     return "\n".join(lines)
 
 
 def _screen_text(screen: str, snapshot: AdminProjectSnapshot) -> str:
     if screen == "main":
         return (
-            "👑 <b>ViMi Pay · Управление</b>\n\n"
-            f"📁 Проект: <b>{escape(snapshot.project_name)}</b>\n"
-            f"🌍 Часовой пояс: <b>{escape(snapshot.timezone)}</b>\n\n"
-            f"Каналов и групп: {len(snapshot.resources)}\n"
-            f"Тарифов: {len(snapshot.plans)}\n"
-            f"Способов оплаты: {len(snapshot.payment_methods)}\n"
-            f"Подключённых ботов: {len(snapshot.bots)}\n\n"
-            "Выберите раздел управления."
+            tr("👑 <b>ViMi Pay · Управление</b>\n\n",
+               "👑 <b>ViMi Pay · Management</b>\n\n")
+            + tr("📁 Проект: ", "📁 Project: ")
+            + f"<b>{escape(snapshot.project_name)}</b>\n"
+            + tr("🌍 Часовой пояс: ", "🌍 Timezone: ")
+            + f"<b>{escape(snapshot.timezone)}</b>\n\n"
+            + tr("Каналов и групп: ", "Channels and groups: ")
+            + f"{len(snapshot.resources)}\n"
+            + tr("Тарифов: ", "Plans: ") + f"{len(snapshot.plans)}\n"
+            + tr("Способов оплаты: ", "Payment methods: ")
+            + f"{len(snapshot.payment_methods)}\n"
+            + tr("Подключённых ботов: ", "Connected bots: ")
+            + f"{len(snapshot.bots)}\n\n"
+            + tr("Выберите раздел управления.", "Choose a management section.")
         )
     if screen == "bots":
         return (
-            _render_entries("🤖 Мои боты", snapshot.bots)
-            + "\n\nЗарегистрированные боты ещё не принимают покупателей. "
-            "после настройки каналов, тарифов и способов оплаты и проверки запуска."
+            _render_entries(tr("🤖 Мои боты", "🤖 My bots"), snapshot.bots)
+            + tr("\n\nЗарегистрированные боты ещё не принимают покупателей. "
+                 "после настройки каналов, тарифов и способов оплаты и проверки запуска.",
+                 "\n\nRegistered bots do not accept buyers until channels, "
+                 "plans, payment methods and runtime are configured.")
         )
     if screen == "resources":
-        return _render_entries("📢 Каналы / группы", snapshot.resources)
+        return _render_entries(
+            tr("📢 Каналы / группы", "📢 Channels / groups"), snapshot.resources,
+        )
     if screen == "plans":
-        return _render_entries("📦 Тарифы", snapshot.plans)
+        return _render_entries(tr("📦 Тарифы", "📦 Plans"), snapshot.plans)
     if screen == "methods":
-        return _render_entries("💳 Способы оплаты", snapshot.payment_methods)
+        return _render_entries(
+            tr("💳 Способы оплаты", "💳 Payment methods"), snapshot.payment_methods,
+        )
     if screen == "settings":
         return (
-            "⚙️ <b>Настройки проекта</b>\n\n"
-            f"📁 {escape(snapshot.project_name)}\n"
-            f"🌍 Текущий часовой пояс: <b>{escape(snapshot.timezone)}</b>\n\n"
-            "Время в базе хранится в UTC. Даты подписок отображаются "
-            "с учётом часового пояса проекта."
+            tr("⚙️ <b>Настройки проекта</b>\n\n",
+               "⚙️ <b>Project settings</b>\n\n")
+            + f"📁 {escape(snapshot.project_name)}\n"
+            + tr("🌍 Текущий часовой пояс: ", "🌍 Current timezone: ")
+            + f"<b>{escape(snapshot.timezone)}</b>\n\n"
+            + tr("Время в базе хранится в UTC. Даты подписок отображаются "
+                 "с учётом часового пояса проекта.",
+                 "Database timestamps use UTC. Subscription dates are "
+                 "displayed in the project's timezone.")
         )
     if screen == "timezone":
         return (
-            "🌍 <b>Часовой пояс проекта</b>\n\n"
-            f"Сейчас: <b>{escape(snapshot.timezone)}</b>\n\n"
-            "Выберите зону ниже или отправьте команду "
-            "<code>/timezone Region/City</code> для любой IANA-зоны.\n"
-            "По умолчанию для новых проектов — Europe/Moscow."
+            tr("🌍 <b>Часовой пояс проекта</b>\n\n",
+               "🌍 <b>Project timezone</b>\n\n")
+            + tr("Сейчас: ", "Current: ")
+            + f"<b>{escape(snapshot.timezone)}</b>\n\n"
+            + tr("Выберите зону ниже или отправьте команду "
+                 "<code>/timezone Region/City</code> для любой IANA-зоны.\n"
+                 "По умолчанию для новых проектов — Europe/Moscow.",
+                 "Choose a timezone below or send "
+                 "<code>/timezone Region/City</code> for any IANA timezone.\n"
+                 "Default for new projects: Europe/Moscow.")
         )
     raise ValueError("Unknown admin screen")
-
 
 def _private_chat(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
@@ -173,7 +231,9 @@ class BotTokenReplyFilter(BaseFilter):
         return bool(
             prompt.from_user is not None
             and prompt.from_user.id == bot.id
-            and (prompt.text or "").startswith(CONNECT_PROMPT_PREFIX)
+            and (prompt.text or "").startswith(
+                (CONNECT_PROMPT_PREFIX, CONNECT_PROMPT_PREFIX_EN)
+            )
         )
 
 
@@ -238,15 +298,23 @@ def create_telegram_admin_router(
             await show_screen(bot, message.from_user.id, screen)
         except PermissionError:
             if command == "/admin":
-                text = "⛔ Нет доступа к управлению проектом."
+                text = tr("⛔ Нет доступа к управлению проектом.",
+                          "⛔ Project management access denied.")
             else:
                 text = (
-                    "👋 <b>ViMi Pay · Управление ботами</b>\n\n"
-                    "Это центральный бот для владельцев каналов, "
-                    "а не бот покупки подписок.\n\n"
-                    "У вас пока нет доступа к текущему проекту. "
-                    "Самостоятельное создание новых проектов "
-                    "будет добавлено в следующем этапе."
+                    tr(
+                        "👋 <b>ViMi Pay · Управление ботами</b>\n\n"
+                        "Это центральный бот для владельцев каналов, "
+                        "а не бот покупки подписок.\n\n"
+                        "У вас пока нет доступа к текущему проекту. "
+                        "Самостоятельное создание новых проектов "
+                        "будет добавлено в следующем этапе.",
+                        "👋 <b>ViMi Pay · Bot management</b>\n\n"
+                        "This central bot is for channel owners, "
+                        "not for purchasing subscriptions.\n\n"
+                        "You do not have access to the selected project. "
+                        "Please use the central connection flow to manage your bots.",
+                    )
                 )
             await bot.send_message(
                 chat_id=message.from_user.id,
@@ -271,7 +339,9 @@ def create_telegram_admin_router(
             await show_screen(bot, message.from_user.id, "timezone")
         except PermissionError:
             await bot.send_message(
-                chat_id=message.from_user.id, text="⛔ Нет доступа к управлению проектом."
+                chat_id=message.from_user.id,
+                text=tr("⛔ Нет доступа к управлению проектом.",
+                        "⛔ Project management access denied."),
             )
         except ValueError as exc:
             await bot.send_message(chat_id=message.from_user.id, text=str(exc))
@@ -281,7 +351,10 @@ def create_telegram_admin_router(
         if callback.data is None or callback.message is None:
             return
         if callback.message.chat.type != "private":
-            await callback.answer("Используйте личный чат с ботом", show_alert=True)
+            await callback.answer(
+                tr("Используйте личный чат с ботом", "Use a private chat with the bot"),
+                show_alert=True,
+            )
             return
         action = callback.data[4:]
         user_id = callback.from_user.id
@@ -296,23 +369,32 @@ def create_telegram_admin_router(
                 )
                 if get_settings().bot_token_encryption_key is None:
                     await callback.answer(
-                        "На сервере ещё не настроено шифрование токенов",
+                        tr("На сервере ещё не настроено шифрование токенов",
+                           "Bot token encryption is not configured."),
                         show_alert=True,
                     )
                     return
                 await bot.send_message(
                     chat_id=user_id,
                     text=(
-                        f"{CONNECT_PROMPT_PREFIX}\n\n"
-                        "1. Создайте бота через @BotFather.\n"
-                        "2. Ответьте на ЭТО сообщение полученным токеном.\n"
-                        "3. ViMi Pay проверит бота и удалит сообщение с токеном.\n\n"
-                        "Важно: бот будет зарегистрирован, но запустится "
-                        "для покупателей после настройки и запуска продаж."
+                        tr(
+                            f"{CONNECT_PROMPT_PREFIX}\n\n"
+                            "1. Создайте бота через @BotFather.\n"
+                            "2. Ответьте на ЭТО сообщение полученным токеном.\n"
+                            "3. ViMi Pay проверит бота и удалит сообщение с токеном.\n\n"
+                            "Важно: бот будет зарегистрирован, но запустится "
+                            "для покупателей после настройки и запуска продаж.",
+                            f"{CONNECT_PROMPT_PREFIX_EN}\n\n"
+                            "1. Create a bot using @BotFather.\n"
+                            "2. Reply to THIS message with its token.\n"
+                            "3. ViMi Pay verifies your bot and deletes the token message.\n\n"
+                            "Your bot is registered first; buyers can use it "
+                            "only after setup and launch.",
+                        )
                     ),
                     reply_markup=ForceReply(
                         selective=True,
-                        input_field_placeholder="Токен BotFather",
+                        input_field_placeholder=tr("Токен BotFather", "BotFather token"),
                     ),
                 )
                 await callback.answer()
@@ -347,15 +429,18 @@ def create_telegram_admin_router(
                     await bot.send_message(
                         chat_id=user_id,
                         text=(
-                            "👁 Покупательский каталог открыт в вашем боте:\n"
-                            f"@{escape(snapshot.bots[0].name.lstrip('@'))}\n\n"
-                            "Откройте его через Telegram и отправьте /start."
+                            tr("👁 Покупательский каталог открыт в вашем боте:\n",
+                               "👁 Buyer catalog is available in your bot:\n")
+                            + f"@{escape(snapshot.bots[0].name.lstrip('@'))}\n\n"
+                            + tr("Откройте его через Telegram и отправьте /start.",
+                                 "Open it in Telegram and send /start.")
                         ),
                     )
                 else:
                     await bot.send_message(
                         chat_id=user_id,
-                        text="Сначала выберите и запустите собственного бота.",
+                        text=tr("Сначала выберите и запустите собственного бота.",
+                                "Select and launch your connected bot first."),
                     )
             elif action == "reviews":
                 snapshot = await load_admin_project(
@@ -365,14 +450,20 @@ def create_telegram_admin_router(
                     if len(snapshot.bots) == 1:
                         target = escape(snapshot.bots[0].name)
                         info = (
-                            "🧾 Заявки теперь обрабатываются в вашем боте "
-                            f"{target}. Откройте его и отправьте /payments.\n\n"
-                            "Старые кнопки подтверждения в ViMi Pay больше не работают."
+                            tr("🧾 Заявки теперь обрабатываются в вашем боте ",
+                               "🧾 Payments are reviewed inside your bot ")
+                            + f"{target}. "
+                            + tr("Откройте его и отправьте /payments.\n\n"
+                                 "Старые кнопки подтверждения в ViMi Pay больше не работают.",
+                                 "Open it and send /payments.\n\n"
+                                 "Old central-bot approval controls no longer work.")
                         )
                     else:
                         info = (
-                            "🧾 Для обработки заявок откройте своего "
-                            "подключённого бота и отправьте /payments."
+                            tr("🧾 Для обработки заявок откройте своего "
+                               "подключённого бота и отправьте /payments.",
+                               "🧾 Open your connected bot and send "
+                               "/payments to review payment requests.")
                         )
                     await bot.send_message(chat_id=user_id, text=info)
                 else:
@@ -386,7 +477,9 @@ def create_telegram_admin_router(
                         )
                     if not pending:
                         await bot.send_message(
-                            chat_id=user_id, text="🧾 Заявок на проверку сейчас нет."
+                            chat_id=user_id,
+                            text=tr("🧾 Заявок на проверку сейчас нет.",
+                                    "🧾 No payment requests awaiting review."),
                         )
                     for item in pending:
                         await bot.send_message(
@@ -395,13 +488,18 @@ def create_telegram_admin_router(
                             reply_markup=_review_keyboard(item.request_id),
                         )
             else:
-                await callback.answer("Неизвестное действие", show_alert=True)
+                await callback.answer(tr("Неизвестное действие", "Unknown action"),
+                                      show_alert=True)
                 return
         except PermissionError:
-            await callback.answer("Нет доступа к управлению", show_alert=True)
+            await callback.answer(tr("Нет доступа к управлению", "Management access denied"),
+                                  show_alert=True)
             return
         except ValueError as exc:
-            await callback.answer(str(exc)[:180], show_alert=True)
+            await callback.answer(
+                tr(str(exc)[:180], "Invalid request or timezone. Please retry."),
+                show_alert=True,
+            )
             return
 
         await callback.answer()
@@ -422,7 +520,8 @@ def create_telegram_admin_router(
         if not deleted:
             await bot.send_message(
                 chat_id=message.chat.id,
-                text="Не удалось удалить сообщение с токеном. Подключение отменено.",
+                text=tr("Не удалось удалить сообщение с токеном. Подключение отменено.",
+                        "Could not delete the token message. Connection canceled."),
             )
             return
 
@@ -436,16 +535,25 @@ def create_telegram_admin_router(
                 central_bot_id=bot.id,
             )
         except (PermissionError, ValueError, RuntimeError) as exc:
-            await bot.send_message(chat_id=message.chat.id, text=str(exc))
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text=tr(str(exc), "Bot connection failed. Check the token and retry."),
+            )
             return
 
         await bot.send_message(
             chat_id=message.chat.id,
             text=(
-                f"✅ Бот <b>@{escape(result.username)}</b> зарегистрирован.\n\n"
-                "Теперь настройте канал, тарифы и оплату. После этого "
-                "проверим готовность вашего бота к продажам.\n"
-                "Откройте /start для просмотра своих ботов."
+                tr("✅ Бот ", "✅ Bot ")
+                + f"<b>@{escape(result.username)}</b> "
+                + tr("зарегистрирован.\n\n"
+                     "Теперь настройте канал, тарифы и оплату. После этого "
+                     "проверим готовность вашего бота к продажам.\n"
+                     "Откройте /start для просмотра своих ботов.",
+                     "registered.\n\n"
+                     "Set up your channel, plans and payments first. "
+                     "Your bot can start selling after readiness checks.\n"
+                     "Open /start to view your bots.")
             ),
             parse_mode="HTML",
         )
@@ -458,12 +566,14 @@ def create_telegram_admin_router(
         except AiogramError:
             await bot.send_message(
                 chat_id=message.chat.id,
-                text="Удалите сообщение с токеном вручную и смените токен в BotFather.",
+                text=tr("Удалите сообщение с токеном вручную и смените токен в BotFather.",
+                        "Delete the token message manually and rotate it in BotFather."),
             )
             return
         await bot.send_message(
             chat_id=message.chat.id,
-            text="Для подключения используйте /start → Подключить своего бота.",
+            text=tr("Для подключения используйте /start → Подключить своего бота.",
+                    "Use /start → Connect my bot to connect a token."),
         )
 
     return router
