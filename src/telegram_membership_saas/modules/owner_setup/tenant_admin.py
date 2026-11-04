@@ -61,10 +61,15 @@ class PlanInfo:
     prices: tuple[PriceInfo, ...]
 
 
+METHOD_PAGE_SIZE = 8
+
+
 async def list_owner_methods(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID, project_id: UUID,
+    actor_id: UUID, project_id: UUID, page: int = 0,
 ) -> tuple[MethodInfo, ...]:
+    if not 0 <= page <= 10000:
+        raise ValueError("Недопустимая страница")
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -75,13 +80,18 @@ async def list_owner_methods(
             select(PaymentMethod)
             .where(PaymentMethod.project_id == project_id)
             .order_by(PaymentMethod.sort_order, PaymentMethod.created_at)
-            .limit(40)
+            .offset(page * METHOD_PAGE_SIZE).limit(METHOD_PAGE_SIZE)
         )).all()
         currencies = (await session.execute(
             select(
                 PaymentMethodCurrency.payment_method_id,
                 PaymentMethodCurrency.currency_code,
-            ).where(PaymentMethodCurrency.project_id == project_id)
+            ).where(
+                PaymentMethodCurrency.project_id == project_id,
+                PaymentMethodCurrency.payment_method_id.in_(
+                    [method.id for method in methods]
+                ),
+            )
         )).all()
         by_method: dict[UUID, list[str]] = {}
         for method_id, code in currencies:
@@ -92,6 +102,39 @@ async def list_owner_methods(
                 currencies=tuple(sorted(by_method.get(method.id, ()))),
             )
             for method in methods
+        )
+
+
+async def get_owner_method_info(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, method_id: UUID,
+) -> MethodInfo:
+    """Retrieve one method independently of the owner's list pagination."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        method = await session.scalar(
+            select(PaymentMethod).where(
+                PaymentMethod.id == method_id,
+                PaymentMethod.project_id == project_id,
+            )
+        )
+        if method is None:
+            raise ValueError("Способ оплаты не найден в этом проекте")
+        currencies = (await session.scalars(
+            select(PaymentMethodCurrency.currency_code)
+            .where(
+                PaymentMethodCurrency.project_id == project_id,
+                PaymentMethodCurrency.payment_method_id == method_id,
+            )
+            .order_by(PaymentMethodCurrency.currency_code)
+        )).all()
+        return MethodInfo(
+            id=method.id, name=method.name, status=method.status,
+            currencies=tuple(currencies),
         )
 
 
