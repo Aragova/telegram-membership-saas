@@ -119,6 +119,17 @@ def _progress(snapshot) -> tuple[str, ...]:
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
 
 
+class StrayBotTokenFilter(BaseFilter):
+    """Scrub credentials even when there is no live ForceReply wizard."""
+
+    async def __call__(self, message: Message) -> bool:
+        return bool(
+            _private(message)
+            and message.text is not None
+            and TOKEN_PATTERN.fullmatch(message.text.strip())
+        )
+
+
 class SetupReplyFilter(BaseFilter):
     def __init__(
         self, factory: async_sessionmaker[AsyncSession],
@@ -1351,5 +1362,27 @@ def create_owner_setup_router(
                 message.chat.id,
                 "⚠️ " + str(exc)[:220] + "\nОткройте нужный раздел и повторите.",
             )
+
+    @router.message(StrayBotTokenFilter())
+    async def stray_bot_token_handler(message: Message, bot: Bot) -> None:
+        # An expired/replaced prompt must never leave a credential in chat.
+        try:
+            removed = await bot.delete_message(
+                message.chat.id, message.message_id,
+            )
+        except AiogramError:
+            removed = False
+        if not removed:
+            await bot.send_message(
+                message.chat.id,
+                "⚠️ Не удалось удалить токен. Удалите сообщение и "
+                "смените токен в @BotFather.",
+            )
+            return
+        await bot.send_message(
+            message.chat.id,
+            "🔐 Токен удалён из чата. Для подключения "
+            "откройте @vimipay_bot → Подключить бота.",
+        )
 
     return router
