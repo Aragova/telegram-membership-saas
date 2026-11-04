@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
@@ -38,6 +39,7 @@ from telegram_membership_saas.modules.bots.service import (
     decrypt_token,
     register_customer_bot,
 )
+from telegram_membership_saas.modules.owner_setup.labels import owner_button_label
 from telegram_membership_saas.modules.owner_setup.obligations import (
     close_owner_payment,
     end_owner_subscription,
@@ -103,7 +105,7 @@ DURATIONS = {
 
 
 def _button(label: str, data: str, style: str = "primary") -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=label, callback_data="own:" + data, style=style)
+    return InlineKeyboardButton(text=owner_button_label(label), callback_data="own:" + data, style=style)
 
 
 def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
@@ -112,13 +114,13 @@ def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
 
 def _status(value: str) -> str:
     return {
-        "active": "🟢 Активно",
-        "registered": "✅ Подключён",
-        "draft": "📝 Черновик",
-        "disabled": "⚪ Отключено",
-        "archived": "📦 Архив",
-        "deleting": "🟡 Удаляется",
-    }.get(value, "Неизвестно")
+        "active": tr("🟢 Активно", "🟢 Active"),
+        "registered": tr("✅ Подключён", "✅ Connected"),
+        "draft": tr("📝 Черновик", "📝 Draft"),
+        "disabled": tr("⚪ Отключено", "⚪ Disabled"),
+        "archived": tr("📦 Архив", "📦 Archived"),
+        "deleting": tr("🟡 Удаляется", "🟡 Removing"),
+    }.get(value, tr("Неизвестно", "Unknown"))
 
 
 def _next_setup_step(snapshot) -> tuple[str, str] | None:
