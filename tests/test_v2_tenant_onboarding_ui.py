@@ -151,13 +151,21 @@ async def test_payment_method_disable_requires_confirmation(monkeypatch):
     project, method = uuid4(), uuid4()
     _auth(monkeypatch, project)
     update = AsyncMock()
-    monkeypatch.setattr(ui, "change_owner_method_status", update)
+    monkeypatch.setattr(ui, "change_owner_method_status_guarded", update)
+    monkeypatch.setattr(
+        ui, "get_owner_method_info",
+        AsyncMock(return_value=MethodInfo(
+            method, "PayPal", "active", ("RUB",),
+            revision="aabbccddeeff",
+        )),
+    )
     bot = _bot()
     await _callback(project)(_query("methodconfirmoff:" + method.hex), bot)
     update.assert_not_awaited()
     sent = bot.send_message.await_args
     assert "Отключить способ" in sent.args[1]
-    assert "own:methodoff:" + method.hex in [
+    from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+    assert "own:methodoff:" + encode_uuid(method) + ":aabbccddeeff" in [
         b.callback_data for row in sent.kwargs["reply_markup"].inline_keyboard
         for b in row
     ]
