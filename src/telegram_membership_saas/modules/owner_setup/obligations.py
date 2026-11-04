@@ -75,6 +75,7 @@ class OwnerGrant:
 
 @dataclass(frozen=True, slots=True)
 class OwnerAccess:
+    id: UUID
     customer_id: UUID
     resource_id: UUID
     desired: bool
@@ -197,7 +198,7 @@ async def list_owner_obligations(
                 source=g.source, resource_id=g.resource_id,
             ) for g, tid in grants),
             access=tuple(OwnerAccess(
-                customer_id=s.customer_id, resource_id=s.resource_id,
+                id=s.id, customer_id=s.customer_id, resource_id=s.resource_id,
                 desired=s.desired_access, actual=s.actual_state,
             ) for s in access),
         )
@@ -340,7 +341,7 @@ async def revoke_owner_grant(
 
 async def retry_owner_access(
     factory: async_sessionmaker[AsyncSession], *, actor_id: UUID,
-    project_id: UUID, customer_id: UUID, resource_id: UUID,
+    project_id: UUID, state_id: UUID,
 ) -> str:
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
@@ -349,14 +350,13 @@ async def retry_owner_access(
         await _require_owner(session, project_id=project_id, actor_id=actor_id)
         state = await session.scalar(select(AccessState).where(
             AccessState.project_id == project_id,
-            AccessState.customer_id == customer_id,
-            AccessState.resource_id == resource_id,
+            AccessState.id == state_id,
         ))
         if state is None:
             raise ValueError("Доступ не найден в этом проекте")
         result = await reconcile_access_target(
             session, project_id=project_id,
-            customer_id=customer_id, resource_id=resource_id,
+            customer_id=state.customer_id, resource_id=state.resource_id,
         )
         if result.effective_access.has_access:
             return "Доступ сохраняется по другому действующему праву"
