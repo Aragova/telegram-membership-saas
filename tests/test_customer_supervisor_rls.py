@@ -15,7 +15,10 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance
-from telegram_membership_saas.modules.bots.health_service import write_bot_health
+from telegram_membership_saas.modules.bots.health_service import (
+    claim_bot_health,
+    write_bot_health,
+)
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
@@ -72,27 +75,38 @@ async def test_trusted_global_discovery_returns_only_metadata_and_rls_hides_ciph
         assert direct is None
 
         worker_a, worker_b = uuid4(), uuid4()
-        await write_bot_health(
-            factory, project_id=project_id, bot_id=bot_id,
-            instance_id=worker_a, state="starting",
-        )
-        await write_bot_health(
-            factory, project_id=project_id, bot_id=bot_id,
-            instance_id=worker_a, state="running",
-        )
-        # A newly acquired lock can take over; old shutdown may not overwrite it.
-        await write_bot_health(
-            factory, project_id=project_id, bot_id=bot_id,
-            instance_id=worker_b, state="starting",
-        )
-        await write_bot_health(
-            factory, project_id=project_id, bot_id=bot_id,
-            instance_id=worker_a, state="queued",
-        )
-        await write_bot_health(
-            factory, project_id=project_id, bot_id=bot_id,
-            instance_id=worker_a, state="stopped",
-        )
+        # Startup ownership can only be claimed by the connection that
+        # *actually* holds the PostgreSQL advisory lock. It is therefore
+        # impossible for a delayed old startup claim to run after new lease.
+        async with project_worker_lock(engine, project_id) as lease:
+            await claim_bot_health(
+                lease, project_id=project_id, bot_id=bot_id,
+                instance_id=worker_a,
+            )
+            await write_bot_health(
+                factory, project_id=project_id, bot_id=bot_id,
+                instance_id=worker_a, state="running",
+            )
+        async with project_worker_lock(engine, project_id) as replacement:
+            await claim_bot_health(
+                replacement, project_id=project_id, bot_id=bot_id,
+                instance_id=worker_b,
+            )
+            # Old worker has a delayed *starting* heartbeat in flight. It
+            # cannot overwrite the replacement's identity even after
+            # database connection delays or previous lock loss.
+            await write_bot_health(
+                factory, project_id=project_id, bot_id=bot_id,
+                instance_id=worker_a, state="starting",
+            )
+            await write_bot_health(
+                factory, project_id=project_id, bot_id=bot_id,
+                instance_id=worker_a, state="queued",
+            )
+            await write_bot_health(
+                factory, project_id=project_id, bot_id=bot_id,
+                instance_id=worker_a, state="stopped",
+            )
         async with tenant_session_scope(
             factory, TenantContext(user_id=owner, project_id=project_id)
         ) as session:
