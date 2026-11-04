@@ -581,17 +581,23 @@ def create_owner_setup_router(
                 "⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
             )
 
+
     async def show_resources(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = ["📢 <b>Каналы и группы</b>", ""]
+        lines = [tr("📢 <b>Каналы и группы</b>", "📢 <b>Channels and groups</b>"), ""]
         lines.extend(
             f"• {escape(name)} — {_status(status)}"
             for _, name, status in data.resources
         )
         if not data.resources:
-            lines.append("Нет подключённых каналов и групп.")
-        lines.append("\nСначала добавьте своего бота администратором канала.")
-        await bot.send_message(user_id, "\n".join(lines), parse_mode="HTML",
+            lines.append(tr("Нет подключённых каналов и групп.",
+                            "No channels or groups are connected."))
+        lines.append(tr(
+            "\nСначала добавьте своего бота администратором канала.",
+            "\nFirst, add your bot as a channel administrator.",
+        ))
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup([
                 [_button("➕ Выбрать канал", "pick:channel", "success")],
                 [_button("➕ Выбрать группу", "pick:group", "success")],
@@ -601,25 +607,28 @@ def create_owner_setup_router(
             ]),
         )
 
+
     async def show_plans(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
         rows: list[list[InlineKeyboardButton]] = []
-        lines = ["📦 <b>Тарифы</b>", ""]
+        lines = [tr("📦 <b>Тарифы</b>", "📦 <b>Plans</b>"), ""]
         if not data.plans:
-            lines.append("Тарифов пока нет.")
+            lines.append(tr("Тарифов пока нет.", "There are no plans yet."))
         for pid, name, status in data.plans[:15]:
             lines.append(f"• <b>{escape(name)}</b> — {_status(status)}")
             rows.append([_button("⚙️ " + name[:45], "plan:" + pid.hex)])
-        rows.extend([
-            [_button("➕ Создать тариф", "newplan", "success")],
-        ])
+        rows.append([_button("➕ Создать тариф", "newplan", "success")])
         if not data.methods:
-            lines.append("\n💳 Настройте оплату, затем публикуйте тарифы.")
+            lines.append(tr(
+                "\n💳 Настройте оплату, затем публикуйте тарифы.",
+                "\n💳 Configure payments before publishing plans.",
+            ))
             rows.append([_button("➕ Настроить оплату", "methods")])
         rows.append([_button("⬅️ Панель администратора", "dashboard")])
         await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML", reply_markup=_markup(rows)
+            user_id, "\n".join(lines), parse_mode="HTML", reply_markup=_markup(rows),
         )
+
 
     async def show_plan_card(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, plan_id: UUID,
@@ -631,14 +640,14 @@ def create_owner_setup_router(
         codes = await owner_available_currencies(factory, actor_id=actor_id)
         lines = [
             "📦 <b>" + escape(data.name) + "</b>",
-            "Статус: " + _status(data.status),
+            tr("Статус: ", "Status: ") + _status(data.status),
             "⏳ " + escape(format_period(data.duration_value, data.duration_unit)),
-            "📢 " + escape(data.resource_name or "Канал не привязан"),
+            "📢 " + escape(data.resource_name or tr("Канал не привязан", "No channel assigned")),
             "",
-            "<b>Цены и оплата</b>",
+            tr("<b>Цены и оплата</b>", "<b>Prices and payments</b>"),
         ]
         if not data.prices:
-            lines.append("Цена ещё не указана.")
+            lines.append(tr("Цена ещё не указана.", "No price has been set yet."))
         for price in data.prices:
             lines.append(
                 ("✅ " if price.method_count else "⚠️ ")
@@ -647,9 +656,9 @@ def create_owner_setup_router(
                     + " " + price.currency
                 )
                 + (
-                    " · оплата настроена"
+                    tr(" · оплата настроена", " · payment ready")
                     if price.method_count
-                    else " · нужен способ оплаты"
+                    else tr(" · нужен способ оплаты", " · payment method required")
                 )
             )
         rows.extend([
@@ -670,6 +679,7 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+
     async def show_methods(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         page: int = 0,
@@ -678,23 +688,26 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id, page=page,
         )
         lines = [
-            "💳 <b>Способы оплаты</b>",
-            "Страница " + str(page + 1),
+            tr("💳 <b>Способы оплаты</b>", "💳 <b>Payment methods</b>"),
+            tr("Страница ", "Page ") + str(page + 1),
             "",
         ]
         rows = []
         if not methods:
             lines.append(
-                "Нет способов оплаты на этой странице."
+                tr("Нет способов оплаты на этой странице.",
+                   "No payment methods on this page.")
                 if page else
-                "Пока ничего не подключено. Для начала выберите валюту "
-                "и добавьте способ перевода."
+                tr("Пока ничего не подключено. Для начала выберите валюту "
+                   "и добавьте способ перевода.",
+                   "No payment methods yet. Choose a currency "
+                   "and add a transfer method to get started.")
             )
         for method in methods:
             lines.append(
                 "• <b>" + escape(method.name) + "</b> — "
                 + _status(method.status) + "\n  "
-                + escape(", ".join(method.currencies) or "Без валюты")
+                + escape(", ".join(method.currencies) or tr("Без валюты", "No currency"))
             )
             rows.append([
                 _button("⚙️ " + method.name[:40], "method:" + method.id.hex),
@@ -710,18 +723,15 @@ def create_owner_setup_router(
             ))
         if navigation:
             rows.append(navigation)
-        rows.append([
-            _button("➕ Добавить способ", "newmethod", "success"),
-        ])
+        rows.append([_button("➕ Добавить способ", "newmethod", "success")])
         if methods or page > 0:
-            rows.append([
-                _button("➡️ Перейти к тарифам", "plans"),
-            ])
+            rows.append([_button("➡️ Перейти к тарифам", "plans")])
         rows.append([_button("⬅️ Панель администратора", "dashboard")])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
         )
+
 
     async def show_method_card(
         bot: Bot, user_id: int, actor_id: UUID,
@@ -731,9 +741,7 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
             method_id=method_id,
         )
-        rows = [[_button(
-            "🌐 Добавить валюту", "methodlink:" + method_id.hex,
-        )]]
+        rows = [[_button("🌐 Добавить валюту", "methodlink:" + method_id.hex)]]
         if method.status == "active":
             rows.append([_button(
                 "⏸️ Отключить для новых покупок",
@@ -748,14 +756,17 @@ def create_owner_setup_router(
         await bot.send_message(
             user_id,
             "💳 <b>" + escape(method.name) + "</b>\n"
-            "Статус: " + _status(method.status)
-            + "\nВалюты: "
-            + escape(", ".join(method.currencies) or "не выбраны")
-            + "\n\nПокупателям показываются только способы, "
-            "совместимые с валютой тарифа.",
+            + tr("Статус: ", "Status: ") + _status(method.status)
+            + tr("\nВалюты: ", "\nCurrencies: ")
+            + escape(", ".join(method.currencies) or tr("не выбраны", "none selected"))
+            + tr("\n\nПокупателям показываются только способы, "
+                 "совместимые с валютой тарифа.",
+                 "\n\nBuyers see only payment methods that support "
+                 "the selected plan currency."),
             parse_mode="HTML",
             reply_markup=_markup(rows),
         )
+
 
     async def show_reviews(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -770,9 +781,14 @@ def create_owner_setup_router(
         if not items:
             await bot.send_message(
                 user_id,
-                "📋 <b>Заявки</b>\n\n"
-                "Сейчас нет платежей, ожидающих проверки.\n"
-                "Новые подтверждения придут сюда вместе с чеком.",
+                tr(
+                    "📋 <b>Заявки</b>\n\n"
+                    "Сейчас нет платежей, ожидающих проверки.\n"
+                    "Новые подтверждения придут сюда вместе с чеком.",
+                    "📋 <b>Payment reviews</b>\n\n"
+                    "There are no payments awaiting review.\n"
+                    "New payment confirmations will appear here with a receipt.",
+                ),
                 parse_mode="HTML",
                 reply_markup=_markup([
                     [_button("⬅️ Панель администратора", "dashboard")],
@@ -781,9 +797,13 @@ def create_owner_setup_router(
             return
         await bot.send_message(
             user_id,
-            f"📋 <b>Заявки на проверку — {len(items)}</b>\n\n"
-            "Перед подтверждением убедитесь, что деньги "
-            "действительно поступили в банк.",
+            tr(
+                f"📋 <b>Заявки на проверку — {len(items)}</b>\n\n"
+                "Перед подтверждением убедитесь, что деньги "
+                "действительно поступили в банк.",
+                f"📋 <b>Pending reviews — {len(items)}</b>\n\n"
+                "Check your bank balance before approving any payment.",
+            ),
             parse_mode="HTML",
         )
         for item in items:
@@ -792,12 +812,14 @@ def create_owner_setup_router(
                 reply_markup=_review_keyboard(item.request_id),
             )
         await bot.send_message(
-            user_id, "Все доступные заявки показаны выше.",
+            user_id,
+            tr("Все доступные заявки показаны выше.", "All available requests are shown above."),
             reply_markup=_markup([
                 [_button("🔄 Обновить заявки", "reviews")],
                 [_button("⬅️ Панель администратора", "dashboard")],
             ]),
         )
+
 
     async def show_guest_preview(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -808,10 +830,13 @@ def create_owner_setup_router(
         )
         published = [name for _, name, status in data.plans if status == "active"]
         content = (
-            "👀 <b>Гостевой просмотр</b>\n\n"
+            tr("👀 <b>Гостевой просмотр</b>\n\n",
+               "👀 <b>Buyer preview</b>\n\n")
             + ("\n".join("• " + escape(name) for name in published[:15])
-               if published else "Пока нет опубликованных тарифов.")
-            + "\n\nЭто просмотр каталога. Никакие платежи не создаются."
+               if published else tr("Пока нет опубликованных тарифов.",
+                                    "There are no published plans yet."))
+            + tr("\n\nЭто просмотр каталога. Никакие платежи не создаются.",
+                 "\n\nThis is a catalog preview. No payment is created.")
         )
         await bot.send_message(
             user_id, content, parse_mode="HTML",
@@ -820,8 +845,11 @@ def create_owner_setup_router(
             ]),
         )
 
-    async def currency_picker(bot: Bot, user_id: int, actor_id: UUID, *,
-                              mode: str, plan_id: UUID | None = None):
+
+    async def currency_picker(
+        bot: Bot, user_id: int, actor_id: UUID, *,
+        mode: str, plan_id: UUID | None = None,
+    ):
         codes = await owner_available_currencies(factory, actor_id=actor_id)
         rows = [
             [_button(
@@ -832,7 +860,8 @@ def create_owner_setup_router(
         ]
         rows.append([_button("⬅️ Панель управления", "dashboard")])
         await bot.send_message(
-            user_id, "💱 Выберите валюту:", reply_markup=_markup(rows),
+            user_id, tr("💱 Выберите валюту:", "💱 Choose a currency:"),
+            reply_markup=_markup(rows),
         )
 
     @router.message(
