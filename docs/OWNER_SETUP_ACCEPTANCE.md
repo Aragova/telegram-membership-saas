@@ -16,6 +16,11 @@ self-service.
 - Bot token: owner sends it as a private ForceReply. The message must be
   successfully deleted **before** getMe/encryption. The token is never stored
   in the session table; `BotInstance` retains only encrypted credentials.
+  Currently a project may have only **one registered customer bot** until
+  bot-specific access routing exists. Re-submitting a token for that same bot
+  refreshes credentials; attaching a second bot is rejected with a clear
+  instruction to create a separate project instead, preserving channel setup.
+  Future owner bot replacement/rotation controls are still required.
 - Channel/group: native Telegram chat picker or manual chat ID/@username.
   The connected **owner bot**, not the central bot, validates the real Telegram
   chat, verifies the applicant is its admin, and checks the customer bot can
