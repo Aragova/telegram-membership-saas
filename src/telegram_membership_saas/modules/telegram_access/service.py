@@ -293,14 +293,11 @@ async def ensure_owner_service_access(
             valid_until=None,
             revoked_at=None,
         )
-        .on_conflict_do_update(
+        # An explicit owner-confirmed revocation must survive the periodic
+        # owner-service reconciler. Re-create absent grants, never resurrect
+        # an existing revoked one while the project is being retired.
+        .on_conflict_do_nothing(
             index_elements=["project_id", "source", "source_id", "resource_id"],
-            set_={
-                "customer_id": customer.id,
-                "status": EntitlementGrantStatus.ACTIVE.value,
-                "valid_until": None,
-                "revoked_at": None,
-            },
         )
     )
 

@@ -20,15 +20,27 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+from cryptography.fernet import InvalidToken
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
 )
 from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
+    decrypt_token,
     register_customer_bot,
+)
+from telegram_membership_saas.modules.owner_setup.obligations import (
+    close_owner_payment,
+    end_owner_subscription,
+    list_owner_obligations,
+    retry_owner_access,
+    revoke_owner_grant,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
     ALLOWED_CURRENCIES,
@@ -57,6 +69,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
     encode_uuid,
 )
+from telegram_membership_saas.tenant_context import TenantContext
 
 DURATIONS = {
     "week": (1, "week", "7 дней"),
@@ -260,6 +273,154 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+
+    async def show_obligations(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        page: int = 0,
+    ) -> None:
+        snapshot = await list_owner_obligations(
+            factory, actor_id=actor_id, project_id=project_id, page=page,
+        )
+        counts = snapshot.blockers
+        lines = [
+            "🧾 <b>Обязательства перед отключением</b>",
+            "Страница " + str(page + 1) + " · до 5 записей каждого типа",
+            "",
+            "Заявки: " + str(counts.requests)
+            + " · Подписки: " + str(counts.subscriptions)
+            + " · Права: " + str(counts.grants),
+            "Доступы: " + str(counts.access)
+            + " · Действия: " + str(counts.access_actions)
+            + " · Приглашения: " + str(counts.join_tickets),
+            "",
+            "Все действия выполняются отдельно с подтверждением. "
+            "Оплаченный доступ нельзя отключать без урегулирования "
+            "обязательств перед покупателем.",
+        ]
+        rows: list[list[InlineKeyboardButton]] = []
+        project_ref = encode_uuid(project_id)
+        for item in snapshot.payments:
+            label = (
+                "Отклонить" if item.status == "waiting_review" else "Закрыть"
+            )
+            lines.append(
+                "💳 " + escape(item.username or str(item.telegram_user_id))
+                + " · " + escape(item.amount + " " + item.currency)
+                + " · " + escape(item.status)
+            )
+            rows.append([_button(
+                "💳 " + label + " заявку " + str(item.telegram_user_id),
+                "ob:pay:" + project_ref + ":" + encode_uuid(item.id)
+                + (":" + str(page) if page else ""), "danger",
+            )])
+        for item in snapshot.subscriptions:
+            end = (
+                item.period_end.strftime("%d.%m.%Y") if item.period_end else "бессрочно"
+            )
+            lines.append(
+                "📦 " + escape(item.plan_name) + " · "
+                + escape(item.username or str(item.telegram_user_id))
+                + " · до " + end
+            )
+            rows.append([_button(
+                "📦 Завершить подписку " + str(item.telegram_user_id),
+                "ob:sub:" + project_ref + ":" + encode_uuid(item.id)
+                + (":" + str(page) if page else ""), "danger",
+            )])
+        for item in snapshot.grants:
+            if item.source == "payment":
+                continue
+            lines.append(
+                "🔑 " + escape(item.source) + " · " + str(item.telegram_user_id)
+            )
+            rows.append([_button(
+                "🔑 Отозвать " + item.source[:12] + " · " + str(item.telegram_user_id),
+                "ob:grant:" + project_ref + ":" + encode_uuid(item.id)
+                + (":" + str(page) if page else ""), "danger",
+            )])
+        if snapshot.access:
+            lines.append(
+                "🔄 Доступы требуют подтверждения фактического отзыва в Telegram. "
+                "Они не очищаются принудительно."
+            )
+            for item in snapshot.access[:12]:
+                rows.append([_button(
+                    "🔄 Синхронизировать доступ · " + item.actual,
+                    "ob:sync:" + project_ref + ":" + encode_uuid(item.id)
+                    + (":" + str(page) if page else ""),
+                )])
+        if counts.access_actions or counts.join_tickets:
+            lines.append(
+                "⏳ Действия доступа и приглашения обрабатывает клиентский бот; "
+                "проверьте состояние после завершения."
+            )
+        if not counts.has_blockers:
+            lines.append("\n✅ Блокировок больше нет. Можно вернуться к удалению.")
+        nav = []
+        if page > 0:
+            nav.append(_button(
+                "⬅️ Назад", "obpage:" + project_ref + ":" + str(page - 1),
+            ))
+        if page < 200 and any(
+            len(items) == 5
+            for items in (
+                snapshot.payments, snapshot.subscriptions,
+                snapshot.grants, snapshot.access,
+            )
+        ):
+            nav.append(_button(
+                "➡️ Далее", "obpage:" + project_ref + ":" + str(page + 1),
+            ))
+        if nav:
+            rows.append(nav)
+        rows.extend([
+            [_button("🔄 Обновить обязательства", "oblist")],
+            [_button("⬅️ Мои боты", "bots")],
+        ])
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_markup(rows),
+        )
+
+    async def notify_buyer(
+        central_bot: Bot, owner_tg_id: int, actor_id: UUID,
+        project_id: UUID, change,
+    ) -> None:
+        if not change.changed or change.telegram_user_id is None:
+            return
+        key = get_settings().bot_token_encryption_key
+        if not key:
+            await central_bot.send_message(
+                owner_tg_id, "⚠️ Состояние сохранено, но уведомление покупателя недоступно.",
+            )
+            return
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id, project_id=project_id)
+        ) as session:
+            instance = await session.scalar(select(BotInstance).where(
+                BotInstance.project_id == project_id,
+                BotInstance.status == "registered",
+            ).limit(1))
+            cipher = instance.token_ciphertext if instance else None
+        if not cipher:
+            await central_bot.send_message(
+                owner_tg_id, "⚠️ Изменение сохранено, но бот покупателя отключён.",
+            )
+            return
+        try:
+            customer_bot = Bot(token=decrypt_token(cipher, key=key))
+            try:
+                await customer_bot.send_message(
+                    change.telegram_user_id, change.message,
+                )
+            finally:
+                await customer_bot.session.close()
+        except (AiogramError, ValueError, RuntimeError, InvalidToken):
+            await central_bot.send_message(
+                owner_tg_id,
+                "⚠️ Изменение сохранено, но Telegram не доставил уведомление покупателю.",
+            )
+
     async def show_resources(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
         lines = ["📢 <b>Каналы и группы</b>", ""]
@@ -432,6 +593,7 @@ def create_owner_setup_router(
                             "dropok:" + project_ref + ":" + instance_ref,
                             "danger",
                         )],
+                        [_button("🧾 Управлять обязательствами", "oblist")],
                         [_button("Отмена", "bots")],
                     ]),
                 )
@@ -449,6 +611,7 @@ def create_owner_setup_router(
                     # Include the entire safety explanation; Telegram alert
                     # callbacks are limited in length and would truncate it.
                     await bot.send_message(user_id, "⚠️ " + str(exc))
+                    await show_obligations(bot, user_id, actor_id, project_id)
                     await query.answer("Удаление пока недоступно", show_alert=True)
                     return
                 await bot.send_message(
@@ -463,6 +626,97 @@ def create_owner_setup_router(
                     "Этот бот уже не подключён. Обновите список.",
                 )
                 await show_bots(bot, user_id, actor_id, project_id)
+            elif action == "oblist":
+                await show_obligations(bot, user_id, actor_id, project_id)
+            elif action.startswith("obpage:"):
+                _, project_ref, page_number = action.split(":", 2)
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError("Открыто меню другого проекта")
+                await show_obligations(
+                    bot, user_id, actor_id, project_id, page=int(page_number),
+                )
+            elif action.startswith(("ob:", "obok:")):
+                parts = action.split(":")
+                if len(parts) not in (4, 5) or parts[1] not in (
+                    "pay", "sub", "grant", "sync"
+                ):
+                    raise ValueError("Неизвестное действие")
+                verb, kind, project_ref, object_ref = parts[:4]
+                page = int(parts[4]) if len(parts) == 5 else 0
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError("Открыто меню другого проекта. Обновите обязательства.")
+                object_id = decode_uuid(object_ref)
+                snapshot = await list_owner_obligations(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    page=page,
+                )
+                active_ids = {
+                    "pay": {item.id for item in snapshot.payments},
+                    "sub": {item.id for item in snapshot.subscriptions},
+                    "grant": {item.id for item in snapshot.grants if item.source != "payment"},
+                    "sync": {item.id for item in snapshot.access},
+                }
+                if verb == "ob":
+                    if object_id not in active_ids[kind]:
+                        raise ValueError("Действие уже неактуально. Обновите обязательства.")
+                    warnings = {
+                        "pay": "Проверьте поступление денег в банке. "
+                        "Отклонение или отмена заявки не возвращает деньги.",
+                        "sub": "Вы досрочно закрываете оплаченный срок! "
+                        "Возврат денег ViMi Pay не выполняет. "
+                        "Урегулируйте вопрос с покупателем самостоятельно.",
+                        "grant": "Это отдельное право доступа. "
+                        "Проверьте, не является ли оно служебным или бессрочным.",
+                        "sync": "ViMi Pay перепроверит права и отправит действие "
+                        "в Telegram. Доступ не будет удалён при других действующих правах.",
+                    }
+                    await bot.send_message(
+                        user_id, "⚠️ <b>Подтвердите действие</b>\n\n"
+                        + escape(warnings[kind]),
+                        parse_mode="HTML", reply_markup=_markup([
+                            [_button(
+                                "✅ Подтверждаю действие",
+                                "obok:" + kind + ":" + project_ref + ":" + object_ref
+                                + (":" + str(page) if page else ""),
+                                "danger" if kind != "sync" else "success",
+                            )],
+                            [_button("Отмена", "oblist")],
+                        ]),
+                    )
+                else:
+                    if object_id not in active_ids[kind]:
+                        raise ValueError("Действие уже выполнено или устарело")
+                    if kind == "pay":
+                        change = await close_owner_payment(
+                            factory, actor_id=actor_id, project_id=project_id,
+                            request_id=object_id,
+                        )
+                    elif kind == "sub":
+                        change = await end_owner_subscription(
+                            factory, actor_id=actor_id, project_id=project_id,
+                            subscription_id=object_id,
+                        )
+                    elif kind == "grant":
+                        change = await revoke_owner_grant(
+                            factory, actor_id=actor_id, project_id=project_id,
+                            grant_id=object_id,
+                        )
+                    else:
+                        message = await retry_owner_access(
+                            factory, actor_id=actor_id, project_id=project_id,
+                            state_id=object_id,
+                        )
+                        await bot.send_message(user_id, "🔄 " + message)
+                        change = None
+                    if change is not None:
+                        await bot.send_message(
+                            user_id, "✅ " + (
+                                "Состояние сохранено" if change.changed
+                                else change.message
+                            ),
+                        )
+                        await notify_buyer(bot, user_id, actor_id, project_id, change)
+                    await show_obligations(bot, user_id, actor_id, project_id)
             elif action == "bots":
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "connect":

@@ -5,6 +5,7 @@ from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.outbox import OutboxEvent
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
+from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments import (
     Payment,
     PaymentMethod,
@@ -24,6 +25,7 @@ __all__ = [
     "BotInstance",
     "CustomerBotRuntimeHealth",
     "OwnerSetupSession",
+    "OwnerObligationAudit",
     "CurrencyAsset",
     "EffectiveAccess",
     "EntitlementGrant",

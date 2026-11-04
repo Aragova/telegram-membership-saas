@@ -35,6 +35,7 @@ from telegram_membership_saas.modules.subscriptions import (
     SubscriptionStatus,
     calculate_period_end,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +130,19 @@ async def _load_subscription_for_update(
     )
 
 
+def renewal_period_start(
+    subscription: Subscription | None, approved_at: datetime,
+) -> datetime:
+    """A cancelled plan must never defer a newly paid period."""
+    if (
+        subscription is None
+        or subscription.status != SubscriptionStatus.ACTIVE.value
+        or subscription.current_period_end is None
+    ):
+        return approved_at
+    return max(approved_at, subscription.current_period_end)
+
+
 async def approve_payment_request(
     session: AsyncSession,
     *,
@@ -137,6 +151,8 @@ async def approve_payment_request(
     reviewer_user_id: UUID,
     reviewed_at: datetime | None = None,
 ) -> ApprovalResult:
+    # Serialize paid grants with owner retirement and early subscription end.
+    await checkout_retirement_lock(session, project_id)
     project = await require_payment_permission(
         session,
         project_id=project_id,
@@ -202,7 +218,11 @@ async def approve_payment_request(
         plan_id=request.plan_id,
     )
 
-    if subscription is not None and subscription.current_period_end is None:
+    if (
+        subscription is not None
+        and subscription.status == SubscriptionStatus.ACTIVE.value
+        and subscription.current_period_end is None
+    ):
         grant_start = moment
         grant_end = calculate_period_end(
             grant_start,
@@ -213,8 +233,7 @@ async def approve_payment_request(
         subscription.status = SubscriptionStatus.ACTIVE.value
         subscription.last_payment_id = payment.id
     else:
-        previous_end = subscription.current_period_end if subscription is not None else None
-        grant_start = previous_end if previous_end is not None and previous_end > moment else moment
+        grant_start = renewal_period_start(subscription, moment)
         grant_end = calculate_period_end(
             grant_start,
             timezone_name=project.timezone,
