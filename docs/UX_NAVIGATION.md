@@ -107,12 +107,43 @@ need to reopen Telegram Menu to see the changed set.
    approval/rejection, access invitations and bot removal. Do not alter
    production before staging acceptance.
 
+## Wizard navigation after PR #44
+
+Keep the native Telegram command Menu at exactly **three shortcuts**. Back,
+retry, cancel and other contextual actions belong inside the relevant screen,
+not as more top-level menu commands.
+
+For tenant administrators, navigating the *unsaved* plan wizard now has
+generation-bound inline Back actions:
+
+- Name entered → duration picker → Back to Plans (discard only unsaved input).
+- Duration selected with multiple eligible channels → resource picker →
+  Back to Duration (preserve the name, regenerate callback token).
+- A stale duration/resource Back button **cannot cancel or replace** a newer
+  wizard. Only exact step, project and generation are accepted.
+- Currency picker Back leads to Payment methods instead of the dashboard;
+  timezone selection Back leads to the admin panel.
+- If no more currencies can be attached, Payment method offers a direct
+  return to its card rather than a terminal message.
+- Invalid channel picker results remove the temporary reply keyboard and offer
+  a return to Channels.
+- ForceReply cannot combine an inline keyboard with its reply field. Its text
+  includes `/back` (return to parent section) and `/cancel` (exit to home)
+  **without adding either to the native command Menu**. The pending state is
+  invalidated atomically on the previous bot's scope before navigation.
+- If validating a ForceReply input fails, show one contextual Back-to-section
+  button. Prices return to the same plan card; no invalid input is saved.
+
+These are display/state navigation changes; existing prices, methods,
+subscriptions, access and payment requests must remain unchanged. Bot tokens
+received in other-than-token prompts must still be deleted as before.
+
 ## Delivery slices
 
 - **UX-A:** Native scoped RU/EN command menus, customer account and
   navigation in purchase/receipt/notification flows; central entry shortcuts.
-- **UX-B:** Tenant admin wizard Cancel/Back and chat-picker cleanup,
-  consistent admin menu and help/empty-state navigation.
+- **UX-B (in progress):** Tenant admin wizard Back/Cancel and chat-picker cleanup,
+  contextual retry navigation and safe generation-bound back actions.
 - **UX-C:** Central/platform report and registry navigation, stale callback
   refresh, explicit customer support configuration and final polish.
 - **UX acceptance:** E2E buyer and owner paths through staging, then promote
