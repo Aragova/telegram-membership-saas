@@ -9,8 +9,10 @@ from uuid import UUID
 
 from aiogram import Bot
 from cryptography.fernet import InvalidToken
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
@@ -20,7 +22,12 @@ from telegram_membership_saas.modules.bots.health_service import (
     public_health_label,
     read_bot_health,
 )
-from telegram_membership_saas.modules.bots.service import decrypt_token
+from telegram_membership_saas.modules.bots.service import (
+    BotRegistration,
+    decrypt_token,
+    encrypt_token,
+    verify_telegram_bot,
+)
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.payments import (
@@ -389,6 +396,61 @@ async def create_owner_project(
         state.generation = None
         state.payload = {}
         return project.id
+
+
+async def register_new_owner_bot(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID,
+    actor_telegram_user_id: int,
+    token: str,
+    encryption_key: SecretStr | None,
+    central_bot_id: int,
+) -> tuple[UUID, BotRegistration]:
+    """Verify first; commit new project and unique bot together, or neither."""
+    verified = await verify_telegram_bot(token)
+    if verified.telegram_bot_id == central_bot_id:
+        raise ValueError("Нельзя подключить управляющий бот ViMi Pay")
+    encrypted = encrypt_token(token, key=encryption_key)
+    try:
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id)
+        ) as session:
+            actual_id = await session.scalar(
+                select(TelegramUser.telegram_user_id).where(
+                    TelegramUser.id == actor_id,
+                )
+            )
+            if actual_id != actor_telegram_user_id:
+                raise PermissionError("Не удалось подтвердить владельца бота")
+            project = Project(
+                owner_user_id=actor_id, name="@" + verified.username,
+                timezone="Europe/Moscow",
+            )
+            session.add(project)
+            await session.flush()
+            session.add(BotInstance(
+                project_id=project.id,
+                telegram_bot_id=verified.telegram_bot_id,
+                username=verified.username,
+                display_name=verified.display_name,
+                token_ciphertext=encrypted,
+                status="registered",
+            ))
+            await session.flush()
+            state = await _current_session(session, actor_id, 0)
+            state.selected_project_id = project.id
+            state.step = None
+            state.prompt_message_id = None
+            state.generation = None
+            state.payload = {}
+            return project.id, BotRegistration(
+                telegram_bot_id=verified.telegram_bot_id,
+                username=verified.username, updated=False,
+            )
+    except IntegrityError:
+        # Global bot ID uniqueness prevents a bot being claimed twice.
+        # The same DB rollback also removes the newly created project.
+        raise ValueError("Этот Telegram-бот уже подключён в другом проекте") from None
 
 
 async def set_default_project_name_from_bot(
