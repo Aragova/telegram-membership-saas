@@ -69,17 +69,27 @@ def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _status(value: str) -> str:
+    return {
+        "active": "🟢 Активно",
+        "registered": "✅ Подключён",
+        "draft": "📝 Черновик",
+        "disabled": "⚪ Отключено",
+        "archived": "📦 Архив",
+    }.get(value, "Неизвестно")
+
+
 def _private(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
 
 
 def _progress(snapshot) -> tuple[str, ...]:
-    # Truthful configuration readiness: does NOT claim a registered bot is running.
+    # A registered bot is configured, not necessarily running.
     steps = (
-        ("Собственный бот", bool(snapshot.bots)),
-        ("Канал / группа", bool(snapshot.resources)),
-        ("Тариф", bool(snapshot.plans)),
-        ("Способ оплаты", bool(snapshot.methods)),
+        ("Собственный бот", any(s == "registered" for _, s in snapshot.bots)),
+        ("Канал / группа", any(s == "active" for _, _, s in snapshot.resources)),
+        ("Тариф", any(s == "active" for _, _, s in snapshot.plans)),
+        ("Способ оплаты", any(s == "active" for _, _, s in snapshot.methods)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
 
@@ -211,7 +221,7 @@ def create_owner_setup_router(
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
         lines = ["📢 <b>Каналы и группы</b>", ""]
         lines.extend(
-            f"• {escape(name)} — {escape(status)}"
+            f"• {escape(name)} — {_status(status)}"
             for _, name, status in data.resources
         )
         if not data.resources:
@@ -233,7 +243,7 @@ def create_owner_setup_router(
         if not data.plans:
             lines.append("Тарифов пока нет.")
         for pid, name, status in data.plans[:15]:
-            lines.append(f"• <b>{escape(name)}</b> — {escape(status)}")
+            lines.append(f"• <b>{escape(name)}</b> — {_status(status)}")
             rows.append([_button("⚙️ " + name[:45], "plan:" + pid.hex)])
         rows.extend([
             [_button("➕ Создать тариф", "newplan", "success")],
@@ -262,7 +272,7 @@ def create_owner_setup_router(
         await bot.send_message(
             user_id,
             "📦 <b>" + escape(name) + "</b>\n"
-            + "Статус: " + escape(status)
+            + "Статус: " + _status(status)
             + "\n\nВыберите валюту, чтобы задать или обновить цену.",
             parse_mode="HTML", reply_markup=_markup(rows),
         )
@@ -274,7 +284,7 @@ def create_owner_setup_router(
             lines.append("Способов оплаты пока нет.")
         else:
             lines.extend(
-                "• " + escape(name) + " — " + escape(status)
+                "• " + escape(name) + " — " + _status(status)
                 for _, name, status in data.methods
             )
         await bot.send_message(
@@ -403,8 +413,8 @@ def create_owner_setup_router(
                 data = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id
                 )
-                if not data.resources:
-                    raise ValueError("Сначала подключите канал или группу")
+                if not any(status == "active" for _, _, status in data.resources):
+                    raise ValueError("Сначала подключите действующий канал или группу")
                 await prompt(
                     bot, user_id, actor_id, step="plan_name",
                     text="📦 Как назвать новый тариф?\nНапример: Premium",
