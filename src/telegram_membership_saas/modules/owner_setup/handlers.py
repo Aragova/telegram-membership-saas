@@ -867,10 +867,7 @@ def create_owner_setup_router(
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action == "reviews":
-                await bot.send_message(
-                    user_id, "📋 Заявки на проверку оплаты: /payments\n"
-                    "Подтверждайте только после проверки денег в банке.",
-                )
+                await show_reviews(bot, user_id, actor_id, project_id)
             elif action == "preview":
                 await show_guest_preview(bot, user_id, actor_id, project_id)
             elif action.startswith("drop:"):
@@ -1201,6 +1198,85 @@ def create_owner_setup_router(
                 await currency_picker(
                     bot, user_id, actor_id, mode="method"
                 )
+            elif action.startswith("method:"):
+                await show_method_card(
+                    bot, user_id, actor_id, project_id,
+                    UUID(hex=action.split(":", 1)[1]),
+                )
+            elif action.startswith("methodlink:"):
+                method_id = UUID(hex=action.split(":", 1)[1])
+                methods = await list_owner_methods(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                method = next(
+                    (item for item in methods if item.id == method_id), None,
+                )
+                if method is None:
+                    raise ValueError("Способ оплаты недоступен")
+                codes = await owner_available_currencies(
+                    factory, actor_id=actor_id,
+                )
+                rows = [
+                    [_button(
+                        "➕ " + code,
+                        "methodattach:" + method_id.hex + ":" + code,
+                    )] for code in codes if code not in method.currencies
+                ]
+                if not rows:
+                    await bot.send_message(
+                        user_id, "Все доступные валюты уже подключены.",
+                    )
+                else:
+                    rows.append([
+                        _button("⬅️ Вернуться", "method:" + method_id.hex),
+                    ])
+                    await bot.send_message(
+                        user_id,
+                        "🌐 <b>" + escape(method.name) + "</b>\n\n"
+                        "Выберите дополнительную валюту. "
+                        "Текущие подключения сохранятся.",
+                        parse_mode="HTML", reply_markup=_markup(rows),
+                    )
+            elif action.startswith("methodattach:"):
+                _, method_hex, currency = action.split(":", 2)
+                added = await attach_owner_method_currency(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=UUID(hex=method_hex), currency_code=currency,
+                )
+                await bot.send_message(
+                    user_id,
+                    "✅ Валюта подключена" if added
+                    else "Эта валюта уже подключена.",
+                )
+                await show_method_card(
+                    bot, user_id, actor_id, project_id, UUID(hex=method_hex),
+                )
+            elif action.startswith("methodconfirmoff:"):
+                method_id = UUID(hex=action.split(":", 1)[1])
+                await bot.send_message(
+                    user_id,
+                    "⏸️ <b>Отключить способ оплаты?</b>\n\n"
+                    "Он исчезнет из новых покупок. Уже полученные "
+                    "заявки и история платежей сохранятся.",
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            "⏸️ Подтвердить отключение",
+                            "methodoff:" + method_id.hex, "danger",
+                        )],
+                        [_button("Отмена", "method:" + method_id.hex)],
+                    ]),
+                )
+            elif action.startswith(("methodoff:", "methodon:")):
+                is_active = action.startswith("methodon:")
+                method_id = UUID(hex=action.split(":", 1)[1])
+                await change_owner_method_status(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id, enabled=is_active,
+                )
+                await show_method_card(
+                    bot, user_id, actor_id, project_id, method_id,
+                )
             elif action.startswith("methodcurrency:"):
                 code = action.split(":", 1)[1]
                 if code not in await owner_available_currencies(
@@ -1242,17 +1318,31 @@ def create_owner_setup_router(
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action == "readiness":
                 data = await setup_overview(
-                    factory, actor_id=actor_id, project_id=project_id
+                    factory, actor_id=actor_id, project_id=project_id,
                 )
+                next_step = _next_setup_step(data)
+                rows = []
+                if next_step is not None:
+                    rows.append([_button(
+                        next_step[0], next_step[1], "success",
+                    )])
+                rows.append([_button(
+                    "⬅️ Панель администратора", "dashboard",
+                )])
                 await bot.send_message(
                     user_id,
-                    "📋 <b>Подготовка к запуску</b>\n\n"
+                    "📋 <b>Готовность к продажам</b>\n\n"
                     + "\n".join(_progress(data))
                     + "\n\n🤖 " + escape(data.bot_runtime_label)
-                    + "\n\nПосле завершения настроек бот запускается "
-                    "автоматически. Покупателям можно давать ссылку только "
-                    "после статуса «Работает».",
+                    + "\n\n"
+                    + (
+                        "✅ Тарифы доступны для покупки."
+                        if data.sales_configured
+                        else "Бот уже может принимать настройки. "
+                        "Покупатели увидят тарифы после завершения шагов."
+                    ),
                     parse_mode="HTML",
+                    reply_markup=_markup(rows),
                 )
             elif action == "help":
                 await bot.send_message(
