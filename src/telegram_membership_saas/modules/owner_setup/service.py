@@ -16,6 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.bots import BotInstance
+from telegram_membership_saas.modules.bots.health_service import (
+    public_health_label,
+    read_bot_health,
+)
 from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
@@ -71,6 +75,8 @@ class SetupOverview:
     resources: tuple[tuple[UUID, str, str], ...]
     plans: tuple[tuple[UUID, str, str], ...]
     methods: tuple[tuple[UUID, str, str], ...]
+    bot_runtime_label: str = "⚪ Ожидает запуска"
+    live_bot_username: str | None = None
 
 
 async def ensure_telegram_actor(
@@ -362,7 +368,18 @@ async def setup_overview(
         methods = list((await session.scalars(select(PaymentMethod).where(
             PaymentMethod.project_id == project_id
         ))).all())
+        health = await read_bot_health(session, project_id=project_id)
+        eligible_bots = [b for b in bots if b.status == "registered"]
+        runtime_label, live = (
+            public_health_label(
+                health, telegram_bot_id=eligible_bots[0].telegram_bot_id
+            )
+            if len(eligible_bots) == 1
+            else ("⚪ Не подключён", False)
+        )
         return SetupOverview(
+            bot_runtime_label=runtime_label,
+            live_bot_username=eligible_bots[0].username if live else None,
             project_id=project_id,
             project_name=project.name,
             timezone=project.timezone,
