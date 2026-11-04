@@ -1,12 +1,12 @@
 """Locale selection stays per user and does not infer location."""
-from telegram_membership_saas.modules.telegram_commerce.service import format_period
-from telegram_membership_saas.modules.telegram_commerce.storefront import catalog_screen
 from telegram_membership_saas.localization import (
     _language,
     current_language,
     telegram_language,
     tr,
 )
+from telegram_membership_saas.modules.telegram_commerce.service import format_period
+from telegram_membership_saas.modules.telegram_commerce.storefront import catalog_screen
 
 
 def test_auto_language_detection() -> None:
