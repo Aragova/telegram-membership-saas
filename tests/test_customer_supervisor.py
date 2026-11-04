@@ -1,8 +1,9 @@
 """Safety contracts for automatic multi-project bot lifecycle."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -139,3 +140,48 @@ def test_supervisor_never_reveals_token_in_safe_error_code():
     assert safe_error_code(error) == "startup_failed"
     assert secret not in safe_error_code(error)
     assert safe_error_code(ProjectWorkerBusy("locked")) == "lock_lost"
+
+
+async def test_stalled_telegram_poll_clears_live_health_before_unlock(monkeypatch):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    events = []
+    target = _target()
+
+    @asynccontextmanager
+    async def lease(_engine, _project):
+        events.append("acquired")
+        try:
+            yield MagicMock()
+        finally:
+            events.append("unlocked")
+
+    async def fake_customer(
+        _factory, *, project_id, telegram_bot_id, settings, on_poll_response
+    ):
+        await asyncio.sleep(0.03)
+        on_poll_response()
+        events.append("telegram_poll_ok")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("customer_stopped")
+
+    async def health(*_args, **kwargs):
+        events.append(kwargs["state"])
+
+    monkeypatch.setattr(runtime, "project_worker_lock", lease)
+    monkeypatch.setattr(runtime, "confirm_project_lock", AsyncMock())
+    monkeypatch.setattr(runtime, "run_customer_bot_instance", fake_customer)
+    monkeypatch.setattr(runtime, "write_bot_health", health)
+    monkeypatch.setattr(runtime, "HEARTBEAT_SECONDS", 0.02)
+    monkeypatch.setattr(runtime, "POLLING_STALE_SECONDS", 0.09)
+
+    await asyncio.wait_for(
+        runtime.run_target(MagicMock(), MagicMock(), target, settings=_settings()),
+        timeout=2,
+    )
+    assert "starting" in events
+    assert "running" in events
+    assert "error" in events
+    assert events.index("customer_stopped") < events.index("unlocked")
