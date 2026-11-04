@@ -185,7 +185,8 @@ def upgrade() -> None:
                 SELECT COALESCE(jsonb_agg(to_jsonb(bot_row)
                     ORDER BY bot_row.connected_at DESC), '[]'::jsonb)
                 FROM (
-                    SELECT b.project_id::text AS project_id,
+                    SELECT b.id::text AS bot_instance_id,
+                           b.project_id::text AS project_id,
                            b.username AS username,
                            b.status AS status,
                            p.name AS project_name,
