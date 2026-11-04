@@ -13,13 +13,14 @@ from telegram_membership_saas.db_base import Base
 class BotInstanceStatus(StrEnum):
     REGISTERED = "registered"
     DISABLED = "disabled"
+    DELETING = "deleting"
 
 
 class BotInstance(Base):
     __tablename__ = "bot_instances"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('registered', 'disabled')",
+            "status IN ('registered', 'disabled', 'deleting')",
             name="ck_bot_instances_status",
         ),
     )
