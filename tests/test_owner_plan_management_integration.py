@@ -158,9 +158,18 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
             request_id = checkout.request.id
             customer_tid = checkout.request.customer_id
 
-        await archive_owner_plan(
+        previous = await get_owner_plan_info(
             factory, actor_id=owner, project_id=project, plan_id=plan,
         )
+        await archive_owner_plan(
+            factory, actor_id=owner, project_id=project, plan_id=plan,
+            expected_revision=previous.revision,
+        )
+        # A legacy publication button must not revive archived sales.
+        with pytest.raises(ValueError, match="изменился"):
+            await publish_owner_plan(
+                factory, actor_id=owner, project_id=project, plan_id=plan,
+            )
         async with system_project_session_scope(factory, project) as session:
             assert not await list_checkout_options(session, project_id=project)
         info = await get_owner_plan_info(
@@ -172,11 +181,13 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
             await delete_unused_owner_plan(
                 factory, actor_id=owner, project_id=project,
                 plan_id=plan, expected_status="archived",
+                expected_revision=info.revision,
             )
         with pytest.raises(ValueError, match="изменился"):
             await delete_unused_owner_plan(
                 factory, actor_id=owner, project_id=project,
                 plan_id=plan, expected_status="active",
+                expected_revision=info.revision,
             )
 
         # Existing obligation can still finish despite the plan being archived.
@@ -207,6 +218,8 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
             ))
         await publish_owner_plan(
             factory, actor_id=owner, project_id=project, plan_id=plan,
+            expected_status="archived",
+            expected_revision=info.revision,
         )
         async with system_project_session_scope(factory, project) as session:
             assert len(await list_checkout_options(session, project_id=project)) == 1
@@ -225,10 +238,15 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
             await delete_unused_owner_plan(
                 factory, actor_id=outsider, project_id=project,
                 plan_id=unused, expected_status="draft",
+                expected_revision="old-confirmation",
             )
+        unused_info = await get_owner_plan_info(
+            factory, actor_id=owner, project_id=project, plan_id=unused,
+        )
         deleted = await delete_unused_owner_plan(
             factory, actor_id=owner, project_id=project,
             plan_id=unused, expected_status="draft",
+            expected_revision=unused_info.revision,
         )
         assert deleted == "Delete me"
         async with tenant_session_scope(

@@ -33,6 +33,7 @@ def _info(plan_id, *, status="draft", history=False):
         id=plan_id, name="Existing <Premium>",
         status=status, duration_value=1, duration_unit="month",
         resource_name="My channel", prices=(), has_history=history,
+        revision="abcd1234abcd",
     )
 
 
@@ -138,12 +139,15 @@ async def test_deleting_plan_requires_confirmation_and_expected_status(monkeypat
     assert "🗑" in bot.send_message.await_args.args[1]
     buttons = _buttons(bot)
     confirm = [v for _, v in buttons if v.startswith("own:pldelok:")]
-    assert confirm == ["own:pldelok:" + encode_uuid(plan) + ":d"]
+    assert confirm == [
+        "own:pldelok:" + encode_uuid(plan) + ":d:abcd1234abcd",
+    ]
     assert any(v == "own:plan:" + plan.hex for _, v in buttons)
     query.data = confirm[0]
     await cb(query, bot)
     delete.assert_awaited_once()
     assert delete.await_args.kwargs["expected_status"] == "draft"
+    assert delete.await_args.kwargs["expected_revision"] == "abcd1234abcd"
     assert delete.await_args.kwargs["plan_id"] == plan
     assert bot.send_message.await_args.args[1].startswith("📦")
     query.answer.assert_awaited()
@@ -162,10 +166,11 @@ async def test_archive_requires_confirm_and_preserves_history(monkeypatch):
     archive.assert_not_awaited()
     assert any(x.startswith("own:plarchok:") for _, x in _buttons(bot))
     assert "Существующие подписки" in bot.send_message.await_args.args[1]
-    query.data = "own:plarchok:" + encode_uuid(plan)
+    query.data = "own:plarchok:" + encode_uuid(plan) + ":abcd1234abcd"
     await cb(query, bot)
     archive.assert_awaited_once()
     assert archive.await_args.kwargs["project_id"] == project
+    assert archive.await_args.kwargs["expected_revision"] == "abcd1234abcd"
 
 
 async def test_rename_prompt_and_completed_reply_return_to_plan(monkeypatch):
