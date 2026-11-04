@@ -451,7 +451,7 @@ async def verify_channel_and_add(
                     ResourceType.TELEGRAM_CHANNEL.value if chat_type == "channel"
                     else ResourceType.TELEGRAM_GROUP.value
                 ),
-                name=chat.title or "Канал",
+                name=(chat.title or "Канал")[:120],
             )
             session.add(resource)
         else:
