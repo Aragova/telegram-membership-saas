@@ -122,6 +122,15 @@ def upgrade() -> None:
                 SELECT count(*) FROM public.bot_instances
                 WHERE status = 'disabled'
             ),
+            'bots_running', (
+                SELECT count(*) FROM public.bot_instances b
+                JOIN public.customer_bot_runtime_health h
+                  ON h.project_id = b.project_id
+                 AND h.telegram_bot_id = b.telegram_bot_id
+                WHERE b.status = 'registered'
+                  AND h.state = 'running'
+                  AND h.last_heartbeat >= now() - interval '120 seconds'
+            ),
             'bots_new_period', (
                 SELECT count(*) FROM public.bot_instances
                 WHERE created_at >= p_since
@@ -181,7 +190,12 @@ def upgrade() -> None:
                            b.status AS status,
                            p.name AS project_name,
                            b.created_at AS connected_at,
-                           COALESCE(h.state, 'unknown') AS runtime_state,
+                           CASE
+                             WHEN h.state = 'running' AND h.last_heartbeat
+                               < now() - interval '120 seconds'
+                             THEN 'stale'
+                             ELSE COALESCE(h.state, 'unknown')
+                           END AS runtime_state,
                            (SELECT count(*) FROM public.resources r
                             WHERE r.project_id = b.project_id
                               AND r.status = 'active') AS resources,
@@ -197,7 +211,23 @@ def upgrade() -> None:
                            (SELECT count(*) FROM public.payments pay
                             WHERE pay.project_id = b.project_id
                               AND pay.approved_at >= p_since
-                           ) AS payments_period
+                           ) AS payments_period,
+                           (
+                             SELECT COALESCE(jsonb_agg(
+                                 jsonb_build_object(
+                                   'currency', amounts.currency_code,
+                                   'amount', amounts.total::text
+                                 ) ORDER BY amounts.currency_code
+                             ), '[]'::jsonb)
+                             FROM (
+                               SELECT pay.currency_code,
+                                      sum(pay.final_amount) AS total
+                               FROM public.payments pay
+                               WHERE pay.project_id = b.project_id
+                                 AND pay.approved_at >= p_since
+                               GROUP BY pay.currency_code
+                             ) amounts
+                           ) AS gmv_by_currency
                     FROM public.bot_instances b
                     JOIN public.projects p ON p.id = b.project_id
                     LEFT JOIN public.customer_bot_runtime_health h
