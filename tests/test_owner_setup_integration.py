@@ -140,10 +140,11 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
             can_invite_users=True, can_restrict_members=True,
         )
         personal = SimpleNamespace(status="creator")
+        long_title = "К" * 128
         bot = SimpleNamespace(
             id=990001,
             get_chat=AsyncMock(return_value=SimpleNamespace(
-                id=-100987654322, type="channel", title="Exclusive Club",
+                id=-100987654322, type="channel", title=long_title,
             )),
             get_me=AsyncMock(return_value=SimpleNamespace(id=990001)),
             get_chat_member=AsyncMock(
@@ -161,7 +162,8 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
             sf, actor_id=actor_id, actor_telegram_id=telegram_id,
             project_id=project_id, chat_reference=-100987654322,
         )
-        assert resource.name == "Exclusive Club"
+        assert resource.name == long_title[:120]
+        assert len(resource.name) == 120
         assert resource.external_id == "-100987654322"
 
         plan_id = await setup.create_owner_plan(
