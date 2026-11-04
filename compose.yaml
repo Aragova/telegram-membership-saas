@@ -31,6 +31,7 @@ services:
     profiles: ["telegram"]
     build: .
     command: ["tms-bot"]
+    stop_grace_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,6 +51,7 @@ services:
     build: .
     command: ["tms-customer-supervisor"]
     restart: unless-stopped
+    stop_grace_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,11 +62,13 @@ services:
       TMS_BOT_TOKEN_ENCRYPTION_KEY: ${TMS_BOT_TOKEN_ENCRYPTION_KEY:-}
       TMS_TELEGRAM_CENTRAL_ACCESS_ENABLED: "false"
       TMS_TELEGRAM_WORKER_POLL_SECONDS: ${TMS_TELEGRAM_WORKER_POLL_SECONDS:-1}
+      TMS_CUSTOMER_SUPERVISOR_MAX_BOTS: ${TMS_CUSTOMER_SUPERVISOR_MAX_BOTS:-10}
 
   customer-bot:
     profiles: ["customer"]
     build: .
     command: ["tms-customer-bot"]
+    stop_grace_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
