@@ -69,6 +69,7 @@ def _summary_text(snapshot) -> str:
         "",
         f"🤖 Подключённых ботов: <b>{stats['bots']}</b>",
         f"✅ Зарегистрировано: {stats['bots_active']}",
+        f"🟢 Работают сейчас: {stats['bots_running']}",
         f"▫️ Отключено: {stats['bots_disabled']}",
         f"👥 Владельцев: <b>{stats['owners']}</b>",
         f"📢 Каналов и групп: {stats['resources']}",
@@ -128,6 +129,14 @@ def _bot_list(snapshot) -> str:
 
 
 def _bot_details(bot: dict, *, period: str) -> str:
+    currency_rows = bot.get("gmv_by_currency") or []
+    finance = (
+        "\n".join(
+            "• " + escape(item["currency"]) + " — "
+            + escape(fmt_turnover(str(item["amount"])))
+            for item in currency_rows
+        ) if currency_rows else "Подтверждённых оплат за период нет."
+    )
     return (
         "✦ <b>Статистика бота</b>\n\n"
         "🤖 <b>@" + escape(bot["username"]) + "</b>\n"
@@ -140,6 +149,8 @@ def _bot_details(bot: dict, *, period: str) -> str:
         "💳 Подтверждённых оплат ("
         + escape(PERIOD_LABELS[period]) + "): "
         + str(bot["payments_period"]) + "\n\n"
+        "💰 <b>Оборот по валютам</b>\n"
+        + finance + "\n\n"
         "<i>Только агрегаты. Управление каналом и платежами "
         "осуществляется в собственном боте владельца.</i>"
     )
