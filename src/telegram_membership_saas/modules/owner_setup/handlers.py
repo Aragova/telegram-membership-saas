@@ -11,7 +11,6 @@ from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
-    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -226,10 +225,15 @@ class SetupReplyFilter(BaseFilter):
         self.fixed_project_id = fixed_project_id
 
     async def __call__(self, message: Message, bot: Bot) -> bool:
-        if not _private(message) or message.reply_to_message is None:
+        if (
+            not _private(message) or message.text is None
+            or message.text.startswith("/")
+        ):
             return False
         origin = message.reply_to_message
-        if origin.from_user is None or origin.from_user.id != bot.id:
+        if origin is not None and (
+            origin.from_user is None or origin.from_user.id != bot.id
+        ):
             return False
         user = message.from_user
         actor_id = await ensure_telegram_actor(
@@ -242,7 +246,7 @@ class SetupReplyFilter(BaseFilter):
             return False
         return await is_expected_prompt(
             self.factory, actor_id=actor_id,
-            reply_message_id=origin.message_id,
+            reply_message_id=origin.message_id if origin is not None else None,
             bot_scope_id=bot.id if self.fixed_project_id else 0,
         )
 
@@ -484,9 +488,10 @@ def create_owner_setup_router(
                 "\n\n↩ /back — back · /cancel — main menu.",
             ),
             parse_mode="HTML",
-            reply_markup=ForceReply(
-                selective=True, input_field_placeholder=tr("Введите ответ", "Type your reply")
-            ),
+            # Do not force Telegram's persistent "В ответ…" composer.
+            # The next plain text message is safely matched to this
+            # user's live, bot-scoped setup flow instead.
+            reply_markup=ReplyKeyboardRemove(),
         )
         await bind_prompt(
             factory, actor_id=actor_id, step=step,
@@ -1332,11 +1337,21 @@ def create_owner_setup_router(
             for key, (value, unit, label) in DURATIONS.items()
         ]
         rows.append([_button(
+            tr("✏️ Добавить название (необязательно)",
+               "✏️ Add a name (optional)"),
+            "planname:" + generation,
+        )])
+        rows.append([_button(
             tr("⬅️ Все тарифы", "⬅️ All plans"),
             "flowback:plans:" + generation,
         )])
         await bot.send_message(
-            user_id, tr("⏳ Выберите срок действия:", "⏳ Choose plan duration:"),
+            user_id, tr(
+                "🗓️ Выберите срок подписки. Название необязательно: "
+                "можно сразу выбрать срок и перейти к цене.",
+                "🗓️ Choose a subscription duration. Naming is optional: "
+                "select a duration to continue to pricing.",
+            ),
             reply_markup=_markup(rows),
         )
 
@@ -2152,11 +2167,12 @@ def create_owner_setup_router(
                 if not any(status == "active" for _, _, status in data.resources):
                     raise ValueError(tr("Сначала подключите действующий канал или группу",
                                         "Connect an active channel or group first"))
-                await prompt(
-                    bot, user_id, actor_id, step="plan_name",
-                    text=tr("📦 Как назвать новый тариф?\nНапример: Premium",
-                             "📦 What is the new plan's name?\nFor example: Premium"),
+                generation = await set_flow(
+                    factory, actor_id=actor_id, step="plan_duration",
+                    payload={"name": ""}, project_id=fixed_project_id,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
                 )
+                await show_duration_picker(bot, user_id, generation)
             elif action.startswith("flowback:"):
                 # A stale keyboard must never reset a newer wizard.
                 _, target, generation = action.split(":", 2)
@@ -2189,6 +2205,25 @@ def create_owner_setup_router(
                         bot_scope_id=bot.id if fixed_project_id else 0,
                     )
                     await show_duration_picker(bot, user_id, fresh)
+            elif action.startswith("planname:"):
+                generation = action.split(":", 1)[1]
+                flow = await consume_button_flow(
+                    factory, actor_id=actor_id, expected_step="plan_duration",
+                    generation=generation,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
+                )
+                if flow.project_id != project_id:
+                    raise ValueError("Проект изменился. Повторите действие.")
+                await prompt(
+                    bot, user_id, actor_id, step="plan_name", source_flow=flow,
+                    text=tr(
+                        "✏️ Введите название тарифа (2–120 символов). "
+                        "Для тарифа без названия нажмите /back и создайте его "
+                        "через выбор срока.",
+                        "✏️ Enter an optional plan name (2–120 characters). "
+                        "For an unnamed plan, use /back and choose its duration.",
+                    ),
+                )
             elif action.startswith("duration:"):
                 _, key, generation = action.split(":", 2)
                 if key not in DURATIONS:
@@ -2996,18 +3031,18 @@ def create_owner_setup_router(
 
     @router.message(SetupReplyFilter(factory, fixed_project_id))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:
-        if not _private(message) or message.reply_to_message is None:
+        if not _private(message) or message.text is None:
             return
-        if (
-            message.reply_to_message.from_user is None
-            or message.reply_to_message.from_user.id != bot.id
+        origin = message.reply_to_message
+        if origin is not None and (
+            origin.from_user is None or origin.from_user.id != bot.id
         ):
             return
         actor_id = await actor(message.from_user)
         text = (message.text or "").strip()
         flow = await consume_flow(
             factory, actor_id=actor_id,
-            reply_message_id=message.reply_to_message.message_id,
+            reply_message_id=origin.message_id if origin is not None else None,
             bot_scope_id=bot.id if fixed_project_id else 0,
         )
         if flow is None:
