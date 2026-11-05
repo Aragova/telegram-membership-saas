@@ -2477,7 +2477,10 @@ def create_owner_setup_router(
                 await show_notifications(bot, user_id, actor_id, project_id)
             elif action.startswith("notifyset:"):
                 _, category, raw = action.split(":", 2)
-                if raw not in ("0", "1") or category not in ("invoice", "expiry", "access", "daily"):
+                if (
+                    raw not in ("0", "1")
+                    or category not in ("invoice", "expiry", "access", "daily")
+                ):
                     raise ValueError(tr("Некорректная настройка", "Invalid setting"))
                 async with tenant_session_scope(
                     factory, TenantContext(user_id=actor_id, project_id=project_id),
