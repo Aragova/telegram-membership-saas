@@ -122,6 +122,10 @@ class SharedProjectLeaseManager:
         self._held: set[UUID] = set()
         self._broken = False
 
+    @property
+    def failed(self) -> bool:
+        return self._broken
+
     async def start(self) -> None:
         async with self._mutex:
             if self._connection is not None:
@@ -170,6 +174,12 @@ class SharedProjectLeaseManager:
             except DBAPIError:
                 self._broken = True
                 raise ProjectWorkerBusy("Unable to acquire shared supervisor lease") from None
+            except BaseException:
+                # An interrupted query might have acquired a session lock
+                # before its response reached Python. Retire the session:
+                # continuing would strand an untracked lock.
+                self._broken = True
+                raise
             if not acquired:
                 raise ProjectWorkerBusy("Project access worker already running")
             self._held.add(project_id)
@@ -187,6 +197,9 @@ class SharedProjectLeaseManager:
                             self._broken = True
                     except DBAPIError:
                         self._broken = True
+                    except BaseException:
+                        self._broken = True
+                        raise
 
     async def execute_scoped(
         self, project_id: UUID, statement, parameters=None,
@@ -204,6 +217,11 @@ class SharedProjectLeaseManager:
             except DBAPIError:
                 self._broken = True
                 raise ProjectWorkerBusy("Shared supervisor lease query failed") from None
+            except BaseException:
+                # A cancelled scoped query may have changed session context
+                # before returning. Force a clean supervisor restart.
+                self._broken = True
+                raise
 
     async def confirm(self, project_id: UUID) -> None:
         """Reentrant check with matched unlock: exactly one lease per bot."""
@@ -228,6 +246,9 @@ class SharedProjectLeaseManager:
             except DBAPIError:
                 self._broken = True
                 raise ProjectWorkerBusy("Shared supervisor lease connection lost") from None
+            except BaseException:
+                self._broken = True
+                raise
 
     async def close(self) -> None:
         async with self._mutex:
