@@ -1964,7 +1964,216 @@ def create_owner_setup_router(
             if project_id is None:
                 raise ValueError(tr("Сначала создайте или выберите проект",
                                     "Create or select a connection first"))
-            if action == "dashboard":
+            if action == "subscribers":
+                await show_subscribers(bot, user_id, actor_id, project_id)
+            elif action.startswith("sublist:"):
+                _, status, page_text = action.split(":", 2)
+                if status not in SUBSCRIBER_FILTERS or not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Некорректный фильтр подписчиков")
+                await show_subscribers(
+                    bot, user_id, actor_id, project_id,
+                    status=status, page=int(page_text),
+                )
+            elif action.startswith("subfind:"):
+                _, page_text, search = action.split(":", 2)
+                if not page_text.isascii() or not page_text.isdecimal() or len(search) > 32:
+                    raise ValueError("Некорректный поиск подписчика")
+                await show_subscribers(
+                    bot, user_id, actor_id, project_id,
+                    page=int(page_text), search=search,
+                )
+            elif action == "subsearch":
+                await prompt(
+                    bot, user_id, actor_id, step="subscriber_search",
+                    text=tr(
+                        "🔎 <b>Найти подписчика</b>\n\n"
+                        "Пришлите @username или числовой Telegram ID. "
+                        "Поиск ограничен покупателями этого бота.",
+                        "🔎 <b>Find a subscriber</b>\n\n"
+                        "Send @username or numeric Telegram ID. "
+                        "Only customers of this bot are searchable.",
+                    ),
+                )
+            elif action.startswith("subscriber:"):
+                cid = decode_uuid(action.split(":", 1)[1])
+                await show_subscriber_card(
+                    bot, user_id, actor_id, project_id, cid,
+                )
+            elif action.startswith("subhistory:"):
+                _, cid, page_text = action.split(":", 2)
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Недопустимая страница покупок")
+                await show_subscriber_card(
+                    bot, user_id, actor_id, project_id,
+                    decode_uuid(cid), history_page=int(page_text),
+                )
+            elif action.startswith("subgrantstart:"):
+                await show_manual_resource_picker(
+                    bot, user_id, actor_id, project_id,
+                    decode_uuid(action.split(":", 1)[1]),
+                )
+            elif action.startswith("subres:"):
+                _, cid, page_text = action.split(":", 2)
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Недопустимая страница каналов")
+                await show_manual_resource_picker(
+                    bot, user_id, actor_id, project_id,
+                    decode_uuid(cid), page=int(page_text),
+                )
+            elif action.startswith("subtarget:"):
+                _, cid, rid = action.split(":", 2)
+                customer_id, resource_id = decode_uuid(cid), decode_uuid(rid)
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    customer_id=customer_id,
+                )
+                if not detail.owner_only_actions or resource_id not in {
+                    ref for ref, _ in detail.resources
+                }:
+                    raise PermissionError("Канал больше недоступен для ручной выдачи")
+                options = [
+                    (tr("7 дней", "7 days"), 7),
+                    (tr("30 дней", "30 days"), 30),
+                    (tr("90 дней", "90 days"), 90),
+                    (tr("Бессрочно", "Lifetime"), 0),
+                ]
+                rows = [[_button(
+                    "🔑 " + label,
+                    "subgrantask:" + cid + ":" + rid + ":" + str(days),
+                )] for label, days in options]
+                rows.append([_button(
+                    tr("⬅️ К каналам", "⬅️ Back to channels"),
+                    "subgrantstart:" + cid,
+                )])
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "🔑 <b>Выберите срок ручного доступа</b>\n"
+                        "Будет выдано отдельное право, без платежа.",
+                        "🔑 <b>Choose the manual access duration</b>\n"
+                        "A separate grant is created without payment.",
+                    ),
+                    parse_mode="HTML", reply_markup=_markup(rows),
+                )
+            elif action.startswith(("subgrantask:", "subgrantok:")):
+                verb, cid, rid, days_text = action.split(":", 3)
+                if not days_text.isascii() or not days_text.isdecimal():
+                    raise ValueError("Неверный срок")
+                days = int(days_text)
+                if days not in MANUAL_DURATIONS:
+                    raise ValueError("Недопустимый срок ручного доступа")
+                customer_id, resource_id = decode_uuid(cid), decode_uuid(rid)
+                if verb == "subgrantask":
+                    detail = await subscriber_detail(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id,
+                    )
+                    resources = dict(detail.resources)
+                    if not detail.owner_only_actions or resource_id not in resources:
+                        raise PermissionError("Доступно только владельцу и активному каналу")
+                    duration = (
+                        tr("бессрочно", "lifetime") if days == 0
+                        else str(days) + tr(" дней", " days")
+                    )
+                    await bot.send_message(
+                        user_id,
+                        tr("🔑 <b>Подтвердите ручную выдачу</b>\n\n",
+                           "🔑 <b>Confirm manual grant</b>\n\n")
+                        + escape(subscriber_label(
+                            detail.telegram_id, detail.username,
+                            detail.first_name,
+                        ))
+                        + "\n📣 " + escape(resources[resource_id])
+                        + "\n⏳ " + duration + "\n\n"
+                        + tr(
+                            "Это отдельное бесплатное право. Оплаченные "
+                            "подписки и финансовая история не меняются.",
+                            "A separate complimentary grant. Paid "
+                            "subscriptions and financial history stay intact.",
+                        ),
+                        parse_mode="HTML", reply_markup=_markup([
+                            [_button(
+                                tr("✅ Выдать доступ", "✅ Grant access"),
+                                "subgrantok:" + cid + ":" + rid + ":"
+                                + str(days), "success",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "subscriber:" + cid)],
+                        ]),
+                    )
+                else:
+                    await grant_manual_access(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id, resource_id=resource_id,
+                        days=days,
+                    )
+                    await bot.send_message(
+                        user_id, tr(
+                            "✅ Ручное право сохранено. Выдачу доступа "
+                            "в Telegram завершит работающий бот.",
+                            "✅ Manual grant saved. The running bot will "
+                            "complete Telegram access delivery.",
+                        ),
+                    )
+                    await show_subscriber_card(
+                        bot, user_id, actor_id, project_id, customer_id,
+                    )
+            elif action.startswith(("subrevoke:", "subrevok:")):
+                verb, cid, gid = action.split(":", 2)
+                customer_id, grant_id = decode_uuid(cid), decode_uuid(gid)
+                if verb == "subrevoke":
+                    detail = await subscriber_detail(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id,
+                    )
+                    if not detail.owner_only_actions or grant_id not in {
+                        g.id for g in detail.grants if g.source == "manual"
+                    }:
+                        raise PermissionError("Можно отзывать только собственные ручные права")
+                    await bot.send_message(
+                        user_id,
+                        tr("⚠️ <b>Отозвать ручной доступ?</b>\n\n",
+                           "⚠️ <b>Revoke manual access?</b>\n\n")
+                        + escape(subscriber_label(
+                            detail.telegram_id, detail.username,
+                            detail.first_name,
+                        ))
+                        + "\n\n" + tr(
+                            "Будет отозвано только выбранное ручное право. "
+                            "Оплаченные подписки и служебные права сохраняются. "
+                            "Если других прав нет — бот поставит отзыв доступа "
+                            "в Telegram в очередь.",
+                            "Only this manual grant is revoked. Paid "
+                            "subscriptions and service rights remain. "
+                            "If no other grants apply, Telegram revocation "
+                            "will be queued.",
+                        ),
+                        parse_mode="HTML", reply_markup=_markup([
+                            [_button(
+                                tr("🗑 Да, отозвать", "🗑 Confirm revoke"),
+                                "subrevok:" + cid + ":" + gid, "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "subscriber:" + cid)],
+                        ]),
+                    )
+                else:
+                    result = await revoke_manual_access(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id, grant_id=grant_id,
+                    )
+                    await bot.send_message(
+                        user_id, tr(
+                            "✅ Ручной доступ отозван." if result.changed
+                            else "ℹ️ Это право уже было отозвано.",
+                            "✅ Manual access revoked." if result.changed
+                            else "ℹ️ This grant was already revoked.",
+                        ),
+                    )
+                    await show_subscriber_card(
+                        bot, user_id, actor_id, project_id, customer_id,
+                    )
+            elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action.startswith("connrename:"):
                 target_id = UUID(hex=action.split(":", 1)[1])
