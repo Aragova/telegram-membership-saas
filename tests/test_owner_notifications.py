@@ -11,7 +11,6 @@ from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
     build_engine,
     build_session_factory,
-    system_project_session_scope,
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import _language
