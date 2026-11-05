@@ -24,7 +24,8 @@ Included from the owner's source project:
 - Manual payment methods, their compatible currencies and names.
 - Payment instructions/bank details **only when the owner explicitly chooses
   the "С реквизитами" confirmation**. Otherwise methods get safe placeholder
-  instructions that must be edited before enabling.
+  instructions. Both guarded and legacy payment-method activation refuse
+  the placeholder until the owner replaces it with real payment instructions.
 
 Every target receives fresh project-scoped UUIDs:
 - Each plan is a **draft** without a channel (PlanResource).
