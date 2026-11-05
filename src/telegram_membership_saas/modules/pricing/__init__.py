@@ -3,8 +3,8 @@ from telegram_membership_saas.modules.pricing.models import (
     CurrencyAssetStatus,
     CurrencyAssetType,
     PlanPrice,
-    ProjectEnabledCurrency,
     PlanPriceStatus,
+    ProjectEnabledCurrency,
 )
 from telegram_membership_saas.modules.pricing.service import (
     replace_active_plan_price,
