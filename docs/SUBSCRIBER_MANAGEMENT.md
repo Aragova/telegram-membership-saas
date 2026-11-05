@@ -86,3 +86,7 @@ payment history and actual vs desired access, create a *test* manual 7-day
 grant in a nonfinancial test channel, then revoke that manual grant and
 verify the real paid customer account remains unaffected. Do not manipulate
 live paying customers merely to simulate a test.
+
+### Additional safeguards verified by review
+
+Manual grants recheck bot-retirement state under the existing checkout-retirement lock; once a bot is marked deleting, no new manual entitlement is created. Active access grants are paginated (8 per page), so a grant older than 30 newer paid or manual entitlements can still be found and revoked. Both cases are covered by dedicated PostgreSQL and UI regression tests.
