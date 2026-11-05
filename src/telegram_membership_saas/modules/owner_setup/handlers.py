@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from decimal import Decimal
 from html import escape
 from secrets import randbelow
 from uuid import UUID
@@ -120,6 +121,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     setup_overview,
     verify_channel_and_add,
 )
+from telegram_membership_saas.modules.owner_setup.statistics import read_owner_statistics
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     FILTERS as SUBSCRIBER_FILTERS,
 )
@@ -173,6 +175,12 @@ def _button(label: str, data: str, style: str = "primary") -> InlineKeyboardButt
 
 def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _statistics_amount(amount: Decimal) -> str:
+    """Preserve integer trailing zeroes while trimming fractional padding."""
+    value = format(amount, "f")
+    return value.rstrip("0").rstrip(".") if "." in value else value
 
 
 def _status(value: str) -> str:
@@ -449,7 +457,8 @@ def create_owner_setup_router(
                  _button("💳 Оплата", "methods")],
                 [_button("📦 Тарифы", "plans"),
                  _button("📋 Заявки", "reviews")],
-                [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers")],
+                [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
+                 _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
                 [_button("📋 Готовность", "readiness"),
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
@@ -457,6 +466,69 @@ def create_owner_setup_router(
                 [_button("❔ Помощь", "help")],
                 [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             ])
+        await bot.send_message(
+            user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_statistics(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        period: str = "7",
+    ) -> None:
+        if fixed_project_id is None:
+            raise PermissionError("Статистика доступна в подключённом боте")
+        stats = await read_owner_statistics(
+            factory, actor_id=actor_id, project_id=project_id, period=period,
+        )
+        labels = {
+            "7": tr("7 дней", "7 days"),
+            "30": tr("30 дней", "30 days"),
+            "all": tr("Всё время", "All time"),
+        }
+        bounds = (
+            f"{stats.since:%d.%m.%Y} — {stats.through:%d.%m.%Y}"
+            if stats.since is not None else tr("За всё время", "All time")
+        )
+        sales = (
+            "\n".join(
+                f"• {escape(currency)}: {_statistics_amount(amount)}"
+                f" · {count}"
+                for currency, amount, count in stats.currency_totals
+            )
+            if stats.currency_totals else tr("Пока нет оплат", "No confirmed payments yet")
+        )
+        text = (
+            tr("📊 <b>Статистика · ViMi Pay</b>\n", "📊 <b>Statistics · ViMi Pay</b>\n")
+            + f"<b>{escape(stats.project_name)}</b>\n"
+            + f"🌍 {escape(stats.timezone)}\n"
+            + f"🗓️ {bounds}\n\n"
+            + tr("💰 <b>Подтверждённые оплаты</b>\n", "💰 <b>Confirmed payments</b>\n")
+            + tr("Платежей: ", "Payments: ") + str(stats.payment_count) + "\n"
+            + sales + "\n\n"
+            + tr("👥 <b>Покупатели</b>\n", "👥 <b>Customers</b>\n")
+            + tr("Новых за период: ", "New in period: ") + str(stats.new_customers) + "\n"
+            + tr("Всего зарегистрировано: ", "Total registered: ")
+            + str(stats.total_customers) + "\n\n"
+            + tr("🔹 <b>Сейчас</b>\n", "🔹 <b>Current status</b>\n")
+            + tr("Активных платных подписчиков: ", "Active paying subscribers: ")
+            + str(stats.active_paid_customers) + "\n"
+            + tr("Истекают за 7 дней: ", "Expiring within 7 days: ")
+            + str(stats.expiring_paid_customers) + "\n"
+            + tr("Активных ручных прав: ", "Active manual grants: ")
+            + str(stats.active_manual_grants) + "\n"
+            + tr("Заявок на проверке: ", "Pending payment reviews: ")
+            + str(stats.waiting_review) + "\n\n"
+            + tr("Суммы не конвертируются. Оплаты подтверждены владельцем, "
+                 "не банком или платформой.",
+                 "Currencies are not converted. Payments are owner-confirmed, "
+                 "not independently bank-verified.")
+        )
+        rows = [
+            [_button(("✅ " if period == key else "") + label,
+                     "statistics:" + key)
+             for key, label in labels.items()],
+            [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
+                     "dashboard")],
+        ]
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
         )
@@ -2211,6 +2283,11 @@ def create_owner_setup_router(
                         bot, user_id, actor_id, project_id, customer_id,
                         grant_page=grant_page,
                     )
+            elif action == "statistics" or action.startswith("statistics:"):
+                period = "7" if action == "statistics" else action.split(":", 1)[1]
+                if period not in ("7", "30", "all"):
+                    raise ValueError(tr("Неизвестный период", "Unknown period"))
+                await show_statistics(bot, user_id, actor_id, project_id, period)
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action.startswith("connrename:"):
