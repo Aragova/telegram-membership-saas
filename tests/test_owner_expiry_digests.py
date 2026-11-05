@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
+from telegram_membership_saas import telegram_runtime
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
     build_engine,
@@ -49,7 +50,6 @@ from telegram_membership_saas.modules.telegram_commerce import (
     submit_checkout_for_telegram_user,
 )
 from telegram_membership_saas.tenant_context import TenantContext
-from telegram_membership_saas import telegram_runtime
 
 
 def _deadline(customer, when, status="active", *, username="buyer",
