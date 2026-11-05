@@ -14,6 +14,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.owner_setup.method_management import (
+    method_has_history,
+    method_revision,
+)
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     plan_has_history,
     plan_revision,
@@ -44,6 +48,9 @@ class MethodInfo:
     name: str
     status: str
     currencies: tuple[str, ...]
+    revision: str = ""
+    has_history: bool = False
+    instruction: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +148,11 @@ async def get_owner_method_info(
         return MethodInfo(
             id=method.id, name=method.name, status=method.status,
             currencies=tuple(currencies),
+            revision=method_revision(method),
+            has_history=await method_has_history(
+                session, project_id=project_id, method_id=method_id,
+            ),
+            instruction=method.instruction_template,
         )
 
 
@@ -186,7 +198,11 @@ async def attach_owner_method_currency(
             )
             .returning(PaymentMethodCurrency.currency_code)
         )
-        return outcome.scalar_one_or_none() is not None
+        added = outcome.scalar_one_or_none() is not None
+        if added:
+            method.updated_at = func.clock_timestamp()
+            await session.flush()
+        return added
 
 
 async def change_owner_method_status(

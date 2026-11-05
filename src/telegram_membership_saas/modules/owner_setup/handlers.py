@@ -49,6 +49,13 @@ from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
 )
+from telegram_membership_saas.modules.owner_setup.method_management import (
+    change_owner_method_status_guarded,
+    delete_unused_owner_method,
+    detach_owner_method_currency,
+    edit_owner_method_instructions,
+    rename_owner_method,
+)
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -98,7 +105,6 @@ from telegram_membership_saas.modules.owner_setup.service import (
 from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     METHOD_PAGE_SIZE,
     attach_owner_method_currency,
-    change_owner_method_status,
     get_owner_method_info,
     get_owner_plan_info,
     list_owner_methods,
@@ -895,32 +901,59 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
             method_id=method_id,
         )
-        rows = [[_button("🌐 Добавить валюту", "methodlink:" + method_id.hex)]]
+        rows = [
+            [_button(
+                tr("✏️ Изменить название", "✏️ Rename"),
+                "methodrename:" + method_id.hex,
+            )],
+            [_button(
+                tr("📝 Изменить реквизиты", "📝 Edit instructions"),
+                "methodedit:" + method_id.hex,
+            )],
+            [_button(
+                tr("🌐 Управление валютами", "🌐 Manage currencies"),
+                "methodlink:" + method_id.hex,
+            )],
+        ]
         if method.status == "active":
             rows.append([_button(
-                "⏸️ Отключить для новых покупок",
+                tr("⏸️ Отключить для новых покупок", "⏸️ Disable new sales"),
                 "methodconfirmoff:" + method_id.hex, "danger",
             )])
         else:
             rows.append([_button(
-                "▶️ Включить способ оплаты",
-                "methodon:" + method_id.hex, "success",
+                tr("▶️ Включить способ оплаты", "▶️ Enable method"),
+                "methodon:" + encode_uuid(method_id) + ":" + method.revision,
+                "success",
             )])
-        rows.append([_button("⬅️ Все способы оплаты", "methods")])
+        if not method.has_history:
+            rows.append([_button(
+                tr("🗑 Удалить способ оплаты", "🗑 Delete method"),
+                "methoddeleteask:" + method_id.hex, "danger",
+            )])
+        rows.append([_button(
+            tr("⬅️ Все способы оплаты", "⬅️ All payment methods"), "methods",
+        )])
+        history_note = tr(
+            "\nУдаление недоступно: есть история покупок.",
+            "\nDeletion unavailable: purchase history exists.",
+        ) if method.has_history else ""
+        instruction_preview = (
+            method.instruction[:350]
+            + ("…" if len(method.instruction) > 350 else "")
+        )
         await bot.send_message(
             user_id,
             "💳 <b>" + escape(method.name) + "</b>\n"
             + tr("Статус: ", "Status: ") + _status(method.status)
             + tr("\nВалюты: ", "\nCurrencies: ")
             + escape(", ".join(method.currencies) or tr("не выбраны", "none selected"))
-            + tr("\n\nПокупателям показываются только способы, "
-                 "совместимые с валютой тарифа.",
-                 "\n\nBuyers see only payment methods that support "
-                 "the selected plan currency."),
+            + tr("\n\nИнструкция покупателю:\n", "\n\nBuyer instructions:\n")
+            + escape(instruction_preview)
+            + history_note,
             parse_mode="HTML",
             reply_markup=_markup(rows),
         )
-
 
     async def show_reviews(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -1217,6 +1250,11 @@ def create_owner_setup_router(
                 await show_plans(bot, message.chat.id, actor_id, project_id)
             else:
                 await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+        elif prior.step in ("method_rename", "method_edit"):
+            await show_method_card(
+                bot, message.chat.id, actor_id, project_id,
+                UUID(hex=prior.payload["method_id"]),
+            )
         elif prior.step in ("method_name", "method_instruction"):
             await show_methods(bot, message.chat.id, actor_id, project_id)
         elif prior.step in ("chat_picker", "resource_reference"):
@@ -2061,6 +2099,14 @@ def create_owner_setup_router(
                         "methodattach:" + method_id.hex + ":" + code,
                     )] for code in codes if code not in method.currencies
                 ]
+                rows.extend([
+                    [_button(
+                        tr("➖ " + code, "➖ " + code),
+                        "methodremoveask:" + encode_uuid(method_id) + ":" + code,
+                        "danger",
+                    )] for code in method.currencies
+                    if len(method.currencies) > 1
+                ])
                 if not rows:
                     await bot.send_message(
                         user_id, tr("Все доступные валюты уже подключены.",
@@ -2098,8 +2144,134 @@ def create_owner_setup_router(
                 await show_method_card(
                     bot, user_id, actor_id, project_id, UUID(hex=method_hex),
                 )
+            elif action.startswith("methodrename:"):
+                method_id = UUID(hex=action.split(":", 1)[1])
+                await get_owner_method_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id, step="method_rename",
+                    payload={"method_id": method_id.hex},
+                    text=tr(
+                        "✏️ <b>Новое название способа оплаты</b>\n"
+                        "От 2 до 120 символов.",
+                        "✏️ <b>Rename payment method</b>\n"
+                        "Enter 2–120 characters.",
+                    ),
+                )
+            elif action.startswith("methodedit:"):
+                method_id = UUID(hex=action.split(":", 1)[1])
+                await get_owner_method_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id, step="method_edit",
+                    payload={"method_id": method_id.hex},
+                    text=tr(
+                        "📝 <b>Новые реквизиты и инструкция</b>\n"
+                        "Допускаются {amount}, {currency}, {plan}, {period}.\n"
+                        "Новые инструкции увидят покупатели при открытии оплаты.",
+                        "📝 <b>New payment instructions</b>\n"
+                        "Allowed: {amount}, {currency}, {plan}, {period}.\n"
+                        "Buyers will see the new text when opening payment.",
+                    ),
+                )
+            elif action.startswith("methodremoveask:"):
+                _, token, code = action.split(":", 2)
+                method_id = decode_uuid(token)
+                method = await get_owner_method_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id,
+                )
+                if code not in method.currencies or len(method.currencies) < 2:
+                    raise ValueError(tr(
+                        "Эту валюту отключить нельзя.",
+                        "This currency cannot be detached.",
+                    ))
+                await bot.send_message(
+                    user_id,
+                    tr("➖ Отключить валюту ", "➖ Detach currency ") + code
+                    + tr(" от способа «", " from “")
+                    + escape(method.name) + tr("»?", "”?"),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            tr("➖ Да, отключить валюту", "➖ Confirm detach"),
+                            "methodremove:" + token + ":" + code + ":" + method.revision,
+                            "danger",
+                        )],
+                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                 "method:" + method_id.hex)],
+                    ]),
+                )
+            elif action.startswith("methodremove:"):
+                _, token, code, revision = action.split(":", 3)
+                method_id = decode_uuid(token)
+                await detach_owner_method_currency(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id, currency_code=code,
+                    expected_revision=revision,
+                )
+                await bot.send_message(
+                    user_id, tr("✅ Валюта отключена.", "✅ Currency detached."),
+                )
+                await show_method_card(bot, user_id, actor_id, project_id, method_id)
+            elif action.startswith("methoddeleteask:"):
+                method_id = UUID(hex=action.split(":", 1)[1])
+                method = await get_owner_method_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id,
+                )
+                if method.has_history:
+                    raise ValueError(tr(
+                        "Есть история покупок. Отключите способ оплаты.",
+                        "Purchase history exists. Disable the method instead.",
+                    ))
+                await bot.send_message(
+                    user_id,
+                    tr("🗑 <b>Удалить способ оплаты навсегда?</b>\n\n",
+                       "🗑 <b>Permanently delete payment method?</b>\n\n")
+                    + escape(method.name)
+                    + tr(
+                        "\n\nНастройки и валюты будут удалены. "
+                        "Удаление возможно только без истории заявок и платежей.",
+                        "\n\nSettings and currency links will be deleted. "
+                        "Only methods with no request or payment history can be removed.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            tr("🗑 Да, удалить", "🗑 Confirm deletion"),
+                            "methoddelete:" + encode_uuid(method_id) + ":" + method.revision,
+                            "danger",
+                        )],
+                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                 "method:" + method_id.hex)],
+                    ]),
+                )
+            elif action.startswith("methoddelete:"):
+                _, token, revision = action.split(":", 2)
+                method_id = decode_uuid(token)
+                await delete_unused_owner_method(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id, expected_revision=revision,
+                )
+                await bot.send_message(
+                    user_id, tr("✅ Способ оплаты удалён.", "✅ Payment method deleted."),
+                )
+                await show_methods(bot, user_id, actor_id, project_id)
             elif action.startswith("methodconfirmoff:"):
                 method_id = UUID(hex=action.split(":", 1)[1])
+                method = await get_owner_method_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id,
+                )
+                if method.status != "active":
+                    raise ValueError(tr(
+                        "Способ уже отключён.", "Method is already disabled.",
+                    ))
                 await bot.send_message(
                     user_id,
                     tr(
@@ -2113,22 +2285,24 @@ def create_owner_setup_router(
                     parse_mode="HTML",
                     reply_markup=_markup([
                         [_button(
-                            "⏸️ Подтвердить отключение",
-                            "methodoff:" + method_id.hex, "danger",
+                            tr("⏸️ Подтвердить отключение", "⏸️ Confirm disable"),
+                            "methodoff:" + encode_uuid(method_id) + ":" + method.revision,
+                            "danger",
                         )],
-                        [_button("Отмена", "method:" + method_id.hex)],
+                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                 "method:" + method_id.hex)],
                     ]),
                 )
             elif action.startswith(("methodoff:", "methodon:")):
                 is_active = action.startswith("methodon:")
-                method_id = UUID(hex=action.split(":", 1)[1])
-                await change_owner_method_status(
+                _, token, revision = action.split(":", 2)
+                method_id = decode_uuid(token)
+                await change_owner_method_status_guarded(
                     factory, actor_id=actor_id, project_id=project_id,
                     method_id=method_id, enabled=is_active,
+                    expected_revision=revision,
                 )
-                await show_method_card(
-                    bot, user_id, actor_id, project_id, method_id,
-                )
+                await show_method_card(bot, user_id, actor_id, project_id, method_id)
             elif action.startswith("methodcurrency:"):
                 code = action.split(":", 1)[1]
                 if code not in await owner_available_currencies(
@@ -2480,6 +2654,32 @@ def create_owner_setup_router(
                 )
                 await bot.send_message(message.chat.id, tr("✅ Цена сохранена.", "✅ Price saved."))
                 await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+            elif flow.step == "method_rename":
+                method_id = UUID(hex=flow.payload["method_id"])
+                name = await rename_owner_method(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id, name=text,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Способ переименован.", "✅ Payment method renamed."),
+                )
+                await show_method_card(
+                    bot, message.chat.id, actor_id, project_id, method_id,
+                )
+            elif flow.step == "method_edit":
+                method_id = UUID(hex=flow.payload["method_id"])
+                await edit_owner_method_instructions(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    method_id=method_id, instruction=text,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Реквизиты обновлены.", "✅ Instructions updated."),
+                )
+                await show_method_card(
+                    bot, message.chat.id, actor_id, project_id, method_id,
+                )
             elif flow.step == "method_name":
                 if not 2 <= len(text) <= 120:
                     raise ValueError(tr("Название способа оплаты: от 2 до 120 символов",
@@ -2530,10 +2730,18 @@ def create_owner_setup_router(
                 "resource_reference": "resources",
                 "method_name": "methods",
                 "method_instruction": "methods",
+                "method_rename": "methods",
+                "method_edit": "methods",
                 "timezone": "dashboard",
                 "new_bot_token": "projects",
                 "bot_token": "bots",
             }.get(flow.step, "dashboard")
+            if flow.step in ("method_rename", "method_edit"):
+                method_hex = flow.payload.get("method_id")
+                try:
+                    destination = "method:" + UUID(hex=method_hex).hex
+                except (TypeError, ValueError, AttributeError):
+                    pass
             if flow.step in ("price_amount", "plan_rename"):
                 plan_hex = flow.payload.get("plan_id")
                 try:

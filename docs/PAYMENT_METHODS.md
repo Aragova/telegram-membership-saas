@@ -92,3 +92,34 @@ The currency link also uses a composite foreign key to `(payment_methods.id, pay
 The provider enum is intentionally separate from the display name so later adapters can add providers such as Telegram Stars, Stripe, YooKassa, PayPal or a crypto processor without changing the meaning of the current manual-settlement methods.
 
 The current database check allows only `manual_settlement`; a future provider is introduced by an explicit migration rather than by arbitrary strings.
+
+## Existing payment-method management (owner bot)
+
+Manage a method on `Payments → Method`, not in a separate settings screen.
+The owner can rename it (2–120 characters), edit the manual instruction
+template (up to 4000 characters; safe placeholders only), attach and detach
+currencies, or disable/re-enable it for future checkouts.
+
+A payment method must retain at least one currency link; to stop accepting it
+entirely, disable the method. Detaching a currency removes that combination from
+**new** checkouts; existing requests/payments remain valid. Manual-settlement
+instruction edits affect future instruction rendering; they do not rewrite
+historical financial amounts or statuses.
+
+Permanent deletion is offered **only if the payment method has never been
+referenced by a PaymentRequest or Payment**. This includes rejected/cancelled
+requests: their history is retained. Deletion removes only the unused method and
+its currency links; database foreign keys additionally protect financial rows.
+If a method has history, disable it for new sales instead.
+
+Disable, delete and currency-detach confirmations are bound to the current
+`PaymentMethod.updated_at` revision; the service rechecks tenant role,
+method ownership, expected status and revision under a row lock. The project's
+checkout advisory lock serializes destructive sales-availability changes with
+checkout creation. Old Telegram confirmation buttons cannot delete a method
+after intervening edits. No new Telegram native Menu entries are added:
+connected bots still expose exactly three commands.
+
+The owner bot provides localized RU/EN action labels and contextual Back to the
+current method card. Test with real PostgreSQL RLS and Telegram callbacks,
+including stale buttons and cross-project denial before staging acceptance.
