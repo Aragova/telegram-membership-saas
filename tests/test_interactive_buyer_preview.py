@@ -71,8 +71,10 @@ def test_preview_uses_actual_checkout_eligible_prices_and_duration_in_english():
         content, keyboard = preview_catalog_screen(fixture.offers)
         assert "Buyer preview" in content
         assert "Channel &lt;VIP&gt;" in content
-        assert "1 месяц · 1 month" in content
-        assert "Навсегда · Lifetime" in content
+        assert "1 month" in content
+        assert "1 месяц · 1 month" not in content
+        assert "Lifetime" in content
+        assert "Навсегда · Lifetime" not in content
         assert "500 RUB" in content
         assert "999 RUB" in content
         assert "No payment request" in content
