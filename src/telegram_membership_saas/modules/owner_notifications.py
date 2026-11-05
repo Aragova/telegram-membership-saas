@@ -303,5 +303,7 @@ async def deliver_one_owner_notification(
                 row.status = "failed"
             else:
                 row.status = "pending"
-                row.available_at = datetime.now(UTC) + timedelta(seconds=min(30 * 2 ** (attempt - 1), 600))
+                row.available_at = datetime.now(UTC) + timedelta(
+                    seconds=min(30 * 2 ** (attempt - 1), 600),
+                )
     return True
