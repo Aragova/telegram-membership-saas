@@ -464,16 +464,37 @@ def create_owner_setup_router(
                  _button("📋 Заявки", "reviews")],
                 [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
                  _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
-                [_button(tr("🔔 Уведомления", "🔔 Notifications"), "notifications")],
-                [_button("📋 Готовность", "readiness"),
-                 _button("🌍 TimeZone", "timezone")],
-                [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
-                [_button("👀 Смотреть гостем", "preview")],
-                [_button("❔ Помощь", "help")],
-                [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
+                [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview")],
+                [_button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
+                [InlineKeyboardButton(
+                    text="🌐 Language / Язык", callback_data="lng:menu",
+                    style="success",
+                )],
             ])
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_settings(
+        bot: Bot, user_id: int,
+    ) -> None:
+        """A single place for connected-bot configuration."""
+        if fixed_project_id is None:
+            raise PermissionError("Settings only available in connected bot")
+        await bot.send_message(
+            user_id,
+            tr("⚙️ <b>Настройки</b>\n\nВыберите раздел:",
+               "⚙️ <b>Settings</b>\n\nChoose a section:"),
+            parse_mode="HTML",
+            reply_markup=_markup([
+                [_button(tr("🔔 Уведомления", "🔔 Notifications"), "notifications")],
+                [_button(tr("📋 Готовность", "📋 Readiness"), "readiness"),
+                 _button("🌍 TimeZone", "timezone")],
+                [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
+                [_button(tr("❔ Помощь", "❔ Help"), "help")],
+                [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
+                         "dashboard")],
+            ]),
         )
 
     async def show_invoice(
@@ -546,7 +567,7 @@ def create_owner_setup_router(
                 user_id,
                 tr("Настройки уведомлений доступны только владельцу.",
                    "Only the project owner can edit notifications."),
-                reply_markup=_markup([[_button(tr("⬅️ Панель", "⬅️ Dashboard"), "dashboard")]]),
+                reply_markup=_markup([[_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")]]),
             )
             return
         invoice_status = (
@@ -575,7 +596,7 @@ def create_owner_setup_router(
                     else tr("🧾 Включить счета", "🧾 Enable invoices"),
                     "notifyset:invoice:" + ("0" if flags["invoice"] else "1"),
                 )],
-                [_button(tr("⬅️ Панель администратора", "⬅️ Dashboard"), "dashboard")],
+                [_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")],
             ]),
         )
 
@@ -699,8 +720,7 @@ def create_owner_setup_router(
                 "networkoff" if profile.enabled else "networkon",
             )])
         buttons.append([_button(
-            tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
-            "dashboard",
+            tr("⬅️ Настройки", "⬅️ Settings"), "settings",
         )])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
@@ -1807,7 +1827,7 @@ def create_owner_setup_router(
                 [_button("📢 Каналы", "resources")],
                 [_button("📦 Тарифы", "plans")],
                 [_button("💳 Оплата", "methods")],
-                [_button("⬅️ Панель администратора", "dashboard")],
+                [_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")],
             ]
             if fixed_project_id is not None
             else [
@@ -2424,6 +2444,8 @@ def create_owner_setup_router(
                         category=category, enabled=raw == "1",
                     )
                 await show_notifications(bot, user_id, actor_id, project_id)
+            elif action == "settings":
+                await show_settings(bot, user_id)
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action.startswith("connrename:"):
@@ -3612,8 +3634,7 @@ def create_owner_setup_router(
                 ]
                 rows.append([_button("✍️ Указать другой", "tzcustom")])
                 rows.append([_button(
-                    tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
-                    "dashboard",
+                    tr("⬅️ Настройки", "⬅️ Settings"), "settings",
                 )])
                 await bot.send_message(
                     user_id, tr("🌍 Выберите часовой пояс:", "🌍 Choose a timezone:"),
@@ -3638,7 +3659,7 @@ def create_owner_setup_router(
                     factory, project_id=project_id,
                     actor_telegram_user_id=user_id, timezone_name=value,
                 )
-                await show_dashboard(bot, user_id, actor_id, project_id)
+                await show_settings(bot, user_id)
             elif action == "readiness":
                 data = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id,
@@ -3650,7 +3671,7 @@ def create_owner_setup_router(
                         next_step[0], next_step[1], "success",
                     )])
                 rows.append([_button(
-                    "⬅️ Панель администратора", "dashboard",
+                    tr("⬅️ Настройки", "⬅️ Settings"), "settings",
                 )])
                 await bot.send_message(
                     user_id,
