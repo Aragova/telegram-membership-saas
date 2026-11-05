@@ -121,6 +121,11 @@ from telegram_membership_saas.modules.owner_setup.service import (
     setup_overview,
     verify_channel_and_add,
 )
+from telegram_membership_saas.modules.owner_notifications import (
+    read_owner_settings,
+    set_owner_setting,
+)
+from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.owner_setup.statistics import read_owner_statistics
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     FILTERS as SUBSCRIBER_FILTERS,
@@ -459,6 +464,7 @@ def create_owner_setup_router(
                  _button("📋 Заявки", "reviews")],
                 [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
                  _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
+                [_button(tr("🔔 Уведомления", "🔔 Notifications"), "notifications")],
                 [_button("📋 Готовность", "readiness"),
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
@@ -468,6 +474,56 @@ def create_owner_setup_router(
             ])
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_notifications(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        if fixed_project_id is None:
+            raise PermissionError("Notification settings are only in connected bots")
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id, project_id=project_id),
+        ) as session:
+            owner = await session.scalar(
+                select(Project.owner_user_id).where(Project.id == project_id)
+            )
+            flags = await read_owner_settings(session, project_id)
+        if owner != actor_id:
+            await bot.send_message(
+                user_id,
+                tr("Настройки уведомлений доступны только владельцу.",
+                   "Only the project owner can edit notifications."),
+                reply_markup=_markup([[_button(tr("⬅️ Панель", "⬅️ Dashboard"), "dashboard")]]),
+            )
+            return
+        invoice_status = (
+            tr("✅ Включены", "✅ Enabled") if flags["invoice"]
+            else tr("🔕 Выключены", "🔕 Disabled")
+        )
+        await bot.send_message(
+            user_id,
+            tr("🔔 <b>Уведомления владельца</b>\\n\\n"
+               "🧾 Новый счёт: ", "🔔 <b>Owner notifications</b>\\n\\n"
+               "🧾 New invoice: ")
+            + invoice_status
+            + tr(
+                "\\n\\n📩 Чеки и решения об оплате работают как прежде. "
+                "Настройки напоминаний об окончании подписок, сбоев доступа "
+                "и ежедневного отчёта будут добавлены после проверки доставки.",
+                "\\n\\n📩 Receipt reviews and payment decisions work as before. "
+                "Expiry, access-incident and daily digest settings will be "
+                "enabled after their delivery paths are tested.",
+            ),
+            parse_mode="HTML",
+            reply_markup=_markup([
+                [_button(
+                    tr("🧾 Выключить счета", "🧾 Mute invoices")
+                    if flags["invoice"]
+                    else tr("🧾 Включить счета", "🧾 Enable invoices"),
+                    "notifyset:invoice:" + ("0" if flags["invoice"] else "1"),
+                )],
+                [_button(tr("⬅️ Панель администратора", "⬅️ Dashboard"), "dashboard")],
+            ]),
         )
 
     async def show_statistics(
@@ -2288,6 +2344,20 @@ def create_owner_setup_router(
                 if period not in ("7", "30", "all"):
                     raise ValueError(tr("Неизвестный период", "Unknown period"))
                 await show_statistics(bot, user_id, actor_id, project_id, period)
+            elif action == "notifications":
+                await show_notifications(bot, user_id, actor_id, project_id)
+            elif action.startswith("notifyset:"):
+                _, category, raw = action.split(":", 2)
+                if raw not in ("0", "1") or category != "invoice":
+                    raise ValueError(tr("Некорректная настройка", "Invalid setting"))
+                async with tenant_session_scope(
+                    factory, TenantContext(user_id=actor_id, project_id=project_id),
+                ) as session:
+                    await set_owner_setting(
+                        session, project_id=project_id, actor_id=actor_id,
+                        category=category, enabled=raw == "1",
+                    )
+                await show_notifications(bot, user_id, actor_id, project_id)
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action.startswith("connrename:"):
