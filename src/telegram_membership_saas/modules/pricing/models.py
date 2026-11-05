@@ -61,6 +61,28 @@ class CurrencyAsset(Base):
     )
 
 
+class ProjectEnabledCurrency(Base):
+    """One optional currency selected in exactly one project.
+
+    CurrencyAsset is the global ISO/crypto catalog; this table makes the
+    owner's added currencies visible only in their own bot picker.
+    """
+    __tablename__ = "project_enabled_currencies"
+
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    currency_code: Mapped[str] = mapped_column(
+        String(16), ForeignKey("currency_assets.code", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+
+
 class PlanPrice(Base):
     __tablename__ = "plan_prices"
     __table_args__ = (
