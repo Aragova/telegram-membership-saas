@@ -670,8 +670,12 @@ async def verify_channel_and_add(
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:
+        # Serialize verified-channel insertion and the first-resource decision
+        # for a project. Concurrent channel selections cannot accidentally
+        # bind imported drafts to TWO different private channels.
         await _require_project_manager(
-            session, project_id=project_id, actor_user_id=actor_id
+            session, project_id=project_id, actor_user_id=actor_id,
+            lock=True,
         )
         external_id = str(chat.id)
         resource = await session.scalar(select(Resource).where(
