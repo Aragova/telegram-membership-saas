@@ -185,10 +185,9 @@ def catalog_screen(
             ),
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
-                    text=tr("🧾 Мои покупки", "🧾 My purchases"),
-                    callback_data="account:home",
+                    text="🌐 Language / Язык",
+                    callback_data="lng:menu", style="success",
                 )],
-                [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             ]),
         )
     chosen = currency if currency in currencies else currencies[0]
@@ -262,11 +261,9 @@ def catalog_screen(
         "👇 Tap a plan below. You’ll choose a payment method next. 💳",
     )])
     rows.append([InlineKeyboardButton(
-        text=tr("🧾 Мои покупки", "🧾 My purchases"),
-        callback_data="account:home",
-    )])
-    rows.append([InlineKeyboardButton(
-        text="🌐 Language / Язык", callback_data="lng:menu",
+        text="🌐 Language / Язык",
+        callback_data="lng:menu",
+        style="success",
     )])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
