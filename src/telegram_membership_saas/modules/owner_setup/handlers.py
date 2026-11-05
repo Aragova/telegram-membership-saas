@@ -582,6 +582,10 @@ def create_owner_setup_router(
             tr("✅ Включены", "✅ Enabled") if flags["access"]
             else tr("🔕 Выключены", "🔕 Disabled")
         )
+        daily_status = (
+            tr("✅ Включён", "✅ Enabled") if flags["daily"]
+            else tr("🔕 Выключен", "🔕 Disabled")
+        )
         await bot.send_message(
             user_id,
             tr("🔔 <b>Уведомления владельца</b>\n\n"
@@ -595,17 +599,19 @@ def create_owner_setup_router(
             + expiry_status
             + tr("\n🚨 Проблемы доступа: ", "\n🚨 Access problems: ")
             + access_status
+            + tr("\n📊 Финансовый отчёт: ", "\n📊 Financial summary: ")
+            + daily_status
             + tr(
-                "\n\n🕙 Подписки — сводка в 10:00 по времени проекта. "
-                "Проблемы доступа — после повторных сбоев или окончательной ошибки; "
-                "восстановление — после подтверждения состояния."
+                "\n\n🕙 Подписки и финансовый отчёт — в 10:00 "
+                "по часовому поясу проекта. Отчёт показывает подтверждённые "
+                "оплаты за предыдущий день, отдельно по валютам."
                 "\n\n📩 Чеки и решения об оплате работают как прежде. "
-                "Ежедневный финансовый отчёт добавим отдельно.",
-                "\n\n🕙 Subscriptions — 10:00 project-local digest. "
-                "Access issues — after persistent or permanent failure; "
-                "recovery — only after verification."
-                "\n\n📩 Receipt reviews and decisions work as before. "
-                "Optional daily financial reports will follow.",
+                "Сводка не заменяет проверку банка.",
+                "\n\n🕙 Subscription alerts and financial summaries "
+                "arrive at 10:00 in the project timezone. The report shows "
+                "yesterday's admin-approved payments by currency."
+                "\n\n📩 Receipt reviews and decisions are unchanged. "
+                "The summary is not a bank statement.",
             ),
             parse_mode="HTML",
             reply_markup=_markup([
@@ -626,6 +632,12 @@ def create_owner_setup_router(
                     if flags["access"]
                     else tr("🚨 Включить ошибки доступа", "🚨 Enable access problems"),
                     "notifyset:access:" + ("0" if flags["access"] else "1"),
+                )],
+                [_button(
+                    tr("📊 Выключить отчёт", "📊 Mute daily summary")
+                    if flags["daily"]
+                    else tr("📊 Включить отчёт", "📊 Enable daily summary"),
+                    "notifyset:daily:" + ("0" if flags["daily"] else "1"),
                 )],
                 [_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")],
             ]),
@@ -2465,7 +2477,7 @@ def create_owner_setup_router(
                 await show_notifications(bot, user_id, actor_id, project_id)
             elif action.startswith("notifyset:"):
                 _, category, raw = action.split(":", 2)
-                if raw not in ("0", "1") or category not in ("invoice", "expiry", "access"):
+                if raw not in ("0", "1") or category not in ("invoice", "expiry", "access", "daily"):
                     raise ValueError(tr("Некорректная настройка", "Invalid setting"))
                 async with tenant_session_scope(
                     factory, TenantContext(user_id=actor_id, project_id=project_id),
