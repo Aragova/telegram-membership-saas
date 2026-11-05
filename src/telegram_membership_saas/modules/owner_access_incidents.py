@@ -112,6 +112,7 @@ async def scan_owner_access_incidents(
                 OwnerNotificationDelivery.project_id == project_id,
                 OwnerNotificationDelivery.kind == "access",
                 OwnerNotificationDelivery.status == "sent",
+                OwnerNotificationDelivery.error_code.is_(None),
                 OwnerNotificationDelivery.sent_at >= now - RECOVERY_LOOKBACK,
                 ~exists(
                     select(recovery.id).where(
@@ -228,6 +229,7 @@ async def prepare_owner_access_notification(
                     OwnerNotificationDelivery.event_key == action_id.hex,
                     OwnerNotificationDelivery.telegram_id == recipient,
                     OwnerNotificationDelivery.status == "sent",
+                    OwnerNotificationDelivery.error_code.is_(None),
                 )
             )
             if old_alert is None:
