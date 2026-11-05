@@ -10,7 +10,11 @@ subscription period (e.g. "1 месяц") for compatibility with existing
 payment, history, profile-import and plan tables. The buyer-facing storefront
 recognizes duration-only names across Russian and English and suppresses
 the redundant 🎟️ plan title, leaving one clear 🗓️ duration and 💰 price.
-True custom names still appear.
+True custom names still appear. When a draft duration is edited, its
+generated name follows the new period; custom names remain untouched.
+The actual payment checkout and the {plan} substitution in admin-defined
+payment instructions use the buyer's localized period for unnamed plans,
+never an old internal Russian label.
 
 ## Switching language
 
@@ -44,3 +48,5 @@ review, zero unresolved threads and explicit user approval. No DB migration
 or backup required; update central `bot` and `customer-supervisor` via
 `compose.light100.yaml` so menu/input UX is consistent in both bot types.
 No restart of PostgreSQL, no production deploy.
+
+Navigation callback middleware discards any active plain-text capture on exit, preserving generation-bound duration/use/back buttons. The buyer receipt flow still requires a reply to the receipt request to prevent proof being attached to the wrong purchase.
