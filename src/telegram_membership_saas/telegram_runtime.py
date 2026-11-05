@@ -119,8 +119,12 @@ async def process_project_runtime_once(
         claimed_at=moment,
         clock=lambda: utcnow(),
     )
-    delivered_notice = await deliver_one_owner_notification(
-        session_factory, project_id=project_id, bot=adapter.bot, now=moment,
+    notification_bot = getattr(adapter, "bot", None)
+    delivered_notice = (
+        await deliver_one_owner_notification(
+            session_factory, project_id=project_id, bot=notification_bot, now=moment,
+        )
+        if notification_bot is not None else False
     )
     return did_work or execution is not None or delivered_notice
 
