@@ -25,6 +25,9 @@ from telegram_membership_saas.modules.outbox import (
 from telegram_membership_saas.modules.owner_access_incidents import (
     scan_owner_access_incidents,
 )
+from telegram_membership_saas.modules.owner_daily import (
+    schedule_owner_daily_financial,
+)
 from telegram_membership_saas.modules.owner_expiry import schedule_owner_expiry_digest
 from telegram_membership_saas.modules.owner_notifications import (
     deliver_one_owner_notification,
@@ -168,6 +171,7 @@ async def run_project_runtime_loop(
     current_time = clock or utcnow
     next_owner_reconcile: datetime | None = None
     next_expiry_scan: datetime | None = None
+    next_daily_scan: datetime | None = None
     next_timezone_check: datetime | None = None
     next_access_alert_scan: datetime | None = None
     cached_timezone: str | None = None
@@ -198,6 +202,7 @@ async def run_project_runtime_loop(
                         # Live timezone edits invalidate the cached UTC wake-up.
                         cached_timezone = timezone
                         next_expiry_scan = None
+                        next_daily_scan = None
                 except Exception:
                     logger.exception("Could not refresh owner digest timezone")
                 finally:
@@ -213,6 +218,16 @@ async def run_project_runtime_loop(
                     # Owner alerts must never interrupt critical access work.
                     logger.exception("Owner subscription digest scheduling failed")
                     next_expiry_scan = moment + timedelta(minutes=5)
+
+            if next_daily_scan is None or moment >= next_daily_scan:
+                try:
+                    next_daily_scan = await schedule_owner_daily_financial(
+                        session_factory, project_id=project_id, now=moment,
+                    )
+                except Exception:
+                    # Optional owner reports must not slow or block access.
+                    logger.exception("Owner daily financial scheduling failed")
+                    next_daily_scan = moment + timedelta(minutes=5)
 
             if next_owner_reconcile is None or moment >= next_owner_reconcile:
                 await reconcile_owner_service(
