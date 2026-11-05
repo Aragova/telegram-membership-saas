@@ -140,17 +140,59 @@ async def scan_owner_access_incidents(
             )
             total += 1
 
-        # Recoveries are linked to actual alerts already delivered. No
-        # recovery message for a fleeting error that never alerted the owner.
+        # Recovery requires proof of a SUCCESSFUL Telegram access action
+        # of the original direction, after the owner actually saw a warning.
+        # Mere expiry/renewal may flip desired state and is NOT recovery.
+        previous_action = aliased(AccessAction)
+        success_action = aliased(AccessAction)
+        current_state = aliased(AccessState)
         recovery = aliased(OwnerNotificationDelivery)
+        proved = exists(
+            select(success_action.id).where(
+                success_action.project_id == project_id,
+                success_action.customer_id == previous_action.customer_id,
+                success_action.resource_id == previous_action.resource_id,
+                success_action.action_type == previous_action.action_type,
+                success_action.status == "succeeded",
+                success_action.processed_at >= OwnerNotificationDelivery.sent_at,
+            )
+        )
         previous = (
-            select(OwnerNotificationDelivery)
+            select(OwnerNotificationDelivery, previous_action)
+            .join(
+                previous_action,
+                and_(
+                    previous_action.project_id == OwnerNotificationDelivery.project_id,
+                    cast(previous_action.id, String) == OwnerNotificationDelivery.event_key,
+                ),
+            )
+            .join(
+                current_state,
+                and_(
+                    current_state.project_id == previous_action.project_id,
+                    current_state.customer_id == previous_action.customer_id,
+                    current_state.resource_id == previous_action.resource_id,
+                ),
+            )
             .where(
                 OwnerNotificationDelivery.project_id == project_id,
                 OwnerNotificationDelivery.kind == "access",
                 OwnerNotificationDelivery.status == "sent",
                 OwnerNotificationDelivery.error_code.is_(None),
                 OwnerNotificationDelivery.sent_at >= now - RECOVERY_LOOKBACK,
+                or_(
+                    and_(
+                        previous_action.action_type == "grant",
+                        current_state.desired_access.is_(True),
+                        current_state.actual_state == "granted",
+                    ),
+                    and_(
+                        previous_action.action_type == "revoke",
+                        current_state.desired_access.is_(False),
+                        current_state.actual_state == "revoked",
+                    ),
+                ),
+                proved,
                 ~exists(
                     select(recovery.id).where(
                         recovery.project_id == OwnerNotificationDelivery.project_id,
@@ -163,34 +205,36 @@ async def scan_owner_access_incidents(
             .order_by(OwnerNotificationDelivery.sent_at.desc())
             .limit(SCAN_LIMIT)
         )
-        for notice in (await session.scalars(previous)).all():
-            try:
-                action_id = UUID(hex=notice.event_key)
-            except ValueError:
-                continue
-            action = await session.scalar(
-                select(AccessAction).where(
-                    AccessAction.project_id == project_id,
-                    AccessAction.id == action_id,
-                )
+        for notice, action in (await session.execute(previous)).all():
+            await _queue(
+                session, project_id=project_id, kind="recovered",
+                event_key=notice.event_key, recipient=owner,
+                payload={"action_id": action.id.hex},
             )
-            if action is None:
-                continue
-            state = await session.scalar(
-                select(AccessState).where(
-                    AccessState.project_id == project_id,
-                    AccessState.customer_id == action.customer_id,
-                    AccessState.resource_id == action.resource_id,
-                )
-            )
-            if state is not None and _is_resolved(state):
-                await _queue(
-                    session, project_id=project_id, kind="recovered",
-                    event_key=notice.event_key, recipient=owner,
-                    payload={"action_id": action.id.hex},
-                )
-                total += 1
+            total += 1
         return total
+
+
+async def _has_verified_recovery(
+    session: AsyncSession, *,
+    project_id: UUID, action: AccessAction, state: AccessState,
+    observed_after: datetime,
+) -> bool:
+    """Direction-matched successful action, not merely a state revision flip."""
+    if state.desired_access != (action.action_type == "grant"):
+        return False
+    if state.actual_state != ("granted" if action.action_type == "grant" else "revoked"):
+        return False
+    return await session.scalar(
+        select(AccessAction.id).where(
+            AccessAction.project_id == project_id,
+            AccessAction.customer_id == action.customer_id,
+            AccessAction.resource_id == action.resource_id,
+            AccessAction.action_type == action.action_type,
+            AccessAction.status == "succeeded",
+            AccessAction.processed_at >= observed_after,
+        ).limit(1)
+    ) is not None
 
 
 async def _current_incident(
@@ -255,21 +299,27 @@ async def prepare_owner_access_notification(
             return None
         action, state, resource_name, username, first_name = found
         if recovered:
-            if not _is_resolved(state):
-                return None
-            # Never claim restoration if the original incident was silently
-            # suppressed before the owner ever saw it.
+            # The old desired operation must actually have succeeded AFTER
+            # the Telegram warning. A subscription expiry that merely
+            # changes desired_access is never a verified recovery.
             old_alert = await session.scalar(
-                select(OwnerNotificationDelivery.id).where(
+                select(OwnerNotificationDelivery).where(
                     OwnerNotificationDelivery.project_id == project_id,
                     OwnerNotificationDelivery.kind == "access",
-                    OwnerNotificationDelivery.event_key == action_id.hex,
+                    OwnerNotificationDelivery.event_key == str(action_id),
                     OwnerNotificationDelivery.telegram_id == recipient,
                     OwnerNotificationDelivery.status == "sent",
                     OwnerNotificationDelivery.error_code.is_(None),
                 )
             )
-            if old_alert is None:
+            if (
+                old_alert is None
+                or old_alert.sent_at is None
+                or not await _has_verified_recovery(
+                    session, project_id=project_id, action=action, state=state,
+                    observed_after=old_alert.sent_at,
+                )
+            ):
                 return None
         elif not _is_confirmed_incident(action, state, now=now):
             return None
