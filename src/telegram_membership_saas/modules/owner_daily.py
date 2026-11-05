@@ -160,7 +160,7 @@ def render_daily_financial_summary(snapshot: DailyFinancialSnapshot) -> str:
     lines.extend([
         "",
         (
-            tr("🆕 Новых покупателей: ", "🆕 New customers: ")
+            tr("🆕 Новых пользователей: ", "🆕 New customers: ")
             + str(snapshot.new_customers)
         ),
         (
