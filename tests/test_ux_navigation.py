@@ -304,8 +304,9 @@ def test_checkout_has_return_navigation_and_no_implicit_cancel():
     request_id = uuid4()
     keyboard = commerce._checkout_keyboard(request_id)
     labels = _buttons(keyboard)
-    assert ("🧾 Мои покупки", "checkoutnav:home") in labels
+    assert ("🧾 Мои покупки", "checkoutnav:home") not in labels
     assert ("💎 К тарифам", "checkoutnav:catalog") in labels
+    assert len(labels) == 3
     assert labels[1][0] == "Отменить заявку"
 
 
