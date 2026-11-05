@@ -158,6 +158,30 @@ async def test_uah_byn_are_ready_and_iso_currency_is_project_scoped():
             factory, actor_id=owner, project_id=project,
             plan_id=plan, currency_code="JPY", amount="120",
         )
+        # ISO 4217 minor-unit values differ from CLDR cash formatting.
+        # AFN/ALL/RSD require cents; IQD permits three decimals.
+        # XCG and ZWG are current replacement currencies as of 2026.
+        for code, amount, precision in (
+            ("AFN", "12.50", 2),
+            ("ALL", "12.50", 2),
+            ("RSD", "12.50", 2),
+            ("IQD", "120.125", 3),
+            ("XCG", "75.50", 2),
+            ("ZWG", "40.25", 2),
+        ):
+            assert await enable_owner_currency(
+                factory, actor_id=owner, project_id=project, code=code,
+            ) == code
+            await save_owner_price(
+                factory, actor_id=owner, project_id=project,
+                plan_id=plan, currency_code=code, amount=amount,
+            )
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                assert await session.scalar(select(CurrencyAsset.precision).where(
+                    CurrencyAsset.code == code,
+                )) == precision
         await attach_owner_method_currency(
             factory, actor_id=owner, project_id=project,
             method_id=method_id, currency_code="JPY",
@@ -181,7 +205,9 @@ async def test_uah_byn_are_ready_and_iso_currency_is_project_scoped():
                     ProjectEnabledCurrency.project_id == project,
                 )
             )).all()
-            assert rows == ["JPY"]
+            assert set(rows) == {
+                "JPY", "AFN", "ALL", "RSD", "IQD", "XCG", "ZWG",
+            }
         async with tenant_session_scope(
             factory, TenantContext(user_id=outsider, project_id=other),
         ) as session:
