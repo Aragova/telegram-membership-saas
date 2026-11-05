@@ -144,7 +144,7 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     get_owner_plan_info,
     list_owner_methods,
 )
-from telegram_membership_saas.modules.payments.models import PaymentMethod
+from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import change_project_timezone
 from telegram_membership_saas.modules.telegram_commerce.handlers import (
@@ -474,6 +474,59 @@ def create_owner_setup_router(
             ])
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_invoice(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        request_id: UUID,
+    ) -> None:
+        if fixed_project_id is None:
+            raise PermissionError("Invoice details are connected-bot only")
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id, project_id=project_id),
+        ) as session:
+            project = await session.scalar(
+                select(Project).where(Project.id == project_id)
+            )
+            if project is None or project.owner_user_id != actor_id:
+                raise PermissionError("Invoice details are owner-only")
+            request = await session.scalar(
+                select(PaymentRequest).where(
+                    PaymentRequest.id == request_id,
+                    PaymentRequest.project_id == project_id,
+                )
+            )
+        if request is None:
+            raise ValueError(tr("Счёт не найден", "Invoice not found"))
+        names = {
+            "waiting_confirmation": tr("Ожидает оплату", "Awaiting payment"),
+            "waiting_review": tr("Чек на проверке", "Receipt under review"),
+            "approved": tr("Оплата подтверждена", "Payment approved"),
+            "rejected": tr("Отклонена", "Rejected"),
+            "cancelled": tr("Отменена", "Cancelled"),
+            "expired": tr("Истекла", "Expired"),
+        }
+        status = names.get(request.status, tr("Неизвестно", "Unknown"))
+        ends = request.created_at.astimezone(ZoneInfo(project.timezone))
+        await bot.send_message(
+            user_id,
+            tr("🧾 <b>Счёт</b>\\n\\n", "🧾 <b>Invoice</b>\\n\\n")
+            + tr("№ ", "Ref ") + request.id.hex[:10].upper() + "\\n"
+            + tr("🕒 Создан: ", "🕒 Created: ")
+            + f"{ends:%d.%m.%Y %H:%M} ({escape(project.timezone)})\\n"
+            + tr("📦 Срок: ", "📦 Period: ")
+            + escape(format_period(request.duration_value, request.duration_unit)) + "\\n"
+            + "💳 <b>" + escape(format_amount(request.final_amount, 18))
+            + " " + escape(request.currency_code) + "</b>\\n"
+            + tr("Статус: ", "Status: ") + escape(status),
+            parse_mode="HTML",
+            reply_markup=_markup([
+                [_button(
+                    tr("👤 Подписчик", "👤 Subscriber"),
+                    "subscriber:" + encode_uuid(request.customer_id),
+                )],
+                [_button(tr("⬅️ Панель администратора", "⬅️ Dashboard"), "dashboard")],
+            ]),
         )
 
     async def show_notifications(
@@ -2344,6 +2397,9 @@ def create_owner_setup_router(
                 if period not in ("7", "30", "all"):
                     raise ValueError(tr("Неизвестный период", "Unknown period"))
                 await show_statistics(bot, user_id, actor_id, project_id, period)
+            elif action.startswith("invoice:"):
+                request_id = decode_uuid(action.split(":", 1)[1])
+                await show_invoice(bot, user_id, actor_id, project_id, request_id)
             elif action == "notifications":
                 await show_notifications(bot, user_id, actor_id, project_id)
             elif action.startswith("notifyset:"):
