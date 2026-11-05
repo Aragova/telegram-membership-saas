@@ -141,13 +141,17 @@ async def _owner_telegram_id(session: AsyncSession, project_id: UUID) -> int | N
 async def _queue(
     session: AsyncSession, *, project_id: UUID, kind: str,
     event_key: str, recipient: int, payload: dict,
+    available_at: datetime | None = None,
 ) -> None:
+    values = dict(
+        project_id=project_id, kind=kind, event_key=event_key,
+        telegram_id=recipient, payload=payload,
+    )
+    if available_at is not None:
+        values["available_at"] = available_at
     await session.execute(
         insert(OwnerNotificationDelivery)
-        .values(
-            project_id=project_id, kind=kind, event_key=event_key,
-            telegram_id=recipient, payload=payload,
-        )
+        .values(**values)
         .on_conflict_do_nothing(
             index_elements=[
                 OwnerNotificationDelivery.project_id,
@@ -294,6 +298,25 @@ async def deliver_one_owner_notification(
                         reply_markup=keyboard,
                     )
                 # If disabled, stale or renewed: suppress as successfully handled.
+            elif kind in ("access", "recovered"):
+                from telegram_membership_saas.modules.owner_access_incidents import (
+                    prepare_owner_access_notification,
+                )
+
+                notice = await prepare_owner_access_notification(
+                    factory, project_id=project_id, recipient=recipient,
+                    payload=payload, recovered=(kind == "recovered"), now=moment,
+                )
+                if notice is not None:
+                    body, keyboard = notice
+                    await bot.send_message(
+                        recipient, body, parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+                else:
+                    # A silently suppressed alert must never be counted as
+                    # owner-observed when deciding if recovery can be sent.
+                    error_code = "Suppressed"
             else:
                 # New producers must be explicitly registered before using them.
                 raise ValueError("Unrecognized owner notification kind")

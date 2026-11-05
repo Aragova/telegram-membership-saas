@@ -219,6 +219,9 @@ async def test_owner_notification_settings_ui_and_toggle_are_bilingual(
         ]
         assert "own:notifyset:invoice:0" in actions
         assert "own:notifyset:expiry:0" in actions
+        assert "own:notifyset:access:0" in actions
+        assert ("Access problems" if locale == "en"
+                else "Проблемы доступа") in msg
         assert ("Subscription expiry" if locale == "en"
                 else "Окончание подписок") in msg
         assert ("10:00" in msg)
@@ -232,6 +235,12 @@ async def test_owner_notification_settings_ui_and_toggle_are_bilingual(
         await handle(query("notifyset:expiry:0"), bot)
         assert change.await_count == 2
         assert change.await_args.kwargs["category"] == "expiry"
+        assert change.await_args.kwargs["actor_id"] == owner
+        assert change.await_args.kwargs["project_id"] == project
+        assert change.await_args.kwargs["enabled"] is False
+        await handle(query("notifyset:access:0"), bot)
+        assert change.await_count == 3
+        assert change.await_args.kwargs["category"] == "access"
         assert change.await_args.kwargs["actor_id"] == owner
         assert change.await_args.kwargs["project_id"] == project
         assert change.await_args.kwargs["enabled"] is False

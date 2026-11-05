@@ -578,6 +578,10 @@ def create_owner_setup_router(
             tr("✅ Включены", "✅ Enabled") if flags["expiry"]
             else tr("🔕 Выключены", "🔕 Disabled")
         )
+        access_status = (
+            tr("✅ Включены", "✅ Enabled") if flags["access"]
+            else tr("🔕 Выключены", "🔕 Disabled")
+        )
         await bot.send_message(
             user_id,
             tr("🔔 <b>Уведомления владельца</b>\n\n"
@@ -589,16 +593,19 @@ def create_owner_setup_router(
                 "\n⏳ Subscription expiry: ",
             )
             + expiry_status
+            + tr("\n🚨 Проблемы доступа: ", "\n🚨 Access problems: ")
+            + access_status
             + tr(
-                "\n🕙 Сводка в 10:00 по часовому поясу проекта. "
-                "За 7, 3 и 1 день и после истечения срока."
+                "\n\n🕙 Подписки — сводка в 10:00 по времени проекта. "
+                "Проблемы доступа — после повторных сбоев или окончательной ошибки; "
+                "восстановление — после подтверждения состояния."
                 "\n\n📩 Чеки и решения об оплате работают как прежде. "
-                "Уведомления об ошибках доступа и ежедневный отчёт "
-                "добавим отдельным этапом.",
-                "\n🕙 Digest at 10:00 in the project timezone. "
-                "7, 3 and 1 day before expiry, and after the term ends."
-                "\n\n📩 Receipt reviews and payment decisions work as before. "
-                "Access incidents and optional daily reports will follow.",
+                "Ежедневный финансовый отчёт добавим отдельно.",
+                "\n\n🕙 Subscriptions — 10:00 project-local digest. "
+                "Access issues — after persistent or permanent failure; "
+                "recovery — only after verification."
+                "\n\n📩 Receipt reviews and decisions work as before. "
+                "Optional daily financial reports will follow.",
             ),
             parse_mode="HTML",
             reply_markup=_markup([
@@ -613,6 +620,12 @@ def create_owner_setup_router(
                     if flags["expiry"]
                     else tr("⏳ Включить сроки", "⏳ Enable expiry"),
                     "notifyset:expiry:" + ("0" if flags["expiry"] else "1"),
+                )],
+                [_button(
+                    tr("🚨 Выключить ошибки доступа", "🚨 Mute access problems")
+                    if flags["access"]
+                    else tr("🚨 Включить ошибки доступа", "🚨 Enable access problems"),
+                    "notifyset:access:" + ("0" if flags["access"] else "1"),
                 )],
                 [_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")],
             ]),
@@ -2452,7 +2465,7 @@ def create_owner_setup_router(
                 await show_notifications(bot, user_id, actor_id, project_id)
             elif action.startswith("notifyset:"):
                 _, category, raw = action.split(":", 2)
-                if raw not in ("0", "1") or category not in ("invoice", "expiry"):
+                if raw not in ("0", "1") or category not in ("invoice", "expiry", "access"):
                     raise ValueError(tr("Некорректная настройка", "Invalid setting"))
                 async with tenant_session_scope(
                     factory, TenantContext(user_id=actor_id, project_id=project_id),
