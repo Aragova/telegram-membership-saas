@@ -327,3 +327,29 @@ async def test_generation_checked_and_discarded_under_single_transaction(monkeyp
     assert state.step == "plan_name"
     assert state.generation == "new"
     assert state.payload == {"draft": "another"}
+
+
+
+@pytest.mark.asyncio
+async def test_custom_currency_entry_is_scoped_to_owning_bot(monkeypatch):
+    project_id, plan_id = uuid4(), uuid4()
+    _, callback = _callback(monkeypatch, project_id)
+    generation = AsyncMock(return_value="new-step")
+    prompt_binder = AsyncMock()
+    monkeypatch.setattr(ui, "set_flow", generation)
+    monkeypatch.setattr(ui, "bind_prompt", prompt_binder)
+    monkeypatch.setattr(ui, "get_owner_plan_info", AsyncMock(
+        return_value=SimpleNamespace(id=plan_id),
+    ))
+    bot, q = _bot(), _query("currencyadd:price:" + plan_id.hex)
+    bot.send_message.return_value = SimpleNamespace(message_id=33)
+    await callback(q, bot)
+    assert generation.await_args.kwargs["step"] == "currency_custom_code"
+    assert generation.await_args.kwargs["payload"] == {
+        "mode": "price", "target": plan_id.hex,
+    }
+    assert generation.await_args.kwargs["project_id"] == project_id
+    assert generation.await_args.kwargs["bot_scope_id"] == bot.id
+    assert "UAH" in bot.send_message.await_args.args[1]
+    prompt_binder.assert_awaited_once()
+    q.answer.assert_awaited_once()
