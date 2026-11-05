@@ -11,7 +11,7 @@ from html import escape
 from uuid import UUID
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import and_, exists, select
+from sqlalchemy import String, and_, cast, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
@@ -43,16 +43,20 @@ def _is_resolved(state: AccessState) -> bool:
 def _is_confirmed_incident(
     action: AccessAction, state: AccessState, *, now: datetime,
 ) -> bool:
-    """Temporary API hiccups and out-of-date actions are NOT owner incidents."""
+    """Do not alert for a transient or superseded command.
+
+    A retryable alert's full ten-minute observation window is enforced by
+    the persisted notification.available_at, not by queue creation time.
+    """
     return (
         state.desired_revision == action.desired_revision
         and not _is_resolved(state)
         and (
             action.status == "failed_permanent"
             or (
-                action.status == "failed_retryable"
+                action.status in ("failed_retryable", "processing")
                 and action.attempt_count >= RETRY_THRESHOLD
-                and action.created_at <= now - RETRY_AGE
+                and action.last_error is not None
             )
         )
     )
@@ -74,6 +78,10 @@ async def scan_owner_access_incidents(
         if owner is None:
             return 0
 
+        # Filter current revisions, unresolved desired/actual access, and
+        # previously queued alerts IN SQL, before LIMIT. Old handled actions
+        # must not starve still-unreported failures.
+        handled = aliased(OwnerNotificationDelivery)
         active_rows = await session.execute(
             select(AccessAction, AccessState)
             .join(
@@ -87,7 +95,32 @@ async def scan_owner_access_incidents(
             .where(
                 AccessAction.project_id == project_id,
                 AccessAction.updated_at >= now - INCIDENT_LOOKBACK,
-                AccessAction.status.in_(("failed_permanent", "failed_retryable")),
+                AccessAction.desired_revision == AccessState.desired_revision,
+                or_(
+                    and_(AccessAction.status == "failed_permanent"),
+                    and_(
+                        AccessAction.status == "failed_retryable",
+                        AccessAction.attempt_count >= RETRY_THRESHOLD,
+                    ),
+                ),
+                or_(
+                    and_(
+                        AccessState.desired_access.is_(True),
+                        AccessState.actual_state != "granted",
+                    ),
+                    and_(
+                        AccessState.desired_access.is_(False),
+                        AccessState.actual_state != "revoked",
+                    ),
+                ),
+                ~exists(
+                    select(handled.id).where(
+                        handled.project_id == AccessAction.project_id,
+                        handled.kind == "access",
+                        handled.event_key == cast(AccessAction.id, String),
+                        handled.telegram_id == owner,
+                    )
+                ),
             )
             .order_by(AccessAction.updated_at.desc(), AccessAction.id)
             .limit(SCAN_LIMIT)
@@ -98,8 +131,12 @@ async def scan_owner_access_incidents(
                 continue
             await _queue(
                 session, project_id=project_id, kind="access",
-                event_key=action.id.hex, recipient=owner,
+                event_key=str(action.id), recipient=owner,
                 payload={"action_id": action.id.hex},
+                available_at=(
+                    now + RETRY_AGE
+                    if action.status == "failed_retryable" else now
+                ),
             )
             total += 1
 
