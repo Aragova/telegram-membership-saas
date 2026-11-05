@@ -254,8 +254,11 @@ async def run_target(
     except ProjectWorkerBusy:
         # Another replica (or the old staging worker) owns this project.
         # Never write a competing status record when we did not get the lease.
+        # Propagate an *initial* busy lease to the supervisor so it retries
+        # at the next scan, instead of treating normal ownership handoff as
+        # a worker failure requiring the full failure backoff.
         if not acquired:
-            return
+            raise
         error_code = "lock_lost"
         status = "error"
     except Exception as exc:
@@ -289,25 +292,34 @@ class CustomerBotSupervisor:
 
     async def reconcile_once(self) -> None:
         discovered = await discover_targets(self.factory)
-        placement = assign_project_shards(
-            discovered,
-            shard_count=self.settings.customer_supervisor_shard_count,
-            shard_capacity=self.settings.customer_supervisor_max_bots,
-        )
-        # Only the owning shard starts a project's poller. Over-capacity bots
-        # are reported as queued by shard 0 once, never by every replica.
-        ready = {
-            t.project_id: t for t in discovered
-            if placement[t.project_id] == self.settings.customer_supervisor_shard_id
-        }
+        if self.settings.customer_supervisor_shard_count == 1:
+            # Backward-compatible admission: never evict an incumbent worker
+            # just because a newly registered bot sorts ahead of it. Legacy
+            # overflow waits in the queue until a real slot becomes free.
+            ready = {t.project_id: t for t in discovered}
+            placement = None
+        else:
+            placement = assign_project_shards(
+                discovered,
+                shard_count=self.settings.customer_supervisor_shard_count,
+                shard_capacity=self.settings.customer_supervisor_max_bots,
+            )
+            # In scale mode all replicas calculate the same placement.
+            ready = {
+                t.project_id: t for t in discovered
+                if placement[t.project_id] == self.settings.customer_supervisor_shard_id
+            }
 
         for pid, current in list(self.workers.items()):
             if current.task.done():
                 was_cancelled = current.task.cancelled()
-                await asyncio.gather(current.task, return_exceptions=True)
+                outcome = (await asyncio.gather(
+                    current.task, return_exceptions=True,
+                ))[0]
                 del self.workers[pid]
-                if was_cancelled:
-                    # Config changes and token rotations should restart promptly.
+                if was_cancelled or isinstance(outcome, ProjectWorkerBusy):
+                    # Cancellation and another shard's still-draining lease
+                    # are normal transitions; retry promptly on next scan.
                     self.retry_after.pop(pid, None)
                 else:
                     self.retry_after[pid] = monotonic() + FAILURE_BACKOFF_SECONDS
@@ -320,7 +332,7 @@ class CustomerBotSupervisor:
         # Polling must be fully drained and the advisory lock free first.
         await self.finalize_removals()
 
-        if self.settings.customer_supervisor_shard_id == 0:
+        if placement is not None and self.settings.customer_supervisor_shard_id == 0:
             for target in discovered:
                 if placement[target.project_id] is None:
                     await write_bot_health(
