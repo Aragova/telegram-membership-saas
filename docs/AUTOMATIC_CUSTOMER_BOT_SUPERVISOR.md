@@ -56,7 +56,12 @@ is needed after the platform operator deploys the supervisor **once**.
   Excess registrations show `🟡 В очереди на запуск` and are admitted when
   capacity is freed. Queue updates cannot overwrite another replica's fresh
   running status. Size PostgreSQL connection limits and scale supervisor
-  replicas before increasing the cap.
+  replicas before increasing the cap. An optional **four-shard topology for
+  100 simultaneously active bots** is described in
+  [SUPERVISOR_SCALE_100.md](SUPERVISOR_SCALE_100.md). It uses bounded
+  deterministic placement and requires a separate explicit Compose overlay,
+  database connection budget and real-bot load acceptance. The default
+  single-supervisor staging configuration is unchanged.
 - Docker `SIGTERM` and `SIGINT` are translated into a single root
   cancellation; a cancellation-resistant shutdown drains Telegram polling
   and access handlers before releasing advisory locks. All three Telegram
