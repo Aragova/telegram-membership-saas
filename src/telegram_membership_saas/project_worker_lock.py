@@ -158,52 +158,92 @@ class SharedProjectLeaseManager:
             raise ProjectWorkerBusy("Shared supervisor lease backend changed")
         return connection
 
-    @asynccontextmanager
-    async def project_lock(
-        self, project_id: UUID,
-    ) -> AsyncIterator[SharedProjectLeaseHandle]:
-        key = project_lock_key(project_id)
+    async def _finish_critical(self, operation):
+        """Finish shared-connection SQL even if its requesting bot is cancelled.
+
+        The child task owns the mutex until its SQL has completed. A worker's
+        cancellation must NEVER cancel an asyncpg query holding the database
+        session used for the rest of the fleet.
+        """
+        task = asyncio.create_task(operation)
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        return task.result(), cancelled
+
+    async def _acquire(self, project_id: UUID) -> bool:
         async with self._mutex:
             if project_id in self._held:
                 raise ProjectWorkerBusy("Project is already held by this supervisor")
             connection = await self._verified_connection()
             try:
                 acquired = await connection.scalar(
-                    text("SELECT pg_try_advisory_lock(:key)"), {"key": key},
+                    text("SELECT pg_try_advisory_lock(:key)"),
+                    {"key": project_lock_key(project_id)},
                 )
             except DBAPIError:
                 self._broken = True
                 raise ProjectWorkerBusy("Unable to acquire shared supervisor lease") from None
             except BaseException:
-                # An interrupted query might have acquired a session lock
-                # before its response reached Python. Retire the session:
-                # continuing would strand an untracked lock.
                 self._broken = True
                 raise
             if not acquired:
                 raise ProjectWorkerBusy("Project access worker already running")
             self._held.add(project_id)
+            return True
+
+    async def _release(self, project_id: UUID) -> None:
+        async with self._mutex:
+            self._held.discard(project_id)
+            if self._broken or self._connection is None:
+                return
+            try:
+                released = await self._connection.scalar(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": project_lock_key(project_id)},
+                )
+                if not released:
+                    self._broken = True
+            except DBAPIError:
+                self._broken = True
+            except BaseException:
+                self._broken = True
+                raise
+
+    @asynccontextmanager
+    async def project_lock(
+        self, project_id: UUID,
+    ) -> AsyncIterator[SharedProjectLeaseHandle]:
+        acquired = False
         try:
+            acquired, cancelled = await self._finish_critical(
+                self._acquire(project_id),
+            )
+            if cancelled:
+                raise asyncio.CancelledError
             yield SharedProjectLeaseHandle(self, project_id)
         finally:
-            async with self._mutex:
-                self._held.discard(project_id)
-                if not self._broken and self._connection is not None:
-                    try:
-                        released = await self._connection.scalar(
-                            text("SELECT pg_advisory_unlock(:key)"), {"key": key},
-                        )
-                        if not released:
-                            self._broken = True
-                    except DBAPIError:
-                        self._broken = True
-                    except BaseException:
-                        self._broken = True
-                        raise
+            if acquired:
+                _, cancelled = await self._finish_critical(
+                    self._release(project_id),
+                )
+                if cancelled:
+                    raise asyncio.CancelledError
 
     async def execute_scoped(
         self, project_id: UUID, statement, parameters=None,
     ):
+        result, cancelled = await self._finish_critical(
+            self._execute_scoped(project_id, statement, parameters),
+        )
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    async def _execute_scoped(self, project_id: UUID, statement, parameters):
         async with self._mutex:
             if project_id not in self._held:
                 raise ProjectWorkerBusy("Project lease was released")
@@ -218,13 +258,16 @@ class SharedProjectLeaseManager:
                 self._broken = True
                 raise ProjectWorkerBusy("Shared supervisor lease query failed") from None
             except BaseException:
-                # A cancelled scoped query may have changed session context
-                # before returning. Force a clean supervisor restart.
                 self._broken = True
                 raise
 
     async def confirm(self, project_id: UUID) -> None:
         """Reentrant check with matched unlock: exactly one lease per bot."""
+        _, cancelled = await self._finish_critical(self._confirm(project_id))
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _confirm(self, project_id: UUID) -> None:
         async with self._mutex:
             if project_id not in self._held:
                 raise ProjectWorkerBusy("Project lease was released")
