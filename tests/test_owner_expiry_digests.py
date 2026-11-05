@@ -80,9 +80,10 @@ def test_exact_ten_am_timezone_and_dst(timezone, before, target):
 def test_reminder_days_expired_no_lifetime_no_manual_and_dedupe():
     zone = ZoneInfo("Europe/Moscow")
     today = date(2026, 11, 6)
-    at = lambda days, hour=12: datetime.combine(
-        today + timedelta(days=days), time(hour), tzinfo=zone,
-    ).astimezone(UTC)
+    def at(days, hour=12):
+        return datetime.combine(
+            today + timedelta(days=days), time(hour), tzinfo=zone,
+        ).astimezone(UTC)
     first, second, third, fourth = (uuid4() for _ in range(4))
     rows = [
         _deadline(first, at(7), username="alice"),
