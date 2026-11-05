@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from html import escape
 from secrets import randbelow
-from zoneinfo import ZoneInfo
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import AiogramError
@@ -122,6 +122,8 @@ from telegram_membership_saas.modules.owner_setup.service import (
 )
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     FILTERS as SUBSCRIBER_FILTERS,
+)
+from telegram_membership_saas.modules.owner_setup.subscribers import (
     MANUAL_DURATIONS,
     SUBSCRIBER_PAGE_SIZE,
     grant_manual_access,
@@ -1968,7 +1970,11 @@ def create_owner_setup_router(
                 await show_subscribers(bot, user_id, actor_id, project_id)
             elif action.startswith("sublist:"):
                 _, status, page_text = action.split(":", 2)
-                if status not in SUBSCRIBER_FILTERS or not page_text.isascii() or not page_text.isdecimal():
+                if (
+                    status not in SUBSCRIBER_FILTERS
+                    or not page_text.isascii()
+                    or not page_text.isdecimal()
+                ):
                     raise ValueError("Некорректный фильтр подписчиков")
                 await show_subscribers(
                     bot, user_id, actor_id, project_id,
