@@ -278,6 +278,22 @@ async def deliver_one_owner_notification(
                     recipient, _invoice_text(payload), parse_mode="HTML",
                     reply_markup=_invoice_keyboard(payload),
                 )
+            elif kind == "expiry":
+                from telegram_membership_saas.modules.owner_expiry import (
+                    prepare_expiry_delivery,
+                )
+
+                digest = await prepare_expiry_delivery(
+                    factory, project_id=project_id, telegram_id=recipient,
+                    payload=payload, now=moment,
+                )
+                if digest is not None:
+                    body, keyboard = digest
+                    await bot.send_message(
+                        recipient, body, parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+                # If disabled, stale or renewed: suppress as successfully handled.
             else:
                 # New producers must be explicitly registered before using them.
                 raise ValueError("Unrecognized owner notification kind")
