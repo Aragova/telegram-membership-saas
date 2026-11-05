@@ -1397,6 +1397,12 @@ def create_owner_setup_router(
         if not _private(message):
             return
         actor_id = await actor(message.from_user)
+        # /menu exits the old text-entry wizard; the next casual message
+        # must never be mistaken for old payment instructions or a plan title.
+        await cancel_owner_flow(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+        )
         command = (
             (getattr(message, "text", None) or "/start")
             .split(maxsplit=1)[0].split("@")[0].lower()
@@ -1577,14 +1583,14 @@ def create_owner_setup_router(
                             "✦ <b>Подключение бота подписок</b>\n\n"
                             "1. Создайте бота в @BotFather или получите новый "
                             "токен существующего.\n"
-                            "2. Ответьте на это сообщение токеном.\n"
+                            "2. Отправьте токен следующим сообщением.\n"
                             "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
                             "После проверки откройте своего бота и "
                             "настройте каналы, оплату и тарифы.",
                             "✦ <b>Connect a subscription bot</b>\n\n"
                             "1. Create a bot in @BotFather or request a new token "
                             "for an existing bot.\n"
-                            "2. Reply to this message with its token.\n"
+                            "2. Send the token in your next message.\n"
                             "3. We delete the token message immediately and "
                             "verify the connection.\n\n"
                             "Then open your bot to set up channels, payments and plans.",
@@ -3400,6 +3406,10 @@ def create_owner_setup_router(
             ):
                 # Buyers must receive the real buyer storefront, not admin UI.
                 return False
+            await cancel_owner_flow(
+                factory, actor_id=actor_id,
+                bot_scope_id=bot.id if fixed_project_id else 0,
+            )
             await show_home(bot, user.id, actor_id)
             return True
 
