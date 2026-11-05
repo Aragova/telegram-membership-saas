@@ -24,7 +24,6 @@ from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramU
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments import Payment
 from telegram_membership_saas.modules.plans import Plan
-from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.subscriptions import Subscription, SubscriptionStatus
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
