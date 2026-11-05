@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.db_base import Base
-from telegram_membership_saas.localization import current_language, recipient_language, tr
+from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.identity.models import TelegramUser
 from telegram_membership_saas.modules.projects.models import Project
 
@@ -164,7 +164,7 @@ def _invoice_text(payload: dict) -> str:
         person += " · " + escape(first_name)
     period = format_period(payload["duration_value"], payload["duration_unit"])
     custom_title = payload.get("plan_name") or ""
-    if is_period_only_plan_name(custom_title, payload["duration_value"], payload["duration_unit"]):
+    if not custom_title or is_period_only_plan_name(\n        custom_title, payload["duration_value"], payload["duration_unit"]\n    ):
         label = period
     else:
         label = escape(custom_title) + " · " + escape(period)
@@ -183,7 +183,7 @@ def _invoice_text(payload: dict) -> str:
 
 def _invoice_keyboard(payload: dict) -> InlineKeyboardMarkup:
     # Existing bot-scoped subscriber and review callbacks perform role checks.
-    from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
+    from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
     customer = UUID(hex=payload["customer_id"])
     return InlineKeyboardMarkup(inline_keyboard=[
