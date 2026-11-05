@@ -15,6 +15,9 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
 )
 from telegram_membership_saas.modules.access import enqueue_due_access_recalculations
+from telegram_membership_saas.modules.owner_notifications import (
+    deliver_one_owner_notification,
+)
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
     claim_next_outbox_event,
@@ -116,7 +119,10 @@ async def process_project_runtime_once(
         claimed_at=moment,
         clock=lambda: utcnow(),
     )
-    return did_work or execution is not None
+    delivered_notice = await deliver_one_owner_notification(
+        session_factory, project_id=project_id, bot=adapter.bot, now=moment,
+    )
+    return did_work or execution is not None or delivered_notice
 
 
 async def reconcile_owner_service(
