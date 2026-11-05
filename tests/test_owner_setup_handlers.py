@@ -77,6 +77,7 @@ async def test_first_start_has_direct_bot_connection_button(monkeypatch):
     monkeypatch.setattr(
         ui, "owner_home", AsyncMock(return_value=OwnerHome((), None))
     )
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
     await _handler("home_message")(_message(), bot)
     sent = bot.send_message.await_args
