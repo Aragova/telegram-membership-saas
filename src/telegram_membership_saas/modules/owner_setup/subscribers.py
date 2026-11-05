@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.access import AccessState
 from telegram_membership_saas.modules.access.service import reconcile_access_target
+from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -101,6 +102,8 @@ class SubscriberDetail:
     total_payments: int
     history_page: int
     grants: tuple[SubscriberGrant, ...]
+    total_grants: int
+    grant_page: int
     access: tuple[SubscriberAccess, ...]
     resources: tuple[tuple[UUID, str], ...]
 
@@ -235,9 +238,9 @@ async def list_subscribers(
 async def subscriber_detail(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, customer_id: UUID,
-    history_page: int = 0,
+    history_page: int = 0, grant_page: int = 0,
 ) -> SubscriberDetail:
-    if not 0 <= history_page <= 10000:
+    if not 0 <= history_page <= 10000 or not 0 <= grant_page <= 10000:
         raise ValueError("Недопустимая страница истории")
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
@@ -273,20 +276,26 @@ async def subscriber_detail(
             .limit(HISTORY_PAGE_SIZE)
         )).all()
         now = datetime.now(UTC)
+        grant_where = (
+            EntitlementGrant.project_id == project_id,
+            EntitlementGrant.customer_id == customer_id,
+            EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+            EntitlementGrant.valid_from <= now,
+            or_(EntitlementGrant.valid_until.is_(None),
+                EntitlementGrant.valid_until > now),
+        )
+        total_grants = await session.scalar(
+            select(func.count(EntitlementGrant.id)).where(*grant_where)
+        ) or 0
         grants = (await session.execute(
             select(EntitlementGrant, Resource.name)
             .join(Resource, and_(
                 Resource.id == EntitlementGrant.resource_id,
                 Resource.project_id == EntitlementGrant.project_id,
             ))
-            .where(EntitlementGrant.project_id == project_id,
-                   EntitlementGrant.customer_id == customer_id,
-                   EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
-                   EntitlementGrant.valid_from <= now,
-                   or_(EntitlementGrant.valid_until.is_(None),
-                       EntitlementGrant.valid_until > now))
+            .where(*grant_where)
             .order_by(EntitlementGrant.created_at.desc(), EntitlementGrant.id.desc())
-            .limit(30)
+            .offset(grant_page * 8).limit(8)
         )).all()
         actual = (await session.execute(
             select(AccessState, Resource.name)
@@ -321,6 +330,7 @@ async def subscriber_detail(
                 currency=payment.currency_code, approved_at=payment.approved_at,
             ) for payment, name in payments),
             total_payments=total_payments, history_page=history_page,
+            total_grants=total_grants, grant_page=grant_page,
             grants=tuple(SubscriberGrant(
                 id=grant.id, resource_id=grant.resource_id,
                 resource_name=name, source=grant.source,
@@ -350,6 +360,15 @@ async def grant_manual_access(
         )
         if project.owner_user_id != actor_id:
             raise PermissionError("Выдать ручной доступ может только владелец")
+        # A removal transaction may have committed immediately before this
+        # grant obtains the same advisory lock. Never resurrect a retiring
+        # bot by creating new entitlements after status=deleting.
+        removing = await session.scalar(select(BotInstance.id).where(
+            BotInstance.project_id == project_id,
+            BotInstance.status == BotInstanceStatus.DELETING.value,
+        ).limit(1))
+        if removing is not None:
+            raise ValueError("Бот отключается. Выдача новых прав временно недоступна")
         customer, user = await _owned_customer(
             session, project_id=project_id, customer_id=customer_id,
         )
