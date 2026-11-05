@@ -41,6 +41,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     encode_uuid,
     format_amount,
     format_period,
+    is_period_only_plan_name,
     list_pending_reviews_for_actor,
     require_awaiting_receipt_for_telegram_user,
     review_payment_request_from_telegram,
@@ -588,7 +589,15 @@ def create_telegram_commerce_router(
             text=(
                 tr("💎 <b>Оформление подписки</b>\n\n",
                    "💎 <b>Subscription checkout</b>\n\n")
-                + f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
+                + (
+                    ""
+                    if is_period_only_plan_name(
+                        checkout.option.plan_name,
+                        checkout.option.duration_value,
+                        checkout.option.duration_unit,
+                    )
+                    else f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
+                )
                 + f"⏳ {period}\n"
                 + f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
                 + tr("Способ: ", "Method: ")
