@@ -39,6 +39,11 @@ from telegram_membership_saas.modules.bots.service import (
     decrypt_token,
     register_customer_bot,
 )
+from telegram_membership_saas.modules.owner_setup.buyer_preview import (
+    preview_catalog_screen,
+    preview_method_screen,
+    preview_offer_screen,
+)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     archive_owner_connection,
     get_connection_disposition,
@@ -46,11 +51,6 @@ from telegram_membership_saas.modules.owner_setup.connection_management import (
     remove_unused_connection,
     rename_owner_connection,
     restore_owner_connection,
-)
-from telegram_membership_saas.modules.owner_setup.buyer_preview import (
-    preview_catalog_screen,
-    preview_method_screen,
-    preview_offer_screen,
 )
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
