@@ -15,14 +15,14 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
 )
 from telegram_membership_saas.modules.access import enqueue_due_access_recalculations
-from telegram_membership_saas.modules.owner_notifications import (
-    deliver_one_owner_notification,
-)
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
     claim_next_outbox_event,
     mark_outbox_event_failed,
     process_claimed_access_recalculate_event,
+)
+from telegram_membership_saas.modules.owner_notifications import (
+    deliver_one_owner_notification,
 )
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessAdapter,
