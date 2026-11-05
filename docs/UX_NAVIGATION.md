@@ -176,3 +176,36 @@ received in other-than-token prompts must still be deleted as before.
   refresh, explicit customer support configuration and final polish.
 - **UX acceptance:** E2E buyer and owner paths through staging, then promote
   only after permission/finance regressions pass.
+
+## Navigation cleanup — approved after PR #57 staging acceptance (2026-11-05)
+
+The owner explicitly requested removal of redundant buttons from the current
+working customer bot. This section supersedes older audit proposals to put
+"My purchases" shortcuts on every buyer screen:
+
+- **Connected owner main dashboard:** Channels | Payments, Plans | Requests,
+  Subscribers | Statistics, View as guest, **⚙️ Settings**, and **green**
+  Language / Язык. No separate Notifications, Readiness, TimeZone, Network
+  profile or Help entries on the dashboard.
+- **⚙️ Settings:** Notifications; Readiness | TimeZone; Network profile;
+  Help; Back to admin dashboard. Child screens return to Settings. Existing
+  setting actions and database roles remain unchanged.
+- **Buyer catalog / main menu:** Currency and buyable plans, plus one green
+  Language / Язык control. If no plans exist, keep only Language. Read-only
+  account history remains available via the native Telegram Menu
+  `/subscription` (and existing legacy `account:` callbacks).
+- **Offer / payment-method selection:** Only applicable currency, payment
+  choices and **⬅️ All plans** back action. Remove My purchases and Language.
+- **Created invoice:** Keep green I have paid, red Cancel request and
+  Browse plans. Remove My purchases. **Never cancel on ordinary navigation.**
+- **Explicit invoice cancellation:** Commit the cancellation via existing
+  payment service, then show buyer home/catalog with a localized success
+  notice in the **same catalog message**. Do not redirect to purchase history.
+- Preserve callbacks on already-sent older messages so existing users can
+  still navigate safely; do not introduce migrations or update live payments,
+  subscriptions, entitlements or review mechanics.
+- All newly introduced text/actions are localized in RU and EN; Telegram
+  clients that don't support button styling still show the language label.
+- Native Telegram Menu continues to have **exactly three** commands:
+  `/menu`, `/subscription`, `/support`. Don't duplicate those commands
+  as buttons throughout the purchase journey.

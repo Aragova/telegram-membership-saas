@@ -75,7 +75,7 @@ async def test_network_save_is_owner_only_and_no_new_native_menu(monkeypatch):
     assert save.await_args.kwargs["source_project_id"] == project_id
     assert save.await_args.kwargs["copy_instructions"] is True
     assert "own:networkoff" in actions(instance)
-    assert "own:dashboard" in actions(instance)
+    assert "own:settings" in actions(instance)
     assert "✅" in instance.send_message.await_args_list[-2].args[1]
 
     monkeypatch.setattr(ui, "set_network_auto_apply", AsyncMock())
