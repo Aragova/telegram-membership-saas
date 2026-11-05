@@ -130,6 +130,27 @@ def test_zero_sales_do_not_claim_funds_or_create_fake_currency():
         _language.reset(token)
 
 
+def test_real_currency_overflow_is_capped_without_mixing_currency_totals():
+    report = DailyFinancialSnapshot(
+        project_name="Many currencies", timezone="Europe/Moscow",
+        report_date=date(2026, 11, 5), approved_count=26,
+        approved_totals=tuple(
+            (f"C{i:02}", Decimal("1"), 1) for i in range(26)
+        ),
+        new_customers=0, active_paid_customers=0, waiting_review=0,
+        as_of=datetime(2026, 11, 6, 7, tzinfo=UTC),
+    )
+    token = _language.set("en")
+    try:
+        text = render_daily_financial_summary(report)
+        assert "2 more currencies" in text
+        assert "C23" in text
+        assert "C24" not in text
+        assert len(text) < 4096
+    finally:
+        _language.reset(token)
+
+
 @pytest.mark.skipif(not os.getenv("TMS_DATABASE_URL"), reason="Requires PostgreSQL")
 async def test_daily_opt_in_financial_facts_idempotency_mute_and_owner():
     engine = build_engine(Settings(_env_file=None))
