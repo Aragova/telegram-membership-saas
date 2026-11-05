@@ -225,3 +225,7 @@ tariff prices and manual payment methods. Project currency selections are
 RLS scoped. The catalog metadata and payment histories stay immutable;
 the central bot does not control tenant payment configuration. Migration
 0024 is required before deploying new customer bot code.
+
+## Buyer storefront visual polish
+
+See [BUYER_PREMIUM_CURRENCY_UI.md](BUYER_PREMIUM_CURRENCY_UI.md). The buyer's price-currency selector now uses five compact flag-labeled buttons per row (RUB/USD/EUR/UAH/BYN first), an obvious green current selection, warm RU/EN plan descriptions, and removes redundant plan-name/duration repetition. The owner read-only buyer preview reuses the same UI and remains non-transactional. No checkout, database, VM, or manual-payment logic change.

@@ -77,7 +77,7 @@ def test_preview_uses_actual_checkout_eligible_prices_and_duration_in_english():
         assert "999 RUB" in content
         assert "No payment request" in content
         buttons = _buttons(keyboard)
-        assert ("USD", "own:pvcat:USD:0") in buttons
+        assert ("🇺🇸USD", "own:pvcat:USD:0") in buttons
         assert any("own:pvoffer:" in callback for _, callback in buttons)
         assert ("⬅️ Admin panel", "own:dashboard") in buttons
         assert not any(callback.startswith(("buy:", "cat:", "offer:"))
