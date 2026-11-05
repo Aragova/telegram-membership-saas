@@ -123,7 +123,7 @@ def test_preview_plan_and_method_buttons_cannot_invoke_real_checkout():
         )
         assert rendered is not None
         text, keyboard = rendered
-        assert "Pay 8.5 USD for 1 месяц &lt;Bank &amp; Co&gt;" in text
+        assert "Pay 8.5 USD for 1 month &lt;Bank &amp; Co&gt;" in text
         assert "No payment request" in text
         assert any(cb.startswith("own:pvoffer:") for _, cb in _buttons(keyboard))
         assert not any(cb.startswith("buy:") for _, cb in _buttons(keyboard))
