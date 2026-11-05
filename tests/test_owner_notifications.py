@@ -15,7 +15,6 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import _language
-from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_notifications import (
     OwnerNotificationDelivery,
@@ -26,6 +25,7 @@ from telegram_membership_saas.modules.owner_notifications import (
     read_owner_settings,
     set_owner_setting,
 )
+from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
