@@ -123,10 +123,6 @@ def _checkout_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
                 )
             ],
             [InlineKeyboardButton(
-                text=tr("🧾 Мои покупки", "🧾 My purchases"),
-                callback_data="checkoutnav:home",
-            )],
-            [InlineKeyboardButton(
                 text=tr("💎 К тарифам", "💎 Browse plans"),
                 callback_data="checkoutnav:catalog",
             )],
@@ -267,10 +263,6 @@ async def _safe_send_message(bot: Bot, chat_id: int, text: str, **kwargs) -> Non
 def _account_navigation_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=tr("🧾 Мои покупки", "🧾 My purchases"),
-            callback_data="account:home",
-        )],
-        [InlineKeyboardButton(
             text=tr("💎 К тарифам", "💎 Browse plans"),
             callback_data="account:catalog",
         )],
@@ -308,6 +300,7 @@ async def _send_catalog(
     page: int = 0,
     message_id: int | None = None,
     price_id: UUID | None = None,
+    notice: str | None = None,
 ) -> bool:
     """Build a fresh, project-isolated catalog and edit the current screen."""
     async with system_project_session_scope(session_factory, project_id) as session:
@@ -322,8 +315,9 @@ async def _send_catalog(
             offers, currency=currency, page=page,
         )
     await _send_screen(
-        bot, chat_id=chat_id, text=text, keyboard=keyboard,
-        message_id=message_id,
+        bot, chat_id=chat_id,
+        text=(notice + "\n\n" + text) if notice else text,
+        keyboard=keyboard, message_id=message_id,
     )
     return True
 
@@ -751,10 +745,13 @@ def create_telegram_commerce_router(
             await callback.answer(_buyer_error(exc), show_alert=True)
             return
         await callback.answer(tr("Заявка отменена", "Payment request canceled"))
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=tr("Заявка на оплату отменена.", "Your payment request was canceled."),
-            reply_markup=_account_navigation_keyboard(),
+        # Return directly to the actual buyer home (catalog), not account
+        # history. Only the canceled request is modified.
+        await _send_catalog(
+            bot, chat_id=callback.from_user.id,
+            session_factory=session_factory, project_id=project_id,
+            notice=tr("✅ Заявка на оплату отменена.",
+                      "✅ Your payment request was canceled."),
         )
 
     async def _review_callback(
