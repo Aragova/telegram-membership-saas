@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from html import escape
 from secrets import randbelow
+from zoneinfo import ZoneInfo
 from uuid import UUID
 
 from aiogram import BaseMiddleware, Bot, F, Router
@@ -118,6 +119,15 @@ from telegram_membership_saas.modules.owner_setup.service import (
     set_flow,
     setup_overview,
     verify_channel_and_add,
+)
+from telegram_membership_saas.modules.owner_setup.subscribers import (
+    FILTERS as SUBSCRIBER_FILTERS,
+    MANUAL_DURATIONS,
+    SUBSCRIBER_PAGE_SIZE,
+    grant_manual_access,
+    list_subscribers,
+    revoke_manual_access,
+    subscriber_detail,
 )
 from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     METHOD_PAGE_SIZE,
@@ -437,6 +447,7 @@ def create_owner_setup_router(
                  _button("💳 Оплата", "methods")],
                 [_button("📦 Тарифы", "plans"),
                  _button("📋 Заявки", "reviews")],
+                [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers")],
                 [_button("📋 Готовность", "readiness"),
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
