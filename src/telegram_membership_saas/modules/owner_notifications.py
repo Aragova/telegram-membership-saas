@@ -9,7 +9,7 @@ from html import escape
 from uuid import UUID, uuid4
 
 from aiogram import Bot
-from aiogram.exceptions import AiogramError, TelegramForbiddenError
+from aiogram.exceptions import AiogramError, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import (
     JSON,
@@ -269,6 +269,7 @@ async def deliver_one_owner_notification(
 
     sent = False
     permanent = False
+    retry_after_seconds = 0
     error_code: str | None = None
     try:
         async with recipient_language(factory, recipient):
@@ -284,6 +285,10 @@ async def deliver_one_owner_notification(
     except (AiogramError, ValueError) as exc:
         error_code = exc.__class__.__name__
         permanent = isinstance(exc, (TelegramForbiddenError, ValueError))
+        if isinstance(exc, TelegramRetryAfter):
+            # Honor the server's explicit flood-control deadline rather than
+            # consuming all five attempts before Telegram permits sending.
+            retry_after_seconds = max(0, exc.retry_after)
 
     async with system_project_session_scope(factory, project_id) as session:
         row = await session.scalar(
@@ -305,6 +310,7 @@ async def deliver_one_owner_notification(
             else:
                 row.status = "pending"
                 row.available_at = datetime.now(UTC) + timedelta(
-                    seconds=min(30 * 2 ** (attempt - 1), 600),
+                    seconds=max(min(30 * 2 ** (attempt - 1), 600),
+                                retry_after_seconds),
                 )
     return True
