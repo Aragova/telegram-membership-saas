@@ -54,9 +54,9 @@ def _tid():
     [
         ("failed_permanent", 1, 1, True),
         ("failed_retryable", 1, 60, False),
-        ("failed_retryable", 3, 9, False),
+        ("failed_retryable", 3, 9, True),
         ("failed_retryable", 3, 12, True),
-        ("processing", 3, 12, False),
+        ("processing", 3, 12, True),
         ("succeeded", 3, 12, False),
     ],
 )
@@ -65,6 +65,7 @@ def test_only_confirmed_failures_trigger(status, attempts, minutes, expected):
     action = SimpleNamespace(
         status=status, attempt_count=attempts,
         created_at=now - timedelta(minutes=minutes), desired_revision=2,
+        last_error="Telegram delivery failed",
     )
     state = SimpleNamespace(
         desired_access=True, actual_state="unknown", desired_revision=2,
@@ -141,7 +142,7 @@ async def test_access_incident_and_recovery_once_with_owner_scope():
         ) == 1
         assert await scan_owner_access_incidents(
             factory, project_id=project, now=now + timedelta(seconds=3),
-        ) == 1  # processed as same durable event, not two notifications
+        ) == 0  # handled event excluded by SQL before the scan limit
         async with system_project_session_scope(factory, project) as session:
             alerts = (await session.scalars(select(OwnerNotificationDelivery).where(
                 OwnerNotificationDelivery.project_id == project,
@@ -149,7 +150,7 @@ async def test_access_incident_and_recovery_once_with_owner_scope():
             assert len(alerts) == 1
             assert alerts[0].telegram_id == owner_tid
             assert alerts[0].kind == "access"
-            assert alerts[0].event_key == action_id.hex
+            assert alerts[0].event_key == str(action_id)
 
         bot = SimpleNamespace(send_message=AsyncMock())
         assert await deliver_one_owner_notification(
@@ -172,7 +173,8 @@ async def test_access_incident_and_recovery_once_with_owner_scope():
         assert buttons[0].startswith("own:subscriber:")
         assert len(buttons[0]) <= 64
 
-        # Confirm via the actual persisted desired/actual access state.
+        # The original grant never succeeded. An expired subscription that
+        # changes DESIRED access to revoked must NOT be called recovery.
         async with tenant_session_scope(
             factory, TenantContext(user_id=owner, project_id=project),
         ) as session:
@@ -180,7 +182,33 @@ async def test_access_incident_and_recovery_once_with_owner_scope():
                 AccessState.project_id == project,
                 AccessState.customer_id == customer_id,
             ))
+            state.desired_access = False
+            state.desired_revision = 2
+            state.actual_state = "revoked"
+        assert await scan_owner_access_incidents(
+            factory, project_id=project, now=now + timedelta(seconds=30),
+        ) == 0
+
+        # Only a direction-matched successful Telegram action after the
+        # original owner alert is a verified recovery.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project,
+                AccessState.customer_id == customer_id,
+            ))
+            state.desired_access = True
+            state.desired_revision = 3
             state.actual_state = "granted"
+            session.add(AccessAction(
+                project_id=project, customer_id=customer_id,
+                resource_id=resource.id, desired_revision=3,
+                action_type="grant", dedupe_key=f"recovery:{uuid4()}",
+                status="succeeded", attempt_count=1,
+                processed_at=now + timedelta(minutes=1),
+                available_at=now,
+            ))
 
         assert await scan_owner_access_incidents(
             factory, project_id=project, now=now + timedelta(minutes=1),
