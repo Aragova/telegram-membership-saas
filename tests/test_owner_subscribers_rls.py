@@ -14,6 +14,7 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.modules.access import EffectiveAccess
 from telegram_membership_saas.modules.access.service import reconcile_access_target
+from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -257,5 +258,72 @@ async def test_revoke_manual_leaves_existing_paid_entitlement_active():
                 factory, actor_id=owner, project_id=project,
                 customer_id=cid, grant_id=paid_id,
             )
+    finally:
+        await engine.dispose()
+
+
+
+async def test_retiring_bot_blocks_grants_and_older_grants_are_paginated():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, _, _, project, _, cid, rid, _ = await setup_subscriber(factory)
+        now = datetime.now(UTC)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            # Existing rights may be much older than the latest 30 payments;
+            # the owner's UI must still find and revoke them.
+            session.add_all([
+                EntitlementGrant(
+                    project_id=project, customer_id=cid,
+                    resource_id=rid, source=EntitlementSource.MANUAL.value,
+                    source_id=uuid4(), valid_from=now,
+                    valid_until=now + timedelta(days=20),
+                    status=EntitlementGrantStatus.ACTIVE.value,
+                )
+                for _ in range(34)
+            ])
+        first = await subscriber_detail(
+            factory, actor_id=owner, project_id=project,
+            customer_id=cid, grant_page=0,
+        )
+        last = await subscriber_detail(
+            factory, actor_id=owner, project_id=project,
+            customer_id=cid, grant_page=4,
+        )
+        assert first.total_grants == last.total_grants == 34
+        assert len(first.grants) == 8 and len(last.grants) == 2
+        assert {g.id for g in first.grants}.isdisjoint({g.id for g in last.grants})
+        target = last.grants[0].id
+        await revoke_manual_access(
+            factory, actor_id=owner, project_id=project,
+            customer_id=cid, grant_id=target,
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add(BotInstance(
+                project_id=project, telegram_bot_id=tg_id(),
+                username="retiring_customer_bot", display_name="Retiring",
+                token_ciphertext="test-only-no-real-token",
+                status="deleting",
+            ))
+        with pytest.raises(ValueError, match="отключается"):
+            await grant_manual_access(
+                factory, actor_id=owner, project_id=project,
+                customer_id=cid, resource_id=rid, days=7,
+            )
+        # The transaction must not create another noncommercial entitlement.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            assert await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project,
+                EntitlementGrant.customer_id == cid,
+                EntitlementGrant.source == EntitlementSource.MANUAL.value,
+            )) == 34
     finally:
         await engine.dispose()
