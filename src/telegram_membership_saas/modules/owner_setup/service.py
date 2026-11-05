@@ -76,6 +76,7 @@ class SetupFlow:
 class OwnerHome:
     projects: tuple[tuple[UUID, str], ...]
     selected: UUID | None
+    archived_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +185,11 @@ async def owner_home(
         return OwnerHome(
             projects=tuple((p.id, p.name) for p in projects),
             selected=selected,
+            archived_count=sum(
+                1 for p in visible
+                if p.owner_user_id == actor_id
+                and p.status == ProjectStatus.ARCHIVED.value
+            ),
         )
 
 
