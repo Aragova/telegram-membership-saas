@@ -15,7 +15,7 @@ from uuid import UUID
 from aiogram import Bot, F, Router
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, User
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -145,6 +145,7 @@ class LanguageMiddleware(BaseMiddleware):
 
 def create_language_router(
     factory: async_sessionmaker[AsyncSession], *, project_id: UUID | None = None,
+    render_main_menu: Callable[[Bot, User], Awaitable[None]] | None = None,
 ) -> Router:
     router = Router(name="vimi-language")
 
@@ -213,10 +214,12 @@ def create_language_router(
             await bot.send_message(
                 user.id,
                 tr(
-                    "✅ Язык сохранён: Русский. Меню Telegram обновлено.",
-                    "✅ Language saved: English. Telegram menu updated.",
+                    "✅ Русский язык включён. Открываю главное меню 👇",
+                    "✅ English is on. Here’s your main menu 👇",
                 ),
             )
+            if render_main_menu is not None:
+                await render_main_menu(bot, user)
             await query.answer()
         finally:
             _language.reset(token)
