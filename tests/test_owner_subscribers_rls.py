@@ -190,12 +190,12 @@ async def test_manual_grant_and_revoke_isolated_from_other_projects():
             assert await session.scalar(select(func.count()).select_from(
                 Subscription,
             ).where(Subscription.project_id == project)) == 0
-        with pytest.raises(ValueError, match="не найдено"):
+        with pytest.raises(ValueError, match="не найден"):
             await subscriber_detail(
                 factory, actor_id=owner, project_id=project,
                 customer_id=uuid4(),
             )
-        with pytest.raises(ValueError, match="не найдено"):
+        with pytest.raises(ValueError, match="не найден"):
             await revoke_manual_access(
                 factory, actor_id=owner, project_id=project,
                 customer_id=uuid4(), grant_id=created.grant_id,
@@ -252,7 +252,7 @@ async def test_revoke_manual_leaves_existing_paid_entitlement_active():
                 EffectiveAccess.resource_id == rid,
             ))
             assert projection.has_access and projection.active_grant_count == 1
-        with pytest.raises(ValueError, match="не найдено"):
+        with pytest.raises(ValueError, match="не найден"):
             await revoke_manual_access(
                 factory, actor_id=owner, project_id=project,
                 customer_id=cid, grant_id=paid_id,
