@@ -56,6 +56,12 @@ from telegram_membership_saas.modules.owner_setup.method_management import (
     edit_owner_method_instructions,
     rename_owner_method,
 )
+from telegram_membership_saas.modules.owner_setup.network_profiles import (
+    get_project_import_status,
+    read_owner_network_profile,
+    save_owner_network_profile,
+    set_network_auto_apply,
+)
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -364,6 +370,7 @@ def create_owner_setup_router(
                  _button("📋 Заявки", "reviews")],
                 [_button("📋 Готовность", "readiness"),
                  _button("🌍 TimeZone", "timezone")],
+                [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
                 [_button("👀 Смотреть гостем", "preview")],
                 [_button("❔ Помощь", "help")],
                 [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
@@ -371,6 +378,72 @@ def create_owner_setup_router(
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
         )
+
+    async def show_network_profile(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        # Profiles are owned by the actor, not by project administrators.
+        profile = await read_owner_network_profile(factory, actor_id=actor_id)
+        if profile is None:
+            lines = [tr(
+                "📁 <b>Профиль сети</b>\n\n"
+                "Сохраните тарифы, цены и способы оплаты одного бота. "
+                "Новые подключённые боты получат независимые черновики "
+                "и отключённую оплату.",
+                "📁 <b>Network profile</b>\n\n"
+                "Save one bot's plans, prices and payment methods. "
+                "Future connected bots receive independent drafts "
+                "and disabled payment methods.",
+            )]
+            buttons = [[_button(
+                tr("📋 Сохранить настройки", "📋 Save settings"),
+                "networkask", "success",
+            )]]
+        else:
+            lines = [
+                tr("📁 <b>Профиль сети</b>", "📁 <b>Network profile</b>"),
+                tr("Источник: ", "Source: ") + escape(profile.source),
+                tr("Версия: ", "Version: ") + str(profile.version),
+                tr("Тарифы: ", "Plans: ") + str(profile.plan_count),
+                tr("Способы оплаты: ", "Payment methods: ")
+                + str(profile.method_count),
+                (tr("Реквизиты: копируются", "Instructions: copied")
+                 if profile.copy_instructions else tr(
+                    "Реквизиты: заполняются отдельно",
+                    "Instructions: set separately",
+                )),
+                tr("Автоприменение: ", "Auto-apply: ") + (
+                    tr("✅ Включено", "✅ Enabled") if profile.enabled
+                    else tr("⏸️ Отключено", "⏸️ Disabled")
+                ),
+                "",
+                tr(
+                    "Изменения профиля затронут только будущие подключения. "
+                    "Существующие боты и подписчики не меняются.",
+                    "Profile changes affect only future connections. "
+                    "Existing bots and subscribers remain unchanged.",
+                ),
+            ]
+            buttons = [[_button(
+                tr("🔄 Обновить из этого бота", "🔄 Update from this bot"),
+                "networkask",
+            )]]
+            buttons.append([_button(
+                tr("⏸️ Отключить автокопирование", "⏸️ Pause auto-copy")
+                if profile.enabled else tr(
+                    "▶️ Включить автокопирование", "▶️ Resume auto-copy",
+                ),
+                "networkoff" if profile.enabled else "networkon",
+            )])
+        buttons.append([_button(
+            tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
+            "dashboard",
+        )])
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_markup(buttons),
+        )
+
 
     async def prompt(
         bot: Bot, user_id: int, actor_id: UUID,
