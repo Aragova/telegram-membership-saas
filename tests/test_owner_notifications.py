@@ -1,7 +1,8 @@
 """Owner invoice notification contract: no false payment, tenant RLS, RU/EN."""
 import os
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import _language
+from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_notifications import (
     OwnerNotificationDelivery,
@@ -154,3 +156,87 @@ async def test_durable_invoice_queue_owner_only_and_project_rls():
             assert len(rows) == 1
     finally:
         await engine.dispose()
+
+@pytest.mark.parametrize(
+    ("locale", "heading"),
+    [("ru", "Уведомления владельца"), ("en", "Owner notifications")],
+)
+async def test_owner_notification_settings_ui_and_toggle_are_bilingual(
+    monkeypatch, locale, heading,
+):
+    project, owner = uuid4(), uuid4()
+
+    class FakeSession:
+        scalar = AsyncMock(return_value=owner)
+
+    @asynccontextmanager
+    async def fake_scope(*_args, **_kwargs):
+        yield FakeSession()
+
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "get_selected_project", AsyncMock(return_value=project))
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+    monkeypatch.setattr(ui, "tenant_session_scope", fake_scope)
+    flags = AsyncMock(return_value={
+        "invoice": True, "receipt": True, "decision": True,
+        "expiry": True, "access": True, "daily": False,
+    })
+    change = AsyncMock()
+    monkeypatch.setattr(ui, "read_owner_settings", flags)
+    monkeypatch.setattr(ui, "set_owner_setting", change)
+
+    router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=project)
+    handle = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "owner_callback"
+    )
+
+    def query(action):
+        return SimpleNamespace(
+            data="own:" + action,
+            from_user=SimpleNamespace(id=123, username="owner", first_name="Owner"),
+            message=SimpleNamespace(chat=SimpleNamespace(type="private", id=123)),
+            answer=AsyncMock(),
+        )
+
+    bot = SimpleNamespace(send_message=AsyncMock(), id=345)
+    token = _language.set(locale)
+    try:
+        await handle(query("notifications"), bot)
+        msg = bot.send_message.await_args.args[1]
+        assert heading in msg
+        assert "🧾" in msg
+        assert (
+            "New invoice" if locale == "en" else "Новый счёт"
+        ) in msg
+        markup = bot.send_message.await_args.kwargs["reply_markup"]
+        assert "own:notifyset:invoice:0" in [
+            b.callback_data for row in markup.inline_keyboard for b in row
+        ]
+
+        await handle(query("notifyset:invoice:0"), bot)
+        change.assert_awaited_once()
+        assert change.await_args.kwargs["actor_id"] == owner
+        assert change.await_args.kwargs["project_id"] == project
+        assert change.await_args.kwargs["enabled"] is False
+    finally:
+        _language.reset(token)
+
+
+async def test_central_bot_does_not_expose_invoice_notification_settings(monkeypatch):
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    router = ui.create_owner_setup_router(MagicMock())
+    handle = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "owner_callback"
+    )
+    query = SimpleNamespace(
+        data="own:notifications",
+        from_user=SimpleNamespace(id=123, username="user", first_name="User"),
+        message=SimpleNamespace(chat=SimpleNamespace(type="private", id=123)),
+        answer=AsyncMock(),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock(), id=345)
+    await handle(query, bot)
+    bot.send_message.assert_not_awaited()
+    assert query.answer.await_args.kwargs["show_alert"]
