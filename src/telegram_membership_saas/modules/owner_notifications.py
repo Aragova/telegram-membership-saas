@@ -141,13 +141,17 @@ async def _owner_telegram_id(session: AsyncSession, project_id: UUID) -> int | N
 async def _queue(
     session: AsyncSession, *, project_id: UUID, kind: str,
     event_key: str, recipient: int, payload: dict,
+    available_at: datetime | None = None,
 ) -> None:
+    values = dict(
+        project_id=project_id, kind=kind, event_key=event_key,
+        telegram_id=recipient, payload=payload,
+    )
+    if available_at is not None:
+        values["available_at"] = available_at
     await session.execute(
         insert(OwnerNotificationDelivery)
-        .values(
-            project_id=project_id, kind=kind, event_key=event_key,
-            telegram_id=recipient, payload=payload,
-        )
+        .values(**values)
         .on_conflict_do_nothing(
             index_elements=[
                 OwnerNotificationDelivery.project_id,
