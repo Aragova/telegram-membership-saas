@@ -302,6 +302,9 @@ def create_owner_setup_router(
         if home.selected is not None:
             await show_dashboard(bot, user_id, actor_id, home.selected)
             return
+        if home.projects and fixed_project_id is None:
+            await show_connections(bot, user_id, actor_id)
+            return
         lines = [tr("✨ <b>ViMi Pay · Управление подписками</b>",
                     "✨ <b>ViMi Pay · Membership management</b>"), ""]
         rows: list[list[InlineKeyboardButton]] = []
@@ -1478,10 +1481,13 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "projects", "dashboard", "bots", "connect",
+                "new", "projects", "archives", "dashboard", "bots", "connect",
                 "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "projects:", "archives:", "archview:", "restore:",
+                "connrename:", "connremove:", "connremoveok:",
+                "connarchive:", "connarchiveok:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -1491,11 +1497,15 @@ def create_owner_setup_router(
                 )
                 return
         else:
-            if action in {"new", "projects", "bots", "connect", "oblist"} or (
-                action.startswith((
-                    "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
-                ))
-            ):
+            if action in {
+                "new", "projects", "archives", "bots", "connect", "oblist",
+            } or action.startswith((
+                "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "projects:", "archives:", "archview:", "restore:",
+                "connrename:", "connremove:", "connremoveok:",
+                "connarchive:", "connarchiveok:",
+            )):
+
                 await query.answer(
                     tr("Управляйте подключением через @vimipay_bot",
                        "Manage bot connections in @vimipay_bot"),
@@ -1530,25 +1540,53 @@ def create_owner_setup_router(
                 )
                 await query.answer()
                 return
-            if action == "projects":
-                home = await owner_home(factory, actor_id=actor_id)
-                rows = [
-                    [_button("📁 " + name[:45], "select:" + pid.hex)]
-                    for pid, name in home.projects[:20]
-                ]
-                rows.append([_button("➕ Подключить бота", "new", "success")])
-                if platform_navigation(user_id):
-                    rows.append(platform_navigation(user_id))
-                await bot.send_message(user_id, tr("📁 Мои боты", "📁 My bots"),
-                                       reply_markup=_markup(rows))
+            if action == "projects" or action.startswith("projects:"):
+                page = 0
+                if ":" in action:
+                    value = action.split(":", 1)[1]
+                    if not value.isascii() or not value.isdecimal() or len(value) > 5:
+                        raise ValueError("Недопустимая страница")
+                    page = int(value)
+                await show_connections(bot, user_id, actor_id, page=page)
+                await query.answer()
+                return
+            if action == "archives" or action.startswith("archives:"):
+                page = 0
+                if ":" in action:
+                    value = action.split(":", 1)[1]
+                    if not value.isascii() or not value.isdecimal() or len(value) > 5:
+                        raise ValueError("Недопустимая страница")
+                    page = int(value)
+                await show_connections(
+                    bot, user_id, actor_id, page=page, archived=True,
+                )
+                await query.answer()
+                return
+            if action.startswith("archview:"):
+                await show_archived_connection(
+                    bot, user_id, actor_id,
+                    UUID(hex=action.split(":", 1)[1]),
+                )
+                await query.answer()
+                return
+            if action.startswith("restore:"):
+                project_ref = UUID(hex=action.split(":", 1)[1])
+                await restore_owner_connection(
+                    factory, actor_id=actor_id, project_id=project_ref,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr("✅ Подключение восстановлено.", "✅ Connection restored."),
+                )
+                await show_connections(bot, user_id, actor_id)
                 await query.answer()
                 return
             if action.startswith("select:"):
+                selected = UUID(hex=action.split(":", 1)[1])
                 await choose_project(
-                    factory, actor_id=actor_id,
-                    project_id=UUID(hex=action.split(":", 1)[1]),
+                    factory, actor_id=actor_id, project_id=selected,
                 )
-                await show_home(bot, user_id, actor_id)
+                await show_bots(bot, user_id, actor_id, selected)
                 await query.answer()
                 return
             if action == "cancel":
