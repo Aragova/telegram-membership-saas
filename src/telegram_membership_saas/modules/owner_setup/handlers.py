@@ -738,6 +738,245 @@ def create_owner_setup_router(
         )
 
 
+    def subscriber_label(user_id: int, username: str | None,
+                         first_name: str | None) -> str:
+        name = ("@" + username if username else first_name) or str(user_id)
+        return str(name)[:45]
+
+    def subscriber_date(value, timezone: str) -> str:
+        if value is None:
+            return tr("бессрочно", "lifetime")
+        return value.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y")
+
+    async def show_subscribers(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, status: str = "all", page: int = 0, search: str = "",
+    ) -> None:
+        snapshot = await list_subscribers(
+            factory, actor_id=actor_id, project_id=project_id,
+            status=status, page=page, search=search,
+        )
+        rows: list[list[InlineKeyboardButton]] = []
+        for item in snapshot.customers:
+            indicator = (
+                "🟢" if item.paid or item.noncommercial else "⚪"
+            )
+            rows.append([_button(
+                indicator + " " + subscriber_label(
+                    item.telegram_id, item.username, item.first_name,
+                ),
+                "subscriber:" + encode_uuid(item.id),
+            )])
+        if not rows:
+            message = tr("Пока никого нет.", "No subscribers found.")
+        else:
+            message = tr(
+                "Нажмите на подписчика, чтобы увидеть оплаты, сроки "
+                "и доступ к каналам.",
+                "Select a subscriber to see payments, subscription periods "
+                "and channel access.",
+            )
+        if search:
+            message = tr("Поиск: ", "Search: ") + escape(search) + "\n" + message
+        text = (
+            tr("👥 <b>Подписчики</b>", "👥 <b>Subscribers</b>")
+            + "\n" + tr("Найдено: ", "Found: ") + str(snapshot.total)
+            + "\n" + message
+        )
+        # Search callbacks carry only a short, validated username/ID. The
+        # rest of state remains in the database, not a global mutable cache.
+        controls = [
+            ("📋 " + tr("Все", "All"), "all"),
+            ("🟢 " + tr("Активные", "Active"), "active"),
+            ("⏳ " + tr("Истекают", "Expiring"), "expiring"),
+            ("⚪ " + tr("Истекли", "Expired"), "expired"),
+        ]
+        for i in (0, 2):
+            rows.append([_button(label, "sublist:" + key + ":0")
+                         for label, key in controls[i:i + 2]])
+        pages = max(1, (snapshot.total + SUBSCRIBER_PAGE_SIZE - 1)
+                    // SUBSCRIBER_PAGE_SIZE)
+        if page < pages - 1 or page > 0:
+            nav: list[InlineKeyboardButton] = []
+            prefix = "subfind:" if search else "sublist:" + status + ":"
+            if page > 0:
+                nav.append(_button(
+                    "◀️", prefix + str(page - 1) + (
+                        ":" + search if search else ""
+                    ),
+                ))
+            nav.append(_button(str(page + 1) + "/" + str(pages),
+                               "subscribers"))
+            if page + 1 < pages:
+                nav.append(_button(
+                    "▶️", prefix + str(page + 1) + (
+                        ":" + search if search else ""
+                    ),
+                ))
+            rows.append(nav)
+        rows.append([_button(
+            tr("🔎 Найти по @username / ID",
+               "🔎 Find by @username / ID"), "subsearch",
+        )])
+        rows.append([_button(
+            tr("⬅️ Панель администратора", "⬅️ Admin dashboard"), "dashboard",
+        )])
+        await bot.send_message(
+            user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_subscriber_card(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        customer_id: UUID, *, history_page: int = 0,
+    ) -> None:
+        data = await subscriber_detail(
+            factory, actor_id=actor_id, project_id=project_id,
+            customer_id=customer_id, history_page=history_page,
+        )
+        who = subscriber_label(
+            data.telegram_id, data.username, data.first_name,
+        )
+        lines = [
+            "👤 <b>" + escape(who) + "</b>",
+            tr("Telegram ID: ", "Telegram ID: ") + str(data.telegram_id),
+            "",
+            tr("📦 <b>Подписки</b>", "📦 <b>Subscriptions</b>"),
+        ]
+        if not data.subscriptions:
+            lines.append(tr("Нет покупок по тарифам", "No plan subscriptions"))
+        for sub in data.subscriptions[:8]:
+            lines.append(
+                "• " + escape(sub.plan_name[:45]) + " · "
+                + escape(sub.status) + " · "
+                + subscriber_date(sub.period_end, data.project_timezone)
+            )
+        lines.extend([
+            "",
+            tr("💳 <b>Оплаченные покупки</b> (последние 5)",
+               "💳 <b>Confirmed purchases</b> (latest 5)"),
+            tr("Всего: ", "Total: ") + str(data.total_payments),
+        ])
+        for item in data.payments:
+            lines.append(
+                "• " + escape(item.plan_name[:28]) + " · "
+                + escape(item.amount + " " + item.currency)
+                + " · " + subscriber_date(item.approved_at, data.project_timezone)
+            )
+        lines.extend(["", tr("🔑 <b>Основания доступа</b>",
+                             "🔑 <b>Access grants</b>")])
+        if not data.grants:
+            lines.append(tr("Нет действующих прав", "No active grants"))
+        for grant in data.grants[:8]:
+            label = {
+                "payment": tr("Оплата", "Paid"),
+                "manual": tr("Ручной", "Manual"),
+                "owner_service": tr("Служебный", "Service"),
+            }.get(grant.source, grant.source)
+            lines.append(
+                "• " + escape(grant.resource_name[:35]) + ": "
+                + escape(label) + " · "
+                + subscriber_date(grant.valid_until, data.project_timezone)
+            )
+        if data.access:
+            lines.extend([
+                "", tr("📣 <b>Доступ к каналам</b>",
+                       "📣 <b>Channel access</b>"),
+            ])
+            for entry in data.access[:8]:
+                mark = "✅" if entry.actual == "granted" else "⏳" if entry.desired else "⚪"
+                lines.append(
+                    mark + " " + escape(entry.resource_name[:35])
+                    + " · " + escape(entry.actual)
+                )
+        rows: list[list[InlineKeyboardButton]] = []
+        if data.total_payments > 5:
+            nav: list[InlineKeyboardButton] = []
+            if history_page:
+                nav.append(_button(
+                    "◀️", "subhistory:" + encode_uuid(customer_id)
+                    + ":" + str(history_page - 1),
+                ))
+            if (history_page + 1) * 5 < data.total_payments:
+                nav.append(_button(
+                    "▶️ " + tr("Покупки", "Purchases"),
+                    "subhistory:" + encode_uuid(customer_id)
+                    + ":" + str(history_page + 1),
+                ))
+            if nav:
+                rows.append(nav)
+        if data.owner_only_actions:
+            rows.append([_button(
+                tr("➕ Выдать ручной доступ", "➕ Grant manual access"),
+                "subgrantstart:" + encode_uuid(customer_id), "success",
+            )])
+            for grant in data.grants:
+                if grant.source == "manual":
+                    rows.append([_button(
+                        tr("🗑 Отозвать ручной доступ · ",
+                           "🗑 Revoke manual access · ")
+                        + grant.resource_name[:25],
+                        "subrevoke:" + encode_uuid(customer_id)
+                        + ":" + encode_uuid(grant.id), "danger",
+                    )])
+        rows.append([_button(
+            tr("🔄 Обновить карточку", "🔄 Refresh"),
+            "subscriber:" + encode_uuid(customer_id),
+        )])
+        rows.append([_button(
+            tr("⬅️ Подписчики", "⬅️ Subscribers"), "subscribers",
+        )])
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_markup(rows),
+        )
+
+    async def show_manual_resource_picker(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        customer_id: UUID, *, page: int = 0,
+    ) -> None:
+        data = await subscriber_detail(
+            factory, actor_id=actor_id, project_id=project_id,
+            customer_id=customer_id,
+        )
+        if not data.owner_only_actions:
+            raise PermissionError("Ручной доступ выдаёт только владелец бота")
+        if page < 0 or page > 100:
+            raise ValueError("Недопустимая страница")
+        rows = [
+            [_button(
+                "📣 " + name[:45],
+                "subtarget:" + encode_uuid(customer_id)
+                + ":" + encode_uuid(resource_id),
+            )]
+            for resource_id, name in data.resources[page * 8:(page + 1) * 8]
+        ]
+        if (page + 1) * 8 < len(data.resources):
+            rows.append([_button(
+                "➡️ " + tr("Далее", "Next"),
+                "subres:" + encode_uuid(customer_id) + ":" + str(page + 1),
+            )])
+        if page:
+            rows.append([_button(
+                "⬅️ " + tr("Назад", "Previous"),
+                "subres:" + encode_uuid(customer_id) + ":" + str(page - 1),
+            )])
+        rows.append([_button(
+            tr("⬅️ К подписчику", "⬅️ Subscriber"),
+            "subscriber:" + encode_uuid(customer_id),
+        )])
+        await bot.send_message(
+            user_id,
+            tr(
+                "🔑 <b>Ручной доступ</b>\n\n"
+                "Выберите канал. Это отдельное бесплатное право — "
+                "оплаченные подписки не меняются.",
+                "🔑 <b>Manual access</b>\n\n"
+                "Choose a channel. This is a separate complimentary grant; "
+                "paid subscriptions are unchanged.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
     async def show_obligations(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         page: int = 0,
