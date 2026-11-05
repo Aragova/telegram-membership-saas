@@ -15,6 +15,10 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.modules.bots.service import VerifiedBot
 from telegram_membership_saas.modules.owner_setup import service as setup
+from telegram_membership_saas.modules.owner_setup.method_management import (
+    change_owner_method_status_guarded,
+    edit_owner_method_instructions,
+)
 from telegram_membership_saas.modules.owner_setup.network_models import (
     OwnerNetworkProfile,
     ProjectProfileApplication,
@@ -33,6 +37,10 @@ from telegram_membership_saas.modules.payments import (
     PaymentRequest,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
+from telegram_membership_saas.modules.owner_setup.tenant_admin import (
+    change_owner_method_status,
+    get_owner_method_info,
+)
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import ProjectMember
 from telegram_membership_saas.modules.resources import (
@@ -219,9 +227,37 @@ async def test_network_profile_auto_copies_only_independent_inactive_configurati
             ))
             assert method is not None
             assert "Укажите реквизиты" in method.instruction_template
+            method_id = method.id
             app = await session.get(ProjectProfileApplication, copy_b)
             assert app.profile_version == 2
             assert app.status == "applied"
+        info = await get_owner_method_info(
+            factory, actor_id=owner, project_id=copy_b, method_id=method_id,
+        )
+        with pytest.raises(ValueError, match="реквизиты"):
+            await change_owner_method_status_guarded(
+                factory, actor_id=owner, project_id=copy_b,
+                method_id=method_id, enabled=True,
+                expected_revision=info.revision,
+            )
+        with pytest.raises(ValueError, match="реквизиты"):
+            await change_owner_method_status(
+                factory, actor_id=owner, project_id=copy_b,
+                method_id=method_id, enabled=True,
+            )
+        await edit_owner_method_instructions(
+            factory, actor_id=owner, project_id=copy_b,
+            method_id=method_id, instruction="Transfer {amount} {currency}.",
+        )
+        fresh = await get_owner_method_info(
+            factory, actor_id=owner, project_id=copy_b, method_id=method_id,
+        )
+        await change_owner_method_status_guarded(
+            factory, actor_id=owner, project_id=copy_b,
+            method_id=method_id, enabled=True,
+            expected_revision=fresh.revision,
+        )
+
         # A trusted ADMIN can connect the first new channel without being
         # allowed to read the owner's private profile snapshot.
         async with tenant_session_scope(
