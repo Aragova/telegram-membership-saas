@@ -1461,6 +1461,21 @@ def create_owner_setup_router(
             )
         if prior.step in ("plan_name", "plan_duration", "plan_resource"):
             await show_plans(bot, message.chat.id, actor_id, project_id)
+        elif prior.step == "currency_custom_code":
+            mode = prior.payload.get("mode")
+            target = prior.payload.get("target")
+            if mode == "price" and target:
+                await show_plan_card(
+                    bot, message.chat.id, actor_id, project_id,
+                    UUID(hex=target),
+                )
+            elif mode == "attach" and target:
+                await show_method_card(
+                    bot, message.chat.id, actor_id, project_id,
+                    UUID(hex=target),
+                )
+            else:
+                await show_methods(bot, message.chat.id, actor_id, project_id)
         elif prior.step in ("price_amount", "plan_rename"):
             try:
                 plan_id = UUID(hex=prior.payload["plan_id"])
@@ -3149,6 +3164,52 @@ def create_owner_setup_router(
                 await show_plan_card(
                     bot, message.chat.id, actor_id, project_id, plan_id,
                 )
+            elif flow.step == "currency_custom_code":
+                code = await enable_owner_currency(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    code=text,
+                )
+                mode = flow.payload.get("mode")
+                target = flow.payload.get("target")
+                if mode == "price":
+                    plan_id = UUID(hex=target)
+                    await prompt(
+                        bot, message.chat.id, actor_id, step="price_amount",
+                        source_flow=flow,
+                        payload={"plan_id": plan_id.hex, "currency": code},
+                        text=tr(
+                            f"💰 Введите цену в {code} (например, 499 или 9.99):",
+                            f"💰 Enter the price in {code} (e.g. 499 or 9.99):",
+                        ),
+                    )
+                elif mode == "method":
+                    await prompt(
+                        bot, message.chat.id, actor_id, step="method_name",
+                        source_flow=flow,
+                        payload={"currency": code},
+                        text=tr(
+                            f"💳 Название способа оплаты для {code}:\n"
+                            "Например: Перевод на карту или Банковский перевод.",
+                            f"💳 Name a payment method for {code}:\n"
+                            "For example: Bank transfer.",
+                        ),
+                    )
+                elif mode == "attach":
+                    method_id = UUID(hex=target)
+                    await attach_owner_method_currency(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        method_id=method_id, currency_code=code,
+                    )
+                    await bot.send_message(
+                        message.chat.id,
+                        tr("✅ Валюта добавлена к способу оплаты.",
+                           "✅ Currency added to payment method."),
+                    )
+                    await show_method_card(
+                        bot, message.chat.id, actor_id, project_id, method_id,
+                    )
+                else:
+                    raise ValueError("Шаг выбора валюты устарел")
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
                 await save_owner_price(
@@ -3240,6 +3301,7 @@ def create_owner_setup_router(
                 "new_bot_token": "projects",
                 "bot_token": "bots",
                 "connection_rename": "bots",
+                "currency_custom_code": "methods",
             }.get(flow.step, "dashboard")
             if flow.step in ("method_rename", "method_edit"):
                 method_hex = flow.payload.get("method_id")
