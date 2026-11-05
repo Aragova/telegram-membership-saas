@@ -11,7 +11,19 @@ from uuid import UUID, uuid4
 from aiogram import Bot
 from aiogram.exceptions import AiogramError, TelegramForbiddenError
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint, Uuid, func, select
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+    select,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
@@ -29,13 +41,27 @@ class OwnerNotificationSettings(Base):
     project_id: Mapped[UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True,
     )
-    invoice_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    receipt_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    decision_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    expiry_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    access_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
-    daily_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    invoice_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+    )
+    receipt_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+    )
+    decision_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+    )
+    expiry_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+    )
+    access_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true",
+    )
+    daily_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now(),
+    )
 
 
 class OwnerNotificationDelivery(Base):
@@ -46,14 +72,22 @@ class OwnerNotificationDelivery(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     event_key: Mapped[str] = mapped_column(String(160), nullable=False)
     telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="pending", default="pending")
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0", default=0)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="pending", default="pending",
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0", default=0,
+    )
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(80))
@@ -164,7 +198,9 @@ def _invoice_text(payload: dict) -> str:
         person += " · " + escape(first_name)
     period = format_period(payload["duration_value"], payload["duration_unit"])
     custom_title = payload.get("plan_name") or ""
-    if not custom_title or is_period_only_plan_name(\n        custom_title, payload["duration_value"], payload["duration_unit"]\n    ):
+    if not custom_title or is_period_only_plan_name(
+        custom_title, payload["duration_value"], payload["duration_unit"]
+    ):
         label = period
     else:
         label = escape(custom_title) + " · " + escape(period)
