@@ -255,3 +255,25 @@ registered customers, active paying subscribers, separate manual grants and
 pending manual reviews. Uses existing tenant RLS and no migrations. Platform
 GMV and tenant sales are not SaaS revenue. This PR depends on #55 and must
 not deploy before its own exact-head CI, review and approval.
+
+## Approved owner notifications (PR #57 in progress)
+
+On 2026-11-05 the project owner approved the full per-connected-bot
+notification catalogue, UX and RU/EN contract. Authoritative implementation
+specification: [OWNER_NOTIFICATIONS.md](OWNER_NOTIFICATIONS.md).
+**Critical: immediately tell the owner when a buyer creates a payment
+invoice**, even before any receipt/proof is submitted. This is not a confirmed
+sale. Preserve existing receipt forwarding with original Approve/Reject
+buttons and prevent duplicate noise. Other approved categories: approved or
+rejected decisions, 7/3/1-day expiry and expired summaries, verified access
+incidents/recovery, optional daily financial digest. Locale always belongs to
+the recipient; statistics and subscribers must remain fully RU/EN.
+
+First isolated implementation slice in PR #57 adds a durable per-project
+invoice queue, notification settings and existing owner-bot routing; the
+remaining producers are phased behind reviews, not falsely advertised as
+already enabled. Database migration **0025_owner_notifications** must be
+applied before deploying the modified customer-supervisor; do not deploy
+a partial PR or restart PostgreSQL. Central bot, payment approval, access
+grants/revocations, `compose.light100.yaml` and existing live channels
+must be preserved. No merge without exact HEAD CI/Codex and owner approval.
