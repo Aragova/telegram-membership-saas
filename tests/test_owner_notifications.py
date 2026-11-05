@@ -220,6 +220,9 @@ async def test_owner_notification_settings_ui_and_toggle_are_bilingual(
         assert "own:notifyset:invoice:0" in actions
         assert "own:notifyset:expiry:0" in actions
         assert "own:notifyset:access:0" in actions
+        assert "own:notifyset:daily:1" in actions
+        assert ("Financial summary" if locale == "en"
+                else "Финансовый отчёт") in msg
         assert ("Access problems" if locale == "en"
                 else "Проблемы доступа") in msg
         assert ("Subscription expiry" if locale == "en"
@@ -244,6 +247,13 @@ async def test_owner_notification_settings_ui_and_toggle_are_bilingual(
         assert change.await_args.kwargs["actor_id"] == owner
         assert change.await_args.kwargs["project_id"] == project
         assert change.await_args.kwargs["enabled"] is False
+
+        await handle(query("notifyset:daily:1"), bot)
+        assert change.await_count == 4
+        assert change.await_args.kwargs["category"] == "daily"
+        assert change.await_args.kwargs["actor_id"] == owner
+        assert change.await_args.kwargs["project_id"] == project
+        assert change.await_args.kwargs["enabled"] is True
     finally:
         _language.reset(token)
 
