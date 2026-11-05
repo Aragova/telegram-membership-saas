@@ -1571,6 +1571,17 @@ def create_owner_setup_router(
                     show_alert=True,
                 )
                 return
+        # ForceReply used to capture only explicit replies. Now ordinary
+        # private text can answer the live form, so leaving a form through
+        # *any other button* must invalidate it before displaying a screen.
+        # Keep atomic generation-bound wizard buttons intact: they consume
+        # their own step and reject stale callbacks in consume_button_flow.
+        wizard_actions = ("flowback:", "planname:", "duration:", "use:")
+        if action != "cancel" and not action.startswith(wizard_actions):
+            await cancel_owner_flow(
+                factory, actor_id=actor_id,
+                bot_scope_id=bot.id if fixed_project_id else 0,
+            )
         try:
             if action == "new":
                 if get_settings().bot_token_encryption_key is None:
