@@ -3614,6 +3614,25 @@ def create_owner_setup_router(
             )
             return
         try:
+            if flow.step == "subscriber_search":
+                needle = text.removeprefix("@").strip()
+                if (
+                    not 2 <= len(needle) <= 32
+                    or not needle.isascii()
+                    or not all(ch.isalnum() or ch == "_" for ch in needle)
+                ):
+                    raise ValueError(
+                        "Пришлите @username или Telegram ID (2–32 символа)"
+                    )
+                if fixed_project_id is None:
+                    raise PermissionError("Поиск подписчиков доступен в подключённом боте")
+                if flow.project_id != fixed_project_id:
+                    raise PermissionError("Поиск другого бота запрещён")
+                await show_subscribers(
+                    bot, message.chat.id, actor_id, fixed_project_id,
+                    search=needle,
+                )
+                return
             if flow.step == "new_bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(
@@ -3852,6 +3871,7 @@ def create_owner_setup_router(
                 "bot_token": "bots",
                 "connection_rename": "bots",
                 "currency_custom_code": "methods",
+                "subscriber_search": "subscribers",
             }.get(flow.step, "dashboard")
             if flow.step in ("method_rename", "method_edit"):
                 method_hex = flow.payload.get("method_id")
