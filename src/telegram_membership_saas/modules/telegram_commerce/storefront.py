@@ -14,7 +14,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from telegram_membership_saas.localization import _language, tr
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.service import (
@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     encode_uuid,
     format_amount,
     format_period,
+    is_period_only_plan_name,
     list_checkout_options,
 )
 
@@ -45,19 +46,6 @@ CURRENCY_ICONS = {
 
 def _currency_icon(code: str) -> str:
     return CURRENCY_ICONS.get(code, "🌐")
-
-
-def _duration_only_title(name: str, value: int | None, unit: str) -> bool:
-    """Hide the internal default period label in both language variants."""
-    normalized = name.strip().casefold()
-    for language in ("ru", "en"):
-        token = _language.set(language)
-        try:
-            if normalized == format_period(value, unit).casefold():
-                return True
-        finally:
-            _language.reset(token)
-    return False
 
 
 def _plan_summary(name: str, period: str, *, duration_only: bool) -> str:
@@ -234,14 +222,14 @@ def catalog_screen(
         lines.append(
             "✨ <b>" + _plan_summary(
                 option.plan_name, period,
-                duration_only=_duration_only_title(
+                duration_only=is_period_only_plan_name(
                     option.plan_name, option.duration_value, option.duration_unit,
                 ),
             ) + "</b>"
             + " — " + escape(price + " " + chosen)
         )
         button_plan = (
-            period if _duration_only_title(
+            period if is_period_only_plan_name(
                 option.plan_name, option.duration_value, option.duration_unit,
             )
             else option.plan_name[:23] + " · " + period
@@ -312,7 +300,7 @@ def offer_screen(
         + "📣 <b>" + escape(current.resource_label) + "</b>\n"
         + (
             ""
-            if _duration_only_title(
+            if is_period_only_plan_name(
                 option.plan_name, option.duration_value, option.duration_unit,
             )
             else "🎟️ <b>" + escape(option.plan_name) + "</b>\n"
