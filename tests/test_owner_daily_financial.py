@@ -28,6 +28,7 @@ from telegram_membership_saas.modules.owner_daily import (
 from telegram_membership_saas.modules.owner_notifications import (
     OwnerNotificationDelivery,
     deliver_one_owner_notification,
+    read_owner_settings,
     set_owner_setting,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
@@ -154,10 +155,7 @@ async def test_daily_opt_in_financial_facts_idempotency_mute_and_owner():
         async with tenant_session_scope(
             factory, TenantContext(user_id=owner, project_id=project),
         ) as session:
-            assert not (await __import__(
-                "telegram_membership_saas.modules.owner_notifications",
-                fromlist=["read_owner_settings"],
-            ).read_owner_settings(session, project))["daily"]
+            assert not (await read_owner_settings(session, project))["daily"]
             await set_owner_setting(
                 session, project_id=project, actor_id=owner,
                 category="invoice", enabled=False,
