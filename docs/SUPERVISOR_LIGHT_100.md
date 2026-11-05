@@ -80,7 +80,8 @@ If more than 10 bots are already registered, some will be queued again,
 so only use rollback for an actual incident.
 
 The shared connection is a single failure domain for its project leases.
-If it is lost, all owned bots fail closed and the supervisor needs a clean
-restart; that is safer than two project pollers simultaneously issuing
-access actions. Do not disable the project advisory lock or fake health
+If it is lost, all owned bots fail closed. The supervisor drains the
+pollers and exits with an error so Docker's existing `restart: unless-stopped`
+policy can start a fresh process and reacquire locks automatically. This is
+safer than two project pollers simultaneously issuing access actions. Do not disable the project advisory lock or fake health
 heartbeats to sidestep this.
