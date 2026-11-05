@@ -202,3 +202,16 @@ Python 3.12+, aiogram 3, FastAPI, PostgreSQL, SQLAlchemy 2, Alembic, Pydantic, p
 ## Network Profiles (optional owner-wide defaults)
 
 See [NETWORK_PROFILES.md](NETWORK_PROFILES.md) for the approved initial network reuse implementation: a connected-bot admin can explicitly save one owner profile, including an optional choice to copy bank instructions. New central-registered bots created by the same Telegram owner receive isolated draft plans, active currency prices, and disabled manual payment methods, plus automatic first verified-channel linking. No purchases, subscriptions, Telegram credentials, historical financial rows or existing projects are copied or changed. The feature requires migration 0023 and must be tested on staging before production.
+
+
+## Central connection management (owner-only)
+
+See [CENTRAL_CONNECTION_MANAGEMENT.md](CENTRAL_CONNECTION_MANAGEMENT.md).
+The central bot offers paginated per-project connection cards, owner-only
+internal labels, protected bot retirement followed by permanent removal of
+disconnected **history-free** projects, and a reversible archive for projects
+with financial/access history. Do not hard-delete payments, subscription
+history or platform usage records to clean up test connections. The connected
+customer bot still owns all commercial plan/payment administration; the
+central bot does not duplicate that UI. Existing customer supervisors and
+the lightweight 100-bot Compose overlay remain unchanged.

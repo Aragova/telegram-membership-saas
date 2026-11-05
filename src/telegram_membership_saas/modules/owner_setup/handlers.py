@@ -44,6 +44,14 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_method_screen,
     preview_offer_screen,
 )
+from telegram_membership_saas.modules.owner_setup.connection_management import (
+    archive_owner_connection,
+    get_connection_disposition,
+    list_archived_owner_connections,
+    remove_unused_connection,
+    rename_owner_connection,
+    restore_owner_connection,
+)
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
@@ -294,6 +302,11 @@ def create_owner_setup_router(
         if home.selected is not None:
             await show_dashboard(bot, user_id, actor_id, home.selected)
             return
+        if fixed_project_id is None and (home.projects or home.archived_count):
+            # Even with zero active projects, keep archived connections
+            # reachable through /start, /menu and /bots.
+            await show_connections(bot, user_id, actor_id)
+            return
         lines = [tr("✨ <b>ViMi Pay · Управление подписками</b>",
                     "✨ <b>ViMi Pay · Membership management</b>"), ""]
         rows: list[list[InlineKeyboardButton]] = []
@@ -479,60 +492,176 @@ def create_owner_setup_router(
             bot_scope_id=bot.id if fixed_project_id else 0,
         )
 
-    async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
-        data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = [tr("🤖 <b>Мои боты</b>", "🤖 <b>My bots</b>"), ""]
-        if not data.bots:
-            lines.append(tr("Бот пока не подключён.", "No bot connected yet."))
-        for username, status in data.bots:
-            lines.append(
-                f"• <b>@{escape(username)}</b> — "
-                + (tr("токен проверен", "token verified") if status == "registered"
-                   else _status(status))
+    async def show_connections(
+        bot: Bot, user_id: int, actor_id: UUID,
+        *, page: int = 0, archived: bool = False,
+    ) -> None:
+        """Compact, paginated central connection registry (100+ bots)."""
+        if archived:
+            projects = await list_archived_owner_connections(
+                factory, actor_id=actor_id,
             )
-        retiring = any(status == "deleting" for _, _, status in data.bot_instances)
-        lines.append(
-            "\n" + (
-                tr("⏳ Бот отключается. Нажмите «Обновить статус» после завершения.",
-                    "⏳ Bot is shutting down. Refresh its status once complete.")
-                if retiring else escape(owner_runtime_label(data.bot_runtime_label))
-                + tr("\n\nБот доступен для настройки сразу после подключения."
-                     "\nОткройте его и добавьте каналы, оплату и тарифы.",
-                     "\n\nA verified bot can be configured immediately."
-                     "\nOpen it to add channels, payments and plans.")
-            )
+        else:
+            home = await owner_home(factory, actor_id=actor_id)
+            projects = home.projects
+        page_size = 10
+        total_pages = max(1, (len(projects) + page_size - 1) // page_size)
+        page = min(max(page, 0), total_pages - 1)
+        listed = projects[page * page_size:(page + 1) * page_size]
+        rows: list[list[InlineKeyboardButton]] = [
+            [_button(
+                ("📦 " if archived else "📁 ") + name[:42],
+                ("archview:" if archived else "select:") + pid.hex,
+            )]
+            for pid, name in listed
+        ]
+        if total_pages > 1:
+            nav = []
+            verb = "archives:" if archived else "projects:"
+            if page > 0:
+                nav.append(_button("◀️", verb + str(page - 1)))
+            nav.append(_button(f"{page + 1}/{total_pages}", verb + str(page)))
+            if page + 1 < total_pages:
+                nav.append(_button("▶️", verb + str(page + 1)))
+            rows.append(nav)
+        if archived:
+            rows.append([_button(
+                tr("⬅️ Мои подключения", "⬅️ My connections"), "projects",
+            )])
+        else:
+            rows.append([_button(
+                tr("➕ Подключить бота", "➕ Connect a bot"), "new", "success",
+            )])
+            if await list_archived_owner_connections(factory, actor_id=actor_id):
+                rows.append([_button(
+                    tr("📦 Архив подключений", "📦 Archived connections"),
+                    "archives",
+                )])
+        if platform_navigation(user_id):
+            rows.append(platform_navigation(user_id))
+        title = tr("📁 <b>Мои подключения</b>", "📁 <b>My connections</b>")
+        if archived:
+            title = tr("📦 <b>Архив подключений</b>", "📦 <b>Archived connections</b>")
+        await bot.send_message(
+            user_id,
+            title + "\n" + (
+                tr("Пусто.", "Empty.") if not projects
+                else tr(
+                    "Выберите подключение для управления.",
+                    "Select a connection to manage.",
+                )
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
         )
-        rows = []
+
+
+    async def show_archived_connection(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        archived = dict(await list_archived_owner_connections(
+            factory, actor_id=actor_id,
+        ))
+        name = archived.get(project_id)
+        if name is None:
+            raise ValueError(tr(
+                "Подключение не найдено в архиве.", "Connection is not archived.",
+            ))
+        await bot.send_message(
+            user_id,
+            tr("📦 <b>В архиве:</b> ", "📦 <b>Archived:</b> ")
+            + escape(name) + "\n\n"
+            + tr(
+                "Бот отключён, финансовая история сохранена. "
+                "Подключение не отображается в активном списке.",
+                "Bot detached, financial records retained. "
+                "This connection is hidden from the active list.",
+            ),
+            parse_mode="HTML",
+            reply_markup=_markup([
+                [_button(
+                    tr("↩️ Восстановить подключение", "↩️ Restore connection"),
+                    "restore:" + project_id.hex, "success",
+                )],
+                [_button(tr("⬅️ Архив", "⬅️ Archive"), "archives")],
+            ]),
+        )
+
+
+    async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
+        """One connection card, with actions based on its actual state."""
+        data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
+        lines = [
+            tr("✦ <b>Управление подключением</b>",
+               "✦ <b>Manage connection</b>"),
+            f"<b>{escape(data.project_name)}</b>",
+            "",
+        ]
+        if not data.bots:
+            lines.append(tr("⚪ Telegram-бот не подключён.",
+                            "⚪ No Telegram bot connected."))
+        else:
+            for username, status in data.bots:
+                lines.append(
+                    f"🤖 <b>@{escape(username)}</b> — "
+                    + (tr("подключён", "connected") if status == "registered"
+                       else _status(status))
+                )
+        retiring = any(status == "deleting" for _, _, status in data.bot_instances)
+        if retiring:
+            lines.append(tr(
+                "\n⏳ Бот отключается. Обновите статус после завершения.",
+                "\n⏳ Bot is being disconnected. Refresh its status afterward.",
+            ))
+        else:
+            lines.append("\n" + escape(owner_runtime_label(data.bot_runtime_label)))
+        rows: list[list[InlineKeyboardButton]] = []
         connected = next(
             (username for _, username, status in data.bot_instances
              if status == "registered"), None,
         )
         if connected:
-            rows.append([
-                InlineKeyboardButton(
-                    text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
-                    url="https://t.me/" + connected,
-                    style="success",
-                )
-            ])
-        rows.append([_button("🔄 Обновить статус", "bots")])
-        if not retiring:
-            rows.append([_button("➕ Подключить / обновить токен", "connect")])
+            rows.append([InlineKeyboardButton(
+                text=tr("🚀 Открыть бота", "🚀 Open bot"),
+                url="https://t.me/" + connected, style="success",
+            )])
+        if data.bot_instances:
+            rows.append([_button(tr("🔄 Обновить статус", "🔄 Refresh"), "bots")])
+        if not retiring and data.can_delete_bot:
+            rows.append([_button(
+                tr("🔑 Подключить / обновить токен", "🔑 Connect / update token"),
+                "connect",
+            )])
         if data.can_delete_bot:
-            for instance_id, username, status in data.bot_instances:
-                if status != "deleting":
-                    rows.append([
-                        _button(
-                            tr("🗑 Удалить @", "🗑 Remove @") + username[:35],
+            rows.append([_button(
+                tr("✏️ Переименовать подключение", "✏️ Rename connection"),
+                "connrename:" + project_id.hex,
+            )])
+            if data.bot_instances:
+                for instance_id, username, status in data.bot_instances:
+                    if status != "deleting":
+                        rows.append([_button(
+                            tr("🗑 Отключить @", "🗑 Disconnect @") + username[:30],
                             "drop:" + encode_uuid(project_id)
                             + ":" + encode_uuid(instance_id),
                             "danger",
-                        )
-                    ])
-        rows.extend([
-            [_button("➕ Подключить другого бота", "new")],
-            [_button("⬅️ Мои подключения", "dashboard")],
-        ])
+                        )])
+            else:
+                disposition = await get_connection_disposition(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if disposition.has_history:
+                    rows.append([_button(
+                        tr("📦 Убрать в архив", "📦 Archive connection"),
+                        "connarchive:" + project_id.hex, "danger",
+                    )])
+                else:
+                    rows.append([_button(
+                        tr("🗑 Удалить подключение", "🗑 Delete connection"),
+                        "connremove:" + project_id.hex, "danger",
+                    )])
+        rows.append([_button(
+            tr("⬅️ Все подключения", "⬅️ All connections"), "projects",
+        )])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
         await bot.send_message(
@@ -1332,7 +1461,7 @@ def create_owner_setup_router(
             await show_methods(bot, message.chat.id, actor_id, project_id)
         elif prior.step in ("chat_picker", "resource_reference"):
             await show_resources(bot, message.chat.id, actor_id, project_id)
-        elif prior.step == "bot_token" and fixed_project_id is None:
+        elif prior.step in ("bot_token", "connection_rename") and fixed_project_id is None:
             await show_bots(bot, message.chat.id, actor_id, project_id)
         else:
             await show_dashboard(bot, message.chat.id, actor_id, project_id)
@@ -1354,10 +1483,13 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "projects", "dashboard", "bots", "connect",
+                "new", "projects", "archives", "dashboard", "bots", "connect",
                 "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "projects:", "archives:", "archview:", "restore:",
+                "connrename:", "connremove:", "connremoveok:",
+                "connarchive:", "connarchiveok:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -1367,11 +1499,15 @@ def create_owner_setup_router(
                 )
                 return
         else:
-            if action in {"new", "projects", "bots", "connect", "oblist"} or (
-                action.startswith((
-                    "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
-                ))
-            ):
+            if action in {
+                "new", "projects", "archives", "bots", "connect", "oblist",
+            } or action.startswith((
+                "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "projects:", "archives:", "archview:", "restore:",
+                "connrename:", "connremove:", "connremoveok:",
+                "connarchive:", "connarchiveok:",
+            )):
+
                 await query.answer(
                     tr("Управляйте подключением через @vimipay_bot",
                        "Manage bot connections in @vimipay_bot"),
@@ -1406,25 +1542,53 @@ def create_owner_setup_router(
                 )
                 await query.answer()
                 return
-            if action == "projects":
-                home = await owner_home(factory, actor_id=actor_id)
-                rows = [
-                    [_button("📁 " + name[:45], "select:" + pid.hex)]
-                    for pid, name in home.projects[:20]
-                ]
-                rows.append([_button("➕ Подключить бота", "new", "success")])
-                if platform_navigation(user_id):
-                    rows.append(platform_navigation(user_id))
-                await bot.send_message(user_id, tr("📁 Мои боты", "📁 My bots"),
-                                       reply_markup=_markup(rows))
+            if action == "projects" or action.startswith("projects:"):
+                page = 0
+                if ":" in action:
+                    value = action.split(":", 1)[1]
+                    if not value.isascii() or not value.isdecimal() or len(value) > 5:
+                        raise ValueError("Недопустимая страница")
+                    page = int(value)
+                await show_connections(bot, user_id, actor_id, page=page)
+                await query.answer()
+                return
+            if action == "archives" or action.startswith("archives:"):
+                page = 0
+                if ":" in action:
+                    value = action.split(":", 1)[1]
+                    if not value.isascii() or not value.isdecimal() or len(value) > 5:
+                        raise ValueError("Недопустимая страница")
+                    page = int(value)
+                await show_connections(
+                    bot, user_id, actor_id, page=page, archived=True,
+                )
+                await query.answer()
+                return
+            if action.startswith("archview:"):
+                await show_archived_connection(
+                    bot, user_id, actor_id,
+                    UUID(hex=action.split(":", 1)[1]),
+                )
+                await query.answer()
+                return
+            if action.startswith("restore:"):
+                project_ref = UUID(hex=action.split(":", 1)[1])
+                await restore_owner_connection(
+                    factory, actor_id=actor_id, project_id=project_ref,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr("✅ Подключение восстановлено.", "✅ Connection restored."),
+                )
+                await show_connections(bot, user_id, actor_id)
                 await query.answer()
                 return
             if action.startswith("select:"):
+                selected = UUID(hex=action.split(":", 1)[1])
                 await choose_project(
-                    factory, actor_id=actor_id,
-                    project_id=UUID(hex=action.split(":", 1)[1]),
+                    factory, actor_id=actor_id, project_id=selected,
                 )
-                await show_home(bot, user_id, actor_id)
+                await show_bots(bot, user_id, actor_id, selected)
                 await query.answer()
                 return
             if action == "cancel":
@@ -1450,6 +1614,122 @@ def create_owner_setup_router(
                                     "Create or select a connection first"))
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action.startswith("connrename:"):
+                target_id = UUID(hex=action.split(":", 1)[1])
+                if target_id != project_id:
+                    raise ValueError("Меню другого подключения. Откройте список заново.")
+                await get_connection_disposition(
+                    factory, actor_id=actor_id, project_id=target_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id, step="connection_rename",
+                    text=tr(
+                        "✏️ <b>Новое название подключения</b>\n\n"
+                        "Это название видно только в ViMi Pay. "
+                        "Имя Telegram-бота в BotFather не изменится.\n"
+                        "Введите название от 2 до 120 символов.",
+                        "✏️ <b>Rename connection</b>\n\n"
+                        "This is an internal ViMi Pay label. "
+                        "It does not rename your Telegram bot.\n"
+                        "Enter 2–120 characters.",
+                    ),
+                )
+            elif action.startswith(("connremove:", "connremoveok:",
+                                    "connarchive:", "connarchiveok:")):
+                verb, token = action.split(":", 1)
+                target_id = UUID(hex=token)
+                if target_id != project_id:
+                    raise ValueError("Меню другого подключения. Откройте список заново.")
+                data = await setup_overview(
+                    factory, actor_id=actor_id, project_id=target_id,
+                )
+                if not data.can_delete_bot:
+                    raise PermissionError("Действие доступно только владельцу подключения")
+                if verb == "connremove":
+                    disposition = await get_connection_disposition(
+                        factory, actor_id=actor_id, project_id=target_id,
+                    )
+                    if disposition.has_bot:
+                        raise ValueError(
+                            "Сначала отключите бота через управление подключением."
+                        )
+                    if disposition.has_history:
+                        raise ValueError(
+                            "История платежей и доступов не подлежит удалению. "
+                            "Для этого проекта используйте архив."
+                        )
+                    await bot.send_message(
+                        user_id,
+                        tr("🗑 <b>Удалить подключение «", "🗑 <b>Delete connection “")
+                        + escape(data.project_name)
+                        + tr("»?</b>\n\n", "”?</b>\n\n")
+                        + tr(
+                            "Это действие необратимо. Будут удалены только "
+                            "настройки НЕПОДКЛЮЧЁННОГО проекта (тарифы, "
+                            "способы оплаты, каналы). Данные других ботов "
+                            "и профиль сети сохранятся.\n\n"
+                            "Проекты с платежами, подписчиками или историей "
+                            "доступа удалить нельзя.",
+                            "This cannot be undone. Configuration of this "
+                            "DISCONNECTED project (plans, methods, channels) "
+                            "will be deleted. Other bots and your network "
+                            "profile remain untouched.\n\n"
+                            "Projects with payment or access history cannot "
+                            "be permanently deleted.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("🗑 Да, удалить подключение",
+                                   "🗑 Confirm deletion"),
+                                "connremoveok:" + target_id.hex, "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bots")],
+                        ]),
+                    )
+                elif verb == "connremoveok":
+                    await remove_unused_connection(
+                        factory, actor_id=actor_id, project_id=target_id,
+                    )
+                    await bot.send_message(
+                        user_id, tr("✅ Подключение удалено.",
+                                    "✅ Connection deleted."),
+                    )
+                    await show_connections(bot, user_id, actor_id)
+                elif verb == "connarchive":
+                    await bot.send_message(
+                        user_id,
+                        tr("📦 <b>Архивировать «", "📦 <b>Archive “")
+                        + escape(data.project_name)
+                        + tr("»?</b>\n\n", "”?</b>\n\n")
+                        + tr(
+                            "Подключение исчезнет из активного списка. "
+                            "Тарифы и финансовая история сохранятся; "
+                            "вернуть подключение можно из архива. "
+                            "Действующий Telegram-бот должен быть отключён.",
+                            "It will be hidden from the active list. "
+                            "Plans and financial history are kept. "
+                            "You can restore it from the archive. "
+                            "The Telegram bot must be disconnected first.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("📦 Да, архивировать", "📦 Confirm archive"),
+                                "connarchiveok:" + target_id.hex, "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bots")],
+                        ]),
+                    )
+                else:
+                    await archive_owner_connection(
+                        factory, actor_id=actor_id, project_id=target_id,
+                    )
+                    await bot.send_message(
+                        user_id, tr("✅ Подключение перемещено в архив.",
+                                    "✅ Connection moved to archive."),
+                    )
+                    await show_connections(bot, user_id, actor_id)
             elif action == "network":
                 await show_network_profile(bot, user_id, actor_id, project_id)
             elif action == "networkask":
@@ -2687,7 +2967,7 @@ def create_owner_setup_router(
         # Old central setup prompts remain in Telegram after a deployment.
         # Do not permit completing tenant settings via stale central messages.
         if fixed_project_id is None and flow.step not in (
-            "new_bot_token", "bot_token",
+            "new_bot_token", "bot_token", "connection_rename",
         ):
             await bot.send_message(
                 message.chat.id,
@@ -2698,7 +2978,7 @@ def create_owner_setup_router(
             )
             return
         if fixed_project_id is not None and flow.step in (
-            "new_bot_token", "bot_token", "project_name",
+            "new_bot_token", "bot_token", "project_name", "connection_rename",
         ):
             await bot.send_message(
                 message.chat.id,
@@ -2740,7 +3020,24 @@ def create_owner_setup_router(
             ):
                 raise ValueError(tr("Настройка другого бота недоступна",
                                     "You cannot change another bot's settings"))
-            if flow.step == "bot_token":
+            if flow.step == "connection_rename":
+                if fixed_project_id is not None:
+                    raise PermissionError("Переименование доступно в центральном боте")
+                current = await get_selected_project(factory, actor_id=actor_id)
+                if current != project_id:
+                    raise ValueError("Подключение изменилось. Откройте список заново.")
+                renamed = await rename_owner_connection(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    name=text,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Подключение переименовано: ",
+                       "✅ Connection renamed: ") + escape(renamed),
+                    parse_mode="HTML",
+                )
+                await show_bots(bot, message.chat.id, actor_id, project_id)
+            elif flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(tr("Неверный формат токена. Получите его в BotFather.",
                                         "Invalid token format. Get it from BotFather."))
@@ -2880,6 +3177,7 @@ def create_owner_setup_router(
                 "timezone": "dashboard",
                 "new_bot_token": "projects",
                 "bot_token": "bots",
+                "connection_rename": "bots",
             }.get(flow.step, "dashboard")
             if flow.step in ("method_rename", "method_edit"):
                 method_hex = flow.payload.get("method_id")
