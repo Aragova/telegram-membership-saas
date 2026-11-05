@@ -106,6 +106,26 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
             sf, actor_id=actor_id, reply_message_id=None,
         ) is None
 
+        # Navigation clears a pending text prompt before a stray message
+        # could overwrite buyer-facing bank instructions.
+        edit_generation = await setup.set_flow(
+            sf, actor_id=actor_id, step="method_edit",
+            payload={"method_id": uuid4().hex},
+        )
+        await setup.bind_prompt(
+            sf, actor_id=actor_id, step="method_edit",
+            message_id=125, generation=edit_generation,
+        )
+        assert await setup.cancel_owner_flow(
+            sf, actor_id=actor_id,
+        ) is True
+        assert await setup.is_expected_prompt(
+            sf, actor_id=actor_id, reply_message_id=None,
+        ) is False
+        assert await setup.consume_flow(
+            sf, actor_id=actor_id, reply_message_id=None,
+        ) is None
+
         old = await setup.set_flow(
             sf, actor_id=actor_id, step="plan_duration",
             payload={"name": "Old plan"},
