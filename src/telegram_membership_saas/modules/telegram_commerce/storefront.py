@@ -26,7 +26,32 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
 )
 
 PAGE_SIZE = 7
-CURRENCY_ORDER = ("RUB", "USD", "EUR", "BYN", "KZT", "AED", "USDT", "TON")
+# Keep the five most requested local currencies together in a single row.
+# Telegram owns the pixel rendering; labels must remain compact on mobile.
+CURRENCIES_PER_ROW = 5
+CURRENCY_ORDER = (
+    "RUB", "USD", "EUR", "UAH", "BYN", "KZT", "AED", "GBP",
+    "CNY", "JPY", "PLN", "USDT", "TON",
+)
+CURRENCY_ICONS = {
+    "RUB": "🇷🇺", "USD": "🇺🇸", "EUR": "🇪🇺", "UAH": "🇺🇦",
+    "BYN": "🇧🇾", "KZT": "🇰🇿", "AED": "🇦🇪", "GBP": "🇬🇧",
+    "CNY": "🇨🇳", "JPY": "🇯🇵", "PLN": "🇵🇱", "CHF": "🇨🇭",
+    "CAD": "🇨🇦", "AUD": "🇦🇺", "TRY": "🇹🇷", "INR": "🇮🇳",
+    "BRL": "🇧🇷", "KRW": "🇰🇷", "UZS": "🇺🇿", "GEL": "🇬🇪",
+    "USDT": "💠", "TON": "💎", "BTC": "₿", "ETH": "◆",
+}
+
+
+def _currency_icon(code: str) -> str:
+    return CURRENCY_ICONS.get(code, "🌐")
+
+
+def _plan_summary(name: str, period: str) -> str:
+    """Do not repeat titles like '1 месяц · 1 месяц' in the storefront."""
+    if name.strip().casefold() == period.strip().casefold():
+        return escape(name)
+    return escape(name) + " · " + escape(period)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,11 +156,19 @@ def _currency_rows(
             callback = f"offer:{encode_uuid(matching.option.plan_price_id)}:{page}"
         else:
             callback = f"cat:{code}:0"
+        selected = code == current
+        # The filled green button and the emoji are both visible selections:
+        # older Telegram clients may ignore button.style.
+        label = ("🟢" if selected else "") + _currency_icon(code) + code
         buttons.append(InlineKeyboardButton(
-            text=("✓ " if code == current else "") + code,
+            text=label,
             callback_data=callback,
+            style="success" if selected else None,
         ))
-    return [buttons[i:i + 4] for i in range(0, len(buttons), 4)]
+    return [
+        buttons[i:i + CURRENCIES_PER_ROW]
+        for i in range(0, len(buttons), CURRENCIES_PER_ROW)
+    ]
 
 
 def catalog_screen(
