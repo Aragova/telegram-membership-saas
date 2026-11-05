@@ -1612,6 +1612,122 @@ def create_owner_setup_router(
                                     "Create or select a connection first"))
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action.startswith("connrename:"):
+                target_id = UUID(hex=action.split(":", 1)[1])
+                if target_id != project_id:
+                    raise ValueError("Меню другого подключения. Откройте список заново.")
+                await get_connection_disposition(
+                    factory, actor_id=actor_id, project_id=target_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id, step="connection_rename",
+                    text=tr(
+                        "✏️ <b>Новое название подключения</b>\n\n"
+                        "Это название видно только в ViMi Pay. "
+                        "Имя Telegram-бота в BotFather не изменится.\n"
+                        "Введите название от 2 до 120 символов.",
+                        "✏️ <b>Rename connection</b>\n\n"
+                        "This is an internal ViMi Pay label. "
+                        "It does not rename your Telegram bot.\n"
+                        "Enter 2–120 characters.",
+                    ),
+                )
+            elif action.startswith(("connremove:", "connremoveok:",
+                                    "connarchive:", "connarchiveok:")):
+                verb, token = action.split(":", 1)
+                target_id = UUID(hex=token)
+                if target_id != project_id:
+                    raise ValueError("Меню другого подключения. Откройте список заново.")
+                data = await setup_overview(
+                    factory, actor_id=actor_id, project_id=target_id,
+                )
+                if not data.can_delete_bot:
+                    raise PermissionError("Действие доступно только владельцу подключения")
+                if verb == "connremove":
+                    disposition = await get_connection_disposition(
+                        factory, actor_id=actor_id, project_id=target_id,
+                    )
+                    if disposition.has_bot:
+                        raise ValueError(
+                            "Сначала отключите бота через управление подключением."
+                        )
+                    if disposition.has_history:
+                        raise ValueError(
+                            "История платежей и доступов не подлежит удалению. "
+                            "Для этого проекта используйте архив."
+                        )
+                    await bot.send_message(
+                        user_id,
+                        tr("🗑 <b>Удалить подключение «", "🗑 <b>Delete connection “")
+                        + escape(data.project_name)
+                        + tr("»?</b>\n\n", "”?</b>\n\n")
+                        + tr(
+                            "Это действие необратимо. Будут удалены только "
+                            "настройки НЕПОДКЛЮЧЁННОГО проекта (тарифы, "
+                            "способы оплаты, каналы). Данные других ботов "
+                            "и профиль сети сохранятся.\n\n"
+                            "Проекты с платежами, подписчиками или историей "
+                            "доступа удалить нельзя.",
+                            "This cannot be undone. Configuration of this "
+                            "DISCONNECTED project (plans, methods, channels) "
+                            "will be deleted. Other bots and your network "
+                            "profile remain untouched.\n\n"
+                            "Projects with payment or access history cannot "
+                            "be permanently deleted.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("🗑 Да, удалить подключение",
+                                   "🗑 Confirm deletion"),
+                                "connremoveok:" + target_id.hex, "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bots")],
+                        ]),
+                    )
+                elif verb == "connremoveok":
+                    await remove_unused_connection(
+                        factory, actor_id=actor_id, project_id=target_id,
+                    )
+                    await bot.send_message(
+                        user_id, tr("✅ Подключение удалено.",
+                                    "✅ Connection deleted."),
+                    )
+                    await show_connections(bot, user_id, actor_id)
+                elif verb == "connarchive":
+                    await bot.send_message(
+                        user_id,
+                        tr("📦 <b>Архивировать «", "📦 <b>Archive “")
+                        + escape(data.project_name)
+                        + tr("»?</b>\n\n", "”?</b>\n\n")
+                        + tr(
+                            "Подключение исчезнет из активного списка. "
+                            "Тарифы и финансовая история сохранятся; "
+                            "вернуть подключение можно из архива. "
+                            "Действующий Telegram-бот должен быть отключён.",
+                            "It will be hidden from the active list. "
+                            "Plans and financial history are kept. "
+                            "You can restore it from the archive. "
+                            "The Telegram bot must be disconnected first.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("📦 Да, архивировать", "📦 Confirm archive"),
+                                "connarchiveok:" + target_id.hex, "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bots")],
+                        ]),
+                    )
+                else:
+                    await archive_owner_connection(
+                        factory, actor_id=actor_id, project_id=target_id,
+                    )
+                    await bot.send_message(
+                        user_id, tr("✅ Подключение перемещено в архив.",
+                                    "✅ Connection moved to archive."),
+                    )
+                    await show_connections(bot, user_id, actor_id)
             elif action == "network":
                 await show_network_profile(bot, user_id, actor_id, project_id)
             elif action == "networkask":
