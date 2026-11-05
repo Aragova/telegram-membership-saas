@@ -510,14 +510,14 @@ def create_owner_setup_router(
         ends = request.created_at.astimezone(ZoneInfo(project.timezone))
         await bot.send_message(
             user_id,
-            tr("🧾 <b>Счёт</b>\\n\\n", "🧾 <b>Invoice</b>\\n\\n")
-            + tr("№ ", "Ref ") + request.id.hex[:10].upper() + "\\n"
+            tr("🧾 <b>Счёт</b>\n\n", "🧾 <b>Invoice</b>\n\n")
+            + tr("№ ", "Ref ") + request.id.hex[:10].upper() + "\n"
             + tr("🕒 Создан: ", "🕒 Created: ")
-            + f"{ends:%d.%m.%Y %H:%M} ({escape(project.timezone)})\\n"
+            + f"{ends:%d.%m.%Y %H:%M} ({escape(project.timezone)})\n"
             + tr("📦 Срок: ", "📦 Period: ")
-            + escape(format_period(request.duration_value, request.duration_unit)) + "\\n"
+            + escape(format_period(request.duration_value, request.duration_unit)) + "\n"
             + "💳 <b>" + escape(format_amount(request.final_amount, 18))
-            + " " + escape(request.currency_code) + "</b>\\n"
+            + " " + escape(request.currency_code) + "</b>\n"
             + tr("Статус: ", "Status: ") + escape(status),
             parse_mode="HTML",
             reply_markup=_markup([
