@@ -214,12 +214,24 @@ async def test_owner_notification_settings_ui_and_toggle_are_bilingual(
             "New invoice" if locale == "en" else "Новый счёт"
         ) in msg
         markup = bot.send_message.await_args.kwargs["reply_markup"]
-        assert "own:notifyset:invoice:0" in [
+        actions = [
             b.callback_data for row in markup.inline_keyboard for b in row
         ]
+        assert "own:notifyset:invoice:0" in actions
+        assert "own:notifyset:expiry:0" in actions
+        assert ("Subscription expiry" if locale == "en"
+                else "Окончание подписок") in msg
+        assert ("10:00" in msg)
 
         await handle(query("notifyset:invoice:0"), bot)
         change.assert_awaited_once()
+        assert change.await_args.kwargs["actor_id"] == owner
+        assert change.await_args.kwargs["project_id"] == project
+        assert change.await_args.kwargs["enabled"] is False
+
+        await handle(query("notifyset:expiry:0"), bot)
+        assert change.await_count == 2
+        assert change.await_args.kwargs["category"] == "expiry"
         assert change.await_args.kwargs["actor_id"] == owner
         assert change.await_args.kwargs["project_id"] == project
         assert change.await_args.kwargs["enabled"] is False

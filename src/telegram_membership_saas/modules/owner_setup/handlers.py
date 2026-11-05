@@ -574,6 +574,10 @@ def create_owner_setup_router(
             tr("✅ Включены", "✅ Enabled") if flags["invoice"]
             else tr("🔕 Выключены", "🔕 Disabled")
         )
+        expiry_status = (
+            tr("✅ Включены", "✅ Enabled") if flags["expiry"]
+            else tr("🔕 Выключены", "🔕 Disabled")
+        )
         await bot.send_message(
             user_id,
             tr("🔔 <b>Уведомления владельца</b>\n\n"
@@ -581,12 +585,20 @@ def create_owner_setup_router(
                "🧾 New invoice: ")
             + invoice_status
             + tr(
+                "\n⏳ Окончание подписок: ",
+                "\n⏳ Subscription expiry: ",
+            )
+            + expiry_status
+            + tr(
+                "\n🕙 Сводка в 10:00 по часовому поясу проекта. "
+                "За 7, 3 и 1 день и после истечения срока."
                 "\n\n📩 Чеки и решения об оплате работают как прежде. "
-                "Настройки напоминаний об окончании подписок, сбоев доступа "
-                "и ежедневного отчёта будут добавлены после проверки доставки.",
+                "Уведомления об ошибках доступа и ежедневный отчёт "
+                "добавим отдельным этапом.",
+                "\n🕙 Digest at 10:00 in the project timezone. "
+                "7, 3 and 1 day before expiry, and after the term ends."
                 "\n\n📩 Receipt reviews and payment decisions work as before. "
-                "Expiry, access-incident and daily digest settings will be "
-                "enabled after their delivery paths are tested.",
+                "Access incidents and optional daily reports will follow.",
             ),
             parse_mode="HTML",
             reply_markup=_markup([
@@ -595,6 +607,12 @@ def create_owner_setup_router(
                     if flags["invoice"]
                     else tr("🧾 Включить счета", "🧾 Enable invoices"),
                     "notifyset:invoice:" + ("0" if flags["invoice"] else "1"),
+                )],
+                [_button(
+                    tr("⏳ Выключить сроки", "⏳ Mute expiry")
+                    if flags["expiry"]
+                    else tr("⏳ Включить сроки", "⏳ Enable expiry"),
+                    "notifyset:expiry:" + ("0" if flags["expiry"] else "1"),
                 )],
                 [_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")],
             ]),
@@ -2434,7 +2452,7 @@ def create_owner_setup_router(
                 await show_notifications(bot, user_id, actor_id, project_id)
             elif action.startswith("notifyset:"):
                 _, category, raw = action.split(":", 2)
-                if raw not in ("0", "1") or category != "invoice":
+                if raw not in ("0", "1") or category not in ("invoice", "expiry"):
                     raise ValueError(tr("Некорректная настройка", "Invalid setting"))
                 async with tenant_session_scope(
                     factory, TenantContext(user_id=actor_id, project_id=project_id),
