@@ -7,7 +7,7 @@ from html import escape
 from secrets import randbelow
 from uuid import UUID
 
-from aiogram import Bot, F, Router
+from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
@@ -253,6 +253,48 @@ class SetupReplyFilter(BaseFilter):
         )
 
 
+class ClearOwnerInputOnNavigation(BaseMiddleware):
+    """When leaving a plain-text form, discard its bot-scoped capture.
+
+    Installed as an inner aiogram callback middleware; direct handler calls
+    in unit tests still test just the handler, while the full dispatcher
+    exercises this shared navigation policy.
+    """
+
+    def __init__(
+        self, factory: async_sessionmaker[AsyncSession],
+        fixed_project_id: UUID | None,
+    ) -> None:
+        self.factory = factory
+        self.fixed_project_id = fixed_project_id
+
+    async def __call__(self, handler, event: CallbackQuery, data: dict):
+        action = (event.data or "")
+        bot = data.get("bot")
+        if (
+            action.startswith("own:")
+            and action != "own:cancel"
+            and not action.startswith((
+                "own:flowback:", "own:planname:",
+                "own:duration:", "own:use:",
+            ))
+            and bot is not None
+            and event.message is not None
+            and event.message.chat.type == "private"
+            and event.message.chat.id == event.from_user.id
+        ):
+            user = event.from_user
+            actor_id = await ensure_telegram_actor(
+                self.factory, telegram_id=user.id,
+                username=user.username, first_name=user.first_name,
+            )
+            await cancel_owner_flow(
+                self.factory, actor_id=actor_id,
+                bot_scope_id=bot.id if self.fixed_project_id else 0,
+            )
+        return await handler(event, data)
+
+
 class OwnerHomeFilter(BaseFilter):
     """Owner / tenant manager sees administration; ordinary buyers fall through."""
 
@@ -286,6 +328,9 @@ def create_owner_setup_router(
     ] | None = None,
 ) -> Router:
     router = Router(name="owner-tenant" if fixed_project_id else "central-registrar")
+    router.callback_query.middleware(
+        ClearOwnerInputOnNavigation(factory, fixed_project_id),
+    )
 
     async def actor(user) -> UUID:
         return await ensure_telegram_actor(
@@ -1571,17 +1616,6 @@ def create_owner_setup_router(
                     show_alert=True,
                 )
                 return
-        # ForceReply used to capture only explicit replies. Now ordinary
-        # private text can answer the live form, so leaving a form through
-        # *any other button* must invalidate it before displaying a screen.
-        # Keep atomic generation-bound wizard buttons intact: they consume
-        # their own step and reject stale callbacks in consume_button_flow.
-        wizard_actions = ("flowback:", "planname:", "duration:", "use:")
-        if action != "cancel" and not action.startswith(wizard_actions):
-            await cancel_owner_flow(
-                factory, actor_id=actor_id,
-                bot_scope_id=bot.id if fixed_project_id else 0,
-            )
         try:
             if action == "new":
                 if get_settings().bot_token_encryption_key is None:
