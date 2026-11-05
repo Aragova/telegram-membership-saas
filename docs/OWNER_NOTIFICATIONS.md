@@ -119,13 +119,19 @@ actionable review messages remain available to authorized reviewers.
 ## PR #60 — confirmed access-action incidents and recovery
 
 - Tenant-scoped connected project bot only; central bot unchanged.
-- Warning on `AccessAction.failed_permanent`, or a persistent retryable
-  failure with >=3 attempts over at least 10 minutes. Never warn for a single
-  transient Telegram retry, pending action or superseded revision.
+- Warning on `AccessAction.failed_permanent` immediately, or a retryable
+  failure after >=3 failed attempts **AND an additional 10-minute observation
+  period**. Observation begins when the scanner first detects the third failed
+  attempt, stored as `owner_notification_deliveries.available_at`. Never
+  infer failure duration from the action's original queue creation time.
+  Do not warn for transient retries or superseded desired revisions.
 - Scan once per minute inside the existing project worker, bounded by 100
-  recent actions from the past 7 days. The delivery queue uses existing
-  `owner_notification_deliveries` with `kind='access'` and the action UUID
-  as its stable event key. One warning per actual action/owner/project.
+  previously *unhandled, current* failed actions from the past 7 days. SQL
+  excludes already queued/delivered incidents **before LIMIT** to prevent
+  long-running tenant projects from starving older failures. The delivery
+  queue uses existing `owner_notification_deliveries` with `kind='access'`
+  and the canonical action UUID string as its stable event key. One warning
+  per actual action/owner/project.
 - The message shows the customer, resource and grant/revoke operation,
   not the Telegram error string, traceback or bot token. Buttons navigate
   through the existing, owner-checked subscriber callback.
@@ -133,9 +139,12 @@ actionable review messages remain available to authorized reviewers.
   action+desired/actual state immediately BEFORE sending a warning. A resolved
   or superseded error must be silently suppressed.
 - A recovery is created ONLY if the initial alert was confirmed sent to
-  Telegram (not silently skipped). Current `AccessState.actual_state` must
-  match the desired grant/revoke state. No recovery spam; one event per
-  original incident via the existing outbox key.
+  Telegram (not silently skipped), and a **same-direction successful access
+  action** for the original customer/channel was persisted *after* that
+  alert, and desired+actual states both agree with the original operation.
+  Subscription expiry/cancellation or plan changes alone are NOT evidence
+  that a failed grant or revocation recovered. Recovery candidates are also
+  prefiltered in SQL before LIMIT. No recovery spam; one event per incident.
 - Owner can mute/unmute both warning and recovery in the existing bilingual
   `⚙️ Settings → 🔔 Notifications` screen. Defaults ON per project.
 - No schema migrations, payment/approval/access state mutations, new services
