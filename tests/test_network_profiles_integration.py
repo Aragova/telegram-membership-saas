@@ -1,5 +1,8 @@
 """Real PostgreSQL RLS and onboarding E2E for independent network copies."""
+import asyncio
 import os
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -130,7 +133,7 @@ async def test_network_profile_auto_copies_only_independent_inactive_configurati
         ) as session:
             assert await session.scalar(select(OwnerNetworkProfile)) is None
 
-        ids = iter((tid(), tid(), tid()))
+        ids = iter((tid(), tid(), tid(), tid()))
         async def verified(_token):
             bot_id = next(ids)
             return VerifiedBot(
@@ -282,6 +285,52 @@ async def test_network_profile_auto_copies_only_independent_inactive_configurati
                 session, actor_id=stranger, project_id=copy_b,
                 resource_id=channel_b.id,
             ) == 1
+        # Two Telegram channel confirmations happening concurrently must
+        # serialize on the project row; the imported plan must never
+        # accidentally unlock both channels.
+        copy_race, race_bot = await setup.register_new_owner_bot(
+            factory, actor_id=owner, actor_telegram_user_id=owner_tg,
+            token=token, encryption_key=key, central_bot_id=987654321,
+        )
+        fake = SimpleNamespace(
+            get_chat=AsyncMock(side_effect=lambda chat_id: SimpleNamespace(
+                id=chat_id, type="channel", title="Race channel",
+            )),
+            get_me=AsyncMock(return_value=SimpleNamespace(
+                id=race_bot.telegram_bot_id,
+            )),
+            get_chat_member=AsyncMock(side_effect=lambda chat_id, user_id: (
+                SimpleNamespace(status="administrator", can_invite_users=True,
+                                can_restrict_members=True)
+                if user_id == race_bot.telegram_bot_id
+                else SimpleNamespace(status="creator")
+            )),
+            session=SimpleNamespace(close=AsyncMock()),
+        )
+        monkeypatch.setattr(setup, "get_settings", lambda: SimpleNamespace(
+            bot_token_encryption_key=key,
+        ))
+        monkeypatch.setattr(setup, "Bot", lambda token: fake)
+        references = [-tid(), -tid()]
+        await asyncio.gather(*(
+            setup.verify_channel_and_add(
+                factory, actor_id=owner, actor_telegram_id=owner_tg,
+                project_id=copy_race, chat_reference=reference,
+            )
+            for reference in references
+        ))
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=copy_race),
+        ) as session:
+            channels = (await session.scalars(select(Resource).where(
+                Resource.project_id == copy_race,
+            ))).all()
+            assignments = (await session.scalars(select(PlanResource).where(
+                PlanResource.project_id == copy_race,
+            ))).all()
+            assert len(channels) == 2
+            assert len(assignments) == 1
+
         await set_network_auto_apply(factory, actor_id=owner, enabled=False)
         copy_c, _ = await setup.register_new_owner_bot(
             factory, actor_id=owner, actor_telegram_user_id=owner_tg,
