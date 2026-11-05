@@ -39,6 +39,14 @@ from telegram_membership_saas.modules.bots.service import (
     decrypt_token,
     register_customer_bot,
 )
+from telegram_membership_saas.modules.owner_setup.connection_management import (
+    archive_owner_connection,
+    get_connection_disposition,
+    list_archived_owner_connections,
+    remove_unused_connection,
+    rename_owner_connection,
+    restore_owner_connection,
+)
 from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_catalog_screen,
     preview_method_screen,
@@ -478,6 +486,101 @@ def create_owner_setup_router(
             message_id=sent.message_id, generation=generation,
             bot_scope_id=bot.id if fixed_project_id else 0,
         )
+
+    async def show_connections(
+        bot: Bot, user_id: int, actor_id: UUID,
+        *, page: int = 0, archived: bool = False,
+    ) -> None:
+        """Compact, paginated central connection registry (100+ bots)."""
+        if archived:
+            projects = await list_archived_owner_connections(
+                factory, actor_id=actor_id,
+            )
+        else:
+            home = await owner_home(factory, actor_id=actor_id)
+            projects = home.projects
+        page_size = 10
+        total_pages = max(1, (len(projects) + page_size - 1) // page_size)
+        page = min(max(page, 0), total_pages - 1)
+        listed = projects[page * page_size:(page + 1) * page_size]
+        rows: list[list[InlineKeyboardButton]] = [
+            [_button(
+                ("📦 " if archived else "📁 ") + name[:42],
+                ("archview:" if archived else "select:") + pid.hex,
+            )]
+            for pid, name in listed
+        ]
+        if total_pages > 1:
+            nav = []
+            verb = "archives:" if archived else "projects:"
+            if page > 0:
+                nav.append(_button("◀️", verb + str(page - 1)))
+            nav.append(_button(f"{page + 1}/{total_pages}", verb + str(page)))
+            if page + 1 < total_pages:
+                nav.append(_button("▶️", verb + str(page + 1)))
+            rows.append(nav)
+        if archived:
+            rows.append([_button(
+                tr("⬅️ Мои подключения", "⬅️ My connections"), "projects",
+            )])
+        else:
+            rows.append([_button(
+                tr("➕ Подключить бота", "➕ Connect a bot"), "new", "success",
+            )])
+            if await list_archived_owner_connections(factory, actor_id=actor_id):
+                rows.append([_button(
+                    tr("📦 Архив подключений", "📦 Archived connections"),
+                    "archives",
+                )])
+        if platform_navigation(user_id):
+            rows.append(platform_navigation(user_id))
+        title = tr("📁 <b>Мои подключения</b>", "📁 <b>My connections</b>")
+        if archived:
+            title = tr("📦 <b>Архив подключений</b>", "📦 <b>Archived connections</b>")
+        await bot.send_message(
+            user_id,
+            title + "\n" + (
+                tr("Пусто.", "Empty.") if not projects
+                else tr(
+                    "Выберите подключение для управления.",
+                    "Select a connection to manage.",
+                )
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+
+    async def show_archived_connection(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        archived = dict(await list_archived_owner_connections(
+            factory, actor_id=actor_id,
+        ))
+        name = archived.get(project_id)
+        if name is None:
+            raise ValueError(tr(
+                "Подключение не найдено в архиве.", "Connection is not archived.",
+            ))
+        await bot.send_message(
+            user_id,
+            tr("📦 <b>В архиве:</b> ", "📦 <b>Archived:</b> ")
+            + escape(name) + "\n\n"
+            + tr(
+                "Бот отключён, финансовая история сохранена. "
+                "Подключение не отображается в активном списке.",
+                "Bot detached, financial records retained. "
+                "This connection is hidden from the active list.",
+            ),
+            parse_mode="HTML",
+            reply_markup=_markup([
+                [_button(
+                    tr("↩️ Восстановить подключение", "↩️ Restore connection"),
+                    "restore:" + project_id.hex, "success",
+                )],
+                [_button(tr("⬅️ Архив", "⬅️ Archive"), "archives")],
+            ]),
+        )
+
 
     async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
