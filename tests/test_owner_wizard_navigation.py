@@ -254,7 +254,8 @@ async def test_method_currency_picker_has_back_and_no_extra_menu_commands(monkey
     assert ("⬅️ Payment methods", "own:methods") not in commands  # Russian default
     assert any(data == "own:methods" for _, data in commands)
     assert any(data == "own:methodcurrency:RUB" for _, data in commands)
-    assert len(commands) == 3
+    assert any(data == "own:currencyadd:method" for _, data in commands)
+    assert len(commands) == 4
 
 
 @pytest.mark.asyncio
