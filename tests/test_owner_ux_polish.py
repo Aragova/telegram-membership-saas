@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-import pytest
 from aiogram.types import ReplyKeyboardRemove
 
 from telegram_membership_saas import localization
