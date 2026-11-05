@@ -98,6 +98,7 @@ def test_daily_summary_render_is_bilingual_safe_and_multi_currency(
         assert waiting in text
         assert "1550 RUB" in text
         assert "9.5 USD" in text
+        assert ("ещё валют" not in text and "more currencies" not in text)
         assert "<VIP & GOLD>" not in text
         assert "Channel &lt;VIP &amp; GOLD&gt;" in text
         assert "05.11.2026" in text
@@ -122,6 +123,7 @@ def test_zero_sales_do_not_claim_funds_or_create_fake_currency():
         text = render_daily_financial_summary(report)
         assert "Оплат подтверждено: 0" in text
         assert "Подтверждённых оплат нет" in text
+        assert "ещё валют" not in text
         assert "Заявок на проверке: 1" in text
         assert "RUB" not in text
     finally:
