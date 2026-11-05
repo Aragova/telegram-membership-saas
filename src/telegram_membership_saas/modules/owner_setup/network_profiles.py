@@ -27,6 +27,7 @@ from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice, replace_active_plan_price
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.tenant_context import TenantContext
 
 MAX_PROFILE_ITEMS = 100
@@ -295,11 +296,17 @@ async def import_profile_into_new_project(
 async def bind_imported_drafts_on_first_channel(
     session: AsyncSession, *, actor_id: UUID, project_id: UUID, resource_id: UUID,
 ) -> int:
-    """Attach only imported unbound drafts to the first verified channel."""
+    """Attach only imported unbound drafts to the first verified channel.
+
+    A project admin may verify a channel but must never read the owner's
+    private network profile. The project-scoped import marker is sufficient.
+    """
+    await _require_project_manager(
+        session, project_id=project_id, actor_user_id=actor_id,
+    )
     applied = await session.scalar(
         select(ProjectProfileApplication).where(
             ProjectProfileApplication.project_id == project_id,
-            ProjectProfileApplication.owner_user_id == actor_id,
             ProjectProfileApplication.status == "applied",
         )
     )
