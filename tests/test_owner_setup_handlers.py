@@ -101,6 +101,7 @@ async def test_central_start_shows_connection_registry_without_raw_uuids(monkeyp
         ui, "setup_overview",
         AsyncMock(return_value=_overview(project_id)),
     )
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
     await _handler("home_message")(_message(), bot)
     sent = bot.send_message.await_args
