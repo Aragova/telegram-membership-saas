@@ -118,3 +118,52 @@ async def test_failed_shared_lease_stops_supervisor_for_clean_restart():
     with pytest.raises(RuntimeError, match="restart required"):
         await asyncio.wait_for(supervisor.run(), timeout=1)
     supervisor.reconcile_once.assert_awaited_once()
+
+
+async def test_busy_first_five_projects_do_not_starve_other_bot_startups(
+    monkeypatch,
+):
+    from telegram_membership_saas import customer_supervisor as runtime
+    from telegram_membership_saas.project_worker_lock import ProjectWorkerBusy
+
+    pool = tuple(
+        BotTarget(
+            project_id=UUID(int=i + 1),
+            telegram_bot_id=4000000 + i,
+            credential_version=datetime.now(UTC),
+        )
+        for i in range(8)
+    )
+    attempts = []
+    release = asyncio.Event()
+
+    async def worker(_engine, _factory, target, *, settings):
+        attempts.append(target.project_id.int)
+        if target.project_id.int <= 5:
+            raise ProjectWorkerBusy("Old supervisor still draining")
+        await release.wait()
+
+    monkeypatch.setattr(runtime, "discover_targets",
+                        AsyncMock(return_value=pool))
+    monkeypatch.setattr(runtime, "discover_removal_targets",
+                        AsyncMock(return_value=()))
+    monkeypatch.setattr(runtime, "run_target", worker)
+    monkeypatch.setattr(runtime, "write_bot_health", AsyncMock())
+    supervisor = CustomerBotSupervisor(
+        MagicMock(), MagicMock(),
+        config(customer_supervisor_lease_mode="shared",
+               customer_supervisor_max_bots=8),
+    )
+    try:
+        await supervisor.reconcile_once()
+        await asyncio.sleep(0)
+        assert attempts == [1, 2, 3, 4, 5]
+        await supervisor.reconcile_once()
+        await asyncio.sleep(0)
+        assert {6, 7, 8}.issubset(set(attempts))
+    finally:
+        release.set()
+        await asyncio.gather(
+            *(w.task for w in supervisor.workers.values()),
+            return_exceptions=True,
+        )
