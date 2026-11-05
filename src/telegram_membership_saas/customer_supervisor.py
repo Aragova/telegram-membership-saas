@@ -408,6 +408,15 @@ class CustomerBotSupervisor:
                     raise
                 except Exception:
                     logger.warning("Customer supervisor discovery failed; retrying")
+                if (isinstance(self.engine, SharedProjectLeaseManager)
+                        and self.engine.failed):
+                    # All project locks share the same PostgreSQL backend.
+                    # If that session was lost or interrupted, stop all
+                    # pollers BEFORE exiting. Docker's restart policy then
+                    # creates a clean manager with freshly acquired locks.
+                    raise RuntimeError(
+                        "Shared supervisor lease failed; restart required"
+                    )
                 await asyncio.sleep(SCAN_SECONDS)
         finally:
             async def shutdown() -> None:
