@@ -18,6 +18,7 @@ services:
 
   customer-supervisor-1:
     extends:
+      file: compose.yaml
       service: customer-supervisor
     profiles: ["supervisor-scale"]
     environment:
@@ -27,6 +28,7 @@ services:
 
   customer-supervisor-2:
     extends:
+      file: compose.yaml
       service: customer-supervisor
     profiles: ["supervisor-scale"]
     environment:
@@ -36,6 +38,7 @@ services:
 
   customer-supervisor-3:
     extends:
+      file: compose.yaml
       service: customer-supervisor
     profiles: ["supervisor-scale"]
     environment:
