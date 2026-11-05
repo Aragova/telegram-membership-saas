@@ -3,6 +3,7 @@ from telegram_membership_saas.modules.pricing.models import (
     CurrencyAssetStatus,
     CurrencyAssetType,
     PlanPrice,
+    ProjectEnabledCurrency,
     PlanPriceStatus,
 )
 from telegram_membership_saas.modules.pricing.service import (
@@ -15,6 +16,7 @@ __all__ = [
     "CurrencyAssetStatus",
     "CurrencyAssetType",
     "PlanPrice",
+    "ProjectEnabledCurrency",
     "PlanPriceStatus",
     "replace_active_plan_price",
     "retire_active_plan_price",
