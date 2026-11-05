@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from hashlib import blake2s
 from dataclasses import dataclass
 from datetime import datetime
 from time import monotonic
@@ -43,6 +44,11 @@ SCAN_SECONDS = 10
 HEARTBEAT_SECONDS = 3
 FAILURE_BACKOFF_SECONDS = 45
 POLLING_STALE_SECONDS = 45
+# Each supervisor owns one operational pool (5 + 10 possible overflow connections).
+# Leave additional PostgreSQL slots for the central bot, API and maintenance.
+OPERATIONAL_POOL_BUDGET_PER_SHARD = 15
+OTHER_DATABASE_CONNECTION_RESERVE = 40
+POSTGRES_SUPERUSER_RESERVED_CONNECTIONS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +62,73 @@ class BotTarget:
 class RunningTarget:
     target: BotTarget
     task: asyncio.Task[None]
+
+
+def assign_project_shards(
+    targets: tuple[BotTarget, ...], *, shard_count: int, shard_capacity: int,
+) -> dict[UUID, int | None]:
+    """Deterministic, capacity-bounded placement across independent workers.
+
+    All replicas observe the same registered targets and compute the same
+    assignments. Rendezvous preference keeps most projects on their preferred
+    shard; overflow goes to the next available shard. A project moves only
+    when the shared target set or deployment topology changes, and the
+    existing per-project PostgreSQL lease prevents concurrent pollers.
+    None means the overall installation is genuinely out of capacity.
+    """
+    if shard_count < 1 or shard_capacity < 1:
+        raise ValueError("Invalid supervisor shard topology")
+    load = [0] * shard_count
+    placements: dict[UUID, int | None] = {}
+    for target in sorted(targets, key=lambda item: item.project_id.int):
+        if target.project_id in placements:
+            raise ValueError("Duplicate project in customer supervisor discovery")
+        ranked = sorted(
+            range(shard_count),
+            key=lambda shard: blake2s(
+                b"vimi-supervisor-shard-v1:"
+                + target.project_id.bytes + shard.to_bytes(2, "big"),
+                digest_size=8,
+            ).digest(),
+            reverse=True,
+        )
+        assignment = next(
+            (shard for shard in ranked if load[shard] < shard_capacity),
+            None,
+        )
+        placements[target.project_id] = assignment
+        if assignment is not None:
+            load[assignment] += 1
+    return placements
+
+
+async def ensure_supervisor_database_budget(
+    factory: async_sessionmaker[AsyncSession], settings: Settings,
+) -> None:
+    """Fail closed before starting multi-shard polling on an undersized DB.
+
+    With a single shard we preserve the existing staging configuration.
+    A multi-shard rollout must reserve one PostgreSQL lease connection per
+    possible worker, operational pools for each shard, and spare connections
+    for the API/central bot. This is a conservative admission check, not a
+    statement about RAM, CPU, disk or Telegram throughput.
+    """
+    if settings.customer_supervisor_shard_count == 1:
+        return
+    expected = (
+        settings.customer_supervisor_shard_count
+        * (settings.customer_supervisor_max_bots + OPERATIONAL_POOL_BUDGET_PER_SHARD)
+        + OTHER_DATABASE_CONNECTION_RESERVE
+        + POSTGRES_SUPERUSER_RESERVED_CONNECTIONS
+    )
+    async with factory() as session:
+        configured = int(await session.scalar(text("SHOW max_connections")))
+    if configured < expected:
+        raise RuntimeError(
+            "PostgreSQL connection budget is too small for the requested "
+            f"supervisor topology: max_connections={configured}; "
+            f"at least {expected} required before enabling multiple shards"
+        )
 
 
 async def discover_targets(
@@ -215,11 +288,18 @@ class CustomerBotSupervisor:
         self._supervisor_id = uuid4()
 
     async def reconcile_once(self) -> None:
-        targets = {t.project_id: t for t in await discover_targets(self.factory)}
-        # Buyer catalog eligibility and long-lived entitlement enforcement
-        # are independent. Never stop a project worker when its last tariff
-        # becomes unavailable: existing grants still need expiry/revocation.
-        ready = targets
+        discovered = await discover_targets(self.factory)
+        placement = assign_project_shards(
+            discovered,
+            shard_count=self.settings.customer_supervisor_shard_count,
+            shard_capacity=self.settings.customer_supervisor_max_bots,
+        )
+        # Only the owning shard starts a project's poller. Over-capacity bots
+        # are reported as queued by shard 0 once, never by every replica.
+        ready = {
+            t.project_id: t for t in discovered
+            if placement[t.project_id] == self.settings.customer_supervisor_shard_id
+        }
 
         for pid, current in list(self.workers.items()):
             if current.task.done():
@@ -239,6 +319,17 @@ class CustomerBotSupervisor:
         # Retiring bots have already disappeared from registered targets.
         # Polling must be fully drained and the advisory lock free first.
         await self.finalize_removals()
+
+        if self.settings.customer_supervisor_shard_id == 0:
+            for target in discovered:
+                if placement[target.project_id] is None:
+                    await write_bot_health(
+                        self.factory,
+                        project_id=target.project_id,
+                        bot_id=target.telegram_bot_id,
+                        instance_id=self._supervisor_id,
+                        state="queued",
+                    )
 
         for pid, target in sorted(ready.items(), key=lambda item: item[0].int):
             if pid in self.workers or monotonic() < self.retry_after.get(pid, 0):
@@ -319,6 +410,9 @@ async def run_customer_supervisor(settings: Settings | None = None) -> None:
     operational_engine = build_engine(current)
     lease_engine = build_lease_engine(current)
     try:
+        await ensure_supervisor_database_budget(
+            build_session_factory(operational_engine), current,
+        )
         supervisor = CustomerBotSupervisor(
             lease_engine,
             build_session_factory(operational_engine),
