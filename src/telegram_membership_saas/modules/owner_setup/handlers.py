@@ -1030,9 +1030,14 @@ def create_owner_setup_router(
         if not data.subscriptions:
             lines.append(tr("Нет покупок по тарифам", "No plan subscriptions"))
         for sub in data.subscriptions[:8]:
+            status_label = {
+                "active": tr("активна", "active"),
+                "expired": tr("истекла", "expired"),
+                "cancelled": tr("отменена", "cancelled"),
+            }.get(sub.status, sub.status)
             lines.append(
                 "• " + escape(sub.plan_name[:45]) + " · "
-                + escape(sub.status) + " · "
+                + escape(status_label) + " · "
                 + subscriber_date(sub.period_end, data.project_timezone)
             )
         lines.extend([
@@ -1070,9 +1075,14 @@ def create_owner_setup_router(
             ])
             for entry in data.access[:8]:
                 mark = "✅" if entry.actual == "granted" else "⏳" if entry.desired else "⚪"
+                access_label = {
+                    "granted": tr("выдан", "granted"),
+                    "revoked": tr("отозван", "revoked"),
+                    "unknown": tr("не подтверждён", "not verified"),
+                }.get(entry.actual, entry.actual)
                 lines.append(
                     mark + " " + escape(entry.resource_name[:35])
-                    + " · " + escape(entry.actual)
+                    + " · " + escape(access_label)
                 )
         rows: list[list[InlineKeyboardButton]] = []
         if data.total_payments > 5:
