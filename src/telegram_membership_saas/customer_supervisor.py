@@ -298,6 +298,9 @@ class CustomerBotSupervisor:
         self.workers: dict[UUID, RunningTarget] = {}
         self.retry_after: dict[UUID, float] = {}
         self._supervisor_id = uuid4()
+        # Shared-mode admission cursor ensures a handful of busy legacy
+        # projects cannot consume every five-worker startup batch forever.
+        self._admission_cursor: UUID | None = None
 
     async def reconcile_once(self) -> None:
         discovered = await discover_targets(self.factory)
@@ -353,7 +356,16 @@ class CustomerBotSupervisor:
                     )
 
         newly_started = 0
-        for pid, target in sorted(ready.items(), key=lambda item: item[0].int):
+        candidates = sorted(ready.items(), key=lambda item: item[0].int)
+        if (self.settings.customer_supervisor_lease_mode == "shared"
+                and candidates and self._admission_cursor is not None):
+            index = next(
+                (i for i, (pid, _) in enumerate(candidates)
+                 if pid.int > self._admission_cursor.int),
+                0,
+            )
+            candidates = candidates[index:] + candidates[:index]
+        for pid, target in candidates:
             if pid in self.workers or monotonic() < self.retry_after.get(pid, 0):
                 continue
             if (self.settings.customer_supervisor_lease_mode == "shared"
@@ -375,6 +387,8 @@ class CustomerBotSupervisor:
                 run_target(self.engine, self.factory, target, settings=self.settings)
             )
             self.workers[pid] = RunningTarget(target=target, task=task)
+            if self.settings.customer_supervisor_lease_mode == "shared":
+                self._admission_cursor = pid
             newly_started += 1
             logger.info("Customer runtime scheduled for project %s", pid)
 
