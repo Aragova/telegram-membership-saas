@@ -14,6 +14,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.owner_setup.currencies import (
+    project_currency_is_selected,
+)
 from telegram_membership_saas.modules.owner_setup.method_management import (
     method_has_history,
     method_revision,
@@ -21,9 +24,6 @@ from telegram_membership_saas.modules.owner_setup.method_management import (
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     plan_has_history,
     plan_revision,
-)
-from telegram_membership_saas.modules.owner_setup.currencies import (
-    project_currency_is_selected,
 )
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
