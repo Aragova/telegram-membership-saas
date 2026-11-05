@@ -198,3 +198,39 @@ async def test_language_change_opens_main_menu_automatically(monkeypatch):
     query.answer.assert_awaited_once()
     assert "main menu" in bot.send_message.await_args.args[1]
     assert localization.current_language() == "ru"
+
+
+async def test_navigation_middleware_discards_plain_input_on_dashboard_click(monkeypatch):
+    project, actor = uuid4(), uuid4()
+    factory = MagicMock()
+    middleware = ui.ClearOwnerInputOnNavigation(factory, project)
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(
+        return_value=actor,
+    ))
+    cancel = AsyncMock(return_value=True)
+    monkeypatch.setattr(ui, "cancel_owner_flow", cancel)
+    handler = AsyncMock(return_value="handled")
+    event = owner_query("dashboard")
+    bot = owner_bot()
+    assert await middleware(handler, event, {"bot": bot}) == "handled"
+    cancel.assert_awaited_once_with(
+        factory, actor_id=actor, bot_scope_id=bot.id,
+    )
+    handler.assert_awaited_once()
+
+    # Wizard buttons are generation-scoped, handled atomically by the
+    # existing consume_button_flow; navigation middleware leaves them intact.
+    cancel.reset_mock()
+    event.data = "own:duration:month:gen"
+    await middleware(handler, event, {"bot": bot})
+    cancel.assert_not_awaited()
+
+    event.data = "own:planname:gen"
+    await middleware(handler, event, {"bot": bot})
+    cancel.assert_not_awaited()
+
+    # Group callback cannot cancel a private wizard.
+    event.data = "own:dashboard"
+    event.message.chat.type = "supergroup"
+    await middleware(handler, event, {"bot": bot})
+    cancel.assert_not_awaited()
