@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
@@ -25,6 +26,7 @@ from telegram_membership_saas.modules.owner_expiry import schedule_owner_expiry_
 from telegram_membership_saas.modules.owner_notifications import (
     deliver_one_owner_notification,
 )
+from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessAdapter,
     ensure_owner_service_for_project,
@@ -163,10 +165,30 @@ async def run_project_runtime_loop(
     current_time = clock or utcnow
     next_owner_reconcile: datetime | None = None
     next_expiry_scan: datetime | None = None
+    next_timezone_check: datetime | None = None
+    cached_timezone: str | None = None
 
     while True:
         moment = current_time()
         try:
+            if next_timezone_check is None or moment >= next_timezone_check:
+                try:
+                    async with system_project_session_scope(
+                        session_factory, project_id,
+                    ) as session:
+                        timezone = await session.scalar(
+                            select(Project.timezone).where(Project.id == project_id)
+                        )
+                    if timezone != cached_timezone:
+                        # Live timezone edits invalidate the cached UTC wake-up.
+                        cached_timezone = timezone
+                        next_expiry_scan = None
+                except Exception:
+                    logger.exception("Could not refresh owner digest timezone")
+                finally:
+                    # Bounded cost: one scoped timezone read per minute.
+                    next_timezone_check = moment + timedelta(seconds=60)
+
             if next_expiry_scan is None or moment >= next_expiry_scan:
                 try:
                     next_expiry_scan = await schedule_owner_expiry_digest(
