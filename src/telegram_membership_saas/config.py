@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     telegram_central_access_enabled: bool = True
     telegram_worker_poll_seconds: float = 1.0
     customer_supervisor_max_bots: int = Field(default=10, ge=1, le=32)
+    customer_supervisor_shard_count: int = Field(default=1, ge=1, le=256)
+    customer_supervisor_shard_id: int = Field(default=0, ge=0, le=255)
     default_project_timezone: str = "Europe/Moscow"
     platform_owner_telegram_id: int | None = None
     platform_timezone: str = "Europe/Moscow"
@@ -30,6 +32,12 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    @model_validator(mode="after")
+    def validate_supervisor_shard(self) -> "Settings":
+        if self.customer_supervisor_shard_id >= self.customer_supervisor_shard_count:
+            raise ValueError("Supervisor shard ID must be smaller than shard count")
+        return self
 
     @field_validator("bot_token_encryption_key", mode="before")
     @classmethod
