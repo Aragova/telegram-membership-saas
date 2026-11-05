@@ -1,17 +1,21 @@
 """Owner invoice notification contract: no false payment, tenant RLS, RU/EN."""
 import os
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from aiogram.exceptions import TelegramRetryAfter
+from aiogram.methods import SendMessage
 from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
     build_engine,
     build_session_factory,
+    system_project_session_scope,
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import _language
@@ -240,3 +244,60 @@ async def test_central_bot_does_not_expose_invoice_notification_settings(monkeyp
     await handle(query, bot)
     bot.send_message.assert_not_awaited()
     assert query.answer.await_args.kwargs["show_alert"]
+
+
+
+@pytest.mark.skipif(not os.getenv("TMS_DATABASE_URL"), reason="Requires PostgreSQL")
+async def test_invoice_flood_control_honors_telegram_retry_after():
+    """Do not use the shorter default backoff when Telegram requires 15 minutes."""
+    engine = build_engine(Settings(_env_file=None))
+    factory = build_session_factory(engine)
+    owner_telegram_id = (uuid4().int % 7_000_000_000_000_000_000) + 1
+    owner_id = await _user(factory, owner_telegram_id)
+    try:
+        async with tenant_session_scope(factory, TenantContext(user_id=owner_id)) as session:
+            project = Project(owner_user_id=owner_id, name="Retry after tenant")
+            session.add(project)
+            await session.flush()
+            project_id = project.id
+
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner_id, project_id=project_id),
+        ) as session:
+            await queue_invoice_created(
+                session, project_id=project_id,
+                request_id=uuid4(), customer_id=uuid4(), username="buyer",
+                first_name="Buyer", plan_name="One month",
+                duration_value=1, duration_unit="month", amount="100",
+                currency="RUB", method="Manual",
+            )
+
+        now = datetime.now(UTC)
+        delay = 900
+        retry = TelegramRetryAfter(
+            method=SendMessage(chat_id=owner_telegram_id, text="Invoice"),
+            message="Too Many Requests", retry_after=delay,
+        )
+        bot = SimpleNamespace(send_message=AsyncMock(side_effect=retry))
+        assert await deliver_one_owner_notification(
+            factory, project_id=project_id, bot=bot, now=now,
+        )
+        async with system_project_session_scope(factory, project_id) as session:
+            row = await session.scalar(
+                select(OwnerNotificationDelivery).where(
+                    OwnerNotificationDelivery.project_id == project_id,
+                )
+            )
+            assert row is not None
+            assert row.status == "pending"
+            assert row.attempt_count == 1
+            assert row.error_code == "TelegramRetryAfter"
+            assert row.available_at >= now + timedelta(seconds=delay)
+
+        assert not await deliver_one_owner_notification(
+            factory, project_id=project_id, bot=bot,
+            now=now + timedelta(minutes=5),
+        )
+        bot.send_message.assert_awaited_once()
+    finally:
+        await engine.dispose()
