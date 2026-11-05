@@ -21,6 +21,7 @@ from telegram_membership_saas.modules.outbox import (
     mark_outbox_event_failed,
     process_claimed_access_recalculate_event,
 )
+from telegram_membership_saas.modules.owner_expiry import schedule_owner_expiry_digest
 from telegram_membership_saas.modules.owner_notifications import (
     deliver_one_owner_notification,
 )
@@ -161,10 +162,21 @@ async def run_project_runtime_loop(
 
     current_time = clock or utcnow
     next_owner_reconcile: datetime | None = None
+    next_expiry_scan: datetime | None = None
 
     while True:
         moment = current_time()
         try:
+            if next_expiry_scan is None or moment >= next_expiry_scan:
+                try:
+                    next_expiry_scan = await schedule_owner_expiry_digest(
+                        session_factory, project_id=project_id, now=moment,
+                    )
+                except Exception:
+                    # Owner alerts must never interrupt critical access work.
+                    logger.exception("Owner subscription digest scheduling failed")
+                    next_expiry_scan = moment + timedelta(minutes=5)
+
             if next_owner_reconcile is None or moment >= next_owner_reconcile:
                 await reconcile_owner_service(
                     session_factory,
