@@ -583,59 +583,80 @@ def create_owner_setup_router(
 
 
     async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
+        """One connection card, with actions based on its actual state."""
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = [tr("🤖 <b>Мои боты</b>", "🤖 <b>My bots</b>"), ""]
+        lines = [
+            tr("✦ <b>Управление подключением</b>",
+               "✦ <b>Manage connection</b>"),
+            f"<b>{escape(data.project_name)}</b>",
+            "",
+        ]
         if not data.bots:
-            lines.append(tr("Бот пока не подключён.", "No bot connected yet."))
-        for username, status in data.bots:
-            lines.append(
-                f"• <b>@{escape(username)}</b> — "
-                + (tr("токен проверен", "token verified") if status == "registered"
-                   else _status(status))
-            )
+            lines.append(tr("⚪ Telegram-бот не подключён.",
+                            "⚪ No Telegram bot connected."))
+        else:
+            for username, status in data.bots:
+                lines.append(
+                    f"🤖 <b>@{escape(username)}</b> — "
+                    + (tr("подключён", "connected") if status == "registered"
+                       else _status(status))
+                )
         retiring = any(status == "deleting" for _, _, status in data.bot_instances)
-        lines.append(
-            "\n" + (
-                tr("⏳ Бот отключается. Нажмите «Обновить статус» после завершения.",
-                    "⏳ Bot is shutting down. Refresh its status once complete.")
-                if retiring else escape(owner_runtime_label(data.bot_runtime_label))
-                + tr("\n\nБот доступен для настройки сразу после подключения."
-                     "\nОткройте его и добавьте каналы, оплату и тарифы.",
-                     "\n\nA verified bot can be configured immediately."
-                     "\nOpen it to add channels, payments and plans.")
-            )
-        )
-        rows = []
+        if retiring:
+            lines.append(tr(
+                "\n⏳ Бот отключается. Обновите статус после завершения.",
+                "\n⏳ Bot is being disconnected. Refresh its status afterward.",
+            ))
+        else:
+            lines.append("\n" + escape(owner_runtime_label(data.bot_runtime_label)))
+        rows: list[list[InlineKeyboardButton]] = []
         connected = next(
             (username for _, username, status in data.bot_instances
              if status == "registered"), None,
         )
         if connected:
-            rows.append([
-                InlineKeyboardButton(
-                    text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
-                    url="https://t.me/" + connected,
-                    style="success",
-                )
-            ])
-        rows.append([_button("🔄 Обновить статус", "bots")])
+            rows.append([InlineKeyboardButton(
+                text=tr("🚀 Открыть бота", "🚀 Open bot"),
+                url="https://t.me/" + connected, style="success",
+            )])
+        if data.bot_instances:
+            rows.append([_button(tr("🔄 Обновить статус", "🔄 Refresh"), "bots")])
         if not retiring:
-            rows.append([_button("➕ Подключить / обновить токен", "connect")])
+            rows.append([_button(
+                tr("🔑 Подключить / обновить токен", "🔑 Connect / update token"),
+                "connect",
+            )])
         if data.can_delete_bot:
-            for instance_id, username, status in data.bot_instances:
-                if status != "deleting":
-                    rows.append([
-                        _button(
-                            tr("🗑 Удалить @", "🗑 Remove @") + username[:35],
+            rows.append([_button(
+                tr("✏️ Переименовать подключение", "✏️ Rename connection"),
+                "connrename:" + project_id.hex,
+            )])
+            if data.bot_instances:
+                for instance_id, username, status in data.bot_instances:
+                    if status != "deleting":
+                        rows.append([_button(
+                            tr("🗑 Отключить @", "🗑 Disconnect @") + username[:30],
                             "drop:" + encode_uuid(project_id)
                             + ":" + encode_uuid(instance_id),
                             "danger",
-                        )
-                    ])
-        rows.extend([
-            [_button("➕ Подключить другого бота", "new")],
-            [_button("⬅️ Мои подключения", "dashboard")],
-        ])
+                        )])
+            else:
+                disposition = await get_connection_disposition(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if disposition.has_history:
+                    rows.append([_button(
+                        tr("📦 Убрать в архив", "📦 Archive connection"),
+                        "connarchive:" + project_id.hex, "danger",
+                    )])
+                else:
+                    rows.append([_button(
+                        tr("🗑 Удалить подключение", "🗑 Delete connection"),
+                        "connremove:" + project_id.hex, "danger",
+                    )])
+        rows.append([_button(
+            tr("⬅️ Все подключения", "⬅️ All connections"), "projects",
+        )])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
         await bot.send_message(
