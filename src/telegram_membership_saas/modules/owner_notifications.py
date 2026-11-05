@@ -188,7 +188,8 @@ async def queue_invoice_created(
 def _invoice_text(payload: dict) -> str:
     # Never interpolate unescaped Telegram/user-controlled HTML into messages.
     from telegram_membership_saas.modules.telegram_commerce.service import (
-        format_period, is_period_only_plan_name,
+        format_period,
+        is_period_only_plan_name,
     )
 
     username = payload.get("username")
