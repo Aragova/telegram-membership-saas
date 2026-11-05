@@ -6,14 +6,14 @@ per-tenant owner notification ledger to deduplicate incidents and recovery.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from html import escape
 from uuid import UUID
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, exists, select
-from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import tr
