@@ -115,3 +115,31 @@ actionable review messages remain available to authorized reviewers.
   are NOT part of PR #59. Existing approvals, subscriptions and access
   decisions are unchanged. Maintain staging-first deployment and
   `compose.light100.yaml`.
+
+## PR #60 — confirmed access-action incidents and recovery
+
+- Tenant-scoped connected project bot only; central bot unchanged.
+- Warning on `AccessAction.failed_permanent`, or a persistent retryable
+  failure with >=3 attempts over at least 10 minutes. Never warn for a single
+  transient Telegram retry, pending action or superseded revision.
+- Scan once per minute inside the existing project worker, bounded by 100
+  recent actions from the past 7 days. The delivery queue uses existing
+  `owner_notification_deliveries` with `kind='access'` and the action UUID
+  as its stable event key. One warning per actual action/owner/project.
+- The message shows the customer, resource and grant/revoke operation,
+  not the Telegram error string, traceback or bot token. Buttons navigate
+  through the existing, owner-checked subscriber callback.
+- Recheck tenant/project owner, project status, access preferences and current
+  action+desired/actual state immediately BEFORE sending a warning. A resolved
+  or superseded error must be silently suppressed.
+- A recovery is created ONLY if the initial alert was confirmed sent to
+  Telegram (not silently skipped). Current `AccessState.actual_state` must
+  match the desired grant/revoke state. No recovery spam; one event per
+  original incident via the existing outbox key.
+- Owner can mute/unmute both warning and recovery in the existing bilingual
+  `⚙️ Settings → 🔔 Notifications` screen. Defaults ON per project.
+- No schema migrations, payment/approval/access state mutations, new services
+  or consumer messages. Continue to use `compose.light100.yaml` at staging.
+- Scope boundary: unavailable bot pollers or missing channel admin privileges
+  that prevent the bot from starting are a separate operations/health-alert
+  path; do not claim this PR can send from a bot that cannot start.
