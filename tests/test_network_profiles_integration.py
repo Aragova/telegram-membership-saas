@@ -34,6 +34,7 @@ from telegram_membership_saas.modules.payments import (
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
+from telegram_membership_saas.modules.projects import ProjectMember
 from telegram_membership_saas.modules.resources import (
     Resource,
     ResourceStatus,
@@ -221,6 +222,30 @@ async def test_network_profile_auto_copies_only_independent_inactive_configurati
             app = await session.get(ProjectProfileApplication, copy_b)
             assert app.profile_version == 2
             assert app.status == "applied"
+        # A trusted ADMIN can connect the first new channel without being
+        # allowed to read the owner's private profile snapshot.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=copy_b),
+        ) as session:
+            session.add(ProjectMember(
+                project_id=copy_b, user_id=stranger, role="admin",
+            ))
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=stranger, project_id=copy_b),
+        ) as session:
+            assert await session.scalar(select(OwnerNetworkProfile)) is None
+            channel_b = Resource(
+                project_id=copy_b,
+                resource_type=ResourceType.TELEGRAM_CHANNEL.value,
+                external_id=str(-tid()), name="Admin verified channel",
+                status=ResourceStatus.ACTIVE.value,
+            )
+            session.add(channel_b)
+            await session.flush()
+            assert await bind_imported_drafts_on_first_channel(
+                session, actor_id=stranger, project_id=copy_b,
+                resource_id=channel_b.id,
+            ) == 1
         await set_network_auto_apply(factory, actor_id=owner, enabled=False)
         copy_c, _ = await setup.register_new_owner_bot(
             factory, actor_id=owner, actor_telegram_user_id=owner_tg,
