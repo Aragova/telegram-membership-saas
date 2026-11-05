@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     customer_telegram_bot_id: int | None = None
     telegram_central_access_enabled: bool = True
     telegram_worker_poll_seconds: float = 1.0
-    customer_supervisor_max_bots: int = Field(default=10, ge=1, le=32)
+    customer_supervisor_max_bots: int = Field(default=10, ge=1, le=128)
+    customer_supervisor_lease_mode: Literal["per_project", "shared"] = "per_project"
     customer_supervisor_shard_count: int = Field(default=1, ge=1, le=256)
     customer_supervisor_shard_id: int = Field(default=0, ge=0, le=255)
     default_project_timezone: str = "Europe/Moscow"
@@ -37,6 +38,11 @@ class Settings(BaseSettings):
     def validate_supervisor_shard(self) -> "Settings":
         if self.customer_supervisor_shard_id >= self.customer_supervisor_shard_count:
             raise ValueError("Supervisor shard ID must be smaller than shard count")
+        if (self.customer_supervisor_lease_mode == "per_project"
+                and self.customer_supervisor_max_bots > 32):
+            raise ValueError(
+                "More than 32 pollers require opt-in shared supervisor leases"
+            )
         return self
 
     @field_validator("bot_token_encryption_key", mode="before")

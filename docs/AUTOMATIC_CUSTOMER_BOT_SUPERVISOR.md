@@ -60,8 +60,11 @@ is needed after the platform operator deploys the supervisor **once**.
   100 simultaneously active bots** is described in
   [SUPERVISOR_SCALE_100.md](SUPERVISOR_SCALE_100.md). It uses bounded
   deterministic placement and requires a separate explicit Compose overlay,
-  database connection budget and real-bot load acceptance. The default
-  single-supervisor staging configuration is unchanged.
+  database connection budget and real-bot load acceptance. A new **lightweight
+  single-supervisor option** using one shared lease connection for up to 100
+  low-traffic bots (without changing PostgreSQL server settings) is documented
+  in [SUPERVISOR_LIGHT_100.md](SUPERVISOR_LIGHT_100.md). Both overlays are
+  opt-in; the default single-supervisor staging configuration is unchanged.
 - Docker `SIGTERM` and `SIGINT` are translated into a single root
   cancellation; a cancellation-resistant shutdown drains Telegram polling
   and access handlers before releasing advisory locks. All three Telegram

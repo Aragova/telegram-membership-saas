@@ -122,5 +122,8 @@ jobs:
       - name: Validate opt-in 100-bot compose overlay
         run: docker compose -f compose.yaml -f compose.scale100.yaml --profile supervisor --profile supervisor-scale config -q
 
+      - name: Validate opt-in light 100-bot compose overlay
+        run: docker compose -f compose.yaml -f compose.light100.yaml --profile supervisor config -q
+
       - name: Build container
         run: docker build -t telegram-membership-saas:ci .
