@@ -29,6 +29,10 @@ from telegram_membership_saas.modules.bots.service import (
     verify_telegram_bot,
 )
 from telegram_membership_saas.modules.identity import TelegramUser
+from telegram_membership_saas.modules.owner_setup.currencies import (
+    PRIMARY_CURRENCIES,
+    list_owner_currencies,
+)
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.owner_setup.network_profiles import (
     bind_imported_drafts_on_first_channel,
@@ -41,7 +45,6 @@ from telegram_membership_saas.modules.payments import (
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import (
-    CurrencyAsset,
     PlanPrice,
     PlanPriceStatus,
     replace_active_plan_price,
@@ -60,7 +63,9 @@ from telegram_membership_saas.modules.telegram_commerce.service import list_chec
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
-ALLOWED_CURRENCIES = ("RUB", "USD", "EUR", "USDT", "TON", "KZT", "AED")
+# Backwards-compatible default names; all configured currencies are
+# validated against the active global registry and project selection.
+ALLOWED_CURRENCIES = PRIMARY_CURRENCIES
 
 
 @dataclass(frozen=True, slots=True)
@@ -856,10 +861,8 @@ async def publish_owner_plan(
 
 async def owner_available_currencies(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID,
+    actor_id: UUID, project_id: UUID | None = None,
 ) -> tuple[str, ...]:
-    async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        registered = set((await session.scalars(
-            select(CurrencyAsset.code).where(CurrencyAsset.status == "active")
-        )).all())
-        return tuple(x for x in ALLOWED_CURRENCIES if x in registered)
+    return await list_owner_currencies(
+        factory, actor_id=actor_id, project_id=project_id,
+    )
