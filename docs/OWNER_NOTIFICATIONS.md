@@ -72,10 +72,41 @@ actionable review messages remain available to authorized reviewers.
 - A customer who has renewed before the current term end must NOT be treated
   as expired. Manual and service grants are never commercial sales.
 - Deadline digests are keyed by project-local date and rechecked against the
-  latest Subscription and access state at dispatch.
+  latest paid Subscription state at dispatch. The digest must not claim that
+  Telegram channel removal is complete just because a paid term ended.
 - All settings/alerts use RU/EN keys; CI verifies roles, tenant isolation,
   creation vs. actual approval, idempotency, recovery and calendar boundaries.
 - Migration required BEFORE deploying any new customer bot runtime that reads
   the notification persistence tables. No production promotion without
   staging acceptance. Keep `compose.light100.yaml` and never restart Postgres
   to merely deploy customer-bot code.
+
+## PR #59 — paid subscription expiry digest (implementation)
+
+- The existing connected-bot project runtime schedules one scan at project-
+  local **10:00**, using IANA timezones and daylight-saving transitions.
+  Startup after 10:00 runs today's digest (no backdated replay flood).
+- Classifies live paid Subscription end dates into 7 / 3 / 1 **calendar days**
+  ahead, and terms ending within the 24 hours before 10:00. An expired term
+  is not automatically a revoked Telegram membership.
+- Each category deduplicates customers; manual grants and pending/unconfirmed
+  invoices never become paid deadlines. Lifetime paid terms are excluded.
+- A single owner-only digest per project and local date uses the existing
+  `owner_notification_deliveries` table with `kind='expiry'` and its
+  project/day/recipient uniqueness key. No migrations or new services.
+- The queued record contains **only the date and timezone**, never a stale
+  list of subscribers. At dispatch the worker rechecks the owner's `expiry`
+  setting, owner identity, current project timezone, local date and paid-term
+  SQL state; renewed subscribers disappear. Stale or now-empty messages are
+  silently handled as completed.
+- UI adds a RU/EN `⏳ Subscription expiry` toggle to the existing
+  **⚙️ Settings → 🔔 Notifications** connected-owner screen. Default ON;
+  owner only, no central-bot setting.
+- Message contains a compact summary grouped by time to expiry and a
+  link to the authorized **👥 Subscribers** directory. Telegram message
+  cap enforced by limiting displayed customer details; all totals remain
+  based on real rows.
+- Buyer notifications, daily revenue reports, and access incidents/recovery
+  are NOT part of PR #59. Existing approvals, subscriptions and access
+  decisions are unchanged. Maintain staging-first deployment and
+  `compose.light100.yaml`.
