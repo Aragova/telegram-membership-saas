@@ -67,7 +67,9 @@ async def test_owner_bot_page_has_confirmed_deletion_and_from_zero_link(monkeypa
     ]
     delete = "own:drop:" + encode_uuid(project_id) + ":" + encode_uuid(instance_id)
     assert delete in callbacks
-    assert "own:new" in callbacks
+    # New bot registration stays in the connection list, not duplicated here.
+    assert "own:projects" in callbacks
+    assert "own:new" not in callbacks
     assert all(len(x.encode()) <= 64 for x in callbacks)
 
     await _handler()(_callback(delete.removeprefix("own:")), bot)
