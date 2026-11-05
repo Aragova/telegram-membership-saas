@@ -1342,9 +1342,11 @@ def create_owner_setup_router(
 
     async def currency_picker(
         bot: Bot, user_id: int, actor_id: UUID, *,
-        mode: str, plan_id: UUID | None = None,
+        project_id: UUID, mode: str, plan_id: UUID | None = None,
     ):
-        codes = await owner_available_currencies(factory, actor_id=actor_id)
+        codes = await owner_available_currencies(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         rows = [
             [_button(
                 code, f"methodcurrency:{code}" if mode == "method"
@@ -1353,8 +1355,14 @@ def create_owner_setup_router(
             for code in codes
         ]
         rows.append([_button(
-            tr("⬅️ К способам оплаты", "⬅️ Payment methods"),
-            "methods",
+            tr("➕ Другая валюта", "➕ Another currency"),
+            "currencyadd:" + mode
+            + (":" + plan_id.hex if plan_id is not None else ""),
+        )])
+        rows.append([_button(
+            tr("⬅️ К способам оплаты", "⬅️ Payment methods")
+            if mode == "method" else tr("⬅️ К тарифу", "⬅️ Back to plan"),
+            "methods" if mode == "method" else "plan:" + plan_id.hex,
         )])
         await bot.send_message(
             user_id, tr("💱 Выберите валюту:", "💱 Choose a currency:"),
@@ -2430,7 +2438,9 @@ def create_owner_setup_router(
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
-                if currency not in ALLOWED_CURRENCIES:
+                if currency not in await owner_available_currencies(
+                    factory, actor_id=actor_id, project_id=project_id,
+                ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
                     bot, user_id, actor_id, step="price_amount",
@@ -2490,7 +2500,7 @@ def create_owner_setup_router(
                 )
             elif action == "newmethod":
                 await currency_picker(
-                    bot, user_id, actor_id, mode="method"
+                    bot, user_id, actor_id, project_id=project_id, mode="method",
                 )
             elif action.startswith("method:"):
                 await show_method_card(
@@ -2504,7 +2514,7 @@ def create_owner_setup_router(
                     method_id=method_id,
                 )
                 codes = await owner_available_currencies(
-                    factory, actor_id=actor_id,
+                    factory, actor_id=actor_id, project_id=project_id,
                 )
                 rows = [
                     [_button(
@@ -2719,7 +2729,7 @@ def create_owner_setup_router(
             elif action.startswith("methodcurrency:"):
                 code = action.split(":", 1)[1]
                 if code not in await owner_available_currencies(
-                    factory, actor_id=actor_id
+                    factory, actor_id=actor_id, project_id=project_id,
                 ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
