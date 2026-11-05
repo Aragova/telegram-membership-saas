@@ -229,8 +229,8 @@ def _invoice_keyboard(payload: dict) -> InlineKeyboardMarkup:
             callback_data="own:subscriber:" + encode_uuid(customer),
         )],
         [InlineKeyboardButton(
-            text=tr("📋 Заявки", "📋 Requests"),
-            callback_data="own:reviews",
+            text=tr("🧾 Счёт", "🧾 Invoice"),
+            callback_data="own:invoice:" + encode_uuid(UUID(hex=payload["request_id"])),
         )],
     ])
 
