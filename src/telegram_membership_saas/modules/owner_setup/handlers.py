@@ -502,15 +502,15 @@ def create_owner_setup_router(
         )
         await bot.send_message(
             user_id,
-            tr("🔔 <b>Уведомления владельца</b>\\n\\n"
-               "🧾 Новый счёт: ", "🔔 <b>Owner notifications</b>\\n\\n"
+            tr("🔔 <b>Уведомления владельца</b>\n\n"
+               "🧾 Новый счёт: ", "🔔 <b>Owner notifications</b>\n\n"
                "🧾 New invoice: ")
             + invoice_status
             + tr(
-                "\\n\\n📩 Чеки и решения об оплате работают как прежде. "
+                "\n\n📩 Чеки и решения об оплате работают как прежде. "
                 "Настройки напоминаний об окончании подписок, сбоев доступа "
                 "и ежедневного отчёта будут добавлены после проверки доставки.",
-                "\\n\\n📩 Receipt reviews and payment decisions work as before. "
+                "\n\n📩 Receipt reviews and payment decisions work as before. "
                 "Expiry, access-incident and daily digest settings will be "
                 "enabled after their delivery paths are tested.",
             ),
