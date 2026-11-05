@@ -235,7 +235,9 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
         assert overview.timezone == "Europe/Moscow"
         assert overview.bots == (("owner_paid_bot", "registered"),)
         assert len(overview.resources) == len(overview.methods) == 1
-        assert overview.plans == ((plan_id, "Premium Monthly", "active"),)
+        assert (plan_id, "Premium Monthly", "active") in overview.plans
+        assert (unnamed_id, "1 месяц", "draft") in overview.plans
+        assert len(overview.plans) == 2
 
         async with tenant_session_scope(
             sf, TenantContext(user_id=actor_id, project_id=project_id)
