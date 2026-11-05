@@ -65,7 +65,7 @@ def test_invoice_text_is_localized_safe_and_not_paid(language, heading, awaiting
             b.callback_data for row in _invoice_keyboard(_payload()).inline_keyboard for b in row
         ]
         assert all(len(callback) <= 64 for callback in callbacks)
-        assert "own:reviews" in callbacks
+        assert any(value.startswith("own:invoice:") for value in callbacks)
     finally:
         _language.reset(token)
 
