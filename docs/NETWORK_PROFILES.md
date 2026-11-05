@@ -33,6 +33,10 @@ Every target receives fresh project-scoped UUIDs:
   private channel, checks payment details, enables methods and publishes plans.
 - On verification of the **first active channel** in a profile-imported
   project, previously unbound draft plans are linked to that channel.
+  The project row is locked before inserting a verified channel, so even two
+  concurrent first-channel verifications cannot bind one plan to both.
+  Project admins may verify a channel and bind drafts via a narrow application
+  marker RLS policy, but cannot read or change the owner's private profile.
   No existing plan/resource binding changes on subsequent channel connections.
 
 Explicitly excluded: bot credentials and tokens, Telegram chat/resource IDs,
