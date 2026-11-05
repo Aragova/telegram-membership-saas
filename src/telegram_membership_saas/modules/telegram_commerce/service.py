@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telegram_membership_saas.localization import _language, current_language
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
+from telegram_membership_saas.modules.owner_notifications import queue_invoice_created
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
     PaymentMethodCurrency,
@@ -412,6 +413,20 @@ async def create_checkout_for_telegram_user(
         currency=request.currency_code,
         plan=buyer_plan_label,
         period=period,
+    )
+    await queue_invoice_created(
+        session,
+        project_id=project_id,
+        request_id=request.id,
+        customer_id=customer.id,
+        username=user.username,
+        first_name=user.first_name,
+        plan_name=option.plan_name,
+        duration_value=request.duration_value,
+        duration_unit=request.duration_unit,
+        amount=format_amount(request.final_amount, option.currency_precision),
+        currency=request.currency_code,
+        method=option.payment_method_name,
     )
     return CheckoutResult(request=request, option=option, instruction=instruction)
 
