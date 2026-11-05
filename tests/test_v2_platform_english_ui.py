@@ -108,6 +108,7 @@ async def test_english_central_welcome(monkeypatch) -> None:
     monkeypatch.setattr(
         owner_ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
     )
+    monkeypatch.setattr(owner_ui, "cancel_owner_flow", AsyncMock())
     router = owner_ui.create_owner_setup_router(MagicMock())
     start = next(
         item.callback for item in router.message.handlers
