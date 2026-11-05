@@ -624,7 +624,7 @@ def create_owner_setup_router(
             )])
         if data.bot_instances:
             rows.append([_button(tr("🔄 Обновить статус", "🔄 Refresh"), "bots")])
-        if not retiring:
+        if not retiring and data.can_delete_bot:
             rows.append([_button(
                 tr("🔑 Подключить / обновить токен", "🔑 Connect / update token"),
                 "connect",
