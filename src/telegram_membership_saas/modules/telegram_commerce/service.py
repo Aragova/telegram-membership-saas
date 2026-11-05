@@ -398,12 +398,20 @@ async def create_checkout_for_telegram_user(
     if method is None:
         raise RuntimeError("Payment method disappeared while checkout was being created")
 
+    period = format_period(request.duration_value, request.duration_unit)
+    # Snapshot the historical internal plan name unchanged, but do not leak
+    # the Russian generated title into English payment instructions.
+    buyer_plan_label = (
+        period if is_period_only_plan_name(
+            option.plan_name, option.duration_value, option.duration_unit,
+        ) else option.plan_name
+    )
     instruction = render_manual_instruction(
         method.instruction_template,
         amount=format_amount(request.final_amount, option.currency_precision),
         currency=request.currency_code,
-        plan=option.plan_name,
-        period=format_period(request.duration_value, request.duration_unit),
+        plan=buyer_plan_label,
+        period=period,
     )
     return CheckoutResult(request=request, option=option, instruction=instruction)
 
