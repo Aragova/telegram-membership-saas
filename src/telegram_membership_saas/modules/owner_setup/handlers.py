@@ -42,6 +42,10 @@ from telegram_membership_saas.modules.bots.service import (
     decrypt_token,
     register_customer_bot,
 )
+from telegram_membership_saas.modules.owner_notifications import (
+    read_owner_settings,
+    set_owner_setting,
+)
 from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_catalog_screen,
     preview_method_screen,
@@ -121,11 +125,6 @@ from telegram_membership_saas.modules.owner_setup.service import (
     setup_overview,
     verify_channel_and_add,
 )
-from telegram_membership_saas.modules.owner_notifications import (
-    read_owner_settings,
-    set_owner_setting,
-)
-from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.owner_setup.statistics import read_owner_statistics
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     FILTERS as SUBSCRIBER_FILTERS,
@@ -146,6 +145,7 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     list_owner_methods,
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod
+from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import change_project_timezone
 from telegram_membership_saas.modules.telegram_commerce.handlers import (
     _review_keyboard,
