@@ -14,6 +14,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.owner_setup.currencies import (
+    project_currency_is_selected,
+)
 from telegram_membership_saas.modules.owner_setup.method_management import (
     method_has_history,
     method_revision,
@@ -21,9 +24,6 @@ from telegram_membership_saas.modules.owner_setup.method_management import (
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     plan_has_history,
     plan_revision,
-)
-from telegram_membership_saas.modules.owner_setup.service import (
-    ALLOWED_CURRENCIES,
 )
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
@@ -162,8 +162,7 @@ async def attach_owner_method_currency(
     actor_id: UUID, project_id: UUID,
     method_id: UUID, currency_code: str,
 ) -> bool:
-    if currency_code not in ALLOWED_CURRENCIES:
-        raise ValueError("Валюта не поддерживается")
+    currency_code = currency_code.strip().upper()
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -179,14 +178,10 @@ async def attach_owner_method_currency(
         )
         if method is None:
             raise ValueError("Способ оплаты недоступен в этом проекте")
-        active_currency = await session.scalar(
-            select(CurrencyAsset.code).where(
-                CurrencyAsset.code == currency_code,
-                CurrencyAsset.status == "active",
-            )
-        )
-        if active_currency is None:
-            raise ValueError("Валюта временно недоступна")
+        if not await project_currency_is_selected(
+            session, project_id=project_id, code=currency_code,
+        ):
+            raise ValueError("Сначала добавьте валюту в этом проекте")
         outcome = await session.execute(
             insert(PaymentMethodCurrency)
             .values(

@@ -52,6 +52,9 @@ from telegram_membership_saas.modules.owner_setup.connection_management import (
     rename_owner_connection,
     restore_owner_connection,
 )
+from telegram_membership_saas.modules.owner_setup.currencies import (
+    enable_owner_currency,
+)
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
@@ -90,7 +93,6 @@ from telegram_membership_saas.modules.owner_setup.plan_management import (
     rename_owner_plan,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
-    ALLOWED_CURRENCIES,
     SetupFlow,
     advance_flow,
     back_owner_flow,
@@ -899,7 +901,9 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
         )
         rows = []
-        codes = await owner_available_currencies(factory, actor_id=actor_id)
+        codes = await owner_available_currencies(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         lines = [
             "📦 <b>" + escape(data.name) + "</b>",
             tr("Статус: ", "Status: ") + _status(data.status),
@@ -927,6 +931,10 @@ def create_owner_setup_router(
             [_button("💰 " + code, "price:" + plan_id.hex + ":" + code)]
             for code in codes
         ])
+        rows.append([_button(
+            tr("➕ Другая валюта", "➕ Another currency"),
+            "currencyadd:price:" + plan_id.hex,
+        )])
         if any(not price.method_count for price in data.prices):
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
@@ -1334,9 +1342,11 @@ def create_owner_setup_router(
 
     async def currency_picker(
         bot: Bot, user_id: int, actor_id: UUID, *,
-        mode: str, plan_id: UUID | None = None,
+        project_id: UUID, mode: str, plan_id: UUID | None = None,
     ):
-        codes = await owner_available_currencies(factory, actor_id=actor_id)
+        codes = await owner_available_currencies(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         rows = [
             [_button(
                 code, f"methodcurrency:{code}" if mode == "method"
@@ -1345,8 +1355,14 @@ def create_owner_setup_router(
             for code in codes
         ]
         rows.append([_button(
-            tr("⬅️ К способам оплаты", "⬅️ Payment methods"),
-            "methods",
+            tr("➕ Другая валюта", "➕ Another currency"),
+            "currencyadd:" + mode
+            + (":" + plan_id.hex if plan_id is not None else ""),
+        )])
+        rows.append([_button(
+            tr("⬅️ К способам оплаты", "⬅️ Payment methods")
+            if mode == "method" else tr("⬅️ К тарифу", "⬅️ Back to plan"),
+            "methods" if mode == "method" else "plan:" + plan_id.hex,
         )])
         await bot.send_message(
             user_id, tr("💱 Выберите валюту:", "💱 Choose a currency:"),
@@ -1445,6 +1461,21 @@ def create_owner_setup_router(
             )
         if prior.step in ("plan_name", "plan_duration", "plan_resource"):
             await show_plans(bot, message.chat.id, actor_id, project_id)
+        elif prior.step == "currency_custom_code":
+            mode = prior.payload.get("mode")
+            target = prior.payload.get("target")
+            if mode == "price" and target:
+                await show_plan_card(
+                    bot, message.chat.id, actor_id, project_id,
+                    UUID(hex=target),
+                )
+            elif mode == "attach" and target:
+                await show_method_card(
+                    bot, message.chat.id, actor_id, project_id,
+                    UUID(hex=target),
+                )
+            else:
+                await show_methods(bot, message.chat.id, actor_id, project_id)
         elif prior.step in ("price_amount", "plan_rename"):
             try:
                 plan_id = UUID(hex=prior.payload["plan_id"])
@@ -2420,9 +2451,51 @@ def create_owner_setup_router(
                     tr("✅ Тариф удалён.", "✅ Plan deleted."),
                 )
                 await show_plans(bot, user_id, actor_id, project_id)
+            elif action.startswith("currencyadd:"):
+                parts = action.split(":")
+                if len(parts) < 2 or len(parts) > 3 or parts[1] not in (
+                    "price", "method", "attach",
+                ):
+                    raise ValueError("Некорректный режим выбора валюты")
+                mode = parts[1]
+                if (mode == "method" and len(parts) != 2) or (
+                    mode != "method" and len(parts) != 3
+                ):
+                    raise ValueError("Некорректная карточка валюты")
+                target = parts[2] if len(parts) == 3 else None
+                if mode == "price":
+                    await get_owner_plan_info(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=UUID(hex=target),
+                    )
+                if mode == "attach":
+                    await get_owner_method_info(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        method_id=UUID(hex=target),
+                    )
+                await prompt(
+                    bot, user_id, actor_id, step="currency_custom_code",
+                    payload={"mode": mode, "target": target},
+                    text=tr(
+                        "💱 <b>Добавить валюту</b>\n\n"
+                        "Введите международный код, например: UAH, BYN, "
+                        "GBP, CNY, JPY, BTC. Доступны валюты ISO 4217 "
+                        "и криптовалюты из справочника ViMi Pay.\n\n"
+                        "Выбранная валюта появится только в этом боте. "
+                        "Цена и способ оплаты настраиваются отдельно.",
+                        "💱 <b>Add currency</b>\n\n"
+                        "Enter an international code, e.g. UAH, BYN, "
+                        "GBP, CNY, JPY, BTC. ISO 4217 and existing ViMi Pay "
+                        "cryptocurrency codes are supported.\n\n"
+                        "The currency is added only to this bot. "
+                        "Prices and payment instructions are configured separately.",
+                    ),
+                )
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
-                if currency not in ALLOWED_CURRENCIES:
+                if currency not in await owner_available_currencies(
+                    factory, actor_id=actor_id, project_id=project_id,
+                ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
                     bot, user_id, actor_id, step="price_amount",
@@ -2482,7 +2555,7 @@ def create_owner_setup_router(
                 )
             elif action == "newmethod":
                 await currency_picker(
-                    bot, user_id, actor_id, mode="method"
+                    bot, user_id, actor_id, project_id=project_id, mode="method",
                 )
             elif action.startswith("method:"):
                 await show_method_card(
@@ -2496,7 +2569,7 @@ def create_owner_setup_router(
                     method_id=method_id,
                 )
                 codes = await owner_available_currencies(
-                    factory, actor_id=actor_id,
+                    factory, actor_id=actor_id, project_id=project_id,
                 )
                 rows = [
                     [_button(
@@ -2512,6 +2585,10 @@ def create_owner_setup_router(
                     )] for code in method.currencies
                     if len(method.currencies) > 1
                 ])
+                rows.append([_button(
+                    tr("➕ Другая валюта", "➕ Another currency"),
+                    "currencyadd:attach:" + method_id.hex,
+                )])
                 if not rows:
                     await bot.send_message(
                         user_id, tr("Все доступные валюты уже подключены.",
@@ -2711,7 +2788,7 @@ def create_owner_setup_router(
             elif action.startswith("methodcurrency:"):
                 code = action.split(":", 1)[1]
                 if code not in await owner_available_currencies(
-                    factory, actor_id=actor_id
+                    factory, actor_id=actor_id, project_id=project_id,
                 ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
@@ -3087,6 +3164,52 @@ def create_owner_setup_router(
                 await show_plan_card(
                     bot, message.chat.id, actor_id, project_id, plan_id,
                 )
+            elif flow.step == "currency_custom_code":
+                code = await enable_owner_currency(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    code=text,
+                )
+                mode = flow.payload.get("mode")
+                target = flow.payload.get("target")
+                if mode == "price":
+                    plan_id = UUID(hex=target)
+                    await prompt(
+                        bot, message.chat.id, actor_id, step="price_amount",
+                        source_flow=flow,
+                        payload={"plan_id": plan_id.hex, "currency": code},
+                        text=tr(
+                            f"💰 Введите цену в {code} (например, 499 или 9.99):",
+                            f"💰 Enter the price in {code} (e.g. 499 or 9.99):",
+                        ),
+                    )
+                elif mode == "method":
+                    await prompt(
+                        bot, message.chat.id, actor_id, step="method_name",
+                        source_flow=flow,
+                        payload={"currency": code},
+                        text=tr(
+                            f"💳 Название способа оплаты для {code}:\n"
+                            "Например: Перевод на карту или Банковский перевод.",
+                            f"💳 Name a payment method for {code}:\n"
+                            "For example: Bank transfer.",
+                        ),
+                    )
+                elif mode == "attach":
+                    method_id = UUID(hex=target)
+                    await attach_owner_method_currency(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        method_id=method_id, currency_code=code,
+                    )
+                    await bot.send_message(
+                        message.chat.id,
+                        tr("✅ Валюта добавлена к способу оплаты.",
+                           "✅ Currency added to payment method."),
+                    )
+                    await show_method_card(
+                        bot, message.chat.id, actor_id, project_id, method_id,
+                    )
+                else:
+                    raise ValueError("Шаг выбора валюты устарел")
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
                 await save_owner_price(
@@ -3178,6 +3301,7 @@ def create_owner_setup_router(
                 "new_bot_token": "projects",
                 "bot_token": "bots",
                 "connection_rename": "bots",
+                "currency_custom_code": "methods",
             }.get(flow.step, "dashboard")
             if flow.step in ("method_rename", "method_edit"):
                 method_hex = flow.payload.get("method_id")
