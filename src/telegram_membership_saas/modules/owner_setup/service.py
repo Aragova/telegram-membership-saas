@@ -59,7 +59,10 @@ from telegram_membership_saas.modules.projects import (
 )
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
-from telegram_membership_saas.modules.telegram_commerce.service import list_checkout_options
+from telegram_membership_saas.modules.telegram_commerce.service import (
+    default_period_plan_name,
+    list_checkout_options,
+)
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
@@ -332,7 +335,7 @@ async def bind_prompt(
 
 async def is_expected_prompt(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID, reply_message_id: int,
+    actor_id: UUID, reply_message_id: int | None,
     bot_scope_id: int = 0,
 ) -> bool:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
@@ -340,7 +343,11 @@ async def is_expected_prompt(
         return bool(
             state is not None
             and state.step
-            and state.prompt_message_id == reply_message_id
+            and state.prompt_message_id is not None
+            and (
+                reply_message_id is None
+                or state.prompt_message_id == reply_message_id
+            )
             and state.expires_at > datetime.now(UTC)
         )
 
@@ -351,12 +358,13 @@ async def consume_flow(
     reply_message_id: int | None,
     bot_scope_id: int = 0,
 ) -> SetupFlow | None:
-    if reply_message_id is None:
-        return None
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         state = await _current_session(session, actor_id, bot_scope_id)
         if (
-            not state.step or state.prompt_message_id != reply_message_id
+            not state.step
+            or state.prompt_message_id is None
+            or (reply_message_id is not None
+                and state.prompt_message_id != reply_message_id)
             or state.expires_at <= datetime.now(UTC)
         ):
             return None
@@ -723,7 +731,7 @@ async def create_owner_plan(
     resource_id: UUID,
 ) -> UUID:
     title = name.strip()
-    if not 2 <= len(title) <= 120:
+    if title and not 2 <= len(title) <= 120:
         raise ValueError("Название тарифа: от 2 до 120 символов")
     if duration_unit not in ("day", "week", "month", "year", "lifetime"):
         raise ValueError("Неподдерживаемая длительность")
@@ -731,6 +739,10 @@ async def create_owner_plan(
         raise ValueError("Укажите корректный срок тарифа")
     if duration_value is not None and not 1 <= duration_value <= 365:
         raise ValueError("Неверный срок тарифа")
+    if not title:
+        # Existing DB/payment snapshots require a nonempty title. The buyer
+        # storefront suppresses the generated period-only name.
+        title = default_period_plan_name(duration_value, duration_unit)
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:

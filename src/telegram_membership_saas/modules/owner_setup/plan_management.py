@@ -19,6 +19,10 @@ from telegram_membership_saas.modules.plans import Plan, PlanResource, PlanStatu
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
+from telegram_membership_saas.modules.telegram_commerce.service import (
+    default_period_plan_name,
+    is_period_only_plan_name,
+)
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -101,8 +105,16 @@ async def edit_owner_draft_duration(
         )
         if plan.status != PlanStatus.DRAFT.value:
             raise ValueError("Срок можно изменить только у неопубликованного тарифа")
+        # Unnamed plans use the period as their internal NOT NULL title.
+        # Keep it synchronized when a draft duration is edited. Explicit
+        # custom titles, including unrelated content, stay unchanged.
+        update_generated_name = is_period_only_plan_name(
+            plan.name, plan.duration_value, plan.duration_unit,
+        )
         plan.duration_value = duration_value
         plan.duration_unit = duration_unit
+        if update_generated_name:
+            plan.name = default_period_plan_name(duration_value, duration_unit)
         await session.flush()
 
 

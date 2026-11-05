@@ -205,7 +205,7 @@ async def test_rename_connection_central_only(monkeypatch):
     instance = bot()
     await cb(query("connrename:" + project_id.hex), instance)
     assert "название подключения" in instance.send_message.await_args.args[1]
-    assert instance.send_message.await_args.kwargs["reply_markup"].selective
+    assert instance.send_message.await_args.kwargs["reply_markup"].remove_keyboard
     ui.set_flow.assert_awaited_once()
 
     # A saved prompt from another project must never rename the selected one.
@@ -244,6 +244,7 @@ async def test_last_archived_connection_is_reachable_from_central_start(monkeypa
         return_value=((archived_id, "Archived E2E"),),
     ))
     monkeypatch.setattr(ui, "set_chat_commands", AsyncMock())
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     router = ui.create_owner_setup_router(MagicMock())
     home_message = next(
         x.callback for x in router.message.handlers

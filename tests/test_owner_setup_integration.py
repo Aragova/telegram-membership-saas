@@ -79,6 +79,53 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
             sf, actor_id=actor_id, reply_message_id=123
         ) is None
 
+        # Plain input replaces ForceReply: only the active, bot-scoped
+        # prompt may consume the next message; no stale prompt persists.
+        plain = await setup.set_flow(
+            sf, actor_id=actor_id, step="method_name",
+            payload={"currency": "RUB"},
+        )
+        assert await setup.is_expected_prompt(
+            sf, actor_id=actor_id, reply_message_id=None,
+        ) is False  # prompt not yet bound
+        await setup.bind_prompt(
+            sf, actor_id=actor_id, step="method_name",
+            message_id=124, generation=plain,
+        )
+        assert await setup.is_expected_prompt(
+            sf, actor_id=actor_id, reply_message_id=None,
+        ) is True
+        assert await setup.consume_flow(
+            sf, actor_id=actor_id, reply_message_id=123,
+        ) is None  # stale replies are rejected
+        plain_flow = await setup.consume_flow(
+            sf, actor_id=actor_id, reply_message_id=None,
+        )
+        assert plain_flow.step == "method_name"
+        assert await setup.consume_flow(
+            sf, actor_id=actor_id, reply_message_id=None,
+        ) is None
+
+        # Navigation clears a pending text prompt before a stray message
+        # could overwrite buyer-facing bank instructions.
+        edit_generation = await setup.set_flow(
+            sf, actor_id=actor_id, step="method_edit",
+            payload={"method_id": uuid4().hex},
+        )
+        await setup.bind_prompt(
+            sf, actor_id=actor_id, step="method_edit",
+            message_id=125, generation=edit_generation,
+        )
+        assert await setup.cancel_owner_flow(
+            sf, actor_id=actor_id,
+        ) is True
+        assert await setup.is_expected_prompt(
+            sf, actor_id=actor_id, reply_message_id=None,
+        ) is False
+        assert await setup.consume_flow(
+            sf, actor_id=actor_id, reply_message_id=None,
+        ) is None
+
         old = await setup.set_flow(
             sf, actor_id=actor_id, step="plan_duration",
             payload={"name": "Old plan"},
@@ -172,6 +219,18 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
             duration_value=1, duration_unit="month",
             resource_id=resource.id,
         )
+        unnamed_id = await setup.create_owner_plan(
+            sf, actor_id=actor_id, project_id=project_id,
+            name="   ", duration_value=1, duration_unit="month",
+            resource_id=resource.id,
+        )
+        async with tenant_session_scope(
+            sf, TenantContext(user_id=actor_id, project_id=project_id),
+        ) as session:
+            unnamed = await session.get(Plan, unnamed_id)
+            assert unnamed.name == "1 месяц"
+            assert unnamed.status == "draft"
+
         await setup.save_owner_price(
             sf, actor_id=actor_id, project_id=project_id,
             plan_id=plan_id, currency_code="RUB", amount="499",
@@ -196,7 +255,9 @@ async def test_owner_configures_project_channel_tariff_payment_and_publishes(mon
         assert overview.timezone == "Europe/Moscow"
         assert overview.bots == (("owner_paid_bot", "registered"),)
         assert len(overview.resources) == len(overview.methods) == 1
-        assert overview.plans == ((plan_id, "Premium Monthly", "active"),)
+        assert (plan_id, "Premium Monthly", "active") in overview.plans
+        assert (unnamed_id, "1 месяц", "draft") in overview.plans
+        assert len(overview.plans) == 2
 
         async with tenant_session_scope(
             sf, TenantContext(user_id=actor_id, project_id=project_id)

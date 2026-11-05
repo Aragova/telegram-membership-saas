@@ -10,7 +10,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from telegram_membership_saas.localization import current_language
+from telegram_membership_saas.localization import _language, current_language
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import (
@@ -159,6 +159,30 @@ def format_period(duration_value: int | None, duration_unit: str) -> str:
     else:
         form = forms[2]
     return f"{duration_value} {form}"
+
+
+def default_period_plan_name(value: int | None, unit: str) -> str:
+    """Stable internal title for a tariff created without a custom name."""
+    token = _language.set("ru")
+    try:
+        return format_period(value, unit)
+    finally:
+        _language.reset(token)
+
+
+def is_period_only_plan_name(
+    name: str, value: int | None, unit: str,
+) -> bool:
+    """Recognize generated/default duration titles in either UI language."""
+    normalized = name.strip().casefold()
+    for language in ("ru", "en"):
+        token = _language.set(language)
+        try:
+            if normalized == format_period(value, unit).casefold():
+                return True
+        finally:
+            _language.reset(token)
+    return False
 
 
 async def upsert_telegram_user(
@@ -374,12 +398,20 @@ async def create_checkout_for_telegram_user(
     if method is None:
         raise RuntimeError("Payment method disappeared while checkout was being created")
 
+    period = format_period(request.duration_value, request.duration_unit)
+    # Snapshot the historical internal plan name unchanged, but do not leak
+    # the Russian generated title into English payment instructions.
+    buyer_plan_label = (
+        period if is_period_only_plan_name(
+            option.plan_name, option.duration_value, option.duration_unit,
+        ) else option.plan_name
+    )
     instruction = render_manual_instruction(
         method.instruction_template,
         amount=format_amount(request.final_amount, option.currency_precision),
         currency=request.currency_code,
-        plan=option.plan_name,
-        period=format_period(request.duration_value, request.duration_unit),
+        plan=buyer_plan_label,
+        period=period,
     )
     return CheckoutResult(request=request, option=option, instruction=instruction)
 

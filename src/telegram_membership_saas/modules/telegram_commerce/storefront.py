@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     encode_uuid,
     format_amount,
     format_period,
+    is_period_only_plan_name,
     list_checkout_options,
 )
 
@@ -47,11 +48,9 @@ def _currency_icon(code: str) -> str:
     return CURRENCY_ICONS.get(code, "🌐")
 
 
-def _plan_summary(name: str, period: str) -> str:
-    """Do not repeat titles like '1 месяц · 1 месяц' in the storefront."""
-    if name.strip().casefold() == period.strip().casefold():
-        return escape(name)
-    return escape(name) + " · " + escape(period)
+def _plan_summary(name: str, period: str, *, duration_only: bool) -> str:
+    """Do not repeat the duration when the plan is unnamed."""
+    return escape(period if duration_only else name + " · " + period)
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,12 +220,18 @@ def catalog_screen(
         price = format_amount(option.amount, option.currency_precision)
         period = format_period(option.duration_value, option.duration_unit)
         lines.append(
-            "✨ <b>" + _plan_summary(option.plan_name, period) + "</b>"
+            "✨ <b>" + _plan_summary(
+                option.plan_name, period,
+                duration_only=is_period_only_plan_name(
+                    option.plan_name, option.duration_value, option.duration_unit,
+                ),
+            ) + "</b>"
             + " — " + escape(price + " " + chosen)
         )
         button_plan = (
-            option.plan_name[:23] if option.plan_name.strip().casefold()
-            == period.strip().casefold()
+            period if is_period_only_plan_name(
+                option.plan_name, option.duration_value, option.duration_unit,
+            )
             else option.plan_name[:23] + " · " + period
         )
         rows.append([InlineKeyboardButton(
@@ -293,7 +298,13 @@ def offer_screen(
             "✨ Great choice! Just pick the payment method you prefer.\n\n",
         )
         + "📣 <b>" + escape(current.resource_label) + "</b>\n"
-        + "🎟️ <b>" + escape(option.plan_name) + "</b>\n"
+        + (
+            ""
+            if is_period_only_plan_name(
+                option.plan_name, option.duration_value, option.duration_unit,
+            )
+            else "🎟️ <b>" + escape(option.plan_name) + "</b>\n"
+        )
         + "🗓️ " + escape(period) + "\n"
         + "💰 <b>" + escape(price + " " + option.currency_code) + "</b>\n\n"
         + tr("👇 <b>Как вам удобнее оплатить?</b>",

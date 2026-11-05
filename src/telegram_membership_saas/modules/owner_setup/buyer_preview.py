@@ -17,6 +17,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     encode_uuid,
     format_amount,
     format_period,
+    is_period_only_plan_name,
 )
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     BuyerOffer,
@@ -130,14 +131,23 @@ def preview_method_screen(
     instruction = render_manual_instruction(
         instruction_template,
         amount=amount, currency=option.currency_code,
-        plan=option.plan_name, period=period,
+        plan=period if is_period_only_plan_name(
+            option.plan_name, option.duration_value, option.duration_unit,
+        ) else option.plan_name,
+        period=period,
     )
     heading = (
         _preview_title()
         + tr("💳 <b>Инструкция по оплате</b>\n\n",
              "💳 <b>Payment instructions</b>\n\n")
         + "📢 " + escape(offer.resource_label) + "\n"
-        + "💎 <b>" + escape(option.plan_name) + "</b>\n"
+        + (
+            ""
+            if is_period_only_plan_name(
+                option.plan_name, option.duration_value, option.duration_unit,
+            )
+            else "💎 <b>" + escape(option.plan_name) + "</b>\n"
+        )
         + "⏳ " + escape(period) + "\n"
         + "💰 <b>" + escape(amount + " " + option.currency_code) + "</b>\n"
         + tr("Способ: ", "Method: ")

@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from html import escape
 from secrets import randbelow
 from uuid import UUID
 
-from aiogram import Bot, F, Router
+from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
-    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -19,6 +19,7 @@ from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    User,
 )
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
@@ -226,10 +227,15 @@ class SetupReplyFilter(BaseFilter):
         self.fixed_project_id = fixed_project_id
 
     async def __call__(self, message: Message, bot: Bot) -> bool:
-        if not _private(message) or message.reply_to_message is None:
+        if (
+            not _private(message) or message.text is None
+            or message.text.startswith("/")
+        ):
             return False
         origin = message.reply_to_message
-        if origin.from_user is None or origin.from_user.id != bot.id:
+        if origin is not None and (
+            origin.from_user is None or origin.from_user.id != bot.id
+        ):
             return False
         user = message.from_user
         actor_id = await ensure_telegram_actor(
@@ -242,9 +248,51 @@ class SetupReplyFilter(BaseFilter):
             return False
         return await is_expected_prompt(
             self.factory, actor_id=actor_id,
-            reply_message_id=origin.message_id,
+            reply_message_id=origin.message_id if origin is not None else None,
             bot_scope_id=bot.id if self.fixed_project_id else 0,
         )
+
+
+class ClearOwnerInputOnNavigation(BaseMiddleware):
+    """When leaving a plain-text form, discard its bot-scoped capture.
+
+    Installed as an inner aiogram callback middleware; direct handler calls
+    in unit tests still test just the handler, while the full dispatcher
+    exercises this shared navigation policy.
+    """
+
+    def __init__(
+        self, factory: async_sessionmaker[AsyncSession],
+        fixed_project_id: UUID | None,
+    ) -> None:
+        self.factory = factory
+        self.fixed_project_id = fixed_project_id
+
+    async def __call__(self, handler, event: CallbackQuery, data: dict):
+        action = (event.data or "")
+        bot = data.get("bot")
+        if (
+            action.startswith("own:")
+            and action != "own:cancel"
+            and not action.startswith((
+                "own:flowback:", "own:planname:",
+                "own:duration:", "own:use:",
+            ))
+            and bot is not None
+            and event.message is not None
+            and event.message.chat.type == "private"
+            and event.message.chat.id == event.from_user.id
+        ):
+            user = event.from_user
+            actor_id = await ensure_telegram_actor(
+                self.factory, telegram_id=user.id,
+                username=user.username, first_name=user.first_name,
+            )
+            await cancel_owner_flow(
+                self.factory, actor_id=actor_id,
+                bot_scope_id=bot.id if self.fixed_project_id else 0,
+            )
+        return await handler(event, data)
 
 
 class OwnerHomeFilter(BaseFilter):
@@ -275,8 +323,14 @@ class OwnerHomeFilter(BaseFilter):
 def create_owner_setup_router(
     factory: async_sessionmaker[AsyncSession], *,
     fixed_project_id: UUID | None = None,
+    language_menu_renderers: list[
+        Callable[[Bot, User], Awaitable[bool]]
+    ] | None = None,
 ) -> Router:
     router = Router(name="owner-tenant" if fixed_project_id else "central-registrar")
+    router.callback_query.middleware(
+        ClearOwnerInputOnNavigation(factory, fixed_project_id),
+    )
 
     async def actor(user) -> UUID:
         return await ensure_telegram_actor(
@@ -484,9 +538,10 @@ def create_owner_setup_router(
                 "\n\n↩ /back — back · /cancel — main menu.",
             ),
             parse_mode="HTML",
-            reply_markup=ForceReply(
-                selective=True, input_field_placeholder=tr("Введите ответ", "Type your reply")
-            ),
+            # Do not force Telegram's persistent "В ответ…" composer.
+            # The next plain text message is safely matched to this
+            # user's live, bot-scoped setup flow instead.
+            reply_markup=ReplyKeyboardRemove(),
         )
         await bind_prompt(
             factory, actor_id=actor_id, step=step,
@@ -1332,11 +1387,21 @@ def create_owner_setup_router(
             for key, (value, unit, label) in DURATIONS.items()
         ]
         rows.append([_button(
+            tr("✏️ Добавить название (необязательно)",
+               "✏️ Add a name (optional)"),
+            "planname:" + generation,
+        )])
+        rows.append([_button(
             tr("⬅️ Все тарифы", "⬅️ All plans"),
             "flowback:plans:" + generation,
         )])
         await bot.send_message(
-            user_id, tr("⏳ Выберите срок действия:", "⏳ Choose plan duration:"),
+            user_id, tr(
+                "🗓️ Выберите срок подписки. Название необязательно: "
+                "можно сразу выбрать срок и перейти к цене.",
+                "🗓️ Choose a subscription duration. Naming is optional: "
+                "select a duration to continue to pricing.",
+            ),
             reply_markup=_markup(rows),
         )
 
@@ -1377,6 +1442,12 @@ def create_owner_setup_router(
         if not _private(message):
             return
         actor_id = await actor(message.from_user)
+        # /menu exits the old text-entry wizard; the next casual message
+        # must never be mistaken for old payment instructions or a plan title.
+        await cancel_owner_flow(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+        )
         command = (
             (getattr(message, "text", None) or "/start")
             .split(maxsplit=1)[0].split("@")[0].lower()
@@ -1557,14 +1628,14 @@ def create_owner_setup_router(
                             "✦ <b>Подключение бота подписок</b>\n\n"
                             "1. Создайте бота в @BotFather или получите новый "
                             "токен существующего.\n"
-                            "2. Ответьте на это сообщение токеном.\n"
+                            "2. Отправьте токен следующим сообщением.\n"
                             "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
                             "После проверки откройте своего бота и "
                             "настройте каналы, оплату и тарифы.",
                             "✦ <b>Connect a subscription bot</b>\n\n"
                             "1. Create a bot in @BotFather or request a new token "
                             "for an existing bot.\n"
-                            "2. Reply to this message with its token.\n"
+                            "2. Send the token in your next message.\n"
                             "3. We delete the token message immediately and "
                             "verify the connection.\n\n"
                             "Then open your bot to set up channels, payments and plans.",
@@ -2152,11 +2223,12 @@ def create_owner_setup_router(
                 if not any(status == "active" for _, _, status in data.resources):
                     raise ValueError(tr("Сначала подключите действующий канал или группу",
                                         "Connect an active channel or group first"))
-                await prompt(
-                    bot, user_id, actor_id, step="plan_name",
-                    text=tr("📦 Как назвать новый тариф?\nНапример: Premium",
-                             "📦 What is the new plan's name?\nFor example: Premium"),
+                generation = await set_flow(
+                    factory, actor_id=actor_id, step="plan_duration",
+                    payload={"name": ""}, project_id=fixed_project_id,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
                 )
+                await show_duration_picker(bot, user_id, generation)
             elif action.startswith("flowback:"):
                 # A stale keyboard must never reset a newer wizard.
                 _, target, generation = action.split(":", 2)
@@ -2189,6 +2261,25 @@ def create_owner_setup_router(
                         bot_scope_id=bot.id if fixed_project_id else 0,
                     )
                     await show_duration_picker(bot, user_id, fresh)
+            elif action.startswith("planname:"):
+                generation = action.split(":", 1)[1]
+                flow = await consume_button_flow(
+                    factory, actor_id=actor_id, expected_step="plan_duration",
+                    generation=generation,
+                    bot_scope_id=bot.id if fixed_project_id else 0,
+                )
+                if flow.project_id != project_id:
+                    raise ValueError("Проект изменился. Повторите действие.")
+                await prompt(
+                    bot, user_id, actor_id, step="plan_name", source_flow=flow,
+                    text=tr(
+                        "✏️ Введите название тарифа (2–120 символов). "
+                        "Для тарифа без названия нажмите /back и создайте его "
+                        "через выбор срока.",
+                        "✏️ Enter an optional plan name (2–120 characters). "
+                        "For an unnamed plan, use /back and choose its duration.",
+                    ),
+                )
             elif action.startswith("duration:"):
                 _, key, generation = action.split(":", 2)
                 if key not in DURATIONS:
@@ -2996,18 +3087,18 @@ def create_owner_setup_router(
 
     @router.message(SetupReplyFilter(factory, fixed_project_id))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:
-        if not _private(message) or message.reply_to_message is None:
+        if not _private(message) or message.text is None:
             return
-        if (
-            message.reply_to_message.from_user is None
-            or message.reply_to_message.from_user.id != bot.id
+        origin = message.reply_to_message
+        if origin is not None and (
+            origin.from_user is None or origin.from_user.id != bot.id
         ):
             return
         actor_id = await actor(message.from_user)
         text = (message.text or "").strip()
         flow = await consume_flow(
             factory, actor_id=actor_id,
-            reply_message_id=message.reply_to_message.message_id,
+            reply_message_id=origin.message_id if origin is not None else None,
             bot_scope_id=bot.id if fixed_project_id else 0,
         )
         if flow is None:
@@ -3351,5 +3442,22 @@ def create_owner_setup_router(
                "🔐 Token removed from this chat. "
                "To connect your bot, open @vimipay_bot → Connect bot."),
         )
+
+    if language_menu_renderers is not None:
+        async def show_main_menu_after_language(bot: Bot, user: User) -> bool:
+            actor_id = await actor(user)
+            if fixed_project_id is not None and not await can_manage_project(
+                factory, actor_id=actor_id, project_id=fixed_project_id,
+            ):
+                # Buyers must receive the real buyer storefront, not admin UI.
+                return False
+            await cancel_owner_flow(
+                factory, actor_id=actor_id,
+                bot_scope_id=bot.id if fixed_project_id else 0,
+            )
+            await show_home(bot, user.id, actor_id)
+            return True
+
+        language_menu_renderers.append(show_main_menu_after_language)
 
     return router
