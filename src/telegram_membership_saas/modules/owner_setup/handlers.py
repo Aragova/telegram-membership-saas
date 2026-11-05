@@ -1459,7 +1459,7 @@ def create_owner_setup_router(
             await show_methods(bot, message.chat.id, actor_id, project_id)
         elif prior.step in ("chat_picker", "resource_reference"):
             await show_resources(bot, message.chat.id, actor_id, project_id)
-        elif prior.step == "bot_token" and fixed_project_id is None:
+        elif prior.step in ("bot_token", "connection_rename") and fixed_project_id is None:
             await show_bots(bot, message.chat.id, actor_id, project_id)
         else:
             await show_dashboard(bot, message.chat.id, actor_id, project_id)
@@ -2965,7 +2965,7 @@ def create_owner_setup_router(
         # Old central setup prompts remain in Telegram after a deployment.
         # Do not permit completing tenant settings via stale central messages.
         if fixed_project_id is None and flow.step not in (
-            "new_bot_token", "bot_token",
+            "new_bot_token", "bot_token", "connection_rename",
         ):
             await bot.send_message(
                 message.chat.id,
@@ -2976,7 +2976,7 @@ def create_owner_setup_router(
             )
             return
         if fixed_project_id is not None and flow.step in (
-            "new_bot_token", "bot_token", "project_name",
+            "new_bot_token", "bot_token", "project_name", "connection_rename",
         ):
             await bot.send_message(
                 message.chat.id,
@@ -3018,7 +3018,24 @@ def create_owner_setup_router(
             ):
                 raise ValueError(tr("Настройка другого бота недоступна",
                                     "You cannot change another bot's settings"))
-            if flow.step == "bot_token":
+            if flow.step == "connection_rename":
+                if fixed_project_id is not None:
+                    raise PermissionError("Переименование доступно в центральном боте")
+                current = await get_selected_project(factory, actor_id=actor_id)
+                if current != project_id:
+                    raise ValueError("Подключение изменилось. Откройте список заново.")
+                renamed = await rename_owner_connection(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    name=text,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Подключение переименовано: ",
+                       "✅ Connection renamed: ") + escape(renamed),
+                    parse_mode="HTML",
+                )
+                await show_bots(bot, message.chat.id, actor_id, project_id)
+            elif flow.step == "bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(tr("Неверный формат токена. Получите его в BotFather.",
                                         "Invalid token format. Get it from BotFather."))
@@ -3158,6 +3175,7 @@ def create_owner_setup_router(
                 "timezone": "dashboard",
                 "new_bot_token": "projects",
                 "bot_token": "bots",
+                "connection_rename": "bots",
             }.get(flow.step, "dashboard")
             if flow.step in ("method_rename", "method_edit"):
                 method_hex = flow.payload.get("method_id")
