@@ -302,7 +302,9 @@ def create_owner_setup_router(
         if home.selected is not None:
             await show_dashboard(bot, user_id, actor_id, home.selected)
             return
-        if home.projects and fixed_project_id is None:
+        if fixed_project_id is None and (home.projects or home.archived_count):
+            # Even with zero active projects, keep archived connections
+            # reachable through /start, /menu and /bots.
             await show_connections(bot, user_id, actor_id)
             return
         lines = [tr("✨ <b>ViMi Pay · Управление подписками</b>",
