@@ -215,3 +215,13 @@ history or platform usage records to clean up test connections. The connected
 customer bot still owns all commercial plan/payment administration; the
 central bot does not duplicate that UI. Existing customer supervisors and
 the lightweight 100-bot Compose overlay remain unchanged.
+
+## Owner self-service currencies
+
+See [OWNER_CURRENCY_MANAGEMENT.md](OWNER_CURRENCY_MANAGEMENT.md). UAH/BYN
+are primary selectable currencies; connected-bot project managers can add
+additional existing ISO 4217 fiat or catalogued crypto codes and configure
+tariff prices and manual payment methods. Project currency selections are
+RLS scoped. The catalog metadata and payment histories stay immutable;
+the central bot does not control tenant payment configuration. Migration
+0024 is required before deploying new customer bot code.
