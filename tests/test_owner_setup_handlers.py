@@ -142,6 +142,7 @@ async def test_token_is_deleted_before_registering(monkeypatch):
         ui, "setup_overview",
         AsyncMock(return_value=_overview(project_id)),
     )
+    monkeypatch.setattr(ui, "get_project_import_status", AsyncMock(return_value=None))
     reply = _message(text=token)
     reply.message_id = 1234
     reply.reply_to_message = SimpleNamespace(

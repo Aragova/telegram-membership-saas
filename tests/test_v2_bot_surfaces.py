@@ -208,6 +208,7 @@ async def test_token_first_connection_deletes_secret_and_links_owner_bot(monkeyp
     monkeypatch.setattr(
         ui, "setup_overview", AsyncMock(return_value=_overview(project_id)),
     )
+    monkeypatch.setattr(ui, "get_project_import_status", AsyncMock(return_value=None))
     message = _message()
     message.text = token
     message.message_id = 199

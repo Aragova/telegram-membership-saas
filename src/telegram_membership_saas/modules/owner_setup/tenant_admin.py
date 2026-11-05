@@ -29,6 +29,7 @@ from telegram_membership_saas.modules.payments import (
     PaymentMethod,
     PaymentMethodCurrency,
 )
+from telegram_membership_saas.modules.payments.service import ensure_real_payment_instructions
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import (
     CurrencyAsset,
@@ -227,6 +228,8 @@ async def change_owner_method_status(
         next_status = "active" if enabled else "disabled"
         if method.status == next_status:
             return False
+        if enabled:
+            ensure_real_payment_instructions(method.instruction_template)
         method.status = next_status
         await session.flush()
         return True

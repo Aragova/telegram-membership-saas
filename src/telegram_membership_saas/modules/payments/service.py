@@ -14,6 +14,16 @@ from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAsse
 from telegram_membership_saas.modules.projects import Project
 
 ALLOWED_INSTRUCTION_FIELDS = frozenset({"amount", "currency", "plan", "period"})
+MISSING_NETWORK_PAYMENT_INSTRUCTIONS = (
+    "Укажите реквизиты для оплаты перед включением этого способа."
+)
+
+
+def ensure_real_payment_instructions(template: str) -> None:
+    """Never expose a network-profile placeholder to a paying buyer."""
+    if template.strip() == MISSING_NETWORK_PAYMENT_INSTRUCTIONS:
+        raise ValueError("Сначала укажите реальные реквизиты способа оплаты")
+
 
 
 def _normalize_name(name: str) -> str:

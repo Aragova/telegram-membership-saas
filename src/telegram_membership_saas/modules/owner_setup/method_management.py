@@ -21,6 +21,7 @@ from telegram_membership_saas.modules.payments.models import (
 )
 from telegram_membership_saas.modules.payments.service import (
     _validate_instruction_template,
+    ensure_real_payment_instructions,
 )
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
@@ -118,6 +119,8 @@ async def change_owner_method_status_guarded(
         status = "disabled" if enabled else "active"
         if method.status != status or method_revision(method) != expected_revision:
             raise ValueError("Способ оплаты изменился. Откройте карточку заново.")
+        if enabled:
+            ensure_real_payment_instructions(method.instruction_template)
         method.status = "active" if enabled else "disabled"
         method.updated_at = func.clock_timestamp()
         await session.flush()
