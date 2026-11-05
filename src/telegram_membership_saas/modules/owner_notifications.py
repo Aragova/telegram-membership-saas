@@ -294,6 +294,25 @@ async def deliver_one_owner_notification(
                         reply_markup=keyboard,
                     )
                 # If disabled, stale or renewed: suppress as successfully handled.
+            elif kind in ("access", "recovered"):
+                from telegram_membership_saas.modules.owner_access_incidents import (
+                    prepare_owner_access_notification,
+                )
+
+                notice = await prepare_owner_access_notification(
+                    factory, project_id=project_id, recipient=recipient,
+                    payload=payload, recovered=(kind == "recovered"), now=moment,
+                )
+                if notice is not None:
+                    body, keyboard = notice
+                    await bot.send_message(
+                        recipient, body, parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+                else:
+                    # A silently suppressed alert must never be counted as
+                    # owner-observed when deciding if recovery can be sent.
+                    error_code = "Suppressed"
             else:
                 # New producers must be explicitly registered before using them.
                 raise ValueError("Unrecognized owner notification kind")
