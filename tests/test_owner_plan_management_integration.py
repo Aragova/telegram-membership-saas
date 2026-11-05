@@ -95,6 +95,28 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
             factory, actor_id=owner, project_id=project,
             plan_id=plan, name="  Premium monthly  ",
         ) == "Premium monthly"
+        unnamed = await create_owner_plan(
+            factory, actor_id=owner, project_id=project,
+            name="", duration_value=1, duration_unit="month",
+            resource_id=first_id,
+        )
+        await edit_owner_draft_duration(
+            factory, actor_id=owner, project_id=project,
+            plan_id=unnamed, duration_value=3, duration_unit="month",
+        )
+        unnamed_info = await get_owner_plan_info(
+            factory, actor_id=owner, project_id=project, plan_id=unnamed,
+        )
+        assert unnamed_info.name == "3 месяца"
+        await edit_owner_draft_duration(
+            factory, actor_id=owner, project_id=project,
+            plan_id=unnamed, duration_value=1, duration_unit="year",
+        )
+        unnamed_info = await get_owner_plan_info(
+            factory, actor_id=owner, project_id=project, plan_id=unnamed,
+        )
+        assert unnamed_info.name == "1 год"
+
         await edit_owner_draft_duration(
             factory, actor_id=owner, project_id=project,
             plan_id=plan, duration_value=3, duration_unit="month",
