@@ -2578,6 +2578,26 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID, username: str,
     ) -> None:
+        imported = await get_project_import_status(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        details = (
+            tr(
+                "\n\n📁 Профиль сети применён: тарифы созданы как черновики, "
+                "способы оплаты выключены. Привяжите канал, проверьте "
+                "реквизиты и включите продажи.",
+                "\n\n📁 Network profile applied: plans are drafts and "
+                "payments are disabled. Connect a channel, verify bank "
+                "details and enable sales.",
+            ) if imported == "applied" else (
+                tr(
+                    "\n\n⚠️ Настройки профиля не скопированы. Бот подключён "
+                    "без шаблона, настройте его вручную.",
+                    "\n\n⚠️ The profile could not be imported. The bot "
+                    "connected without the template; configure it manually.",
+                ) if imported == "failed" else ""
+            )
+        )
         await bot.send_message(
             user_id,
             tr(
@@ -2588,7 +2608,7 @@ def create_owner_setup_router(
                 f"✅ <b>@{escape(username)} connected</b>\n\n"
                 "Your bot is connected to ViMi Pay.\n"
                 "Open it to configure channels, payment methods and plans.",
-            ),
+            ) + details,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
