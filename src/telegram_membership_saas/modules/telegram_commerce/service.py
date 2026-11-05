@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, localcontext
@@ -8,11 +9,13 @@ from uuid import UUID
 
 from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.localization import _language, current_language
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
+from telegram_membership_saas.modules.owner_notifications import queue_invoice_created
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
     PaymentMethodCurrency,
@@ -42,6 +45,8 @@ from telegram_membership_saas.modules.projects import (
     ProjectStatus,
 )
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +418,26 @@ async def create_checkout_for_telegram_user(
         plan=buyer_plan_label,
         period=period,
     )
+    # Notification persistence is a savepoint under the checkout transaction:
+    # a broken alert table must not make real customers unable to buy.
+    try:
+        async with session.begin_nested():
+            await queue_invoice_created(
+                session,
+                project_id=project_id,
+                request_id=request.id,
+                customer_id=customer.id,
+                username=user.username,
+                first_name=user.first_name,
+                plan_name=option.plan_name,
+                duration_value=request.duration_value,
+                duration_unit=request.duration_unit,
+                amount=format_amount(request.final_amount, option.currency_precision),
+                currency=request.currency_code,
+                method=option.payment_method_name,
+            )
+    except SQLAlchemyError:
+        logger.warning("Invoice alert queue unavailable; checkout remains valid")
     return CheckoutResult(request=request, option=option, instruction=instruction)
 
 

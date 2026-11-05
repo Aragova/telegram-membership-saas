@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     ManualAccessChange,
@@ -243,3 +244,37 @@ async def test_older_manual_grant_can_be_revoked_from_paginated_list(monkeypatch
     await cb(_query("subrevoke:" + cid + ":" + gid + ":4"), bot)
     assert "own:subrevok:" + cid + ":" + gid + ":4" in _buttons(bot)
     assert detail.await_args.kwargs["grant_page"] == 4
+
+async def test_subscriber_statuses_ru_en_and_buttons_are_translated(monkeypatch):
+    project, customer, resource = uuid4(), uuid4(), uuid4()
+    cb, _ = _callbacks(monkeypatch, project)
+    monkeypatch.setattr(
+        ui, "subscriber_detail",
+        AsyncMock(return_value=_detail(customer, resource, paid=True)),
+    )
+    for language, subscription, actual in (
+        ("ru", "активна", "не подтверждён"),
+        ("en", "active", "not verified"),
+    ):
+        token = _language.set(language)
+        try:
+            bot = _bot()
+            await cb(_query("subscriber:" + encode_uuid(customer)), bot)
+            body = bot.send_message.await_args.args[1]
+            assert "Premium" in body
+            assert subscription in body
+            assert actual in body
+            labels = [
+                b.text for row in
+                bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+                for b in row
+            ]
+            assert any(
+                ("Grant manual access" if language == "en" else "Выдать ручной доступ")
+                in label for label in labels
+            )
+            if language == "en":
+                assert "Подписки" not in body
+                assert "Основания доступа" not in body
+        finally:
+            _language.reset(token)

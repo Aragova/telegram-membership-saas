@@ -44,6 +44,11 @@ class TelegramAccessAdapter:
         self._session_factory = session_factory
 
     @property
+    def bot(self) -> Bot:
+        """Bot handle for project-bound notification delivery."""
+        return self._bot
+
+    @property
     def invite_ttl(self) -> timedelta:
         return self._invite_ttl
 

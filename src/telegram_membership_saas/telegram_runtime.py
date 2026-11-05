@@ -21,6 +21,9 @@ from telegram_membership_saas.modules.outbox import (
     mark_outbox_event_failed,
     process_claimed_access_recalculate_event,
 )
+from telegram_membership_saas.modules.owner_notifications import (
+    deliver_one_owner_notification,
+)
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessAdapter,
     ensure_owner_service_for_project,
@@ -116,7 +119,14 @@ async def process_project_runtime_once(
         claimed_at=moment,
         clock=lambda: utcnow(),
     )
-    return did_work or execution is not None
+    notification_bot = getattr(adapter, "bot", None)
+    delivered_notice = (
+        await deliver_one_owner_notification(
+            session_factory, project_id=project_id, bot=notification_bot, now=moment,
+        )
+        if notification_bot is not None else False
+    )
+    return did_work or execution is not None or delivered_notice
 
 
 async def reconcile_owner_service(

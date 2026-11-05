@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.statistics import (
     OwnerStatistics,
@@ -115,3 +116,32 @@ def test_statistics_amount_keeps_integer_trailing_zeroes():
     assert ui._statistics_amount(Decimal("10.000000")) == "10"
     assert ui._statistics_amount(Decimal("100.50000")) == "100.5"
     assert ui._statistics_amount(Decimal("0.00000")) == "0"
+
+async def test_statistics_has_complete_english_labels(monkeypatch):
+    project, actor = uuid4(), uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor))
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+    monkeypatch.setattr(ui, "get_selected_project", AsyncMock(return_value=project))
+    monkeypatch.setattr(
+        ui, "read_owner_statistics", AsyncMock(return_value=_stats("7")),
+    )
+    token = _language.set("en")
+    try:
+        bot = _bot()
+        await _handler(project)(_query("statistics:7"), bot)
+        message = bot.send_message.await_args.args[1]
+        assert "Confirmed payments" in message
+        assert "New in period:" in message
+        assert "Active paying subscribers:" in message
+        assert "Pending payment reviews:" in message
+        assert "Подтверждённые оплаты" not in message
+        assert "Заявок на проверке" not in message
+        buttons = [
+            b.text for row in
+            bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+            for b in row
+        ]
+        assert "30 days" in buttons
+        assert "All time" in buttons
+    finally:
+        _language.reset(token)
