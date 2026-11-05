@@ -19,26 +19,38 @@ PROJECT = "NULLIF(current_setting('app.current_project_id', true), '')::uuid"
 def upgrade() -> None:
     op.create_table(
         "owner_notification_settings",
-        sa.Column("project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column(
+            "project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
         sa.Column("invoice_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("receipt_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("decision_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("expiry_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("access_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("daily_enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True),
+            nullable=False, server_default=sa.func.now(),
+        ),
     )
     op.create_table(
         "owner_notification_deliveries",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("kind", sa.String(32), nullable=False),
         sa.Column("event_key", sa.String(160), nullable=False),
         sa.Column("telegram_id", sa.BigInteger(), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.Column("status", sa.String(24), nullable=False, server_default="pending"),
         sa.Column("attempt_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("available_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "available_at", sa.DateTime(timezone=True),
+            nullable=False, server_default=sa.func.now(),
+        ),
         sa.Column("locked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error_code", sa.String(80), nullable=True),
