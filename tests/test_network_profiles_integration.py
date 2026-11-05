@@ -28,15 +28,20 @@ from telegram_membership_saas.modules.owner_setup.network_profiles import (
     set_network_auto_apply,
 )
 from telegram_membership_saas.modules.payments import (
-    PaymentMethod, PaymentMethodCurrency, PaymentRequest,
+    PaymentMethod,
+    PaymentMethodCurrency,
+    PaymentRequest,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import (
-    Resource, ResourceStatus, ResourceType,
+    Resource,
+    ResourceStatus,
+    ResourceType,
 )
 from telegram_membership_saas.tenant_context import (
-    TenantAccessDenied, TenantContext,
+    TenantAccessDenied,
+    TenantContext,
 )
 
 pytestmark = pytest.mark.skipif(
