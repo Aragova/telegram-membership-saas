@@ -150,7 +150,7 @@ def render_daily_financial_summary(snapshot: DailyFinancialSnapshot) -> str:
             + tr("операций: ", "payments: ") + str(count)
         )
     overflow = len(snapshot.approved_totals) - MAX_CURRENCIES
-    if overflow:
+    if overflow > 0:
         lines.append(tr(
             f"… ещё валют: {overflow}. Подробности в статистике.",
             f"… {overflow} more currencies. See Statistics.",
