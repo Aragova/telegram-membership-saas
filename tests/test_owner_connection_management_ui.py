@@ -230,3 +230,33 @@ async def test_rename_connection_central_only(monkeypatch):
     )
     await reply_handler(reply, instance)
     ui.rename_owner_connection.assert_not_awaited()
+
+
+async def test_last_archived_connection_is_reachable_from_central_start(monkeypatch):
+    archived_id = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(
+        return_value=uuid4(),
+    ))
+    monkeypatch.setattr(ui, "owner_home", AsyncMock(
+        return_value=OwnerHome((), None, archived_count=1),
+    ))
+    monkeypatch.setattr(ui, "list_archived_owner_connections", AsyncMock(
+        return_value=((archived_id, "Archived E2E"),),
+    ))
+    monkeypatch.setattr(ui, "set_chat_commands", AsyncMock())
+    router = ui.create_owner_setup_router(MagicMock())
+    home_message = next(
+        x.callback for x in router.message.handlers
+        if x.callback.__name__ == "home_message"
+    )
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(
+            id=123, first_name="Owner", username="owner",
+        ),
+        chat=SimpleNamespace(id=123, type="private"),
+        text="/menu",
+    )
+    instance = bot()
+    await home_message(message, instance)
+    assert "own:archives" in buttons(instance.send_message.await_args)
+    assert "own:new" in buttons(instance.send_message.await_args)
