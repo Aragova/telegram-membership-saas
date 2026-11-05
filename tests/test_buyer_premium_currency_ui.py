@@ -143,3 +143,41 @@ def test_english_copy_and_html_escaping_are_preserved():
         assert len(keyboard.inline_keyboard[0]) == 2
     finally:
         _language.reset(token)
+
+
+def test_unnamed_period_only_plan_does_not_show_artificial_title():
+    offers = _offers(("RUB",), name="1 месяц")
+    item = offers[0]
+    catalog, keyboard = catalog_screen(offers)
+    assert "1 месяц · 1 месяц" not in catalog
+    assert "🎟️" not in catalog
+    assert "🗓️" not in catalog
+    button = next(
+        b for row in keyboard.inline_keyboard for b in row
+        if b.callback_data.startswith("offer:")
+    )
+    assert button.text.count("1 месяц") == 1
+    detail, _ = offer_screen(offers, price_id=item.option.plan_price_id)
+    assert "🗓️ 1 месяц" in detail
+    assert "🎟️" not in detail
+    assert "💰 <b>550 RUB</b>" in detail
+
+    # Internal names are stable (Russian) even if the buyer switches language.
+    token = _language.set("en")
+    try:
+        en_catalog, _ = catalog_screen(offers)
+        en_detail, _ = offer_screen(offers, price_id=item.option.plan_price_id)
+        assert "1 month" in en_catalog
+        assert "1 месяц" not in en_catalog
+        assert "🗓️ 1 month" in en_detail
+        assert "🎟️" not in en_detail
+    finally:
+        _language.reset(token)
+
+
+def test_explicit_plan_name_still_appears_once():
+    offers = _offers(("RUB",), name="VIP")
+    item = offers[0]
+    detail, _ = offer_screen(offers, price_id=item.option.plan_price_id)
+    assert "🎟️ <b>VIP</b>" in detail
+    assert "🗓️ 1 месяц" in detail
