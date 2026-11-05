@@ -30,6 +30,10 @@ from telegram_membership_saas.modules.bots.service import (
 )
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
+from telegram_membership_saas.modules.owner_setup.network_profiles import (
+    bind_imported_drafts_on_first_channel,
+    import_profile_into_new_project,
+)
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
     PaymentMethodCurrency,
@@ -506,6 +510,12 @@ async def register_new_owner_bot(
                 status="registered",
             ))
             await session.flush()
+            # The new project is empty and isolated from all other bots.
+            # A failed template import rolls back only copied commercial
+            # configuration and never blocks successful bot registration.
+            await import_profile_into_new_project(
+                session, actor_id=actor_id, project_id=project.id,
+            )
             state = await _current_session(session, actor_id, 0)
             state.selected_project_id = project.id
             state.step = None
@@ -681,6 +691,13 @@ async def verify_channel_and_add(
         else:
             resource.status = ResourceStatus.ACTIVE.value
         await session.flush()
+        # Only projects seeded from a network profile receive automatic
+        # linking. The FIRST verified channel binds unassigned draft plans;
+        # no existing published plan or other project's resource changes.
+        await bind_imported_drafts_on_first_channel(
+            session, actor_id=actor_id, project_id=project_id,
+            resource_id=resource.id,
+        )
         return resource
 
 
