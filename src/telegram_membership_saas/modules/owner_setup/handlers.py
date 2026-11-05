@@ -830,10 +830,12 @@ def create_owner_setup_router(
     async def show_subscriber_card(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         customer_id: UUID, *, history_page: int = 0,
+        grant_page: int = 0,
     ) -> None:
         data = await subscriber_detail(
             factory, actor_id=actor_id, project_id=project_id,
             customer_id=customer_id, history_page=history_page,
+            grant_page=grant_page,
         )
         who = subscriber_label(
             data.telegram_id, data.username, data.first_name,
@@ -865,7 +867,8 @@ def create_owner_setup_router(
                 + " · " + subscriber_date(item.approved_at, data.project_timezone)
             )
         lines.extend(["", tr("🔑 <b>Основания доступа</b>",
-                             "🔑 <b>Access grants</b>")])
+                             "🔑 <b>Access grants</b>")
+                      + " · " + str(data.total_grants)])
         if not data.grants:
             lines.append(tr("Нет действующих прав", "No active grants"))
         for grant in data.grants[:8]:
@@ -906,6 +909,21 @@ def create_owner_setup_router(
                 ))
             if nav:
                 rows.append(nav)
+        if data.total_grants > 8:
+            grant_nav: list[InlineKeyboardButton] = []
+            cid_ref = encode_uuid(customer_id)
+            if grant_page:
+                grant_nav.append(_button(
+                    "◀️ " + tr("Права", "Grants"),
+                    "subgrantpage:" + cid_ref + ":" + str(grant_page - 1),
+                ))
+            if (grant_page + 1) * 8 < data.total_grants:
+                grant_nav.append(_button(
+                    tr("Права", "Grants") + " ▶️",
+                    "subgrantpage:" + cid_ref + ":" + str(grant_page + 1),
+                ))
+            if grant_nav:
+                rows.append(grant_nav)
         if data.owner_only_actions:
             rows.append([_button(
                 tr("➕ Выдать ручной доступ", "➕ Grant manual access"),
@@ -918,7 +936,8 @@ def create_owner_setup_router(
                            "🗑 Revoke manual access · ")
                         + grant.resource_name[:25],
                         "subrevoke:" + encode_uuid(customer_id)
-                        + ":" + encode_uuid(grant.id), "danger",
+                        + ":" + encode_uuid(grant.id)
+                        + ":" + str(grant_page), "danger",
                     )])
         rows.append([_button(
             tr("🔄 Обновить карточку", "🔄 Refresh"),
@@ -2013,6 +2032,14 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     decode_uuid(cid), history_page=int(page_text),
                 )
+            elif action.startswith("subgrantpage:"):
+                _, cid, page_text = action.split(":", 2)
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Недопустимая страница прав доступа")
+                await show_subscriber_card(
+                    bot, user_id, actor_id, project_id,
+                    decode_uuid(cid), grant_page=int(page_text),
+                )
             elif action.startswith("subgrantstart:"):
                 await show_manual_resource_picker(
                     bot, user_id, actor_id, project_id,
@@ -2125,12 +2152,15 @@ def create_owner_setup_router(
                         bot, user_id, actor_id, project_id, customer_id,
                     )
             elif action.startswith(("subrevoke:", "subrevok:")):
-                verb, cid, gid = action.split(":", 2)
+                verb, cid, gid, page_text = action.split(":", 3)
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Недопустимая страница ручных прав")
+                grant_page = int(page_text)
                 customer_id, grant_id = decode_uuid(cid), decode_uuid(gid)
                 if verb == "subrevoke":
                     detail = await subscriber_detail(
                         factory, actor_id=actor_id, project_id=project_id,
-                        customer_id=customer_id,
+                        customer_id=customer_id, grant_page=grant_page,
                     )
                     if not detail.owner_only_actions or grant_id not in {
                         g.id for g in detail.grants if g.source == "manual"
@@ -2157,7 +2187,8 @@ def create_owner_setup_router(
                         parse_mode="HTML", reply_markup=_markup([
                             [_button(
                                 tr("🗑 Да, отозвать", "🗑 Confirm revoke"),
-                                "subrevok:" + cid + ":" + gid, "danger",
+                                "subrevok:" + cid + ":" + gid
+                                + ":" + page_text, "danger",
                             )],
                             [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
                                      "subscriber:" + cid)],
@@ -2178,6 +2209,7 @@ def create_owner_setup_router(
                     )
                     await show_subscriber_card(
                         bot, user_id, actor_id, project_id, customer_id,
+                        grant_page=grant_page,
                     )
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
