@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import apply_tenant_context, tenant_session_scope
-from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.health_service import (
     public_health_label,
@@ -61,7 +60,7 @@ from telegram_membership_saas.modules.projects import (
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.modules.telegram_commerce.service import (
-    format_period,
+    default_period_plan_name,
     list_checkout_options,
 )
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
@@ -741,14 +740,9 @@ async def create_owner_plan(
     if duration_value is not None and not 1 <= duration_value <= 365:
         raise ValueError("Неверный срок тарифа")
     if not title:
-        # Database names and immutable payment snapshots remain non-empty.
-        # The storefront hides this generated duration-only label as a
-        # separate plan title, in both RU and EN.
-        language_token = _language.set("ru")
-        try:
-            title = format_period(duration_value, duration_unit)
-        finally:
-            _language.reset(language_token)
+        # Existing DB/payment snapshots require a nonempty title. The buyer
+        # storefront suppresses the generated period-only name.
+        title = default_period_plan_name(duration_value, duration_unit)
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:
