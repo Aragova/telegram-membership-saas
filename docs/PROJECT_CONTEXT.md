@@ -246,3 +246,12 @@ cannot cancel a paid or owner-service grant. No financial ledger or schema
 migration changes. Central remains a connection registry only. All staging
 changes require PR review, explicit merge authorization and deployment
 approval; real customers must not be altered during acceptance tests.
+
+## Owner statistics (read-only, PR #56)
+
+See [OWNER_STATISTICS.md](OWNER_STATISTICS.md). The connected owner's bot offers
+project-scoped 7/30/all-time statistics: original-currency approved Payments,
+registered customers, active paying subscribers, separate manual grants and
+pending manual reviews. Uses existing tenant RLS and no migrations. Platform
+GMV and tenant sales are not SaaS revenue. This PR depends on #55 and must
+not deploy before its own exact-head CI, review and approval.
