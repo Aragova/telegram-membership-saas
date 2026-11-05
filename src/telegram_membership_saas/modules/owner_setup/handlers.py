@@ -2436,6 +2436,46 @@ def create_owner_setup_router(
                     tr("✅ Тариф удалён.", "✅ Plan deleted."),
                 )
                 await show_plans(bot, user_id, actor_id, project_id)
+            elif action.startswith("currencyadd:"):
+                parts = action.split(":")
+                if len(parts) < 2 or len(parts) > 3 or parts[1] not in (
+                    "price", "method", "attach",
+                ):
+                    raise ValueError("Некорректный режим выбора валюты")
+                mode = parts[1]
+                if (mode == "method" and len(parts) != 2) or (
+                    mode != "method" and len(parts) != 3
+                ):
+                    raise ValueError("Некорректная карточка валюты")
+                target = parts[2] if len(parts) == 3 else None
+                if mode == "price":
+                    await get_owner_plan_info(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=UUID(hex=target),
+                    )
+                if mode == "attach":
+                    await get_owner_method_info(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        method_id=UUID(hex=target),
+                    )
+                await prompt(
+                    bot, user_id, actor_id, step="currency_custom_code",
+                    payload={"mode": mode, "target": target},
+                    text=tr(
+                        "💱 <b>Добавить валюту</b>\n\n"
+                        "Введите международный код, например: UAH, BYN, "
+                        "GBP, CNY, JPY, BTC. Доступны валюты ISO 4217 "
+                        "и криптовалюты из справочника ViMi Pay.\n\n"
+                        "Выбранная валюта появится только в этом боте. "
+                        "Цена и способ оплаты настраиваются отдельно.",
+                        "💱 <b>Add currency</b>\n\n"
+                        "Enter an international code, e.g. UAH, BYN, "
+                        "GBP, CNY, JPY, BTC. ISO 4217 and existing ViMi Pay "
+                        "cryptocurrency codes are supported.\n\n"
+                        "The currency is added only to this bot. "
+                        "Prices and payment instructions are configured separately.",
+                    ),
+                )
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
                 if currency not in await owner_available_currencies(
@@ -2530,6 +2570,10 @@ def create_owner_setup_router(
                     )] for code in method.currencies
                     if len(method.currencies) > 1
                 ])
+                rows.append([_button(
+                    tr("➕ Другая валюта", "➕ Another currency"),
+                    "currencyadd:attach:" + method_id.hex,
+                )])
                 if not rows:
                     await bot.send_message(
                         user_id, tr("Все доступные валюты уже подключены.",
