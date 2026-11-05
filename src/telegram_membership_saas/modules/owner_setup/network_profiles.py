@@ -22,7 +22,10 @@ from telegram_membership_saas.modules.payments import (
     PaymentMethodCurrency,
     create_manual_payment_method,
 )
-from telegram_membership_saas.modules.payments.service import _validate_instruction_template
+from telegram_membership_saas.modules.payments.service import (
+    MISSING_NETWORK_PAYMENT_INSTRUCTIONS,
+    _validate_instruction_template,
+)
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice, replace_active_plan_price
 from telegram_membership_saas.modules.projects import Project
@@ -31,7 +34,7 @@ from telegram_membership_saas.modules.telegram_admin.service import _require_pro
 from telegram_membership_saas.tenant_context import TenantContext
 
 MAX_PROFILE_ITEMS = 100
-EMPTY_INSTRUCTIONS = "Укажите реквизиты для оплаты перед включением этого способа."
+EMPTY_INSTRUCTIONS = MISSING_NETWORK_PAYMENT_INSTRUCTIONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,7 +305,7 @@ async def bind_imported_drafts_on_first_channel(
     private network profile. The project-scoped import marker is sufficient.
     """
     await _require_project_manager(
-        session, project_id=project_id, actor_user_id=actor_id,
+        session, project_id=project_id, actor_user_id=actor_id, lock=True,
     )
     applied = await session.scalar(
         select(ProjectProfileApplication).where(
