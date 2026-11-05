@@ -154,3 +154,70 @@ async def test_interleaved_shared_lease_claims_preserve_project_rls():
         await manager.close()
         await lease_engine.dispose()
         await engine.dispose()
+
+
+async def test_cancelled_one_bot_query_does_not_release_other_project_leases():
+    settings = Settings()
+    engine = build_lease_engine(settings)
+    competing = build_lease_engine(settings)
+    manager = SharedProjectLeaseManager(engine)
+    await manager.start()
+    first, second = uuid4(), uuid4()
+    from contextlib import AsyncExitStack
+
+    try:
+        async with AsyncExitStack() as stack:
+            handle_a = await stack.enter_async_context(project_worker_lock(manager, first))
+            handle_b = await stack.enter_async_context(project_worker_lock(manager, second))
+            # Cancel a statement while PostgreSQL is actively processing it.
+            # No cancellation may reach the shared DB connection.
+            query = asyncio.create_task(
+                handle_a.execute(text("SELECT pg_sleep(0.15)")),
+            )
+            await asyncio.sleep(0.04)
+            assert not query.done()
+            query.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await query
+            assert not manager.failed
+            await confirm_project_lock(handle_b, second)
+            with pytest.raises(ProjectWorkerBusy):
+                async with project_worker_lock(competing, second):
+                    pytest.fail("Cancel of first bot cannot unlock second bot")
+            with pytest.raises(ProjectWorkerBusy):
+                async with project_worker_lock(competing, first):
+                    pytest.fail("Cancelled query cannot drop first bot's lock")
+    finally:
+        await manager.close()
+        await engine.dispose()
+        await competing.dispose()
+
+
+async def test_cancelled_lease_acquisition_releases_unclaimed_project_lock():
+    settings = Settings()
+    engine = build_lease_engine(settings)
+    competing = build_lease_engine(settings)
+    manager = SharedProjectLeaseManager(engine)
+    await manager.start()
+    project_id = uuid4()
+
+    async def interrupted_owner():
+        async with project_worker_lock(manager, project_id):
+            pytest.fail("Cancelled before project scope must not start poller")
+
+    try:
+        # Stall acquisition on the mutex. Cancellation must not interrupt the
+        # SQL, and its newly acquired lease must still be cleaned up.
+        async with manager._mutex:
+            owner = asyncio.create_task(interrupted_owner())
+            await asyncio.sleep(0)
+            owner.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await owner
+        assert not manager.failed
+        async with project_worker_lock(competing, project_id):
+            pass
+    finally:
+        await manager.close()
+        await engine.dispose()
+        await competing.dispose()
