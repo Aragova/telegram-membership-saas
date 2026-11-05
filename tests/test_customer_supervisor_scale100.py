@@ -14,6 +14,7 @@ from telegram_membership_saas.customer_supervisor import (
     assign_project_shards,
     ensure_supervisor_database_budget,
 )
+from telegram_membership_saas.project_worker_lock import ProjectWorkerBusy
 
 
 def targets(total: int) -> tuple[BotTarget, ...]:
@@ -168,3 +169,87 @@ async def test_scaled_supervisor_checks_database_connection_headroom(
     factory.reset_mock()
     await ensure_supervisor_database_budget(factory, single)
     factory.assert_not_called()
+
+
+async def test_legacy_single_shard_never_evicts_incumbent_on_new_registration(
+    monkeypatch,
+):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    initial = targets(2)
+    newcomer = BotTarget(UUID(int=0), 200000000, datetime.now(UTC))
+    discovered = list(initial)
+    release = asyncio.Event()
+
+    async def find(_factory):
+        return tuple(discovered)
+
+    async def worker(_engine, _factory, _target, *, settings):
+        await release.wait()
+
+    statuses = AsyncMock()
+    monkeypatch.setattr(runtime, "discover_targets", find)
+    monkeypatch.setattr(runtime, "discover_removal_targets",
+                        AsyncMock(return_value=()))
+    monkeypatch.setattr(runtime, "run_target", worker)
+    monkeypatch.setattr(runtime, "write_bot_health", statuses)
+
+    supervisor = CustomerBotSupervisor(
+        MagicMock(), MagicMock(), configuration(0, count=1, cap=2),
+    )
+    try:
+        await supervisor.reconcile_once()
+        assert set(supervisor.workers) == {t.project_id for t in initial}
+        discovered.append(newcomer)
+        await supervisor.reconcile_once()
+        assert set(supervisor.workers) == {t.project_id for t in initial}
+        assert all(not worker.task.cancelling()
+                   for worker in supervisor.workers.values())
+        assert statuses.await_count == 1
+        assert statuses.await_args.kwargs["state"] == "queued"
+        assert statuses.await_args.kwargs["project_id"] == newcomer.project_id
+    finally:
+        release.set()
+        await asyncio.gather(
+            *(w.task for w in supervisor.workers.values()),
+            return_exceptions=True,
+        )
+
+
+async def test_initial_busy_lease_has_no_failure_backoff(monkeypatch):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    target = targets(1)[0]
+    release = asyncio.Event()
+    attempts = 0
+
+    async def worker(_engine, _factory, _target, *, settings):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ProjectWorkerBusy("old shard is still draining")
+        await release.wait()
+
+    monkeypatch.setattr(runtime, "discover_targets",
+                        AsyncMock(return_value=(target,)))
+    monkeypatch.setattr(runtime, "discover_removal_targets",
+                        AsyncMock(return_value=()))
+    monkeypatch.setattr(runtime, "run_target", worker)
+
+    supervisor = CustomerBotSupervisor(
+        MagicMock(), MagicMock(), configuration(0, count=1, cap=1),
+    )
+    try:
+        await supervisor.reconcile_once()
+        await asyncio.sleep(0)
+        assert attempts == 1
+        await supervisor.reconcile_once()
+        await asyncio.sleep(0)
+        assert attempts == 2
+        assert target.project_id not in supervisor.retry_after
+    finally:
+        release.set()
+        await asyncio.gather(
+            *(w.task for w in supervisor.workers.values()),
+            return_exceptions=True,
+        )
