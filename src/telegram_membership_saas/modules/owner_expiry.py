@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
-from telegram_membership_saas.modules.plans import Plan
+from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions import Subscription
 
@@ -38,6 +38,54 @@ class PaidDeadline:
     username: str | None
     first_name: str | None
     plan_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaidCoverage:
+    """Another confirmed paid subscription potentially covering old resources."""
+
+    customer_id: UUID
+    plan_id: UUID
+    ends_at: datetime | None
+    started_at: datetime
+
+
+def exclude_replaced_deadlines(
+    candidates: list[PaidDeadline], *,
+    coverages: list[PaidCoverage],
+    plan_resources: dict[UUID, set[UUID]],
+    checked_at: datetime,
+) -> list[PaidDeadline]:
+    """Exclude an older plan only when all its channels remain paid elsewhere.
+
+    A replacement can consist of several plans. Each covering term must
+    remain effective past the old deadline; a partial replacement is not enough.
+    Lifetime coverage is represented by ends_at=None.
+    """
+    by_customer: dict[UUID, list[PaidCoverage]] = {}
+    for cover in coverages:
+        if (
+            cover.started_at <= checked_at
+            and (cover.ends_at is None or cover.ends_at > checked_at)
+        ):
+            by_customer.setdefault(cover.customer_id, []).append(cover)
+
+    visible = []
+    for old in candidates:
+        required = plan_resources.get(old.plan_id, set())
+        alternatives = [
+            cover for cover in by_customer.get(old.customer_id, [])
+            if cover.plan_id != old.plan_id
+            and (cover.ends_at is None or cover.ends_at > old.ends_at)
+        ]
+        paid_elsewhere = {
+            resource for cover in alternatives
+            for resource in plan_resources.get(cover.plan_id, set())
+        }
+        if required and required.issubset(paid_elsewhere):
+            continue
+        visible.append(old)
+    return visible
 
 
 def _due_time(day: date, timezone: str) -> datetime:
@@ -147,10 +195,54 @@ async def _read_deadline_rows(
 
 async def read_expiry_digest(
     session: AsyncSession, *, project_id: UUID, local_date: date,
-    timezone: str,
+    timezone: str, checked_at: datetime | None = None,
 ) -> dict[int, list[PaidDeadline]]:
     rows = await _read_deadline_rows(
         session, project_id=project_id, local_date=local_date, timezone=timezone,
+    )
+    if not rows:
+        return {7: [], 3: [], 1: [], 0: []}
+
+    # Do not tell an owner that a customer is expiring if a different PAID
+    # plan (including lifetime) already covers every resource of the old one.
+    # A different currency/plan ID is not sufficient evidence of replacement:
+    # compare the actual channel resources, with tenant boundaries.
+    checked = checked_at or _due_time(local_date, timezone).astimezone(UTC)
+    customers = {row.customer_id for row in rows}
+    covering = (
+        await session.execute(
+            select(
+                Subscription.customer_id, Subscription.plan_id,
+                Subscription.current_period_end, Subscription.started_at,
+            ).where(
+                Subscription.project_id == project_id,
+                Subscription.customer_id.in_(customers),
+                Subscription.status == "active",
+                Subscription.started_at <= checked,
+                (
+                    Subscription.current_period_end.is_(None)
+                    | (Subscription.current_period_end > checked)
+                ),
+            )
+        )
+    ).all()
+    coverages = [PaidCoverage(*row) for row in covering]
+    plan_ids = {row.plan_id for row in rows}
+    plan_ids.update(item.plan_id for item in coverages)
+    links = (
+        await session.execute(
+            select(PlanResource.plan_id, PlanResource.resource_id).where(
+                PlanResource.project_id == project_id,
+                PlanResource.plan_id.in_(plan_ids),
+            )
+        )
+    ).all()
+    plan_resources: dict[UUID, set[UUID]] = {}
+    for plan_id, resource_id in links:
+        plan_resources.setdefault(plan_id, set()).add(resource_id)
+    rows = exclude_replaced_deadlines(
+        rows, coverages=coverages,
+        plan_resources=plan_resources, checked_at=checked,
     )
     return classify_paid_deadlines(
         rows, local_date=local_date, timezone=timezone,
@@ -236,6 +328,7 @@ async def schedule_owner_expiry_digest(
             return next_slot
         groups = await read_expiry_digest(
             session, project_id=project_id, local_date=local.date(), timezone=zone,
+            checked_at=now,
         )
         if not any(groups.values()):
             return next_slot
@@ -277,7 +370,7 @@ async def prepare_expiry_delivery(
             return None
         groups = await read_expiry_digest(
             session, project_id=project_id, local_date=local_date,
-            timezone=project.timezone,
+            timezone=project.timezone, checked_at=now,
         )
         body = render_expiry_digest(
             groups, local_date=local_date, timezone=project.timezone,
