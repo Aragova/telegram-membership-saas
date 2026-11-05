@@ -1450,6 +1450,58 @@ def create_owner_setup_router(
                                     "Create or select a connection first"))
             if action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action == "network":
+                await show_network_profile(bot, user_id, actor_id, project_id)
+            elif action == "networkask":
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "📁 <b>Сохранить настройки для новых ботов?</b>\n\n"
+                        "Копируются тарифы, сроки, цены, способы оплаты и валюты. "
+                        "Тарифы будут черновиками, оплата выключена.\n\n"
+                        "Выберите, копировать ли также банковские реквизиты. "
+                        "Автоприменение к новым ботам включится сразу.",
+                        "📁 <b>Save settings for future bots?</b>\n\n"
+                        "Plans, durations, prices, methods and currencies are copied. "
+                        "Plans remain drafts; payments are disabled.\n\n"
+                        "Choose whether to include bank details. "
+                        "Auto-apply to future bots will be enabled.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            tr("✅ С реквизитами", "✅ Include bank details"),
+                            "networksave:yes", "success",
+                        )],
+                        [_button(
+                            tr("✅ Без реквизитов", "✅ Without bank details"),
+                            "networksave:no",
+                        )],
+                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "network")],
+                    ]),
+                )
+            elif action.startswith("networksave:"):
+                choice = action.split(":", 1)[1]
+                if choice not in ("yes", "no"):
+                    raise ValueError("Некорректный выбор профиля")
+                saved = await save_owner_network_profile(
+                    factory, actor_id=actor_id, source_project_id=project_id,
+                    copy_instructions=(choice == "yes"),
+                )
+                await bot.send_message(
+                    user_id,
+                    tr("✅ Профиль сохранён: ", "✅ Profile saved: ")
+                    + str(saved.plan_count)
+                    + tr(" тарифов и ", " plans and ")
+                    + str(saved.method_count)
+                    + tr(" способов оплаты.", " payment methods."),
+                )
+                await show_network_profile(bot, user_id, actor_id, project_id)
+            elif action in ("networkoff", "networkon"):
+                await set_network_auto_apply(
+                    factory, actor_id=actor_id, enabled=action == "networkon",
+                )
+                await show_network_profile(bot, user_id, actor_id, project_id)
             elif action == "reviews":
                 await show_reviews(bot, user_id, actor_id, project_id)
             elif action == "preview":
