@@ -85,10 +85,15 @@ actionable review messages remain available to authorized reviewers.
 
 - The existing connected-bot project runtime schedules one scan at project-
   local **10:00**, using IANA timezones and daylight-saving transitions.
-  Startup after 10:00 runs today's digest (no backdated replay flood).
+  A cheap project-scoped timezone refresh once a minute detects live timezone
+  edits and invalidates the cached 10:00 UTC wake-up. Startup after 10:00
+  runs today's digest (no backdated replay flood).
 - Classifies live paid Subscription end dates into 7 / 3 / 1 **calendar days**
   ahead, and terms ending within the 24 hours before 10:00. An expired term
-  is not automatically a revoked Telegram membership.
+  is not automatically a revoked Telegram membership. Before classification,
+  the worker excludes a customer's old plan when another active **paid** plan
+  (or combination of plans) covers **all the old plan's channels** past its
+  end date, including lifetime coverage. Partial replacement is not enough.
 - Each category deduplicates customers; manual grants and pending/unconfirmed
   invoices never become paid deadlines. Lifetime paid terms are excluded.
 - A single owner-only digest per project and local date uses the existing
