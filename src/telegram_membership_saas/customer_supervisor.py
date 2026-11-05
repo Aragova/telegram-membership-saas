@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from hashlib import blake2s
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import blake2s
 from time import monotonic
 from uuid import UUID, uuid4
 
