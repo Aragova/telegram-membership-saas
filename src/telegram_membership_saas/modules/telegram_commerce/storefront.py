@@ -319,11 +319,4 @@ def offer_screen(
         text=tr("⬅️ Все тарифы", "⬅️ All plans"),
         callback_data=f"cat:{option.currency_code}:{page}",
     )])
-    rows.append([InlineKeyboardButton(
-        text=tr("🧾 Мои покупки", "🧾 My purchases"),
-        callback_data="account:home",
-    )])
-    rows.append([InlineKeyboardButton(
-        text="🌐 Language / Язык", callback_data="lng:menu",
-    )])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
