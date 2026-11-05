@@ -1,0 +1,14 @@
+# Optional light runtime profile: one supervisor for up to 100 low-traffic
+# Telegram customer bots on the existing VM and PostgreSQL installation.
+# This overlay DOES NOT change PostgreSQL max_connections or any persistent DB
+# settings. It is inactive unless explicitly included with -f.
+services:
+  customer-supervisor:
+    environment:
+      TMS_CUSTOMER_SUPERVISOR_LEASE_MODE: "shared"
+      TMS_CUSTOMER_SUPERVISOR_MAX_BOTS: "100"
+      TMS_CUSTOMER_SUPERVISOR_SHARD_COUNT: "1"
+      TMS_CUSTOMER_SUPERVISOR_SHARD_ID: "0"
+      # Quiet channels do not need a PostgreSQL access/outbox scan every second.
+      # New access/revocation actions may be delayed by up to this interval.
+      TMS_TELEGRAM_WORKER_POLL_SECONDS: "5"
