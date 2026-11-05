@@ -102,3 +102,19 @@ async def test_shared_mode_starts_100_bots_in_five_per_scan_batches(monkeypatch)
             *(w.task for w in supervisor.workers.values()),
             return_exceptions=True,
         )
+
+
+async def test_failed_shared_lease_stops_supervisor_for_clean_restart():
+    from telegram_membership_saas.project_worker_lock import SharedProjectLeaseManager
+
+    manager = SharedProjectLeaseManager(MagicMock())
+    manager._broken = True
+    supervisor = CustomerBotSupervisor(
+        manager, MagicMock(),
+        config(customer_supervisor_lease_mode="shared",
+               customer_supervisor_max_bots=100),
+    )
+    supervisor.reconcile_once = AsyncMock()
+    with pytest.raises(RuntimeError, match="restart required"):
+        await asyncio.wait_for(supervisor.run(), timeout=1)
+    supervisor.reconcile_once.assert_awaited_once()
