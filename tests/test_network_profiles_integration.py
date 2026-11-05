@@ -34,16 +34,16 @@ from telegram_membership_saas.modules.owner_setup.network_profiles import (
     save_owner_network_profile,
     set_network_auto_apply,
 )
+from telegram_membership_saas.modules.owner_setup.tenant_admin import (
+    change_owner_method_status,
+    get_owner_method_info,
+)
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
     PaymentMethodCurrency,
     PaymentRequest,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
-from telegram_membership_saas.modules.owner_setup.tenant_admin import (
-    change_owner_method_status,
-    get_owner_method_info,
-)
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import ProjectMember
 from telegram_membership_saas.modules.resources import (
