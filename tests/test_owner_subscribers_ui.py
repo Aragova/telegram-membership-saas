@@ -87,6 +87,7 @@ def _detail(customer, resource, *, owner=True, paid=False):
             id=uuid4(), resource_id=resource,
             resource_name="Channel", source="manual", valid_until=None,
         ),),
+        total_grants=1, grant_page=0,
         access=(SubscriberAccess(
             resource_name="Channel", desired=True, actual="unknown",
         ),),
@@ -192,14 +193,14 @@ async def test_revoke_manual_only_and_reject_fake_paid_grant(monkeypatch):
     monkeypatch.setattr(ui, "revoke_manual_access", revoke)
     bot = _bot()
     cid, gid = encode_uuid(customer), encode_uuid(record.grants[0].id)
-    await cb(_query("subrevoke:" + cid + ":" + gid), bot)
+    await cb(_query("subrevoke:" + cid + ":" + gid + ":0"), bot)
     assert revoke.await_count == 0
-    assert "own:subrevok:" + cid + ":" + gid in _buttons(bot)
-    await cb(_query("subrevok:" + cid + ":" + gid), bot)
+    assert "own:subrevok:" + cid + ":" + gid + ":0" in _buttons(bot)
+    await cb(_query("subrevok:" + cid + ":" + gid + ":0"), bot)
     revoke.assert_awaited_once()
 
     revoke.reset_mock()
-    req = _query("subrevoke:" + cid + ":" + encode_uuid(uuid4()))
+    req = _query("subrevoke:" + cid + ":" + encode_uuid(uuid4()) + ":0")
     await cb(req, bot)
     revoke.assert_not_awaited()
     assert req.answer.await_args.kwargs.get("show_alert")
@@ -213,3 +214,32 @@ async def test_central_bot_rejects_subscriber_admin_callbacks(monkeypatch):
     req.answer.assert_awaited()
     assert req.answer.await_args.kwargs.get("show_alert")
     bot.send_message.assert_not_awaited()
+
+
+
+async def test_older_manual_grant_can_be_revoked_from_paginated_list(monkeypatch):
+    project, customer, resource = uuid4(), uuid4(), uuid4()
+    cb, _ = _callbacks(monkeypatch, project)
+    target = uuid4()
+    current = _detail(customer, resource)
+    from dataclasses import replace
+
+    # An older manual entitlement is on page 4 after 32 newer grants.
+    older = SubscriberGrant(
+        id=target, resource_id=resource, resource_name="Old Channel",
+        source="manual", valid_until=None,
+    )
+    detail = AsyncMock(return_value=replace(
+        current, grants=(older,), total_grants=33, grant_page=4,
+    ))
+    monkeypatch.setattr(ui, "subscriber_detail", detail)
+    bot = _bot()
+    cid, gid = encode_uuid(customer), encode_uuid(target)
+    await cb(_query("subgrantpage:" + cid + ":4"), bot)
+    actions = _buttons(bot)
+    assert "own:subrevoke:" + cid + ":" + gid + ":4" in actions
+    assert "own:subgrantpage:" + cid + ":3" in actions
+    assert all(len(a.encode("utf-8")) <= 64 for a in actions)
+    await cb(_query("subrevoke:" + cid + ":" + gid + ":4"), bot)
+    assert "own:subrevok:" + cid + ":" + gid + ":4" in _buttons(bot)
+    assert detail.await_args.kwargs["grant_page"] == 4
