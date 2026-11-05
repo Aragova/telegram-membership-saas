@@ -1,7 +1,9 @@
 """PR #59: owner paid-term digests, 10:00 IANA timezone, RU/EN and safety."""
+import asyncio
 import os
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -17,8 +19,10 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_expiry import (
+    PaidCoverage,
     PaidDeadline,
     classify_paid_deadlines,
+    exclude_replaced_deadlines,
     next_digest_check,
     render_expiry_digest,
     schedule_owner_expiry_digest,
@@ -45,6 +49,7 @@ from telegram_membership_saas.modules.telegram_commerce import (
     submit_checkout_for_telegram_user,
 )
 from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas import telegram_runtime
 
 
 def _deadline(customer, when, status="active", *, username="buyer",
@@ -296,3 +301,91 @@ async def test_owner_ten_am_digest_dedup_and_renewal_rechecked_before_delivery()
         )
     finally:
         await engine.dispose()
+
+
+
+def test_cross_plan_paid_replacement_suppresses_only_fully_covered_channels():
+    """A lifetime/annual upgrade must suppress an old monthly deadline."""
+    customer, stranger = uuid4(), uuid4()
+    old_plan, new_annual, new_lifetime, partial = (
+        uuid4() for _ in range(4)
+    )
+    channel_a, channel_b, other_channel = (uuid4() for _ in range(3))
+    now = datetime(2026, 11, 6, 7, tzinfo=UTC)
+    ends = now + timedelta(days=3)
+    old = _deadline(
+        customer, ends, plan=old_plan, start=now - timedelta(days=27),
+    )
+    resources = {
+        old_plan: {channel_a, channel_b},
+        new_annual: {channel_a, channel_b},
+        new_lifetime: {channel_a, channel_b},
+        partial: {channel_a, other_channel},
+    }
+
+    assert exclude_replaced_deadlines(
+        [old],
+        coverages=[PaidCoverage(
+            customer, new_annual, ends + timedelta(days=300), now,
+        )],
+        plan_resources=resources, checked_at=now,
+    ) == []
+    assert exclude_replaced_deadlines(
+        [old],
+        coverages=[PaidCoverage(
+            customer, new_lifetime, None, now - timedelta(days=1),
+        )],
+        plan_resources=resources, checked_at=now,
+    ) == []
+    assert exclude_replaced_deadlines(
+        [old],
+        coverages=[PaidCoverage(
+            customer, partial, None, now - timedelta(days=1),
+        )],
+        plan_resources=resources, checked_at=now,
+    ) == [old]  # channel B is unprotected
+    assert exclude_replaced_deadlines(
+        [old],
+        coverages=[PaidCoverage(
+            stranger, new_lifetime, None, now - timedelta(days=1),
+        )],
+        plan_resources=resources, checked_at=now,
+    ) == [old]  # never borrow another buyer's paid rights
+    assert exclude_replaced_deadlines(
+        [old],
+        coverages=[PaidCoverage(
+            customer, new_lifetime, None, now + timedelta(days=1),
+        )],
+        plan_resources=resources, checked_at=now,
+    ) == [old]  # future paid start does not yet cover the old plan
+
+
+async def test_running_worker_reschedules_when_owner_changes_timezone(monkeypatch):
+    """A live Moscow→Tokyo edit cannot use the old 07:00 UTC deadline."""
+    moment = datetime(2026, 11, 5, 0, tzinfo=UTC)
+    clock = iter([moment, moment + timedelta(seconds=61)])
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=["Europe/Moscow", "Asia/Tokyo"])
+
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield session
+
+    schedule = AsyncMock(return_value=moment + timedelta(days=1))
+    monkeypatch.setattr(telegram_runtime, "system_project_session_scope", scope)
+    monkeypatch.setattr(
+        telegram_runtime, "schedule_owner_expiry_digest", schedule,
+    )
+    monkeypatch.setattr(
+        telegram_runtime, "reconcile_owner_service", AsyncMock(return_value=0),
+    )
+    work = AsyncMock(side_effect=[False, asyncio.CancelledError()])
+    monkeypatch.setattr(telegram_runtime, "process_project_runtime_once", work)
+
+    with pytest.raises(asyncio.CancelledError):
+        await telegram_runtime.run_project_runtime_loop(
+            MagicMock(), project_id=uuid4(), adapter=MagicMock(),
+            poll_seconds=0.001, clock=lambda: next(clock),
+        )
+    assert schedule.await_count == 2
+    assert session.scalar.await_count == 2
