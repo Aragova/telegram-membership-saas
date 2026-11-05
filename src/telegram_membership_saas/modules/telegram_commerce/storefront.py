@@ -179,10 +179,10 @@ def catalog_screen(
     if not currencies:
         return (
             tr(
-                "✦ <b>Подписки</b>\n\n"
-                "Пока нет тарифов, доступных для покупки. Загляните позже.",
-                "✦ <b>Subscriptions</b>\n\n"
-                "No plans are available for purchase yet. Please check back later.",
+                "💎 <b>Подписки</b>\n\n"
+                "✨ Пока нет тарифов, доступных для покупки. Загляните позже! 👋",
+                "💎 <b>Subscriptions</b>\n\n"
+                "✨ No plans are available for purchase yet. Please check back later! 👋",
             ),
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
@@ -201,10 +201,16 @@ def catalog_screen(
     ]
     rows = _currency_rows(currencies, chosen)
     lines = [
-        tr("✦ <b>Подписки</b>", "✦ <b>Subscriptions</b>"),
-        tr("Выберите срок и тариф.", "Choose a plan and duration."),
+        tr("💎 <b>Подписки</b>", "💎 <b>Subscriptions</b>"),
+        tr(
+            "👋 Добро пожаловать! Выберите валюту и подходящий тариф — "
+            "с оплатой поможем на следующем шаге.",
+            "👋 Welcome! Choose a currency and the plan that suits you. "
+            "We’ll guide you through payment next.",
+        ),
         "",
-        tr("Валюта: <b>", "Currency: <b>") + escape(chosen) + "</b>",
+        tr("🌍 Валюта: <b>", "🌍 Currency: <b>")
+        + _currency_icon(chosen) + " " + escape(chosen) + "</b>",
     ]
     current_resource = None
     for item in visible:
@@ -215,13 +221,17 @@ def catalog_screen(
         price = format_amount(option.amount, option.currency_precision)
         period = format_period(option.duration_value, option.duration_unit)
         lines.append(
-            "• " + escape(option.plan_name) + " · " + escape(period)
-            + " — <b>" + escape(price + " " + chosen) + "</b>"
+            "✨ <b>" + _plan_summary(option.plan_name, period) + "</b>"
+            + " — " + escape(price + " " + chosen)
+        )
+        button_plan = (
+            option.plan_name[:23] if option.plan_name.strip().casefold()
+            == period.strip().casefold()
+            else option.plan_name[:23] + " · " + period
         )
         rows.append([InlineKeyboardButton(
             text=(
-                "💎 " + option.plan_name[:23] + " · " + period
-                + " · " + price + " " + chosen
+                "💎 " + button_plan + " · " + price + " " + chosen
             )[:64],
             callback_data=(
                 f"offer:{encode_uuid(option.plan_price_id)}:{current_page}"
@@ -242,8 +252,10 @@ def catalog_screen(
         rows.append(nav)
         lines.extend(["", tr(f"Страница {current_page + 1} из {total_pages}",
                               f"Page {current_page + 1} of {total_pages}")])
-    lines.extend(["", tr("Способ оплаты выберете на следующем шаге.",
-                          "You will choose a payment method next.")])
+    lines.extend(["", tr(
+        "👇 Нажмите на тариф ниже. Способ оплаты выберете на следующем шаге. 💳",
+        "👇 Tap a plan below. You’ll choose a payment method next. 💳",
+    )])
     rows.append([InlineKeyboardButton(
         text=tr("🧾 Мои покупки", "🧾 My purchases"),
         callback_data="account:home",
@@ -274,12 +286,18 @@ def offer_screen(
     price = format_amount(option.amount, option.currency_precision)
     period = format_period(option.duration_value, option.duration_unit)
     text = (
-        tr("✦ <b>Оформление подписки</b>\n\n", "✦ <b>Subscription checkout</b>\n\n")
-        + "📢 " + escape(current.resource_label) + "\n"
-        "💎 <b>" + escape(option.plan_name) + "</b>\n"
-        "⏳ " + escape(period) + "\n"
-        "💰 <b>" + escape(price + " " + option.currency_code) + "</b>\n\n"
-        + tr("Выберите удобный способ оплаты:", "Choose a payment method:")
+        tr(
+            "💎 <b>Оформление подписки</b>\n"
+            "✨ Отличный выбор! Осталось выбрать удобный способ оплаты.\n\n",
+            "💎 <b>Subscription checkout</b>\n"
+            "✨ Great choice! Just pick the payment method you prefer.\n\n",
+        )
+        + "📣 <b>" + escape(current.resource_label) + "</b>\n"
+        + "🎟️ <b>" + escape(option.plan_name) + "</b>\n"
+        + "🗓️ " + escape(period) + "\n"
+        + "💰 <b>" + escape(price + " " + option.currency_code) + "</b>\n\n"
+        + tr("👇 <b>Как вам удобнее оплатить?</b>",
+             "👇 <b>How would you like to pay?</b>")
     )
     for method in current.methods:
         rows.append([InlineKeyboardButton(
