@@ -327,3 +327,33 @@ async def test_retiring_bot_blocks_grants_and_older_grants_are_paginated():
             )) == 34
     finally:
         await engine.dispose()
+
+
+async def test_owner_resource_picker_does_not_truncate_after_thirty_channels():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, _, _, project, _, cid, initial, _ = await setup_subscriber(factory)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            for n in range(35):
+                session.add(Resource(
+                    project_id=project,
+                    resource_type=ResourceType.TELEGRAM_CHANNEL.value,
+                    external_id=f"-100{uuid4().int % 100000000000}",
+                    name=f"Extra private channel {n:02d}",
+                    status=ResourceStatus.ACTIVE.value,
+                ))
+        detail = await subscriber_detail(
+            factory, actor_id=owner, project_id=project,
+            customer_id=cid,
+        )
+        assert len(detail.resources) == 36
+        assert initial in {resource_id for resource_id, _ in detail.resources}
+        assert "Extra private channel 34" in {
+            name for _, name in detail.resources
+        }
+        assert len(detail.resources[32:40]) == 4
+    finally:
+        await engine.dispose()
