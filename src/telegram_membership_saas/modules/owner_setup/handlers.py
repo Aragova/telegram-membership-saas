@@ -44,6 +44,9 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_method_screen,
     preview_offer_screen,
 )
+from telegram_membership_saas.modules.owner_setup.currencies import (
+    enable_owner_currency,
+)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     archive_owner_connection,
     get_connection_disposition,
@@ -90,7 +93,6 @@ from telegram_membership_saas.modules.owner_setup.plan_management import (
     rename_owner_plan,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
-    ALLOWED_CURRENCIES,
     SetupFlow,
     advance_flow,
     back_owner_flow,
@@ -899,7 +901,9 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
         )
         rows = []
-        codes = await owner_available_currencies(factory, actor_id=actor_id)
+        codes = await owner_available_currencies(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         lines = [
             "📦 <b>" + escape(data.name) + "</b>",
             tr("Статус: ", "Status: ") + _status(data.status),
@@ -927,6 +931,10 @@ def create_owner_setup_router(
             [_button("💰 " + code, "price:" + plan_id.hex + ":" + code)]
             for code in codes
         ])
+        rows.append([_button(
+            tr("➕ Другая валюта", "➕ Another currency"),
+            "currencyadd:price:" + plan_id.hex,
+        )])
         if any(not price.method_count for price in data.prices):
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
