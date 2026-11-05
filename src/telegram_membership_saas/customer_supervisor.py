@@ -34,6 +34,7 @@ from telegram_membership_saas.modules.bots.health_service import (
 )
 from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
+    SharedProjectLeaseManager,
     confirm_project_lock,
     project_worker_lock,
 )
@@ -113,11 +114,16 @@ async def ensure_supervisor_database_budget(
     for the API/central bot. This is a conservative admission check, not a
     statement about RAM, CPU, disk or Telegram throughput.
     """
-    if settings.customer_supervisor_shard_count == 1:
+    if (settings.customer_supervisor_shard_count == 1
+            and settings.customer_supervisor_lease_mode == "per_project"):
         return
+    leases_per_shard = (
+        1 if settings.customer_supervisor_lease_mode == "shared"
+        else settings.customer_supervisor_max_bots
+    )
     expected = (
         settings.customer_supervisor_shard_count
-        * (settings.customer_supervisor_max_bots + OPERATIONAL_POOL_BUDGET_PER_SHARD)
+        * (leases_per_shard + OPERATIONAL_POOL_BUDGET_PER_SHARD)
         + OTHER_DATABASE_CONNECTION_RESERVE
         + POSTGRES_SUPERUSER_RESERVED_CONNECTIONS
     )
@@ -175,7 +181,7 @@ def safe_error_code(exc: Exception) -> str:
 
 
 async def run_target(
-    engine: AsyncEngine,
+    engine: AsyncEngine | SharedProjectLeaseManager,
     factory: async_sessionmaker[AsyncSession],
     target: BotTarget,
     *,
@@ -207,7 +213,10 @@ async def run_target(
 
             async def heartbeat() -> None:
                 while True:
-                    await asyncio.sleep(HEARTBEAT_SECONDS)
+                    await asyncio.sleep(
+                        10 if isinstance(engine, SharedProjectLeaseManager)
+                        else HEARTBEAT_SECONDS
+                    )
                     await confirm_project_lock(lease, project_id)
                     last_ok = last_poll_response
                     silence = monotonic() - (
@@ -279,7 +288,7 @@ async def run_target(
 class CustomerBotSupervisor:
     def __init__(
         self,
-        engine: AsyncEngine,
+        engine: AsyncEngine | SharedProjectLeaseManager,
         factory: async_sessionmaker[AsyncSession],
         settings: Settings,
     ) -> None:
@@ -343,9 +352,15 @@ class CustomerBotSupervisor:
                         state="queued",
                     )
 
+        newly_started = 0
         for pid, target in sorted(ready.items(), key=lambda item: item[0].int):
             if pid in self.workers or monotonic() < self.retry_after.get(pid, 0):
                 continue
+            if (self.settings.customer_supervisor_lease_mode == "shared"
+                    and newly_started >= 5):
+                # Avoid bursting 100 simultaneous getMe/getUpdates handshakes
+                # and resource checks at the start of a small VM.
+                break
             if len(self.workers) >= self.settings.customer_supervisor_max_bots:
                 # Do not overwrite a healthy status owned by another replica.
                 await write_bot_health(
@@ -360,6 +375,7 @@ class CustomerBotSupervisor:
                 run_target(self.engine, self.factory, target, settings=self.settings)
             )
             self.workers[pid] = RunningTarget(target=target, task=task)
+            newly_started += 1
             logger.info("Customer runtime scheduled for project %s", pid)
 
     async def finalize_removals(self) -> None:
@@ -421,12 +437,16 @@ async def run_customer_supervisor(settings: Settings | None = None) -> None:
     # never consume the pool used by payments, access revocation or discovery.
     operational_engine = build_engine(current)
     lease_engine = build_lease_engine(current)
+    shared_leases: SharedProjectLeaseManager | None = None
     try:
         await ensure_supervisor_database_budget(
             build_session_factory(operational_engine), current,
         )
+        if current.customer_supervisor_lease_mode == "shared":
+            shared_leases = SharedProjectLeaseManager(lease_engine)
+            await shared_leases.start()
         supervisor = CustomerBotSupervisor(
-            lease_engine,
+            shared_leases if shared_leases is not None else lease_engine,
             build_session_factory(operational_engine),
             current,
         )
@@ -434,8 +454,12 @@ async def run_customer_supervisor(settings: Settings | None = None) -> None:
     finally:
         async def shutdown_engines() -> None:
             try:
-                await lease_engine.dispose()
+                if shared_leases is not None:
+                    await shared_leases.close()
             finally:
-                await operational_engine.dispose()
+                try:
+                    await lease_engine.dispose()
+                finally:
+                    await operational_engine.dispose()
 
         await complete_cleanup(shutdown_engines())
