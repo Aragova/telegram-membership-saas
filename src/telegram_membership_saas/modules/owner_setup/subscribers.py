@@ -308,12 +308,14 @@ async def subscriber_detail(
             .order_by(Resource.name, Resource.id)
             .limit(30)
         )).all()
+        # The owner picker paginates these resources in groups of eight.
+        # Do not silently cap the entire project at 30 channels: a project
+        # may have more active resources, and every one must remain reachable.
         resources = (await session.execute(
             select(Resource.id, Resource.name)
             .where(Resource.project_id == project_id,
                    Resource.status == ResourceStatus.ACTIVE.value)
             .order_by(Resource.created_at, Resource.id)
-            .limit(30)
         )).all()
         return SubscriberDetail(
             customer_id=customer.id, telegram_id=user.telegram_user_id,
