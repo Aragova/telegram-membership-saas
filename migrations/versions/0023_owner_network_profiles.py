@@ -104,6 +104,24 @@ def upgrade() -> None:
             )
         )
     """)
+    # A trusted ADMIN of this one project may read ONLY the application
+    # metadata (not the profile snapshot) to link draft plans after verifying
+    # the channel. Profile writes remain restricted to the owner.
+    op.execute(f"""
+        CREATE POLICY network_application_project_admin_read
+        ON project_profile_applications FOR SELECT
+        USING (
+            project_id = NULLIF(
+                current_setting('app.current_project_id', true), ''
+            )::uuid
+            AND EXISTS (
+                SELECT 1 FROM project_members pm
+                WHERE pm.project_id = project_id
+                  AND pm.user_id = {ACTOR}
+                  AND pm.role = 'admin'
+            )
+        )
+    """)
     # The staging runtime role already exists before this migration.
     # CI creates it afterwards and grants DML on ALL TABLES.
     op.execute("""
