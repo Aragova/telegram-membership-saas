@@ -24,14 +24,25 @@ def create_dispatcher(
     dispatcher = Dispatcher()
     if session_factory is not None:
         dispatcher.update.outer_middleware(LanguageMiddleware(session_factory))
-        dispatcher.include_router(create_language_router(session_factory, project_id=project_id))
+        owner_menu_renderers = []
+        owner_router = create_owner_setup_router(
+            session_factory, language_menu_renderers=owner_menu_renderers,
+        )
+
+        async def render_main_menu(bot, user):
+            await owner_menu_renderers[0](bot, user)
+
+        dispatcher.include_router(create_language_router(
+            session_factory, project_id=project_id,
+            render_main_menu=render_main_menu,
+        ))
         if get_settings().platform_owner_telegram_id is not None:
             # Only the configured central control bot gets the platform panel;
             # connected buyer bots never include these routes.
             dispatcher.include_router(
                 create_platform_dashboard_router(session_factory)
             )
-        dispatcher.include_router(create_owner_setup_router(session_factory))
+        dispatcher.include_router(owner_router)
         if enable_access:
             dispatcher.include_router(create_telegram_access_router(session_factory))
         if project_id is not None:
@@ -61,14 +72,33 @@ def create_customer_dispatcher(
     """Owner admin and buyer storefront in one project-bound BotInstance."""
     dispatcher = Dispatcher()
     dispatcher.update.outer_middleware(LanguageMiddleware(session_factory))
-    dispatcher.include_router(create_language_router(session_factory, project_id=project_id))
+    owner_menu_renderers = []
+    owner_router = create_owner_setup_router(
+        session_factory, fixed_project_id=project_id,
+        language_menu_renderers=owner_menu_renderers,
+    )
+
+    async def render_main_menu(bot, user):
+        if await owner_menu_renderers[0](bot, user):
+            return
+        # The user is a buyer, not an admin. Show the same live catalog
+        # as /menu, without inventing a second navigation UI.
+        from telegram_membership_saas.modules.telegram_commerce.handlers import (
+            _send_catalog,
+        )
+
+        await _send_catalog(
+            bot, chat_id=user.id, session_factory=session_factory,
+            project_id=project_id,
+        )
+
+    dispatcher.include_router(create_language_router(
+        session_factory, project_id=project_id,
+        render_main_menu=render_main_menu,
+    ))
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
-    dispatcher.include_router(
-        create_owner_setup_router(
-            session_factory, fixed_project_id=project_id,
-        )
-    )
+    dispatcher.include_router(owner_router)
     dispatcher.include_router(
         create_telegram_access_router(session_factory, expected_project_id=project_id)
     )
