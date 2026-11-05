@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from html import escape
 from secrets import randbelow
 from uuid import UUID
@@ -18,6 +19,7 @@ from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    User,
 )
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
@@ -279,6 +281,9 @@ class OwnerHomeFilter(BaseFilter):
 def create_owner_setup_router(
     factory: async_sessionmaker[AsyncSession], *,
     fixed_project_id: UUID | None = None,
+    language_menu_renderers: list[
+        Callable[[Bot, User], Awaitable[bool]]
+    ] | None = None,
 ) -> Router:
     router = Router(name="owner-tenant" if fixed_project_id else "central-registrar")
 
@@ -3386,5 +3391,18 @@ def create_owner_setup_router(
                "🔐 Token removed from this chat. "
                "To connect your bot, open @vimipay_bot → Connect bot."),
         )
+
+    if language_menu_renderers is not None:
+        async def show_main_menu_after_language(bot: Bot, user: User) -> bool:
+            actor_id = await actor(user)
+            if fixed_project_id is not None and not await can_manage_project(
+                factory, actor_id=actor_id, project_id=fixed_project_id,
+            ):
+                # Buyers must receive the real buyer storefront, not admin UI.
+                return False
+            await show_home(bot, user.id, actor_id)
+            return True
+
+        language_menu_renderers.append(show_main_menu_after_language)
 
     return router
