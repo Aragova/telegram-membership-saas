@@ -204,7 +204,7 @@ async def test_rename_connection_central_only(monkeypatch):
     monkeypatch.setattr(ui, "bind_prompt", AsyncMock())
     instance = bot()
     await cb(query("connrename:" + project_id.hex), instance)
-    assert "Название" in instance.send_message.await_args.args[1]
+    assert "название подключения" in instance.send_message.await_args.args[1]
     assert instance.send_message.await_args.kwargs["reply_markup"].selective
     ui.set_flow.assert_awaited_once()
 
