@@ -22,6 +22,9 @@ from telegram_membership_saas.modules.outbox import (
     mark_outbox_event_failed,
     process_claimed_access_recalculate_event,
 )
+from telegram_membership_saas.modules.owner_access_incidents import (
+    scan_owner_access_incidents,
+)
 from telegram_membership_saas.modules.owner_expiry import schedule_owner_expiry_digest
 from telegram_membership_saas.modules.owner_notifications import (
     deliver_one_owner_notification,
@@ -166,11 +169,23 @@ async def run_project_runtime_loop(
     next_owner_reconcile: datetime | None = None
     next_expiry_scan: datetime | None = None
     next_timezone_check: datetime | None = None
+    next_access_alert_scan: datetime | None = None
     cached_timezone: str | None = None
 
     while True:
         moment = current_time()
         try:
+            if next_access_alert_scan is None or moment >= next_access_alert_scan:
+                try:
+                    await scan_owner_access_incidents(
+                        session_factory, project_id=project_id, now=moment,
+                    )
+                except Exception:
+                    # An alert failure must not interrupt Telegram access work.
+                    logger.exception("Owner access incident scan failed")
+                finally:
+                    next_access_alert_scan = moment + timedelta(seconds=60)
+
             if next_timezone_check is None or moment >= next_timezone_check:
                 try:
                     async with system_project_session_scope(
