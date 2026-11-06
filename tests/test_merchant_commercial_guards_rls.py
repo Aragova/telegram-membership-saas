@@ -40,7 +40,7 @@ def _chat():
     return "-100" + str(uuid4().int % 10**12).zfill(12)
 
 
-async def _bot(factory, owner, project):
+async def _bot(factory, owner, project, *, status="registered"):
     async with tenant_session_scope(
         factory, TenantContext(user_id=owner, project_id=project),
     ) as session:
@@ -48,6 +48,7 @@ async def _bot(factory, owner, project):
             id=uuid4(), project_id=project, telegram_bot_id=_tid(),
             username="quota_test_bot", display_name="Quota test",
             token_ciphertext="test-only-encrypted-placeholder",
+            status=status,
         )
         session.add(item)
         await session.flush()
@@ -111,6 +112,12 @@ async def test_configured_owner_quota_cannot_be_reset_by_new_project():
             await _bot(factory, owner, b)
         assert getattr(error.value.orig, "sqlstate", None) == "P6701"
 
+        # A caller cannot insert a 'deleting' bot as a free slot and later
+        # change it to 'registered', bypassing the connected-bot quota.
+        with pytest.raises(DBAPIError) as error:
+            await _bot(factory, owner, b, status="deleting")
+        assert getattr(error.value.orig, "sqlstate", None) == "P6701"
+
         # A different Merchant ID under the same account is still bounded.
         assert await _merchant(factory, owner, a) != await _merchant(
             factory, owner, b,
@@ -123,6 +130,16 @@ async def test_configured_owner_quota_cannot_be_reset_by_new_project():
         ) as session:
             record = await session.get(BotInstance, bot_id)
             record.token_ciphertext = "updated-test-only-ciphertext"
+            record.status = "deleting"
+        # Retirement is only a phase; its row still owns the quota slot.
+        with pytest.raises(DBAPIError) as error:
+            await _bot(factory, owner, b)
+        assert getattr(error.value.orig, "sqlstate", None) == "P6701"
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=a),
+        ) as session:
+            record = await session.get(BotInstance, bot_id)
+            record.status = "registered"  # legitimate rollback of deletion
         async with tenant_session_scope(
             factory, TenantContext(user_id=owner, project_id=a),
         ) as session:
