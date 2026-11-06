@@ -40,7 +40,11 @@ confirmation, so fresh /start events join **subsequent campaigns**.
 ## Delivery and safety
 
 - Explicit admin confirmation and actor/project authorization at every
-  callback. Central ViMi Pay has no broadcast controls, no shared tenants
+  callback. Each confirmation button contains a random one-use identity,
+  atomically stored with the campaign. Replaying that same Telegram
+  callback returns its original campaign without re-enqueueing recipients
+  even after completion; a new preview/confirmation creates a new identity.
+  Central ViMi Pay has no broadcast controls, no shared tenants
   or cross-project audience reads.
 - PostgreSQL FORCE RLS on all five broadcast tables, composite references
   between saved posts and campaigns/delivery rows. The normal per-project
