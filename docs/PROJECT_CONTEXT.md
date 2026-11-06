@@ -338,3 +338,17 @@ bot reconnection, safe archive, buyer access and subscription processing
 remain unchanged. No SaaS tariff, usage fee, trial, commission or platform
 payment service is activated. No service rebuild: staging DB migration only,
 preserving `compose.light100.yaml`. See [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
+
+
+## PR #70 — connected-bot broadcasts (stage 1)
+
+Saved text or forwarded photo/video/document/GIF posts with Telegram entities,
+preview, recipient confirmation, repeat send, rename, replace, library and
+history. Audience is only users who actually pressed /start on the specific
+bot ID, including non-buyers; unreachable users are learned from Telegram
+send errors, not inferred from channel membership. Durable project-scoped
+queue with RLS and 2 sends/sec per bot, pause/resume and unknown-outcome
+handling; no paid Telegram broadcasting. Only connected owner bot admin UI;
+no changes to payment confirmations or subscriptions. See
+[BROADCASTS.md](BROADCASTS.md). Staging migration 0032 and supervisor-only
+rebuild required after approved merge; preserve compose.light100.yaml.
