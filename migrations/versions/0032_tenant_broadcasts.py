@@ -86,6 +86,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(16), nullable=False, server_default="running"),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
         sa.Column("finished_at", sa.DateTime(timezone=True)),
+        sa.Column("cooldown_until", sa.DateTime(timezone=True)),
         sa.UniqueConstraint("id", "project_id", name="uq_broadcast_campaign_project"),
         sa.ForeignKeyConstraint(
             ["template_id", "project_id"],
