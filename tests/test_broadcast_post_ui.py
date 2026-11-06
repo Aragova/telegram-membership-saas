@@ -120,6 +120,13 @@ async def test_start_middleware_only_registers_private_start(monkeypatch):
     assert await middleware(downstream, msg.model_copy(update={"text": "/menu"}),
                             {"bot": bot}) == "handled"
     record.assert_not_awaited()
+    # Media messages and photo/PDF payment receipts MUST pass unchanged.
+    for media in ("photo", "video", "document"):
+        media_msg = msg.model_copy(update={"text": None, media: ["fake"]})
+        assert await middleware(
+            downstream, media_msg, {"bot": bot},
+        ) == "handled"
+    record.assert_not_awaited()
     assert await middleware(downstream, msg.model_copy(update={
         "chat": Chat(id=-100111, type="supergroup")
     }), {"bot": bot}) == "handled"
