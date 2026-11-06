@@ -9,10 +9,13 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
-    build_engine, build_session_factory, tenant_session_scope,
+    build_engine,
+    build_session_factory,
+    tenant_session_scope,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
-    create_owner_project, ensure_telegram_actor,
+    create_owner_project,
+    ensure_telegram_actor,
 )
 from telegram_membership_saas.modules.platform_risk import (
     platform_merchant_risk_report,
