@@ -61,6 +61,14 @@ _ERROR_EN = {
     "Некорректное имя бота": "Invalid bot username.",
     "Сначала подключите одного собственного бота":
         "Connect your own Telegram bot first.",
+    "Этот канал уже использовался в другом вашем подключении. "
+    "Откройте прежнее подключение в @vimipay_bot → Мои подключения "
+    "(при необходимости восстановите его из архива) и "
+    "подключите нового бота там. Финансовая история сохранится.":
+        "This channel belongs to an earlier connection of yours. "
+        "Open @vimipay_bot → My connections, restore the old connection "
+        "from the archive if needed, and connect your new bot there. "
+        "The financial history remains intact.",
     "Подключённый бот требует повторной проверки токена":
         "The connected bot requires token verification again.",
     "Поддерживаются только каналы и супергруппы":
