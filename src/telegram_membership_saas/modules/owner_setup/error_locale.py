@@ -58,6 +58,10 @@ _ERROR_EN = {
         "The bot owner could not be verified.",
     "Этот Telegram-бот уже подключён в другом проекте":
         "This Telegram bot is already connected to another project.",
+    "Достигнут установленный лимит подключённых ботов. "
+    "Удалите ненужное подключение или обратитесь в поддержку ViMi Pay.":
+        "Your connected bot limit has been reached. Remove an unused "
+        "connection or contact ViMi Pay support.",
     "Некорректное имя бота": "Invalid bot username.",
     "Сначала подключите одного собственного бота":
         "Connect your own Telegram bot first.",
