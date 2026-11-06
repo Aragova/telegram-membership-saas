@@ -152,3 +152,39 @@ actionable review messages remain available to authorized reviewers.
 - Scope boundary: unavailable bot pollers or missing channel admin privileges
   that prevent the bot from starting are a separate operations/health-alert
   path; do not claim this PR can send from a bot that cannot start.
+
+## PR #61 — optional previous-day financial summary
+
+- Opt-in **OFF** by default, under **⚙️ Settings → 🔔 Notifications** in
+  the connected project bot. Only the actual verified owner can enable or
+  disable reports. The central `@vimipay_bot` never sends tenant summaries.
+- Schedule one summary at **10:00 project-local** (DST-aware), matching the
+  expiry digest. A lightweight once-per-minute project timezone check already
+  invalidates cached wake-ups after TimeZone edits. A late restart after
+  10:00 queues at most one report for that local date; never backfills a
+  month's reports into the Telegram chat.
+- The **completed previous project-local calendar day** determines the payment
+  window `[previous_midnight, today_midnight)` translated to UTC. Only
+  **actual `Payment` rows with `approved_at` in that window** count.
+  `PaymentRequest` creation, a buyer's screenshot, cancelled/rejected or
+  pending requests, manual grants and active-access changes are **not sales**.
+- Show total count and aggregate original `Payment.final_amount` **by currency**
+  without inventing any FX conversions. Display new registered project users
+  in that completed day, current active unique paying subscribers, and the
+  current count of requests awaiting manual review separately.
+- Be explicit that admin-approved payments do not replace a bank-balance
+  check. There is no receipt storage or bank balance reconciliation.
+- Use the existing tenant-RLS notification delivery ledger: `kind='daily'`,
+  unique project + local report delivery date + owner. Only date/timezone are
+  queued; **financial figures are recomputed at send time** in a transaction
+  scoped to that project, not persisted in the notification payload.
+- Delivery rechecks current project state, IANA timezone, local date (no
+  after-midnight stale reports), opt-in flag and owner Telegram ID. Retries use
+  the existing bounded-backoff Telegram queue. Muting after enqueue prevents
+  a pending report from being sent. A zero-sale day still generates a useful
+  opted-in status report.
+- The owner can open the authorized `📊 Statistics` screen from the report.
+  Russian/English labels follow the owner's Telegram language preference.
+- No new database migrations (the `daily` type and default-off preference
+  were provisioned in migration 0025), no extra services, no access/approval/
+  entitlement changes. Staging deployment retains `compose.light100.yaml`.

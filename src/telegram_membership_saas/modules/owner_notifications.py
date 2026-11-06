@@ -298,6 +298,23 @@ async def deliver_one_owner_notification(
                         reply_markup=keyboard,
                     )
                 # If disabled, stale or renewed: suppress as successfully handled.
+            elif kind == "daily":
+                from telegram_membership_saas.modules.owner_daily import (
+                    prepare_owner_daily_financial,
+                )
+
+                report = await prepare_owner_daily_financial(
+                    factory, project_id=project_id, recipient=recipient,
+                    payload=payload, now=moment,
+                )
+                if report is not None:
+                    body, keyboard = report
+                    await bot.send_message(
+                        recipient, body, parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+                else:
+                    error_code = "Suppressed"
             elif kind in ("access", "recovered"):
                 from telegram_membership_saas.modules.owner_access_incidents import (
                     prepare_owner_access_notification,
