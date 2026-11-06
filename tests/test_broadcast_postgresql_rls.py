@@ -139,6 +139,7 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
             await get_template(
                 factory, project_id=project_a, actor_id=owner_b,
                 telegram_bot_id=bot_a, template_id=saved.id,
+                confirmation_key=uuid4(),
             )
         with pytest.raises((PermissionError, ValueError, TenantAccessDenied)):
             await get_template(
@@ -146,9 +147,11 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
                 telegram_bot_id=bot_b, template_id=saved.id,
             )
 
+        first_confirmation_key = uuid4()
         campaign, count = await create_campaign(
             factory, project_id=project_a, actor_id=owner_a,
             telegram_bot_id=bot_a, template_id=saved.id,
+            confirmation_key=first_confirmation_key,
         )
         assert count == 1
         with pytest.raises(ValueError, match="не завершена"):
@@ -193,6 +196,18 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
             telegram_bot_id=bot_a, campaign_id=campaign.id,
         )
         assert results == {"sent": 1}
+        # Replaying the exact confirmation after full completion is
+        # idempotent: it must not enqueue another wave of messages.
+        previous, old_count = await create_campaign(
+            factory, project_id=project_a, actor_id=owner_a,
+            telegram_bot_id=bot_a, template_id=saved.id,
+            confirmation_key=first_confirmation_key,
+        )
+        assert previous.id == campaign.id and old_count == 1
+        assert not await deliver_broadcast_once(
+            factory, project_id=project_a, telegram_bot_id=bot_a, bot=bot,
+        )
+        bot.send_message.assert_awaited_once()
 
         # Deleting a saved template never erases previous campaign evidence.
         await archive_template(
@@ -244,6 +259,7 @@ async def test_telegram_429_pauses_every_pending_recipient_for_this_bot():
         campaign, count = await create_campaign(
             factory, project_id=project, actor_id=owner,
             telegram_bot_id=bot_id, template_id=template.id,
+            confirmation_key=uuid4(),
         )
         assert count == 3
         retry = TelegramRetryAfter(
