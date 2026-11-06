@@ -249,12 +249,11 @@ def upgrade() -> None:
             cap integer;
             connected integer;
         BEGIN
-            -- Count registered and disabled bots as connected; only deleting
-            -- an actual connection frees a slot. A retry/reenable is not a
-            -- second registration. No quota exists until explicitly set.
-            IF NEW.status NOT IN ('registered', 'disabled') THEN
-                RETURN NEW;
-            END IF;
+            -- Every persisted bot (including 'deleting') reserves its
+            -- connection slot until its row is actually removed. Thus no
+            -- INSERT status or later UPDATE can bypass an owner quota.
+            -- Existing bot updates and rollback of retirement are not new
+            -- connections. No quota exists until explicitly set.
             actor := NULLIF(current_setting(
                 'app.current_user_id', true), '')::uuid;
             selected_project := NULLIF(current_setting(
@@ -284,8 +283,7 @@ def upgrade() -> None:
             SELECT count(*) INTO connected
             FROM public.bot_instances bot
             JOIN public.projects p ON p.id = bot.project_id
-            WHERE p.owner_user_id = owner_id
-              AND bot.status IN ('registered', 'disabled');
+            WHERE p.owner_user_id = owner_id;
             IF connected >= cap THEN
                 RAISE EXCEPTION 'Configured connected bot limit reached'
                     USING ERRCODE = 'P6701';
