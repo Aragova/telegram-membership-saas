@@ -730,6 +730,11 @@ async def verify_channel_and_add(
                     "(при необходимости восстановите его из архива) и "
                     "подключите нового бота там. Финансовая история сохранится."
                 ) from None
+            if getattr(exc.orig, "sqlstate", None) == "P6702":
+                raise ValueError(
+                    "У этого канала есть финансовая история в удалённом подключении. "
+                    "Обратитесь в поддержку ViMi Pay для безопасного восстановления."
+                ) from None
             raise
         # Only projects seeded from a network profile receive automatic
         # linking. The FIRST verified channel binds unassigned draft plans;
