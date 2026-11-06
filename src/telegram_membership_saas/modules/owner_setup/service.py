@@ -12,7 +12,7 @@ from cryptography.fernet import InvalidToken
 from pydantic import SecretStr
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
@@ -713,7 +713,17 @@ async def verify_channel_and_add(
             session.add(resource)
         else:
             resource.status = ResourceStatus.ACTIVE.value
-        await session.flush()
+        try:
+            await session.flush()
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == "P6501":
+                raise ValueError(
+                    "Этот канал уже использовался в другом вашем подключении. "
+                    "Откройте прежнее подключение в @vimipay_bot → Мои подключения "
+                    "(при необходимости восстановите его из архива) и "
+                    "подключите нового бота там. Финансовая история сохранится."
+                ) from None
+            raise
         # Only projects seeded from a network profile receive automatic
         # linking. The FIRST verified channel binds unassigned draft plans;
         # no existing published plan or other project's resource changes.
