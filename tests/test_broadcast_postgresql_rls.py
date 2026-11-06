@@ -139,7 +139,6 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
             await get_template(
                 factory, project_id=project_a, actor_id=owner_b,
                 telegram_bot_id=bot_a, template_id=saved.id,
-                confirmation_key=uuid4(),
             )
         with pytest.raises((PermissionError, ValueError, TenantAccessDenied)):
             await get_template(
@@ -158,6 +157,7 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
             await create_campaign(
                 factory, project_id=project_a, actor_id=owner_a,
                 telegram_bot_id=bot_a, template_id=saved.id,
+                confirmation_key=uuid4(),
             )
         # Later /start joins only the next send-to-all confirmation.
         await record_bot_start(
