@@ -10,7 +10,7 @@ from aiogram import Bot
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
