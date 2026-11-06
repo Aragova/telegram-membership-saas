@@ -164,3 +164,33 @@ explicit policy approval, auditable changes and rollout checks.
 Staging rollout: apply Alembic 0029 **before** rebuilding the central bot
 and the connected-bot supervisor; preserve `compose.light100.yaml`.
 Do not touch production or deploy/merge before explicit approval.
+
+
+## PR #68 — owner-only channel risk review
+
+Migration `0030_platform_risk_review` exposes an audited, fixed read-only
+`platform_merchant_risk_snapshot` function over the PR67
+`merchant_risk_observations` table. It validates the configured Platform
+Owner in the database, verifies bounded pagination, and records every
+invocation in `platform_report_audit`. Normal tenant roles do not gain raw
+SELECT privileges on the protected risk table.
+
+The central `@vimipay_bot` Platform Owner panel now has
+`🛡 Проверка каналов` / `Channel review` with timezone-aware timestamps,
+period selection and pagination. Each observation displays the channel and
+target connection names plus the numeric Telegram chat ID, with HTML escaping
+and RU/EN localization. These are **manual review signals only**: a channel
+can legitimately change owners. No account, bot or channel is suspended,
+no financial history is reassigned, and no commission or trial is activated.
+
+The report only includes signals recorded after PR67 migration 0029. Older
+unobserved transfers cannot be retrospectively proven from incomplete
+data. The original source owner's confidential records are not disclosed
+to another tenant.
+
+Roll out on staging: migration 0030, privileged
+`python -m telegram_membership_saas.platform_bootstrap` to grant the
+runtime function, then rebuild **central bot only** using
+`compose.yaml + compose.light100.yaml`. Do not alter customer-supervisor,
+tenant payments, subscriber access, or production. Exact-HEAD CI, Codex
+review and an explicit merge authorization precede deployment.

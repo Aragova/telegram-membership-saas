@@ -63,6 +63,11 @@ async def bootstrap_platform_owner() -> None:
                 "public.platform_merchant_finances(timestamptz, integer, integer) "
                 f"TO {quoted_role}"
             ))
+            await connection.execute(text(
+                "GRANT EXECUTE ON FUNCTION "
+                "public.platform_merchant_risk_snapshot(timestamptz, integer, integer) "
+                f"TO {quoted_role}"
+            ))
     finally:
         await engine.dispose()
 

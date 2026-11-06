@@ -128,3 +128,17 @@ currently connected owners automatically. A separate operator-approved
 billing product and trustworthy payment reconciliation are required before
 charges. Cross-owner Chat ID reuse produces protected **review signals**,
 not fraud verdicts. See [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
+
+
+## PR #68 — private risk observation panel
+
+`🛡 Проверка каналов` shows observations of Telegram Chat IDs reused
+under a *different* account, as identified by PR67. It presents the channel
+ID, project/channel labels and local timestamp with paginated period
+filters, solely to the separately authorized Platform Owner. A
+`platform_merchant_risk_snapshot` SECURITY DEFINER function validates
+DB operator permissions and audits each read. Normal tenants cannot query
+raw `merchant_risk_observations`. These are manual review signals, not
+fraud determinations: lawful ownership transfers remain supported. No
+automatic sanctions or billing. Apply migration 0030, privileged platform
+bootstrap and a central-only rebuild on staging after approved merge.
