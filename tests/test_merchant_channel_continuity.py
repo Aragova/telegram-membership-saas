@@ -171,7 +171,16 @@ async def test_privileged_channel_guard_never_reveals_cross_tenant_history():
         # A before-RLS SECURITY DEFINER guard must not distinguish them.
         for chat in (reused_chat, new_chat):
             with pytest.raises(DBAPIError) as error:
-                await _resource(factory, attacker, victim_target, chat)
+                async with tenant_session_scope(
+                    factory, TenantContext(user_id=attacker, project_id=attacker_project),
+                ) as session:
+                    session.add(Resource(
+                        project_id=victim_target,
+                        resource_type="telegram_channel",
+                        external_id=chat,
+                        name="Cross-tenant insert",
+                    ))
+                    await session.flush()
             assert getattr(error.value.orig, "sqlstate", None) == "42501"
             assert "Resource project scope denied" in str(error.value.orig)
             assert "Channel belongs" not in str(error.value.orig)
