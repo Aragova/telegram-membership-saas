@@ -140,3 +140,65 @@ async def test_concurrent_same_owner_channel_claims_only_one_wins():
             assert count == 0  # Permanent merchant history never gets tenant SELECT access.
     finally:
         await engine.dispose()
+
+
+async def test_privileged_channel_guard_never_reveals_cross_tenant_history():
+    """Foreign INSERT failures must not depend on hidden channel observations."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        attacker = await ensure_telegram_actor(
+            factory, telegram_id=_telegram_id(), username=None, first_name=None,
+        )
+        victim = await ensure_telegram_actor(
+            factory, telegram_id=_telegram_id(), username=None, first_name=None,
+        )
+        attacker_project = await create_owner_project(
+            factory, actor_id=attacker, name="Attacker project",
+        )
+        victim_old = await create_owner_project(
+            factory, actor_id=victim, name="Victim history",
+        )
+        victim_target = await create_owner_project(
+            factory, actor_id=victim, name="Victim target",
+        )
+        reused_chat = _chat_id()
+        new_chat = _chat_id()
+        await _resource(factory, victim, victim_old, reused_chat)
+
+        # Both probes target the victim's valid project UUID, but only one
+        # chat exists in the victim's private historical observations.
+        # A before-RLS SECURITY DEFINER guard must not distinguish them.
+        for chat in (reused_chat, new_chat):
+            with pytest.raises(DBAPIError) as error:
+                await _resource(factory, attacker, victim_target, chat)
+            assert getattr(error.value.orig, "sqlstate", None) == "42501"
+            assert "Resource project scope denied" in str(error.value.orig)
+            assert "Channel belongs" not in str(error.value.orig)
+
+        # Defend in depth: even a manually forged tenant project GUC cannot
+        # access the victim's channel history under a different actor ID.
+        for chat in (reused_chat, new_chat):
+            with pytest.raises(DBAPIError) as error:
+                async with factory() as session:
+                    async with session.begin():
+                        await session.execute(text(
+                            "SELECT set_config('app.current_user_id', :actor, true)"
+                        ), {"actor": str(attacker)})
+                        await session.execute(text(
+                            "SELECT set_config('app.current_project_id', :project, true)"
+                        ), {"project": str(victim_target)})
+                        session.add(Resource(
+                            project_id=victim_target,
+                            resource_type="telegram_channel",
+                            external_id=chat,
+                            name="Unauthorized insert",
+                        ))
+                        await session.flush()
+            assert getattr(error.value.orig, "sqlstate", None) == "42501"
+            assert "Resource project scope denied" in str(error.value.orig)
+
+        # The attacker's normal project remains unaffected.
+        assert await _resource(factory, attacker, attacker_project, _chat_id())
+    finally:
+        await engine.dispose()
