@@ -178,3 +178,14 @@ migration cannot be inferred retroactively from nonexistent records.
 
 This file is the **authoritative behavioral contract** if older docs or
 existing code disagree. Update old documents and tests alongside each stage.
+
+
+## PR #69 — approved financial evidence must be immutable
+
+PostgreSQL migration `0031_financial_record_integrity` prevents the tenant
+runtime from editing/deleting confirmed payments or erasing checkout request
+history, even via cascading project deletion. Frozen request price/currency,
+buyer, plan, method and duration are not editable after checkout. The existing
+buyer checkout, admin manual approval/rejection, renewal, access workers and
+safe archive behavior are preserved. No SaaS billing, commission or trial
+policy is enabled. Manual bank confirmation remains non-verifiable by ViMi Pay.
