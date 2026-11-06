@@ -16,7 +16,7 @@ from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentMethodCurrency
 from telegram_membership_saas.modules.payments.service import ensure_real_payment_instructions
 from telegram_membership_saas.modules.plans import Plan, PlanResource
-from telegram_membership_saas.modules.pricing import PlanPrice
+from telegram_membership_saas.modules.pricing import CurrencyAsset, PlanPrice
 from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
@@ -104,6 +104,8 @@ async def _require_plan_sale_ready(
         )
     available = await session.scalar(
         select(PlanPrice.id).join(
+            CurrencyAsset, CurrencyAsset.code == PlanPrice.currency_code,
+        ).join(
             PaymentMethodCurrency, and_(
                 PaymentMethodCurrency.project_id == PlanPrice.project_id,
                 PaymentMethodCurrency.currency_code == PlanPrice.currency_code,
@@ -118,6 +120,7 @@ async def _require_plan_sale_ready(
             PlanPrice.project_id == project_id,
             PlanPrice.plan_id == plan.id,
             PlanPrice.status == "active",
+            CurrencyAsset.status == "active",
         ).limit(1)
     )
     if available is None:
