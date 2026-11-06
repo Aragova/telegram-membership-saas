@@ -1,11 +1,13 @@
 """Merchant turnover: historical payment-ID deduplication and platform isolation."""
 
 import os
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -156,5 +158,102 @@ async def test_merchant_finances_original_currency_once_per_payment_after_projec
                 await admin.execute(text(
                     "DELETE FROM platform_usage_events WHERE event_key = ANY(:keys)"
                 ), {"keys": event_keys})
+        await engine.dispose()
+        await admin_engine.dispose()
+
+
+async def test_duplicate_approval_cannot_move_to_later_period_or_different_merchant():
+    """A duplicate in a fresh period must not replace an old canonical approval."""
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    owner_tg = _tg()
+    event_keys = [f"fin-duplicate:{uuid4()}" for _ in range(2)]
+    try:
+        owner = await ensure_telegram_actor(
+            factory, telegram_id=owner_tg, username=None, first_name=None,
+        )
+        original_project = await create_owner_project(
+            factory, actor_id=owner, name="Canonical merchant",
+        )
+        other_project = await create_owner_project(
+            factory, actor_id=owner, name="Duplicate destination",
+        )
+        payment_id = uuid4()
+        async with admin_engine.begin() as admin:
+            await admin.execute(text(
+                "INSERT INTO platform_operators(telegram_user_id, role) "
+                "VALUES (:id, 'owner')"
+            ), {"id": owner_tg})
+            merchant_id = (await admin.execute(text(
+                "SELECT merchant_id FROM merchant_project_periods "
+                "WHERE project_id = :p AND ended_at IS NULL"
+            ), {"p": original_project})).scalar_one()
+            other_merchant = (await admin.execute(text(
+                "SELECT merchant_id FROM merchant_project_periods "
+                "WHERE project_id = :p AND ended_at IS NULL"
+            ), {"p": other_project})).scalar_one()
+            await _event(
+                admin, original_project, payment_id, "USD", "13.75", event_keys[0],
+            )
+            # Timestamp between canonical event and a duplicate inside a
+            # newer report window; both occur after the project was created.
+            cutoff = (await admin.execute(
+                text("SELECT clock_timestamp()")
+            )).scalar_one()
+            await _event(
+                admin, other_project, payment_id, "RUB", "999", event_keys[1],
+            )
+
+        async def rows_since(since):
+            items = []
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner),
+            ) as session:
+                page = 0
+                while True:
+                    statement = text(
+                        "SELECT public.platform_merchant_finances("
+                        ":since, :page, 10) AS payload"
+                    ).columns(payload=JSONB)
+                    result = (await session.execute(
+                        statement, {"since": since, "page": page},
+                    )).scalar_one()
+                    items.extend(result["merchants"])
+                    if page + 1 >= result["pages"]:
+                        break
+                    page += 1
+                    assert page < 10000
+            return items
+
+        current_rows = await rows_since(cutoff)
+        assert all(
+            item["merchant_id"] not in {str(merchant_id), str(other_merchant)}
+            for item in current_rows
+        )
+
+        original_rows = await rows_since(datetime(1970, 1, 1, tzinfo=UTC))
+        canonical = next(
+            item for item in original_rows
+            if item["merchant_id"] == str(merchant_id)
+        )
+        assert canonical["payments"] == 1
+        assert len(canonical["currencies"]) == 1
+        assert canonical["currencies"][0]["currency"] == "USD"
+        assert canonical["currencies"][0]["count"] == 1
+        assert Decimal(canonical["currencies"][0]["amount"]) == Decimal("13.75")
+        assert all(
+            item["merchant_id"] != str(other_merchant)
+            for item in original_rows
+        )
+    finally:
+        async with admin_engine.begin() as admin:
+            await admin.execute(text(
+                "DELETE FROM platform_operators WHERE telegram_user_id = :id"
+            ), {"id": owner_tg})
+            await admin.execute(text(
+                "DELETE FROM platform_usage_events WHERE event_key = ANY(:keys)"
+            ), {"keys": event_keys})
         await engine.dispose()
         await admin_engine.dispose()
