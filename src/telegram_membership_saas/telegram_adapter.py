@@ -76,6 +76,9 @@ def create_customer_dispatcher(
     """Owner admin and buyer storefront in one project-bound BotInstance."""
     dispatcher = Dispatcher()
     dispatcher.update.outer_middleware(LanguageMiddleware(session_factory))
+    dispatcher.message.outer_middleware(
+        StartAudienceMiddleware(session_factory, project_id=project_id)
+    )
     owner_menu_renderers = []
     owner_router = create_owner_setup_router(
         session_factory, fixed_project_id=project_id,
@@ -103,6 +106,9 @@ def create_customer_dispatcher(
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
     dispatcher.include_router(owner_router)
+    dispatcher.include_router(create_broadcast_router(
+        session_factory, project_id=project_id,
+    ))
     dispatcher.include_router(
         create_telegram_access_router(session_factory, expected_project_id=project_id)
     )
