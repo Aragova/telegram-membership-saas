@@ -86,16 +86,34 @@ async def test_merchant_finances_original_currency_once_per_payment_after_projec
             await session.delete(await session.get(Project, first))
 
         config = Settings(platform_owner_telegram_id=owner_tg)
+        async with admin_engine.connect() as admin:
+            merchant_id = (await admin.execute(text(
+                "SELECT merchant_id FROM merchant_project_periods "
+                "WHERE project_id = :project"
+            ), {"project": first})).scalar_one()
+            second_merchant = (await admin.execute(text(
+                "SELECT merchant_id FROM merchant_project_periods "
+                "WHERE project_id = :project"
+            ), {"project": second})).scalar_one()
+        assert merchant_id != second_merchant
+
         report = await platform_merchant_finances(
             factory, actor_user_id=owner, actor_telegram_id=owner_tg,
             period="all", settings=config,
         )
-        # Other tests can add merchants with payments in the same CI DB.
+        # Other tests can add merchants in the same CI DB, so search all pages.
+        businesses = list(report.businesses)
+        for page in range(1, report.pages):
+            next_page = await platform_merchant_finances(
+                factory, actor_user_id=owner, actor_telegram_id=owner_tg,
+                period="all", page=page, settings=config,
+            )
+            businesses.extend(next_page.businesses)
         archived = next(
-            b for b in report.businesses
-            if b["label"] == "Archived connection"
-            and {c["currency"] for c in b["currencies"]} == {"USD", "RUB"}
+            item for item in businesses
+            if item["merchant_id"] == str(merchant_id)
         )
+        assert archived["label"] == "Archived connection"
         assert archived["payments"] == 2
         currencies = {c["currency"]: c for c in archived["currencies"]}
         assert currencies["USD"]["count"] == 1
