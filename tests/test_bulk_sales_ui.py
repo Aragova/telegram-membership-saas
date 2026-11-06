@@ -96,6 +96,12 @@ async def test_bulk_button_confirm_is_one_dynamic_control(monkeypatch, kind, rou
 async def test_new_button_switches_to_enable_when_everything_off(monkeypatch):
     project, instance = uuid4(), uuid4()
     cb = _handler(monkeypatch, project, instance)
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(return_value=SetupOverview(
+        project_id=project, project_name="Example",
+        timezone="Europe/Moscow", bots=(("example_bot", "registered"),),
+        resources=(), plans=((instance, "Monthly", "archived"),),
+        methods=((instance, "Bank", "active"),),
+    )))
     monkeypatch.setattr(ui, "read_bulk_sales_state", AsyncMock(
         return_value=BulkSalesState("plan", 0, 5, 2, "aaaabbbbcccc"),
     ))
