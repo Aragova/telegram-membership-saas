@@ -314,7 +314,10 @@ def _merchant_text(snapshot) -> str:
         lines.append(tr("Нет подтверждённых оплат за период.",
                         "No approved payments in this period."))
     for business in snapshot.businesses:
-        label = str(business["label"])
+        # Existing project names can contain embedded line separators.
+        # Collapse whitespace before HTML escaping so the chunker never
+        # splits a <b>label</b> element across Telegram messages.
+        label = " ".join(str(business["label"]).split())
         if label == "Archived connection":
             label = tr("Архивное подключение", "Archived connection")
         lines.extend([
