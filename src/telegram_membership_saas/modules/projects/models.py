@@ -6,6 +6,7 @@ from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, UniqueCons
 from sqlalchemy.orm import Mapped, mapped_column
 
 from telegram_membership_saas.db_base import Base
+from telegram_membership_saas.modules.merchant_identity import MerchantIdentity
 
 DEFAULT_PROJECT_TIMEZONE = "Europe/Moscow"
 DEFAULT_PROJECT_LANGUAGE = "ru"
@@ -38,6 +39,12 @@ class Project(Base):
         ForeignKey("telegram_users.id", ondelete="RESTRICT"),
         index=True,
         nullable=False,
+    )
+    # Stable commercial identity; independent of the replaceable project bot.
+    merchant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(MerchantIdentity.id, ondelete="RESTRICT"),
+        server_default=func.gen_random_uuid(), nullable=False,
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     timezone: Mapped[str] = mapped_column(
