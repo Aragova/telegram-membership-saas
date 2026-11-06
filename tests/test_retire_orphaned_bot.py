@@ -34,6 +34,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
 )
 from telegram_membership_saas.modules.payments import get_or_create_project_customer
 from telegram_membership_saas.modules.resources import Resource, ResourceType
+from telegram_membership_saas.project_worker_lock import project_worker_lock
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -192,7 +193,6 @@ async def test_deleted_bot_no_other_obligations_can_retire_and_history_stays():
         ({"state_actual": "granted"}, "неотозванный доступ"),
         ({"state_desired": True, "has_rights": True}, "обязательства"),
         ({"health": "running"}, "работает"),
-        ({"status": "processing", "locked_at": datetime.now(UTC)}, "обрабатывается"),
     ],
 )
 async def test_emergency_removal_stays_locked_for_active_claims(opts, expected):
@@ -215,6 +215,55 @@ async def test_emergency_removal_stays_locked_for_active_claims(opts, expected):
             assert not (await session.scalars(select(OwnerObligationAudit).where(
                 OwnerObligationAudit.project_id == project,
             ))).all()
+    finally:
+        await engine.dispose()
+
+
+async def test_active_bot_worker_lease_prevents_unsafe_action_retirement():
+    engine = build_engine(Settings(_env_file=None))
+    factory = build_session_factory(engine)
+    try:
+        owner, _, project, _, bot, action = await _fixture(factory)
+        async with project_worker_lock(engine, project):
+            with pytest.raises(ValueError, match="воркера"):
+                await retire_unreachable_bot_with_orphan_actions(
+                    factory, actor_id=owner, project_id=project,
+                    bot_instance_id=bot,
+                )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            row = await session.get(AccessAction, action)
+            instance = await session.get(BotInstance, bot)
+            assert row.status == "pending"
+            assert instance.status == "registered"
+    finally:
+        await engine.dispose()
+
+
+async def test_processing_claim_can_retire_only_when_worker_lease_is_free():
+    engine = build_engine(Settings(_env_file=None))
+    factory = build_session_factory(engine)
+    try:
+        owner, _, project, _, bot, action = await _fixture(
+            factory, status="processing", locked_at=datetime.now(UTC),
+        )
+        async with project_worker_lock(engine, project):
+            with pytest.raises(ValueError, match="воркера"):
+                await retire_unreachable_bot_with_orphan_actions(
+                    factory, actor_id=owner, project_id=project,
+                    bot_instance_id=bot,
+                )
+        assert await retire_unreachable_bot_with_orphan_actions(
+            factory, actor_id=owner, project_id=project,
+            bot_instance_id=bot,
+        ) == 1
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            row = await session.get(AccessAction, action)
+            assert row.status == "superseded"
+            assert row.locked_at is None
     finally:
         await engine.dispose()
 
