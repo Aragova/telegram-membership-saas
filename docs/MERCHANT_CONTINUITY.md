@@ -46,3 +46,34 @@ remain distinct *observations* across merchants. Do not update production.
 
 Security caveat: Merchant ID at this stage is a **persistent data foundation**,
 not yet a complete defense against intentionally creating a fresh project.
+
+
+## PR #65 — same-owner channel continuity enforcement
+
+After the owner and connected bot both pass the existing live Telegram
+administrator checks, an active channel cannot be added to a *different*
+existing project of that same real owner if that Telegram numeric Chat ID was
+previously linked to another still-existing project. Historical observations
+remain protective even when the old resource association is deleted.
+
+The owner sees a short RU/EN message directing them to @vimipay_bot →
+My connections, to restore an archived original connection if needed and
+attach a replacement bot **to that original project**. Payments,
+subscriptions, access grants, owner/merchant IDs and existing bot credentials
+are never copied or reassigned.
+
+Enforcement is in PostgreSQL migration 0027, under a narrowly scoped
+SECURITY DEFINER BEFORE INSERT/UPDATE resource guard. A transaction advisory
+lock by numeric Telegram Chat ID closes concurrent registrations. The
+runtime role cannot read private historical merchant data and no old-owner
+project existence is disclosed to a different Telegram owner.
+
+Removing an entirely history-free old project permits subsequent reuse,
+since the original project no longer exists. A genuinely transferred channel
+registered by a *different* Telegram owner is never automatically grouped
+with its previous owner; a separately verified transfer workflow is future
+work. Trial/billing continuity for deliberately switched accounts or
+different channel IDs is addressed separately in PR #67.
+
+Rollout: migrate 0027 before restarting the new connected-bot supervisor;
+central bot and existing database rows require no destructive changes.
