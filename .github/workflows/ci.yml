@@ -109,6 +109,14 @@ jobs:
                       "public.platform_merchant_finances(timestamptz, integer, integer) "
                       "TO membership_runtime"
                   )
+                  # Match production: migration 0029 explicitly denies
+                  # runtime CRUD on platform-only commercial tables.
+                  await connection.execute(
+                      "REVOKE ALL ON platform_owner_bot_limits, "
+                      "merchant_platform_trial_claims, "
+                      "merchant_commission_reservations, "
+                      "merchant_risk_observations FROM membership_runtime"
+                  )
               finally:
                   await connection.close()
 
