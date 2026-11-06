@@ -475,7 +475,10 @@ def create_owner_setup_router(
                  _button("📋 Заявки", "reviews")],
                 [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
                  _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
-                [_button(tr("📨 Рассылки", "📨 Broadcasts"), "bc:home")],
+                [InlineKeyboardButton(
+                    text=tr("📨 Рассылки", "📨 Broadcasts"),
+                    callback_data="bc:home",
+                )],
                 [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview")],
                 [_button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
                 [InlineKeyboardButton(
