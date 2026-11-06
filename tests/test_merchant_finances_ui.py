@@ -168,3 +168,20 @@ async def test_large_merchant_report_sends_navigation_only_on_last_chunk(monkeyp
     ]
     assert "plat:merchants:30:1" in controls
     assert "plat:home:30:0" in controls
+
+
+def test_large_multiline_business_name_never_breaks_html_chunks():
+    snapshot = _large_snapshot()
+    businesses = list(snapshot.businesses)
+    businesses[0] = {
+        **businesses[0],
+        "label": "Elite & Partners\nUltra Premium <Channel>\r\n" + "A" * 65,
+    }
+    snapshot = replace(snapshot, businesses=tuple(businesses))
+    chunks = ui._merchant_text_chunks(snapshot)
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 3500 for chunk in chunks)
+    assert "Elite &amp; Partners Ultra Premium &lt;Channel&gt;" in "\n".join(chunks)
+    assert all(chunk.count("<b>") == chunk.count("</b>") for chunk in chunks)
+    assert all(chunk.count("<i>") == chunk.count("</i>") for chunk in chunks)
+    assert "\n".join(chunks) == ui._merchant_text(snapshot)
