@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.localization import current_language, tr
 from telegram_membership_saas.modules.merchant_finances import platform_merchant_finances
-from telegram_membership_saas.modules.platform_risk import platform_merchant_risk_report
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
@@ -33,6 +32,7 @@ from telegram_membership_saas.modules.platform_dashboard import (
     is_configured_platform_owner,
     platform_report,
 )
+from telegram_membership_saas.modules.platform_risk import platform_merchant_risk_report
 from telegram_membership_saas.modules.platform_usage import (
     BOT_EVENT_LABELS,
     EVENT_LABELS,
