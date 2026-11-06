@@ -549,6 +549,13 @@ async def register_new_owner_bot(
         # Global bot ID uniqueness prevents a bot being claimed twice.
         # The same DB rollback also removes the newly created project.
         raise ValueError("Этот Telegram-бот уже подключён в другом проекте") from None
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "P6701":
+            raise ValueError(
+                "Достигнут установленный лимит подключённых ботов. "
+                "Удалите ненужное подключение или обратитесь в поддержку ViMi Pay."
+            ) from None
+        raise
 
 
 async def set_default_project_name_from_bot(
