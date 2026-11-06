@@ -50,16 +50,21 @@ def upgrade() -> None:
                 actor_user_id, report_kind, period_since
             ) VALUES (actor, 'merchant_finances', p_since);
 
-            WITH approved AS MATERIALIZED (
-                -- One immutable original Payment UUID counts once,
-                -- even if a malformed duplicate metering row is present.
+            WITH original_approvals AS MATERIALIZED (
+                -- Pick each original Payment UUID globally, before the
+                -- selected report period can hide its canonical approval.
+                -- A later duplicate can never move turnover into a newer
+                -- period or associate that payment with another merchant.
                 SELECT DISTINCT ON (e.source_id)
                        e.source_id, e.project_id, e.currency_code,
                        e.amount, e.occurred_at
                 FROM public.platform_usage_events e
                 WHERE e.event_type = 'payment_approved'
-                  AND e.occurred_at >= p_since
                 ORDER BY e.source_id, e.id
+            ),
+            approved AS MATERIALIZED (
+                SELECT * FROM original_approvals
+                WHERE occurred_at >= p_since
             ),
             attributed AS MATERIALIZED (
                 SELECT e.*, period.merchant_id
