@@ -10,10 +10,13 @@ from sqlalchemy.exc import DBAPIError
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
-    build_engine, build_session_factory, tenant_session_scope,
+    build_engine,
+    build_session_factory,
+    tenant_session_scope,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
-    create_owner_project, ensure_telegram_actor,
+    create_owner_project,
+    ensure_telegram_actor,
 )
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource
