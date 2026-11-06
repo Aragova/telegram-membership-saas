@@ -112,8 +112,12 @@ def test_preview_plan_and_method_buttons_cannot_invoke_real_checkout():
         assert len(method_callback) <= 64
         assert any(cb == method_callback for _, cb in _buttons(keyboard))
         assert not any(cb.startswith("buy:") for _, cb in _buttons(keyboard))
-        assert not any(cb.startswith("own:pvmethod:") and "RUB" in cb
-                       for _, cb in _buttons(keyboard))
+        # UUID callback tokens are opaque; they can randomly contain "RUB".
+        # Verify exact eligible checkout choices rather than substring matches.
+        assert [
+            cb for _, cb in _buttons(keyboard)
+            if cb.startswith("own:pvmethod:")
+        ] == [method_callback]
         assert preview_offer_screen(fixture.offers, price_id=uuid4()) is None
 
         rendered = preview_method_screen(
