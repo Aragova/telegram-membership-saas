@@ -121,8 +121,9 @@ RLS, no tenant policies and explicitly REVOKE default runtime table grants.
   Merchant IDs. A missing row means unlimited (current default). Once an
   operator explicitly configures a cap, a DB BEFORE INSERT trigger serializes
   concurrent registrations using an owner-scoped transaction advisory lock
-  and blocks excess connections with SQLSTATE `P6701`. Disabled bots
-  remain connected and consume slots; deleting the bot releases its slot.
+  and blocks excess connections with SQLSTATE `P6701`. Disabled and deleting bots
+  remain counted until their bot row is actually removed; a deletion request
+  or status change alone does not release the slot.
   Updating an already-connected bot's token does not consume another slot.
   There is no forced suspension of existing bots when a cap is lowered.
 - `merchant_platform_trial_claims`: protected lifetime history of future
