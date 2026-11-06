@@ -102,3 +102,16 @@ only the owner role currently allowed to report),
 
 Full billing, platform operator delegation, anomaly alerts and usage events
 are explicitly reserved for later work.
+
+
+## Merchant financial continuity (PR #66)
+
+A new operator-only `💼 Финансы бизнесов` section in the central bot
+reports immutable approved payments per permanent Merchant ID and currency,
+with a clear distinction between channel-admin confirmations and verified
+bank receipts. History remains linked when a project is removed, using
+its historical merchant/project periods. No reports are exposed in
+connected customer bots. The fixed PostgreSQL function
+`platform_merchant_finances` checks the DB operator ACL and audits each
+invocation; grant it with the privileged platform bootstrap after migration
+0028. This is not SaaS billing.

@@ -104,6 +104,11 @@ jobs:
                       "public.platform_usage_snapshot(timestamptz, integer, integer) "
                       "TO membership_runtime"
                   )
+                  await connection.execute(
+                      "GRANT EXECUTE ON FUNCTION "
+                      "public.platform_merchant_finances(timestamptz, integer, integer) "
+                      "TO membership_runtime"
+                  )
               finally:
                   await connection.close()
 

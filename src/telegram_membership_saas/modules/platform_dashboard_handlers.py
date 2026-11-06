@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.localization import current_language, tr
+from telegram_membership_saas.modules.merchant_finances import platform_merchant_finances
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
@@ -301,6 +302,86 @@ def _usage_text(snapshot, *, timezone: str) -> str:
     ])
     return "\n".join(lines)
 
+def _merchant_text(snapshot) -> str:
+    lines = [
+        tr("✦ <b>ViMi Pay · Финансы бизнесов</b>",
+           "✦ <b>ViMi Pay · Merchant finances</b>"),
+        "<b>" + escape(_period_label(snapshot.period)) + "</b>",
+        tr("Бизнесов с подтверждёнными платежами: ",
+           "Businesses with approved payments: ") + str(snapshot.merchants_total),
+    ]
+    if not snapshot.businesses:
+        lines.append(tr("Нет подтверждённых оплат за период.",
+                        "No approved payments in this period."))
+    for business in snapshot.businesses:
+        # Existing project names can contain embedded line separators.
+        # Collapse whitespace before HTML escaping so the chunker never
+        # splits a <b>label</b> element across Telegram messages.
+        label = " ".join(str(business["label"]).split())
+        if label == "Archived connection":
+            label = tr("Архивное подключение", "Archived connection")
+        lines.extend([
+            "",
+            "💼 <b>" + escape(label[:90]) + "</b>",
+            tr("Подтверждённых операций: ", "Approved transactions: ")
+            + str(business["payments"]),
+        ])
+        for currency in business["currencies"]:
+            lines.append(
+                "• " + escape(str(currency["currency"])) + " — "
+                + escape(fmt_turnover(str(currency["amount"])))
+                + tr(" (операций: ", " (transactions: ")
+                + str(currency["count"]) + ")"
+            )
+    if snapshot.unmapped_payments:
+        lines.extend([
+            "",
+            tr("⚠️ Операций без установленного исторического бизнеса: ",
+               "⚠️ Approvals with no attributable historical business: ")
+            + str(snapshot.unmapped_payments),
+        ])
+    if snapshot.pages > 1:
+        lines.append(
+            tr("\nСтраница ", "\nPage ") + str(snapshot.page + 1)
+            + tr(" из ", " of ") + str(snapshot.pages)
+        )
+    lines.extend([
+        "",
+        tr("<i>Только подтверждения администраторов каналов, "
+           "без независимой банковской проверки. "
+           "Это не выручка ViMi Pay и не счёт к оплате.</i>",
+           "<i>Channel-admin approvals, not independent bank verification. "
+           "This is neither ViMi Pay revenue nor an invoice.</i>"),
+    ])
+    return "\n".join(lines)
+
+
+def _merchant_text_chunks(snapshot, *, limit: int = 3500) -> tuple[str, ...]:
+    """Split a financial report only between complete HTML-safe lines.
+
+    Telegram rejects a message longer than 4096 characters. Splitting on
+    rendered lines (never inside escaped amounts or tags) preserves every
+    currency, the summary and the final navigation keyboard.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in _merchant_text(snapshot).split("\n"):
+        if len(line) > limit:
+            raise ValueError("Merchant finance report line exceeds safe Telegram size")
+        required = len(line) + (1 if current else 0)
+        if current and size + required > limit:
+            chunks.append("\n".join(current))
+            current = []
+            size = 0
+            required = len(line)
+        current.append(line)
+        size += required
+    if current:
+        chunks.append("\n".join(current))
+    return tuple(chunks)
+
+
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
@@ -326,6 +407,7 @@ def create_platform_dashboard_router(
         rows.extend([
             [_button(tr("🤖 Все подключённые боты", "🤖 Connected bots"), f"bots:{period}:0")],
             [_button(tr("📊 Использование и история", "📊 Usage & history"), f"usage:{period}:0")],
+            [_button(tr("💼 Финансы бизнесов", "💼 Merchant finances"), f"merchants:{period}:0")],
             [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             [InlineKeyboardButton(
                 text=tr("🤖 Мои боты · личный режим", "🤖 My bots · personal mode"),
@@ -419,6 +501,48 @@ def create_platform_dashboard_router(
                     _usage_text(report, timezone=config.platform_timezone),
                     parse_mode="HTML", reply_markup=_keyboard(rows),
                 )
+            elif len(tokens) == 4 and tokens[1] == "merchants":
+                _, _, period, page_token = tokens
+                if period not in PERIODS or (
+                    not page_token.isascii() or not page_token.isdecimal()
+                ):
+                    raise ValueError("Некорректная страница финансов")
+                page = int(page_token)
+                if page > 100000:
+                    raise ValueError("Страница недоступна")
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_merchant_finances(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    period=period, page=page, settings=config,
+                )
+                rows = _period_rows(period, section="merchants")
+                nav = []
+                if page > 0:
+                    nav.append(_button(
+                        tr("⬅️ Предыдущие", "⬅️ Previous"),
+                        f"merchants:{period}:{page - 1}",
+                    ))
+                if page + 1 < report.pages:
+                    nav.append(_button(
+                        tr("Следующие ➡️", "Next ➡️"),
+                        f"merchants:{period}:{page + 1}",
+                    ))
+                if nav:
+                    rows.append(nav)
+                rows.append([_button(
+                    tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0",
+                )])
+                chunks = _merchant_text_chunks(report)
+                for index, chunk in enumerate(chunks):
+                    await bot.send_message(
+                        query.from_user.id, chunk, parse_mode="HTML",
+                        reply_markup=_keyboard(rows) if index == len(chunks) - 1 else None,
+                    )
             elif len(tokens) == 4 and tokens[1] == "bots":
                 _, _, period, page_token = tokens
                 if period not in PERIODS or not page_token.isascii() or (

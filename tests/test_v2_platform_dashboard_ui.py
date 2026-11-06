@@ -208,6 +208,9 @@ def test_moscow_day_boundary_and_fixed_timezones():
     with pytest.raises(ValueError):
         period_start("wrong",settings=_settings(),now=now)
     assert fmt_turnover("1000.000000000000") == "1000"
+    assert fmt_turnover("12345678901234567890.123456789012345678") == (
+        "12345678901234567890.123456789012345678"
+    )
 
 
 async def test_bot_detail_rejects_stale_list_row_after_reordering(monkeypatch):

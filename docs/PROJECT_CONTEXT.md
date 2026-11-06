@@ -288,3 +288,15 @@ connection, then connect the new bot inside it; do not transplant payments
 or reassign merchant identities. Concurrent channel claims are serialized.
 A different Telegram owner is **not** automatically assigned another
 owner's merchant history. See [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
+
+
+## PR #66 — merchant historical turnover (read-only)
+
+Platform Owner in central @vimipay_bot has an audited Merchant ID report:
+approved Payment UUIDs counted once, original exact amount and currency,
+historic project periods retained after project/bot removal, per-business
+pagination and RU/EN UI. Unknown old project attribution is explicitly
+reported, not guessed. This is tenant GMV, not ViMi Pay revenue or bank
+verification. Requires Alembic 0028 before central-bot rebuild and
+platform owner database EXECUTE grant; existing customer bots unchanged.
+Details: [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).

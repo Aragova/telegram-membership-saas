@@ -108,4 +108,8 @@ def fmt_turnover(value: str) -> str:
     amount = Decimal(value)
     if not amount.is_finite():
         raise ValueError("Invalid turnover")
-    return format(amount.normalize(), "f")
+    # Decimal.normalize() rounds to the current context precision (28 by
+    # default), corrupting the display of valid numeric(38,18) totals.
+    # Fixed-point formatting retains every source digit without rounding.
+    rendered = format(amount, "f")
+    return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
