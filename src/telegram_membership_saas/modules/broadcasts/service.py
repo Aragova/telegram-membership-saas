@@ -361,7 +361,7 @@ async def archive_template(
 async def create_campaign(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, actor_id: UUID, telegram_bot_id: int,
-    template_id: UUID,
+    template_id: UUID, confirmation_key: UUID,
 ) -> tuple[BroadcastCampaign, int]:
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
@@ -370,16 +370,30 @@ async def create_campaign(
             session, project_id=project_id, actor_id=actor_id,
             telegram_bot_id=telegram_bot_id,
         )
+        # Serialize all confirmations for the same project. Two concurrent
+        # presses of the same Telegram button must share one campaign.
+        await session.scalar(
+            select(Project.id).where(Project.id == project_id).with_for_update()
+        )
+        prior = await session.scalar(select(BroadcastCampaign).where(
+            BroadcastCampaign.project_id == project_id,
+            BroadcastCampaign.telegram_bot_id == telegram_bot_id,
+            BroadcastCampaign.confirmation_key == confirmation_key,
+        ))
+        if prior is not None:
+            if prior.created_by != actor_id or prior.template_id != template_id:
+                raise PermissionError("Подтверждение принадлежит другой рассылке")
+            total = await session.scalar(select(func.count()).select_from(
+                BroadcastDelivery
+            ).where(BroadcastDelivery.campaign_id == prior.id)) or 0
+            return prior, total
         post = await _get_template(
             session, project_id, telegram_bot_id, template_id,
         )
         if post is None:
             raise ValueError("Пост не найден")
-        # Serialize start across administrators and concurrent callbacks.
-        await session.scalar(
-            select(Project.id).where(Project.id == project_id).with_for_update()
-        )
-        # Never enqueue two campaigns by rapid/double-tapping the button.
+        # Never enqueue two overlapping campaigns; but do not block replay
+        # of an earlier confirmation after its campaign has completed.
         existing = await session.scalar(select(BroadcastCampaign.id).where(
             BroadcastCampaign.project_id == project_id,
             BroadcastCampaign.telegram_bot_id == telegram_bot_id,
@@ -392,6 +406,7 @@ async def create_campaign(
         campaign = BroadcastCampaign(
             project_id=project_id, telegram_bot_id=telegram_bot_id,
             template_id=post.id, created_by=actor_id,
+            confirmation_key=confirmation_key,
             kind=post.kind, text=post.text,
             entities=post.entities, file_id=post.file_id,
         )
