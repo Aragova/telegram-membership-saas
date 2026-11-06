@@ -219,6 +219,13 @@ async def register_customer_bot(
     except IntegrityError:
         # Do not disclose the other tenant or SQL parameters in an exception chain.
         raise ValueError("Этот Telegram-бот уже привязан к другому проекту") from None
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "P6701":
+            raise ValueError(
+                "Достигнут установленный лимит подключённых ботов. "
+                "Удалите ненужное подключение или обратитесь в поддержку ViMi Pay."
+            ) from None
+        raise
     return BotRegistration(
         telegram_bot_id=verified.telegram_bot_id,
         username=verified.username,
