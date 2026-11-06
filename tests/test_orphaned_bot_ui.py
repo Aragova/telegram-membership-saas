@@ -7,7 +7,6 @@ from telegram_membership_saas.modules.bots.deletion_service import RetirementBlo
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.obligations import OwnerObligations
 from telegram_membership_saas.modules.owner_setup.service import SetupOverview
-from telegram_membership_saas.telegram_menus import commands_for
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
 
