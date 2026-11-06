@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from telegram_membership_saas.modules.owner_setup import handlers as ui
+from telegram_membership_saas.modules.owner_setup.bulk_sales import BulkSalesState
 from telegram_membership_saas.modules.owner_setup.service import SetupOverview
 from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     MethodInfo,
@@ -52,6 +53,14 @@ def _auth(monkeypatch, project_id):
     )
     monkeypatch.setattr(
         ui, "get_selected_project", AsyncMock(return_value=project_id),
+    )
+    monkeypatch.setattr(
+        ui, "read_bulk_sales_state", AsyncMock(
+            return_value=BulkSalesState(
+                "method", active=1, paused=0, drafts=0,
+                revision="000000000000",
+            ),
+        ),
     )
     return actor_id
 
