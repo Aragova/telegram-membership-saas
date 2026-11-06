@@ -1495,17 +1495,16 @@ def create_owner_setup_router(
         for pid, name, status in data.plans[:15]:
             lines.append(f"• <b>{escape(name)}</b> — {_status(status)}")
             rows.append([_button("⚙️ " + name[:45], "plan:" + pid.hex)])
-        bulk = await read_bulk_sales_state(
-            factory, actor_id=actor_id, project_id=project_id, kind="plan",
-        )
-        if bulk.available:
+        active = any(status == "active" for _, _, status in data.plans)
+        archived = any(status == "archived" for _, _, status in data.plans)
+        if active or archived:
             rows.append([_button(
                 tr("▶️ Включить все тарифы", "▶️ Enable all plans")
-                if bulk.enable_action else
+                if not active else
                 tr("⏸️ Выключить все тарифы", "⏸️ Disable all plans"),
-                "bulks:plan:" + ("on:" if bulk.enable_action else "off:")
+                "bulks:plan:" + ("off:" if active else "on:")
                 + encode_uuid(project_id),
-                "success" if bulk.enable_action else "danger",
+                "danger" if active else "success",
             )])
         rows.append([_button("➕ Создать тариф", "newplan", "success")])
         if not data.methods:
@@ -1719,18 +1718,19 @@ def create_owner_setup_router(
             ))
         if navigation:
             rows.append(navigation)
-        bulk = await read_bulk_sales_state(
-            factory, actor_id=actor_id, project_id=project_id, kind="method",
-        )
-        if bulk.available:
-            rows.append([_button(
-                tr("▶️ Включить все оплаты", "▶️ Enable all payments")
-                if bulk.enable_action else
-                tr("⏸️ Выключить все оплаты", "⏸️ Disable all payments"),
-                "bulks:method:" + ("on:" if bulk.enable_action else "off:")
-                + encode_uuid(project_id),
-                "success" if bulk.enable_action else "danger",
-            )])
+        if methods or page > 0:
+            bulk = await read_bulk_sales_state(
+                factory, actor_id=actor_id, project_id=project_id, kind="method",
+            )
+            if bulk.available:
+                rows.append([_button(
+                    tr("▶️ Включить все оплаты", "▶️ Enable all payments")
+                    if bulk.enable_action else
+                    tr("⏸️ Выключить все оплаты", "⏸️ Disable all payments"),
+                    "bulks:method:" + ("on:" if bulk.enable_action else "off:")
+                    + encode_uuid(project_id),
+                    "success" if bulk.enable_action else "danger",
+                )])
         rows.append([_button("➕ Добавить способ", "newmethod", "success")])
         if methods or page > 0:
             rows.append([_button("➡️ Перейти к тарифам", "plans")])
