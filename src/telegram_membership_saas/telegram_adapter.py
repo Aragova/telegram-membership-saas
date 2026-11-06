@@ -5,6 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.localization import LanguageMiddleware, create_language_router
+from telegram_membership_saas.modules.broadcasts.handlers import (
+    StartAudienceMiddleware,
+    create_broadcast_router,
+)
 from telegram_membership_saas.modules.owner_setup.handlers import create_owner_setup_router
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     create_platform_dashboard_router,
