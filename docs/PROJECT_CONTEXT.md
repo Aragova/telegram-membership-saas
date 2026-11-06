@@ -313,3 +313,16 @@ was deleted. Different businesses and legitimate channel transfers are not
 auto-merged. No real billing/trials/limits are turned on. See
 [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md). Deploy 0029 before any
 updated bot runtime; protect the live `compose.light100.yaml` setup.
+
+
+## PR #68 — platform-only manual channel review
+
+The Platform Owner of central `@vimipay_bot` gets a read-only RU/EN
+`🛡 Проверка каналов` list of PR67 cross-owner channel history signals.
+A fixed audited SECURITY DEFINER report validates the real DB operator,
+supports periods, pagination and timezone-aware labels. Signals do not
+prove fraud and never trigger automatic blocks, migrations, or charges.
+Migration **0030_platform_risk_review**, privileged platform bootstrap and
+a **central-bot-only** rebuild are required. Customer supervisor stays
+unchanged; preserve `compose.light100.yaml`. See
+[MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
