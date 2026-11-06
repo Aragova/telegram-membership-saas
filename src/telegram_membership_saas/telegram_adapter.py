@@ -5,6 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.localization import LanguageMiddleware, create_language_router
+from telegram_membership_saas.modules.broadcasts.handlers import (
+    StartAudienceMiddleware,
+    create_broadcast_router,
+)
 from telegram_membership_saas.modules.owner_setup.handlers import create_owner_setup_router
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     create_platform_dashboard_router,
@@ -72,6 +76,9 @@ def create_customer_dispatcher(
     """Owner admin and buyer storefront in one project-bound BotInstance."""
     dispatcher = Dispatcher()
     dispatcher.update.outer_middleware(LanguageMiddleware(session_factory))
+    dispatcher.message.outer_middleware(
+        StartAudienceMiddleware(session_factory, project_id=project_id)
+    )
     owner_menu_renderers = []
     owner_router = create_owner_setup_router(
         session_factory, fixed_project_id=project_id,
@@ -99,6 +106,9 @@ def create_customer_dispatcher(
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
     dispatcher.include_router(owner_router)
+    dispatcher.include_router(create_broadcast_router(
+        session_factory, project_id=project_id,
+    ))
     dispatcher.include_router(
         create_telegram_access_router(session_factory, expected_project_id=project_id)
     )

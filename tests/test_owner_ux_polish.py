@@ -209,6 +209,8 @@ async def test_navigation_middleware_discards_plain_input_on_dashboard_click(mon
     ))
     cancel = AsyncMock(return_value=True)
     monkeypatch.setattr(ui, "cancel_owner_flow", cancel)
+    cancel_broadcast = AsyncMock()
+    monkeypatch.setattr(ui, "cancel_draft", cancel_broadcast)
     handler = AsyncMock(return_value="handled")
     event = owner_query("dashboard")
     bot = owner_bot()
@@ -217,6 +219,9 @@ async def test_navigation_middleware_discards_plain_input_on_dashboard_click(mon
         factory, actor_id=actor, bot_scope_id=bot.id,
     )
     handler.assert_awaited_once()
+    cancel_broadcast.assert_awaited_once_with(
+        factory, project_id=project, actor_id=actor,
+    )
 
     # Wizard buttons are generation-scoped, handled atomically by the
     # existing consume_button_flow; navigation middleware leaves them intact.

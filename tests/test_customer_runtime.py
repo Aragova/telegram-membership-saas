@@ -58,7 +58,8 @@ def _sf(monkeypatch, *, project_status="active", bots=()):
 def test_connected_dispatcher_separates_tenant_admin_and_buyer_routes():
     dispatcher = create_customer_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "vimi-language", "owner-tenant", "telegram-access", "telegram-commerce"
+        "vimi-language", "owner-tenant", "customer-broadcasts",
+        "telegram-access", "telegram-commerce"
     ]
 
 

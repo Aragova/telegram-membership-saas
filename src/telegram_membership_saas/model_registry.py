@@ -1,6 +1,13 @@
 from telegram_membership_saas.modules.access import AccessAction, AccessState, EffectiveAccess
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
+from telegram_membership_saas.modules.broadcasts import (
+    BroadcastAudience,
+    BroadcastCampaign,
+    BroadcastDelivery,
+    BroadcastDraft,
+    BroadcastTemplate,
+)
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.merchant_identity import (
@@ -36,6 +43,11 @@ __all__ = [
     "AccessAction",
     "AccessState",
     "BotInstance",
+    "BroadcastAudience",
+    "BroadcastCampaign",
+    "BroadcastDelivery",
+    "BroadcastDraft",
+    "BroadcastTemplate",
     "CustomerBotRuntimeHealth",
     "MerchantChannelPeriod",
     "MerchantIdentity",

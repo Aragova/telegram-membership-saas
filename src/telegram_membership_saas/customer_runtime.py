@@ -27,6 +27,7 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.modules.bots import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.bots.service import decrypt_token
+from telegram_membership_saas.modules.broadcasts.worker import run_broadcast_loop
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
@@ -169,6 +170,7 @@ async def run_customer_bot_instance(
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
     worker: asyncio.Task[None] | None = None
+    broadcast_worker: asyncio.Task[None] | None = None
     polling: asyncio.Task[None] | None = None
     dispatcher = None
     try:
@@ -197,6 +199,12 @@ async def run_customer_bot_instance(
                 project_id=project_id,
                 adapter=TelegramAccessAdapter(bot, session_factory=session_factory),
                 poll_seconds=settings.telegram_worker_poll_seconds,
+            )
+        )
+        broadcast_worker = asyncio.create_task(
+            run_broadcast_loop(
+                session_factory, project_id=project_id,
+                telegram_bot_id=telegram_bot_id, bot=bot,
             )
         )
         if on_started is not None:
@@ -239,6 +247,11 @@ async def run_customer_bot_instance(
                         cancel_once(worker)
                         await asyncio.gather(worker, return_exceptions=True)
                 finally:
+                    if broadcast_worker is not None:
+                        cancel_once(broadcast_worker)
+                        await asyncio.gather(
+                            broadcast_worker, return_exceptions=True,
+                        )
                     if bot is not None:
                         await bot.session.close()
 
