@@ -65,7 +65,7 @@ def test_connected_dispatcher_includes_project_bound_admin_before_buyer():
     project_id = uuid4()
     dispatcher = create_customer_dispatcher(MagicMock(), project_id=project_id)
     assert [r.name for r in dispatcher.sub_routers] == [
-        "vimi-language", "owner-tenant", "telegram-access", "telegram-commerce",
+        "vimi-language", "owner-tenant", "customer-broadcasts", "telegram-access", "telegram-commerce",
     ]
 
 
