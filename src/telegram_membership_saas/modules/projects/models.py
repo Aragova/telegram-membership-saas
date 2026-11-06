@@ -39,6 +39,12 @@ class Project(Base):
         index=True,
         nullable=False,
     )
+    # Stable commercial identity; independent of the replaceable project bot.
+    merchant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("merchant_identities.id", ondelete="RESTRICT"),
+        server_default=func.gen_random_uuid(), nullable=False,
+    )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     timezone: Mapped[str] = mapped_column(
         String(64),
