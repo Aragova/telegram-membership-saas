@@ -47,6 +47,10 @@ from telegram_membership_saas.modules.owner_notifications import (
     read_owner_settings,
     set_owner_setting,
 )
+from telegram_membership_saas.modules.owner_setup.bulk_sales import (
+    read_bulk_sales_state,
+    switch_all_sales,
+)
 from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_catalog_screen,
     preview_method_screen,
@@ -1491,6 +1495,18 @@ def create_owner_setup_router(
         for pid, name, status in data.plans[:15]:
             lines.append(f"• <b>{escape(name)}</b> — {_status(status)}")
             rows.append([_button("⚙️ " + name[:45], "plan:" + pid.hex)])
+        bulk = await read_bulk_sales_state(
+            factory, actor_id=actor_id, project_id=project_id, kind="plan",
+        )
+        if bulk.available:
+            rows.append([_button(
+                tr("▶️ Включить все тарифы", "▶️ Enable all plans")
+                if bulk.enable_action else
+                tr("⏸️ Выключить все тарифы", "⏸️ Disable all plans"),
+                "bulks:plan:" + ("on:" if bulk.enable_action else "off:")
+                + encode_uuid(project_id),
+                "success" if bulk.enable_action else "danger",
+            )])
         rows.append([_button("➕ Создать тариф", "newplan", "success")])
         if not data.methods:
             lines.append(tr(
@@ -1703,6 +1719,18 @@ def create_owner_setup_router(
             ))
         if navigation:
             rows.append(navigation)
+        bulk = await read_bulk_sales_state(
+            factory, actor_id=actor_id, project_id=project_id, kind="method",
+        )
+        if bulk.available:
+            rows.append([_button(
+                tr("▶️ Включить все оплаты", "▶️ Enable all payments")
+                if bulk.enable_action else
+                tr("⏸️ Выключить все оплаты", "⏸️ Disable all payments"),
+                "bulks:method:" + ("on:" if bulk.enable_action else "off:")
+                + encode_uuid(project_id),
+                "success" if bulk.enable_action else "danger",
+            )])
         rows.append([_button("➕ Добавить способ", "newmethod", "success")])
         if methods or page > 0:
             rows.append([_button("➡️ Перейти к тарифам", "plans")])
@@ -3121,6 +3149,91 @@ def create_owner_setup_router(
                 )
             elif action == "plans":
                 await show_plans(bot, user_id, actor_id, project_id)
+            elif action.startswith(("bulks:", "bulkok:")):
+                parts = action.split(":")
+                verb = parts[0]
+                if (
+                    len(parts) != (4 if verb == "bulks" else 5)
+                    or parts[1] not in ("plan", "method")
+                    or parts[2] not in ("on", "off")
+                    or decode_uuid(parts[3]) != project_id
+                ):
+                    raise ValueError(tr(
+                        "Меню другого подключения. Откройте раздел заново.",
+                        "Different connection menu. Reopen this section.",
+                    ))
+                kind, enable = parts[1], parts[2] == "on"
+                state = await read_bulk_sales_state(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    kind=kind,
+                )
+                if not state.available or state.enable_action != enable:
+                    raise ValueError(tr(
+                        "Настройки изменились. Откройте раздел заново.",
+                        "Settings changed. Reopen this section.",
+                    ))
+                if verb == "bulks":
+                    total = state.paused if enable else state.active
+                    subject = (
+                        tr("все тарифы", "all plans") if kind == "plan"
+                        else tr("все способы оплаты", "all payment methods")
+                    )
+                    action_label = (
+                        tr("включить", "enable") if enable
+                        else tr("выключить", "disable")
+                    )
+                    explanation = tr(
+                        "Черновики не публикуются автоматически. "
+                        "Для включения все архивные тарифы должны иметь "
+                        "действующий канал, цену и оплату. "
+                        "Если хотя бы один не готов, изменения отменяются.\n\n",
+                        "Drafts are never published automatically. "
+                        "Every archived plan needs an active channel, price "
+                        "and payment method. If any is unready, nothing changes.\n\n",
+                    ) if kind == "plan" and enable else ""
+                    await bot.send_message(
+                        user_id,
+                        tr("⚙️ <b>Массовое управление</b>\n\n",
+                           "⚙️ <b>Bulk management</b>\n\n")
+                        + action_label.capitalize() + " " + subject + "?\n"
+                        + tr("Будет изменено: ", "Affected: ") + str(total)
+                        + ".\n\n" + explanation
+                        + tr(
+                            "Изменятся только новые продажи. "
+                            "Действующие подписки, заявки и история платежей "
+                            "сохранятся.",
+                            "Only future purchases are affected. "
+                            "Existing subscriptions, pending requests and "
+                            "payment history stay unchanged.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("✅ Подтвердить", "✅ Confirm"),
+                                "bulkok:" + kind + ":"
+                                + ("on:" if enable else "off:")
+                                + encode_uuid(project_id) + ":" + state.revision,
+                                "success" if enable else "danger",
+                            )],
+                            [_button(
+                                tr("⬅️ Отмена", "⬅️ Cancel"),
+                                "plans" if kind == "plan" else "methods",
+                            )],
+                        ]),
+                    )
+                else:
+                    changed = await switch_all_sales(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        kind=kind, enable=enable, expected_revision=parts[4],
+                    )
+                    await bot.send_message(
+                        user_id,
+                        tr("✅ Изменено: ", "✅ Updated: ") + str(changed),
+                    )
+                    if kind == "plan":
+                        await show_plans(bot, user_id, actor_id, project_id)
+                    else:
+                        await show_methods(bot, user_id, actor_id, project_id)
             elif action == "newplan":
                 data = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id
