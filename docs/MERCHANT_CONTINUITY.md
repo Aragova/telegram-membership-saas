@@ -63,7 +63,10 @@ subscriptions, access grants, owner/merchant IDs and existing bot credentials
 are never copied or reassigned.
 
 Enforcement is in PostgreSQL migration 0027, under a narrowly scoped
-SECURITY DEFINER BEFORE INSERT/UPDATE resource guard. It validates the invoker's\nselected tenant and owner/admin identity **before reading privileged history**, so\nforeign project UUIDs cannot probe another tenant's channel observations.\nA transaction advisory
+SECURITY DEFINER BEFORE INSERT/UPDATE resource guard. It validates the invoker's
+selected tenant and owner/admin identity **before reading privileged history**, so
+foreign project UUIDs cannot probe another tenant's channel observations.
+A transaction advisory
 lock by numeric Telegram Chat ID closes concurrent registrations. The
 runtime role cannot read private historical merchant data and no old-owner
 project existence is disclosed to a different Telegram owner.
