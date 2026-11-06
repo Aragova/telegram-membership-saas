@@ -152,8 +152,24 @@ def upgrade() -> None:
     ):
         op.execute(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY")
-        # No tenant SELECT / INSERT / UPDATE / DELETE policy and no runtime
-        # grants. Only a privileged administrator can create a policy.
+        # No tenant SELECT / INSERT / UPDATE / DELETE policies.
+    # The DB uses ALTER DEFAULT PRIVILEGES to grant future table CRUD to
+    # membership_runtime; revoke it explicitly before runtime can invoke a
+    # privileged BEFORE INSERT trigger as an existence oracle.
+    op.execute("""
+        DO $revoke$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='membership_runtime') THEN
+            REVOKE ALL ON
+              public.platform_owner_bot_limits,
+              public.merchant_platform_trial_claims,
+              public.merchant_commission_reservations,
+              public.merchant_risk_observations
+            FROM membership_runtime;
+          END IF;
+        END
+        $revoke$
+    """)
 
     op.execute("""
         CREATE FUNCTION public.merchant_commercial_claim_guard()
