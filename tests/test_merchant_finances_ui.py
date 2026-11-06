@@ -1,5 +1,6 @@
 """Platform owner merchant-finance screen: compact RU/EN and private callbacks."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -106,3 +107,64 @@ async def test_merchant_finances_rejects_unconfigured_owner():
             MagicMock(), actor_user_id=uuid4(), actor_telegram_id=7777,
             settings=Settings(platform_owner_telegram_id=None),
         )
+
+
+def _large_snapshot():
+    currencies = [
+        {
+            "currency": f"CODE{i:02}",
+            "amount": "12345678901234567890.123456789012345678",
+            "count": 123456,
+        }
+        for i in range(33)
+    ]
+    return replace(
+        _snapshot(),
+        businesses=tuple(
+            {
+                "merchant_id": str(uuid4()),
+                "label": "A & B " + ("Premium channel " * 5),
+                "payments": 123456,
+                "currencies": currencies,
+            }
+            for _ in range(6)
+        ),
+    )
+
+
+def test_large_merchant_report_split_at_html_safe_lines():
+    snapshot = _large_snapshot()
+    full_text = ui._merchant_text(snapshot)
+    chunks = ui._merchant_text_chunks(snapshot)
+    assert len(full_text) > 4096
+    assert len(chunks) > 1
+    assert all(len(part) <= 3500 for part in chunks)
+    assert "\n".join(chunks) == full_text
+    for part in chunks:
+        assert part.count("<b>") == part.count("</b>")
+        assert part.count("<i>") == part.count("</i>")
+    assert "не выручка ViMi Pay" in chunks[-1]
+
+
+async def test_large_merchant_report_sends_navigation_only_on_last_chunk(monkeypatch):
+    report = AsyncMock(return_value=_large_snapshot())
+    monkeypatch.setattr(ui, "platform_merchant_finances", report)
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    router = ui.create_platform_dashboard_router(
+        MagicMock(), settings=Settings(platform_owner_telegram_id=7777),
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    await _handler(router)(_callback(), bot)
+    calls = bot.send_message.await_args_list
+    assert len(calls) > 1
+    assert all(len(call.args[1]) <= 3500 for call in calls)
+    assert all(call.kwargs["reply_markup"] is None for call in calls[:-1])
+    assert calls[-1].kwargs["reply_markup"] is not None
+    controls = [
+        button.callback_data
+        for row in calls[-1].kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert "plat:merchants:30:1" in controls
+    assert "plat:home:30:0" in controls
