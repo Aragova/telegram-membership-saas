@@ -51,6 +51,14 @@ def test_forwarded_photo_video_and_caption_are_copyable_without_downloading():
     assert extract_post(video) == (
         "video", caption, None, "bot-owned-video",
     )
+    # Telegram's backward-compatible animation payload ALSO has a
+    # document field; GIF must retain animation delivery semantics.
+    gif = _post(caption="GIF 🎉")
+    gif.document = SimpleNamespace(file_id="fallback-document")
+    gif.animation = SimpleNamespace(file_id="real-animation")
+    assert extract_post(gif) == (
+        "animation", "GIF 🎉", None, "real-animation",
+    )
 
 
 def test_protected_forward_or_album_is_rejected_not_partially_saved():
@@ -93,6 +101,15 @@ async def test_broadcast_worker_uses_entities_not_unescaped_html():
     )
     bot.send_photo.assert_awaited_once()
     assert bot.send_photo.await_args.kwargs["photo"] == "file-from-this-bot"
+    await _send_post(
+        bot, user_id=123,
+        content=SimpleNamespace(
+            kind="animation", text="GIF 🎉", entities=None,
+            file_id="real-animation",
+        ),
+    )
+    bot.send_animation.assert_awaited_once()
+    assert bot.send_animation.await_args.kwargs["animation"] == "real-animation"
 
 
 async def test_start_middleware_only_registers_private_start(monkeypatch):
