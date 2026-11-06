@@ -277,3 +277,14 @@ applied before deploying the modified customer-supervisor; do not deploy
 a partial PR or restart PostgreSQL. Central bot, payment approval, access
 grants/revocations, `compose.light100.yaml` and existing live channels
 must be preserved. No merge without exact HEAD CI/Codex and owner approval.
+
+
+## Channel continuity (PR #65)
+
+When a channel is verified through Telegram and already belongs to a
+different existing connection of the same project owner, a new project's
+resource insertion is rejected by migration 0027. Restore/reuse the old
+connection, then connect the new bot inside it; do not transplant payments
+or reassign merchant identities. Concurrent channel claims are serialized.
+A different Telegram owner is **not** automatically assigned another
+owner's merchant history. See [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
