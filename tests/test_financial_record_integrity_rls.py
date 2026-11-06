@@ -1,5 +1,6 @@
 """Real PostgreSQL: monetary snapshots survive project/bot lifecycle attacks."""
 import os
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -124,7 +125,7 @@ async def test_approved_payment_and_checkout_price_are_immutable():
             for column, value in [
                 ("final_amount", "1"),
                 ("currency_code", "RUB"),
-                ("approved_at", "2100-01-01 00:00:00+00"),
+                ("approved_at", datetime(2100, 1, 1, tzinfo=UTC)),
             ]:
                 await _blocked(
                     session,
