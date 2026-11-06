@@ -375,6 +375,269 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Restore PR65's pure existing-project channel guard before dropping
+    # the 0029 trial/commission tables used by the enhanced guard.
+    op.execute("""
+        CREATE OR REPLACE FUNCTION public.merchant_guard_channel_reuse()
+        RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $merchant$
+        DECLARE
+            current_owner uuid;
+            caller_user uuid;
+            caller_project uuid;
+        BEGIN
+            -- A disabled channel cannot be sold; check again on activation.
+            IF NEW.status <> 'active'
+               OR NEW.external_id !~ '^-?[1-9][0-9]{0,18}
+    op.execute("DROP FUNCTION IF EXISTS public.merchant_detect_channel_transfer_risk()")
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_merchant_owner_bot_limit ON public.bot_instances"
+    )
+    op.execute("DROP FUNCTION IF EXISTS public.merchant_owner_bot_limit_guard()")
+    for table in (
+        "merchant_commission_reservations", "merchant_platform_trial_claims",
+    ):
+        op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_claim_guard ON public.{table}")
+    op.execute("DROP FUNCTION IF EXISTS public.merchant_commercial_claim_guard()")
+    for table in (
+        "merchant_risk_observations", "merchant_commission_reservations",
+        "merchant_platform_trial_claims", "platform_owner_bot_limits",
+    ):
+        op.drop_table(table)
+ THEN
+                RETURN NEW;
+            END IF;
+            IF TG_OP = 'UPDATE'
+               AND NEW.project_id IS NOT DISTINCT FROM OLD.project_id
+               AND NEW.external_id IS NOT DISTINCT FROM OLD.external_id
+               AND NEW.resource_type IS NOT DISTINCT FROM OLD.resource_type
+               AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
+                RETURN NEW;
+            END IF;
+
+            -- Authenticate before examining any cross-tenant history.
+            caller_user := NULLIF(current_setting(
+                'app.current_user_id', true), '')::uuid;
+            caller_project := NULLIF(current_setting(
+                'app.current_project_id', true), '')::uuid;
+            IF caller_user IS NULL OR caller_project IS DISTINCT FROM NEW.project_id THEN
+                RAISE EXCEPTION 'Resource project scope denied'
+                    USING ERRCODE = '42501';
+            END IF;
+            SELECT p.owner_user_id INTO current_owner
+            FROM public.projects p
+            WHERE p.id = NEW.project_id AND p.status = 'active'
+              AND (
+                  p.owner_user_id = caller_user
+                  OR EXISTS (
+                      SELECT 1 FROM public.project_members pm
+                      WHERE pm.project_id = p.id AND pm.user_id = caller_user
+                        AND pm.role = 'admin'
+                  )
+              );
+            IF current_owner IS NULL THEN
+                RAISE EXCEPTION 'Resource project scope denied'
+                    USING ERRCODE = '42501';
+            END IF;
+
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('vimi:channel:' || NEW.external_id, 0)
+            );
+
+            IF EXISTS (
+                SELECT 1
+                FROM public.merchant_channel_periods c
+                JOIN public.projects previous
+                  ON previous.id = c.project_id
+                WHERE c.telegram_chat_id = NEW.external_id
+                  AND c.project_id <> NEW.project_id
+                  AND previous.owner_user_id = current_owner
+            ) THEN
+                RAISE EXCEPTION
+                    'Channel belongs to another existing connection of this owner'
+                    USING ERRCODE = 'P6501';
+            END IF;
+
+            IF EXISTS (
+                SELECT 1 FROM public.merchant_channel_periods c
+                JOIN public.merchant_project_periods prev
+                  ON prev.project_id = c.project_id
+                 AND prev.merchant_id = c.merchant_id
+                WHERE c.telegram_chat_id = NEW.external_id
+                  AND c.project_id <> NEW.project_id
+                  AND prev.owner_user_id = current_owner
+                  AND NOT EXISTS (
+                      SELECT 1 FROM public.projects p
+                      WHERE p.id = c.project_id
+                  )
+                  AND (
+                      EXISTS (
+                          SELECT 1 FROM public.platform_usage_events e
+                          WHERE e.project_id = c.project_id
+                            AND e.event_type = 'payment_approved'
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM public.merchant_platform_trial_claims trial
+                          WHERE trial.merchant_id = c.merchant_id
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM public.merchant_commission_reservations reserve
+                          WHERE reserve.merchant_id = c.merchant_id
+                      )
+                  )
+            ) THEN
+                RAISE EXCEPTION
+                    'Channel has historical commercial use in a purged connection'
+                    USING ERRCODE = 'P6702';
+            END IF;
+            RETURN NEW;
+        END
+        $merchant$
+    """)
+
+    op.execute("""
+        CREATE FUNCTION public.merchant_detect_channel_transfer_risk()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $risk$
+        DECLARE
+            target_owner uuid;
+            target_merchant uuid;
+        BEGIN
+            IF NEW.status <> 'active'
+               OR NEW.resource_type NOT IN (
+                   'telegram_channel', 'telegram_group'
+               )
+               OR NEW.external_id !~ '^-?[1-9][0-9]{0,18}$' THEN
+                RETURN NEW;
+            END IF;
+
+            SELECT p.owner_user_id, p.merchant_id
+            INTO target_owner, target_merchant
+            FROM public.projects p WHERE p.id = NEW.project_id;
+            IF target_owner IS NULL THEN RETURN NEW; END IF;
+            -- A historical observation is NOT legal proof of ownership.
+            -- Record only an operator-visible review signal, never block a
+            -- verified legitimate transfer or reveal the old owner's data.
+            IF EXISTS (
+                SELECT 1 FROM public.merchant_channel_periods c
+                JOIN public.merchant_project_periods mp
+                  ON mp.project_id = c.project_id
+                 AND mp.merchant_id = c.merchant_id
+                WHERE c.telegram_chat_id = NEW.external_id
+                  AND c.project_id <> NEW.project_id
+                  AND mp.owner_user_id <> target_owner
+            ) THEN
+                INSERT INTO public.merchant_risk_observations (
+                    id, merchant_id, project_id, telegram_chat_id, risk_kind
+                ) VALUES (
+                    gen_random_uuid(), target_merchant, NEW.project_id,
+                    NEW.external_id, 'historical_chat_other_owner'
+                ) ON CONFLICT (
+                    merchant_id, project_id, telegram_chat_id, risk_kind
+                ) DO NOTHING;
+            END IF;
+            RETURN NEW;
+        END
+        $risk$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_merchant_channel_transfer_risk
+        AFTER INSERT ON public.resources
+        FOR EACH ROW EXECUTE FUNCTION public.merchant_detect_channel_transfer_risk()
+    """)
+    op.execute("""
+        REVOKE ALL ON FUNCTION
+        public.merchant_detect_channel_transfer_risk() FROM PUBLIC
+    """)
+
+
+def downgrade() -> None:
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_merchant_channel_transfer_risk ON public.resources"
+    )
+    op.execute("DROP FUNCTION IF EXISTS public.merchant_detect_channel_transfer_risk()")
+    op.execute(
+        "DROP TRIGGER IF EXISTS trg_merchant_owner_bot_limit ON public.bot_instances"
+    )
+    op.execute("DROP FUNCTION IF EXISTS public.merchant_owner_bot_limit_guard()")
+    for table in (
+        "merchant_commission_reservations", "merchant_platform_trial_claims",
+    ):
+        op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_claim_guard ON public.{table}")
+    op.execute("DROP FUNCTION IF EXISTS public.merchant_commercial_claim_guard()")
+    for table in (
+        "merchant_risk_observations", "merchant_commission_reservations",
+        "merchant_platform_trial_claims", "platform_owner_bot_limits",
+    ):
+        op.drop_table(table)
+ THEN
+                RETURN NEW;
+            END IF;
+            IF TG_OP = 'UPDATE'
+               AND NEW.project_id IS NOT DISTINCT FROM OLD.project_id
+               AND NEW.external_id IS NOT DISTINCT FROM OLD.external_id
+               AND NEW.resource_type IS NOT DISTINCT FROM OLD.resource_type
+               AND NEW.status IS NOT DISTINCT FROM OLD.status THEN
+                RETURN NEW;
+            END IF;
+
+            -- Triggers run before INSERT RLS WITH CHECK. A SECURITY DEFINER
+            -- function MUST authenticate caller scope before looking at
+            -- private historical channel links (otherwise a forged target
+            -- project UUID creates a cross-tenant existence oracle).
+            caller_user := NULLIF(current_setting(
+                'app.current_user_id', true), '')::uuid;
+            caller_project := NULLIF(current_setting(
+                'app.current_project_id', true), '')::uuid;
+            IF caller_user IS NULL OR caller_project IS DISTINCT FROM NEW.project_id THEN
+                RAISE EXCEPTION 'Resource project scope denied'
+                  USING ERRCODE = '42501';
+            END IF;
+            SELECT p.owner_user_id INTO current_owner
+              FROM public.projects p
+             WHERE p.id = NEW.project_id
+               AND p.status = 'active'
+               AND (
+                   p.owner_user_id = caller_user
+                   OR EXISTS (
+                       SELECT 1 FROM public.project_members pm
+                        WHERE pm.project_id = p.id
+                          AND pm.user_id = caller_user
+                          AND pm.role = 'admin'
+                   )
+               );
+            IF current_owner IS NULL THEN
+                RAISE EXCEPTION 'Resource project scope denied'
+                  USING ERRCODE = '42501';
+            END IF;
+
+            -- Serialize even concurrent channel attachments in two projects:
+            -- the second transaction must see the first committed observation.
+            PERFORM pg_advisory_xact_lock(
+                hashtextextended('vimi:channel:' || NEW.external_id, 0)
+            );
+
+            IF EXISTS (
+                SELECT 1
+                FROM public.merchant_channel_periods observation
+                JOIN public.projects previous
+                  ON previous.id = observation.project_id
+                WHERE observation.telegram_chat_id = NEW.external_id
+                  AND observation.project_id <> NEW.project_id
+                  AND previous.owner_user_id = current_owner
+            ) THEN
+                RAISE EXCEPTION
+                  'Channel belongs to another existing connection of this owner'
+                  USING ERRCODE = 'P6501';
+            END IF;
+
+            RETURN NEW;
+        END
+        $merchant$
+    """)
     op.execute(
         "DROP TRIGGER IF EXISTS trg_merchant_channel_transfer_risk ON public.resources"
     )
