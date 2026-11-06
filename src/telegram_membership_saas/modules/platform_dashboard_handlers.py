@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.localization import current_language, tr
 from telegram_membership_saas.modules.merchant_finances import platform_merchant_finances
+from telegram_membership_saas.modules.platform_risk import platform_merchant_risk_report
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
@@ -382,6 +383,53 @@ def _merchant_text_chunks(snapshot, *, limit: int = 3500) -> tuple[str, ...]:
     return tuple(chunks)
 
 
+def _risk_review_text(snapshot, *, timezone: str) -> str:
+    """Review signals are not fraud verdicts or automatic actions."""
+    lines = [
+        tr("✦ <b>ViMi Pay · Проверка каналов</b>",
+           "✦ <b>ViMi Pay · Channel review</b>"),
+        "<b>" + escape(_period_label(snapshot.period)) + "</b>",
+        tr("Сигналов для проверки: ", "Review signals: ") + str(snapshot.total),
+    ]
+    if not snapshot.observations:
+        lines.append(tr("Совпадений между разными владельцами нет.",
+                        "No cross-owner channel observations."))
+    for item in snapshot.observations:
+        channel = " ".join(str(item["channel_name"]).split())
+        if channel == "Channel unavailable":
+            channel = tr("Название недоступно", "Name unavailable")
+        project = " ".join(str(item["project_name"]).split())
+        if project == "Archived connection":
+            project = tr("Архивное подключение", "Archived connection")
+        timestamp = datetime.fromisoformat(str(item["observed_at"]))
+        local_date = timestamp.astimezone(
+            ZoneInfo(timezone)
+        ).strftime("%d.%m.%Y %H:%M")
+        lines.extend([
+            "",
+            "⚠️ <b>" + escape(channel[:120]) + "</b>",
+            tr("Подключение: ", "Connection: ") + escape(project[:120]),
+            tr("ID канала: ", "Channel ID: ") + "<code>"
+            + escape(str(item["chat_id"])) + "</code>",
+            tr("Зафиксировано: ", "Observed: ") + escape(local_date),
+        ])
+    if snapshot.pages > 1:
+        lines.append(
+            tr("\nСтраница ", "\nPage ") + str(snapshot.page + 1)
+            + tr(" из ", " of ") + str(snapshot.pages)
+        )
+    lines.extend([
+        "",
+        tr("<i>Совпадение канала у разных владельцев — только повод "
+           "проверить подключение. Законная передача возможна. "
+           "ViMi Pay ничего не блокирует автоматически.</i>",
+           "<i>A channel observed under different owners is a review "
+           "signal, not proof of fraud. Legitimate transfers are possible. "
+           "No automatic blocking occurs.</i>"),
+    ])
+    return "\n".join(lines)
+
+
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
@@ -408,6 +456,7 @@ def create_platform_dashboard_router(
             [_button(tr("🤖 Все подключённые боты", "🤖 Connected bots"), f"bots:{period}:0")],
             [_button(tr("📊 Использование и история", "📊 Usage & history"), f"usage:{period}:0")],
             [_button(tr("💼 Финансы бизнесов", "💼 Merchant finances"), f"merchants:{period}:0")],
+            [_button(tr("🛡 Проверка каналов", "🛡 Channel review"), f"risks:{period}:0")],
             [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             [InlineKeyboardButton(
                 text=tr("🤖 Мои боты · личный режим", "🤖 My bots · personal mode"),
@@ -543,6 +592,47 @@ def create_platform_dashboard_router(
                         query.from_user.id, chunk, parse_mode="HTML",
                         reply_markup=_keyboard(rows) if index == len(chunks) - 1 else None,
                     )
+            elif len(tokens) == 4 and tokens[1] == "risks":
+                _, _, period, page_token = tokens
+                if period not in PERIODS or (
+                    not page_token.isascii() or not page_token.isdecimal()
+                ):
+                    raise ValueError("Некорректная страница проверок")
+                page = int(page_token)
+                if page > 100000:
+                    raise ValueError("Страница недоступна")
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_merchant_risk_report(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    period=period, page=page, settings=config,
+                )
+                rows = _period_rows(period, section="risks")
+                nav = []
+                if page > 0:
+                    nav.append(_button(
+                        tr("⬅️ Предыдущие", "⬅️ Previous"),
+                        f"risks:{period}:{page - 1}",
+                    ))
+                if page + 1 < report.pages:
+                    nav.append(_button(
+                        tr("Следующие ➡️", "Next ➡️"),
+                        f"risks:{period}:{page + 1}",
+                    ))
+                if nav:
+                    rows.append(nav)
+                rows.append([_button(
+                    tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0",
+                )])
+                await bot.send_message(
+                    query.from_user.id,
+                    _risk_review_text(report, timezone=config.platform_timezone),
+                    parse_mode="HTML", reply_markup=_keyboard(rows),
+                )
             elif len(tokens) == 4 and tokens[1] == "bots":
                 _, _, period, page_token = tokens
                 if period not in PERIODS or not page_token.isascii() or (
