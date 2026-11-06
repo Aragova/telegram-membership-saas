@@ -53,7 +53,9 @@ confirmation, so fresh /start events join **subsequent campaigns**.
   `unknown`, **never silently retried**, preventing unwanted duplicates.
   The owner sees these counts clearly. Rate-limit responses (429) may be
   retried with retry-after, at most 3 attempts because Telegram rejected
-  the request. Other Telegram errors are recorded without revealing
+  the request. The retry-after deadline is persisted on the campaign and
+  pauses **all remaining recipients** of that bot, not just the rejected
+  recipient, including after a worker restart. Other Telegram errors are recorded without revealing
   personal data or secrets in the UI.
 - Telegram `Forbidden` or unavailable recipient marks only that bot's
   audience contact as `blocked`; a new /start reactivates the contact.
