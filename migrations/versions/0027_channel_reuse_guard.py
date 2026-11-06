@@ -26,6 +26,8 @@ def upgrade() -> None:
         AS $merchant$
         DECLARE
             current_owner uuid;
+            caller_user uuid;
+            caller_project uuid;
         BEGIN
             -- A disabled channel cannot be sold; check again on activation.
             IF NEW.status <> 'active'
@@ -40,10 +42,34 @@ def upgrade() -> None:
                 RETURN NEW;
             END IF;
 
+            -- Triggers run before INSERT RLS WITH CHECK. A SECURITY DEFINER
+            -- function MUST authenticate caller scope before looking at
+            -- private historical channel links (otherwise a forged target
+            -- project UUID creates a cross-tenant existence oracle).
+            caller_user := NULLIF(current_setting(
+                'app.current_user_id', true), '')::uuid;
+            caller_project := NULLIF(current_setting(
+                'app.current_project_id', true), '')::uuid;
+            IF caller_user IS NULL OR caller_project IS DISTINCT FROM NEW.project_id THEN
+                RAISE EXCEPTION 'Resource project scope denied'
+                  USING ERRCODE = '42501';
+            END IF;
             SELECT p.owner_user_id INTO current_owner
-              FROM public.projects p WHERE p.id = NEW.project_id;
+              FROM public.projects p
+             WHERE p.id = NEW.project_id
+               AND p.status = 'active'
+               AND (
+                   p.owner_user_id = caller_user
+                   OR EXISTS (
+                       SELECT 1 FROM public.project_members pm
+                        WHERE pm.project_id = p.id
+                          AND pm.user_id = caller_user
+                          AND pm.role = 'admin'
+                   )
+               );
             IF current_owner IS NULL THEN
-                RETURN NEW; -- The resource FK will reject this project.
+                RAISE EXCEPTION 'Resource project scope denied'
+                  USING ERRCODE = '42501';
             END IF;
 
             -- Serialize even concurrent channel attachments in two projects:
