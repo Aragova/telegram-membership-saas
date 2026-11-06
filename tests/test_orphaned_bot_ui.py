@@ -35,6 +35,9 @@ def _handler(monkeypatch, project, *, central=True):
     monkeypatch.setattr(ui, "get_selected_project", AsyncMock(
         return_value=project,
     ))
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(
+        return_value=True,
+    ))
     router = ui.create_owner_setup_router(
         MagicMock(), fixed_project_id=None if central else project,
     )
@@ -93,7 +96,7 @@ async def test_orphan_owner_sees_button_confirms_and_returns_to_card(monkeypatch
 
     await cb(_query("orphanask:" + ref + ":" + bref), bot)
     text = bot.send_message.await_args.args[1]
-    assert "не" in text and "Telegram" in text
+    assert "не затрагиваются" in text and "BotFather" in text
     actions = _callbacks(bot.send_message.await_args)
     assert "own:orphanok:" + ref + ":" + bref in actions
     finish.assert_not_awaited()
