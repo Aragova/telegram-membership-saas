@@ -115,3 +115,16 @@ connected customer bots. The fixed PostgreSQL function
 `platform_merchant_finances` checks the DB operator ACL and audits each
 invocation; grant it with the privileged platform bootstrap after migration
 0028. This is not SaaS billing.
+
+
+## PR #67 — future SaaS commercial protection
+
+The staging-only schema extends merchant continuity with an opt-in bot
+connection quota per verified Telegram owner, protected one-time merchant
+or owner platform trial claims, and idempotent original-payment commission
+reservations. All price, trial and limit *policies* are intentionally absent
+by default: ViMi Pay does not grant trials, bill commissions, or restrict
+currently connected owners automatically. A separate operator-approved
+billing product and trustworthy payment reconciliation are required before
+charges. Cross-owner Chat ID reuse produces protected **review signals**,
+not fraud verdicts. See [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).

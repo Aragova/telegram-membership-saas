@@ -10,7 +10,7 @@ from aiogram import Bot
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
@@ -219,6 +219,13 @@ async def register_customer_bot(
     except IntegrityError:
         # Do not disclose the other tenant or SQL parameters in an exception chain.
         raise ValueError("Этот Telegram-бот уже привязан к другому проекту") from None
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "P6701":
+            raise ValueError(
+                "Достигнут установленный лимит подключённых ботов. "
+                "Удалите ненужное подключение или обратитесь в поддержку ViMi Pay."
+            ) from None
+        raise
     return BotRegistration(
         telegram_bot_id=verified.telegram_bot_id,
         username=verified.username,
