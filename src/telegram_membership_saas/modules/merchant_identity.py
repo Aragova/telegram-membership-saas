@@ -7,7 +7,7 @@ are added in this schema-only foundation.
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from telegram_membership_saas.db_base import Base
@@ -50,10 +50,6 @@ class MerchantProjectPeriod(Base):
 class MerchantChannelPeriod(Base):
     __tablename__ = "merchant_channel_periods"
     __table_args__ = (
-        CheckConstraint(
-            "verified_at IS NULL",
-            name="ck_merchant_channel_foundation_unverified",
-        ),
         CheckConstraint(
             "ended_at IS NULL OR ended_at >= started_at",
             name="ck_merchant_channel_period_dates",
