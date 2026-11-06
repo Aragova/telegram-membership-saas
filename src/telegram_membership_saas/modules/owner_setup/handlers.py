@@ -1372,7 +1372,7 @@ def create_owner_setup_router(
                 factory, actor_id=actor_id, project_id=project_id,
             )
             if overview.can_delete_bot:
-                for instance_id, name, status in overview.bot_instances:
+                for instance_id, _name, status in overview.bot_instances:
                     if status != "deleting":
                         rows.append([_button(
                             tr("🗑 Отключить недоступного бота",
