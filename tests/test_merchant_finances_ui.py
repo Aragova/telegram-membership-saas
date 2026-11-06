@@ -137,6 +137,7 @@ def test_large_merchant_report_split_at_html_safe_lines():
     full_text = ui._merchant_text(snapshot)
     chunks = ui._merchant_text_chunks(snapshot)
     assert len(full_text) > 4096
+    assert "12345678901234567890.123456789012345678" in full_text
     assert len(chunks) > 1
     assert all(len(part) <= 3500 for part in chunks)
     assert "\n".join(chunks) == full_text
