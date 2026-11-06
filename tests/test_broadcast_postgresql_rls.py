@@ -38,7 +38,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
 )
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"),
@@ -131,12 +131,12 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
         )
         assert total == 1 and posts[0].id == saved.id
 
-        with pytest.raises((PermissionError, ValueError)):
+        with pytest.raises((PermissionError, ValueError, TenantAccessDenied)):
             await get_template(
                 factory, project_id=project_a, actor_id=owner_b,
                 telegram_bot_id=bot_a, template_id=saved.id,
             )
-        with pytest.raises((PermissionError, ValueError)):
+        with pytest.raises((PermissionError, ValueError, TenantAccessDenied)):
             await get_template(
                 factory, project_id=project_b, actor_id=owner_b,
                 telegram_bot_id=bot_b, template_id=saved.id,
