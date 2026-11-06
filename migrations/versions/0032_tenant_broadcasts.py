@@ -78,6 +78,7 @@ def upgrade() -> None:
         sa.Column("project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
         sa.Column("telegram_bot_id", sa.BigInteger(), nullable=False),
         sa.Column("template_id", sa.Uuid(), nullable=False),
+        sa.Column("confirmation_key", sa.Uuid(), nullable=False),
         sa.Column("created_by", sa.Uuid(), sa.ForeignKey("telegram_users.id"), nullable=False),
         sa.Column("kind", sa.String(16), nullable=False),
         sa.Column("text", sa.Text()),
@@ -88,6 +89,10 @@ def upgrade() -> None:
         sa.Column("finished_at", sa.DateTime(timezone=True)),
         sa.Column("cooldown_until", sa.DateTime(timezone=True)),
         sa.UniqueConstraint("id", "project_id", name="uq_broadcast_campaign_project"),
+        sa.UniqueConstraint(
+            "project_id", "telegram_bot_id", "confirmation_key",
+            name="uq_broadcast_campaign_confirmation",
+        ),
         sa.ForeignKeyConstraint(
             ["template_id", "project_id"],
             ["broadcast_templates.id", "broadcast_templates.project_id"],
