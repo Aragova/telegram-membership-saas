@@ -98,6 +98,10 @@ async def deliver_broadcast_once(
                 BroadcastCampaign.project_id == project_id,
                 BroadcastCampaign.telegram_bot_id == telegram_bot_id,
                 BroadcastCampaign.status == "running",
+                (
+                    (BroadcastCampaign.cooldown_until.is_(None))
+                    | (BroadcastCampaign.cooldown_until <= now)
+                ),
                 BroadcastDelivery.status == "pending",
                 BroadcastDelivery.next_attempt_at <= now,
             )
@@ -175,8 +179,17 @@ async def deliver_broadcast_once(
         if outcome == "sent":
             record.sent_at = datetime.now(UTC)
         if outcome == "pending":
-            record.next_attempt_at = datetime.now(UTC) + timedelta(
+            cooldown = datetime.now(UTC) + timedelta(
                 seconds=retry_after or 30
+            )
+            record.next_attempt_at = cooldown
+            # Telegram's retry_after may apply to the whole bot. Persist
+            # this shared cooldown before allowing ANY other recipient.
+            await session.execute(
+                update(BroadcastCampaign).where(
+                    BroadcastCampaign.id == record.campaign_id,
+                    BroadcastCampaign.project_id == project_id,
+                ).values(cooldown_until=cooldown)
             )
         if outcome == "blocked":
             # Do not suppress a newer /start that happened after the send
