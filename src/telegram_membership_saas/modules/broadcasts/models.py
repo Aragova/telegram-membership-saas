@@ -117,6 +117,10 @@ class BroadcastCampaign(Base):
     __tablename__ = "broadcast_campaigns"
     __table_args__ = (
         UniqueConstraint("id", "project_id", name="uq_broadcast_campaign_project"),
+        UniqueConstraint(
+            "project_id", "telegram_bot_id", "confirmation_key",
+            name="uq_broadcast_campaign_confirmation",
+        ),
         ForeignKeyConstraint(
             ["template_id", "project_id"],
             ["broadcast_templates.id", "broadcast_templates.project_id"],
@@ -139,6 +143,7 @@ class BroadcastCampaign(Base):
     )
     telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     template_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    confirmation_key: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     created_by: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("telegram_users.id"), nullable=False,
     )
