@@ -67,8 +67,6 @@ def test_merchant_financial_text_escapes_labels_and_preserves_currency():
 
 
 async def test_private_merchant_screen_uses_server_bound_owner_identity(monkeypatch):
-    from telegram_membership_saas.modules.merchant_finances import MerchantFinances
-
     report = AsyncMock(return_value=_snapshot())
     monkeypatch.setattr(ui, "platform_merchant_finances", report)
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
