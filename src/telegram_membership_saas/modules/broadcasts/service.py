@@ -500,3 +500,36 @@ async def set_campaign_status(
         if record is None or record.status == "completed":
             raise ValueError("Рассылка завершена")
         record.status = status
+
+
+
+async def cancel_draft(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, actor_id: UUID,
+) -> None:
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        record = await session.get(BroadcastDraft, (project_id, actor_id))
+        if record is not None:
+            await session.delete(record)
+
+
+async def audience_count(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, actor_id: UUID, telegram_bot_id: int,
+) -> int:
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _manager(
+            session, project_id=project_id, actor_id=actor_id,
+            telegram_bot_id=telegram_bot_id,
+        )
+        return await session.scalar(select(func.count()).select_from(
+            BroadcastAudience
+        ).where(
+            BroadcastAudience.project_id == project_id,
+            BroadcastAudience.telegram_bot_id == telegram_bot_id,
+            BroadcastAudience.status == "active",
+        )) or 0
