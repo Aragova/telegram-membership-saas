@@ -38,6 +38,7 @@ from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
     retire_unreachable_bot_with_orphan_actions,
 )
+from telegram_membership_saas.modules.broadcasts.service import cancel_draft
 from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
     decrypt_token,
@@ -322,6 +323,11 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 self.factory, actor_id=actor_id,
                 bot_scope_id=bot.id if self.fixed_project_id else 0,
             )
+            if self.fixed_project_id is not None:
+                await cancel_draft(
+                    self.factory, project_id=self.fixed_project_id,
+                    actor_id=actor_id,
+                )
         return await handler(event, data)
 
 
@@ -2026,6 +2032,10 @@ def create_owner_setup_router(
         if not _private(message):
             return
         actor_id = await actor(message.from_user)
+        if fixed_project_id is not None:
+            await cancel_draft(
+                factory, project_id=fixed_project_id, actor_id=actor_id,
+            )
         # /menu exits the old text-entry wizard; the next casual message
         # must never be mistaken for old payment instructions or a plan title.
         await cancel_owner_flow(
@@ -2073,6 +2083,10 @@ def create_owner_setup_router(
         if not _private(message):
             return
         actor_id = await actor(message.from_user)
+        if fixed_project_id is not None:
+            await cancel_draft(
+                factory, project_id=fixed_project_id, actor_id=actor_id,
+            )
         await cancel_owner_flow(
             factory, actor_id=actor_id,
             bot_scope_id=bot.id if fixed_project_id else 0,
@@ -2090,6 +2104,10 @@ def create_owner_setup_router(
         if not _private(message):
             return
         actor_id = await actor(message.from_user)
+        if fixed_project_id is not None:
+            await cancel_draft(
+                factory, project_id=fixed_project_id, actor_id=actor_id,
+            )
         prior = await back_owner_flow(
             factory, actor_id=actor_id,
             bot_scope_id=bot.id if fixed_project_id else 0,
