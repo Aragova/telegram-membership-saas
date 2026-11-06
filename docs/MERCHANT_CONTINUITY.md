@@ -194,3 +194,40 @@ runtime function, then rebuild **central bot only** using
 `compose.yaml + compose.light100.yaml`. Do not alter customer-supervisor,
 tenant payments, subscriber access, or production. Exact-HEAD CI, Codex
 review and an explicit merge authorization precede deployment.
+
+
+## PR #69 — closing payment-history tampering, not adding billing
+
+Migration `0031_financial_record_integrity` is a protective database
+boundary. The existing PostgreSQL tenant RLS permits actions within a project
+but **does not by itself make monetary records immutable**. A future faulty
+endpoint or a compromised runtime with a tenant session could otherwise alter
+or DELETE an approved `payments` row, falsifying the underlying financial
+evidence, or rewrite the price/currency/recipient on `payment_requests`.
+
+- A `BEFORE UPDATE OR DELETE` trigger blocks **every modification or deletion
+  of a confirmed Payment**, even through a cascading Project deletion.
+- Every PaymentRequest preserves its original price, currency, customer, plan,
+  payment method, discount, duration, project and creation timestamp. Only
+  legitimate mutable **review state** fields remain editable before decision.
+- Approved/rejected/cancelled/expired request decisions are final. Requests
+  cannot be deleted to erase a review history. Normal new checkout, submission,
+  manual approval/rejection, subscription renewal and entitlement management
+  are unchanged.
+- Database custom SQLSTATEs are for diagnostics only, not a new owner UI.
+  There are **no** new ViMi Pay tariffs, SaaS trials, bot limits, commissions,
+  invoices, money movement or automatic sanctions.
+
+This blocks tampering through application-level DB credentials, including
+attempts to reset a project by cascading its payment history. A database
+superuser can still perform explicitly privileged maintenance (including
+disabling triggers), so backups and operational access controls remain essential.
+The report still represents **administrator-confirmed, not bank-verified**
+payments: fake approvals or offline transfers remain fundamentally
+unverifiable by this application.
+
+Staging rollout after clean exact-HEAD CI/Codex and explicit merge approval:
+apply migration 0031, no service rebuild is needed (the checks are PostgreSQL
+triggers). Preserve `compose.light100.yaml`, production, existing bot tokens,
+tariffs, clients and subscriptions. Verify staging checkout flow without
+creating any real bank payment. No mass data deletion.
