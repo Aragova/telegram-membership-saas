@@ -1,11 +1,14 @@
 """Real PostgreSQL: independent owner audiences and durable broadcast lifecycle."""
 import os
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from aiogram.exceptions import TelegramRetryAfter
+from aiogram.methods import SendMessage
+from sqlalchemy import select, update
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
@@ -17,6 +20,7 @@ from telegram_membership_saas.db import (
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.broadcasts.models import (
     BroadcastAudience,
+    BroadcastCampaign,
     BroadcastDelivery,
 )
 from telegram_membership_saas.modules.broadcasts.service import (
@@ -213,5 +217,68 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
             assert not (await session.scalars(select(
                 BroadcastAudience
             ).where(BroadcastAudience.project_id == project_a))).all()
+    finally:
+        await engine.dispose()
+
+
+
+async def test_telegram_429_pauses_every_pending_recipient_for_this_bot():
+    """A per-recipient 429 delay is insufficient: the whole queue must stop."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, project, bot_id = await _project_with_bot(factory)
+        for _ in range(3):
+            await record_bot_start(
+                factory, project_id=project, telegram_bot_id=bot_id,
+                telegram_user_id=_tid(),
+            )
+        await start_draft(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id,
+        )
+        template = await save_from_message(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, message=_post("Promo"),
+        )
+        campaign, count = await create_campaign(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, template_id=template.id,
+        )
+        assert count == 3
+        retry = TelegramRetryAfter(
+            method=SendMessage(chat_id=123, text="Promo"),
+            message="Bot flood control", retry_after=120,
+        )
+        bot = SimpleNamespace(send_message=AsyncMock(side_effect=retry))
+        assert await deliver_broadcast_once(
+            factory, project_id=project, telegram_bot_id=bot_id, bot=bot,
+        )
+        bot.send_message.assert_awaited_once()
+
+        async with system_project_session_scope(factory, project) as session:
+            row = await session.get(BroadcastCampaign, campaign.id)
+            assert row.cooldown_until > datetime.now(UTC) + timedelta(seconds=100)
+            deliveries = (await session.scalars(select(
+                BroadcastDelivery
+            ).where(BroadcastDelivery.campaign_id == campaign.id))).all()
+            assert sum(v.status == "pending" for v in deliveries) == 3
+
+        bot.send_message = AsyncMock()
+        # There are still two *other* recipients ready for immediate
+        # delivery. The bot-wide cooldown must stop them as well.
+        assert not await deliver_broadcast_once(
+            factory, project_id=project, telegram_bot_id=bot_id, bot=bot,
+        )
+        bot.send_message.assert_not_awaited()
+
+        async with system_project_session_scope(factory, project) as session:
+            await session.execute(update(BroadcastCampaign).where(
+                BroadcastCampaign.id == campaign.id,
+            ).values(cooldown_until=datetime.now(UTC) - timedelta(seconds=1)))
+        assert await deliver_broadcast_once(
+            factory, project_id=project, telegram_bot_id=bot_id, bot=bot,
+        )
+        bot.send_message.assert_awaited_once()
     finally:
         await engine.dispose()
