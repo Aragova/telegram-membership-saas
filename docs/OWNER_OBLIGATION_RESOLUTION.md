@@ -71,12 +71,18 @@ undeliverable actions in one protected transaction. This is not automatic:
 
 - The owner confirms the Telegram bot is permanently unreachable/deleted.
   Current `CustomerBotRuntimeHealth` must NOT show a recent running heartbeat.
+- Acquire the **exact same project worker advisory lease** used by the
+  connected Telegram poller before opening the retirement transaction. If the
+  poller holds it, even with a stale/error heartbeat, fail closed: a Telegram
+  call may remain in flight for up to `invite_ttl + 5 minutes` (normally
+  20 minutes). Claim-age shortcuts are never sufficient.
 - Recheck the actual owner, selected project and BotInstance with tenant RLS,
   transaction advisory lock and project/bot `FOR UPDATE` locks.
 - All other blockers **MUST** be zero: pending payments, active subscriptions,
   grants, desired/unrevoked access and unprocessed invite tickets.
-- Only unfinished `pending`, `failed_retryable`, or stale `processing`
-  access actions qualify. A freshly processing Telegram action is denied.
+- Only unfinished `pending`, `failed_retryable`, or `processing`
+  access actions qualify, and only **while the caller holds the exclusive
+  worker lease** proving no live customer poller can execute them.
 - Preserve each action row and its old error/attempt history; record
   `status='superseded'` plus an immutable `owner_obligation_audit` entry
   naming the owner and action. **Never** update `AccessState.actual_state`
