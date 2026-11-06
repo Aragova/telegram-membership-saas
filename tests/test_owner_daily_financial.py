@@ -39,7 +39,6 @@ from telegram_membership_saas.modules.owner_setup.service import (
     publish_owner_plan,
     save_owner_price,
 )
-from telegram_membership_saas.modules.payments import Payment
 from telegram_membership_saas.modules.resources import Resource, ResourceType
 from telegram_membership_saas.modules.telegram_commerce import (
     create_checkout_for_telegram_user,
@@ -235,18 +234,9 @@ async def test_daily_opt_in_financial_facts_idempotency_mute_and_owner():
                     )
                     assert result.changed
 
-        # The confirmed payment occurred on the full previous local day.
-        previous_noon = datetime.combine(
-            report_day, time(12), tzinfo=zone,
-        ).astimezone(UTC)
-        async with tenant_session_scope(
-            factory, TenantContext(user_id=owner, project_id=project),
-        ) as session:
-            payment = await session.scalar(
-                select(Payment).where(Payment.project_id == project)
-            )
-            assert payment is not None
-            payment.approved_at = previous_noon
+        # The approval happened on report_day (today in the project's
+        # timezone). Never backdate a real confirmed payment after INSERT:
+        # PR #69 makes Payment facts immutable in PostgreSQL.
 
         next_due = await schedule_owner_daily_financial(
             factory, project_id=project, now=due - timedelta(minutes=1),

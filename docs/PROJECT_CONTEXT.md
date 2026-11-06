@@ -326,3 +326,15 @@ Migration **0030_platform_risk_review**, privileged platform bootstrap and
 a **central-bot-only** rebuild are required. Customer supervisor stays
 unchanged; preserve `compose.light100.yaml`. See
 [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
+
+
+## PR #69 — payment evidence immutability (financial vulnerability hardening)
+
+Migration **0031_financial_record_integrity** prevents altering/deleting
+committed Payment rows and deleting/payment-price-snapshot rewriting of
+PaymentRequest rows at the PostgreSQL boundary, including during a Project
+cascade. Terminal decisions cannot be reopened. Ordinary review/approval,
+bot reconnection, safe archive, buyer access and subscription processing
+remain unchanged. No SaaS tariff, usage fee, trial, commission or platform
+payment service is activated. No service rebuild: staging DB migration only,
+preserving `compose.light100.yaml`. See [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
