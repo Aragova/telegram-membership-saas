@@ -13,6 +13,10 @@ from telegram_membership_saas.db import (
     build_session_factory,
     tenant_session_scope,
 )
+from telegram_membership_saas.modules.owner_setup.service import (
+    create_owner_project,
+    ensure_telegram_actor,
+)
 from telegram_membership_saas.modules.payments import (
     Payment,
     PaymentRequest,
@@ -22,10 +26,6 @@ from telegram_membership_saas.modules.payments import (
     get_or_create_project_customer,
     mark_payment_request_submitted,
     reject_payment_request,
-)
-from telegram_membership_saas.modules.owner_setup.service import (
-    create_owner_project,
-    ensure_telegram_actor,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import replace_active_plan_price
