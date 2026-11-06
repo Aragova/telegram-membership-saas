@@ -153,6 +153,7 @@ class BroadcastCampaign(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class BroadcastDelivery(Base):
