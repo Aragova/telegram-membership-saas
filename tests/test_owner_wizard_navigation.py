@@ -174,6 +174,7 @@ async def test_back_owner_flow_atomically_invalidates_force_reply(monkeypatch):
 async def test_back_command_routes_to_price_plan_without_modifying_price(monkeypatch):
     project_id, actor_id, plan_id = uuid4(), uuid4(), uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
+    monkeypatch.setattr(ui, "cancel_draft", AsyncMock())
     back = AsyncMock(return_value=SetupFlow(
         step="price_amount", project_id=project_id,
         payload={"plan_id": plan_id.hex}, prompt_message_id=55,
@@ -263,6 +264,7 @@ async def test_expired_chat_picker_back_removes_stale_telegram_keyboard(monkeypa
     """After the 15-minute TTL the expired step cannot identify a picker."""
     project_id, actor_id = uuid4(), uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
+    monkeypatch.setattr(ui, "cancel_draft", AsyncMock())
     pending = AsyncMock(return_value=None)
     monkeypatch.setattr(ui, "back_owner_flow", pending)
     monkeypatch.setattr(
