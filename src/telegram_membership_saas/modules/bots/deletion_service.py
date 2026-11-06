@@ -8,7 +8,7 @@ In-flight access/payment obligations block retirement until resolved.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
@@ -17,12 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.modules.access.models import (
     AccessAction,
+    AccessActionStatus,
     AccessState,
     EffectiveAccess,
 )
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
+from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 from telegram_membership_saas.modules.entitlements.models import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer
+from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments.models import PaymentRequest, PaymentRequestStatus
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions.models import Subscription
@@ -206,6 +209,124 @@ async def request_bot_retirement(
         # polling stopped and has retired this exact identity.
         await session.flush()
         return True
+
+
+async def retire_unreachable_bot_with_orphan_actions(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, bot_instance_id: UUID,
+) -> int:
+    """Explicit owner emergency retirement when ONLY undeliverable actions remain.
+
+    The BotFather token can no longer run in this situation. Never pretend
+    Telegram granted/revoked membership: preserve AccessState and historical
+    AccessAction rows and audit the owner's decision. Do NOT bypass any paid
+    customer obligation or a live bot/worker. Set DELETING atomically so the
+    supervisor performs its normal poller shutdown and credential retirement.
+    """
+    now = datetime.now(UTC)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        project = await session.scalar(
+            select(Project).where(Project.id == project_id).with_for_update()
+        )
+        if project is None or project.owner_user_id != actor_id:
+            raise PermissionError("Отключить недоступного бота может только владелец")
+        if project.status != "active":
+            raise ValueError("Подключение уже не активно")
+        bot = await session.scalar(
+            select(BotInstance).where(
+                BotInstance.id == bot_instance_id,
+                BotInstance.project_id == project_id,
+            ).with_for_update()
+        )
+        if bot is None or bot.status == BotInstanceStatus.DELETING.value:
+            raise ValueError("Бот уже отключён или удаляется. Обновите статус")
+
+        blockers = await count_retirement_blockers(session, project_id=project_id)
+        if (
+            blockers.requests or blockers.subscriptions or blockers.grants
+            or blockers.access or blockers.join_tickets
+        ):
+            raise ValueError(
+                "Есть обязательства перед покупателями или неотозванный доступ. "
+                "Экстренное отключение запрещено: " + blockers.display()
+            )
+        if not blockers.access_actions:
+            raise ValueError(
+                "Незавершённых действий доступа больше нет. "
+                "Отключите бота обычной кнопкой."
+            )
+
+        health = await session.scalar(
+            select(CustomerBotRuntimeHealth).where(
+                CustomerBotRuntimeHealth.project_id == project_id,
+            )
+        )
+        if (
+            health is not None
+            and health.telegram_bot_id == bot.telegram_bot_id
+            and health.state == "running"
+            and health.last_heartbeat >= now - timedelta(seconds=60)
+        ):
+            raise ValueError(
+                "Бот сейчас работает. Используйте обычное отключение "
+                "после завершения действий доступа."
+            )
+
+        actions = list((await session.scalars(
+            select(AccessAction).where(
+                AccessAction.project_id == project_id,
+                AccessAction.status.in_((
+                    AccessActionStatus.PENDING.value,
+                    AccessActionStatus.PROCESSING.value,
+                    AccessActionStatus.FAILED_RETRYABLE.value,
+                )),
+            ).order_by(AccessAction.created_at, AccessAction.id).with_for_update()
+        )).all())
+        if len(actions) != blockers.access_actions:
+            raise ValueError("Действия доступа изменились. Обновите обязательства")
+        # A Telegram request might still be in-flight even with an old health
+        # heartbeat. Let its five-minute claim lease expire before retiring.
+        for action in actions:
+            if (
+                action.status == AccessActionStatus.PROCESSING.value
+                and (
+                    action.locked_at is None
+                    or action.locked_at > now - timedelta(minutes=5)
+                )
+            ):
+                raise ValueError(
+                    "Действие ещё обрабатывается. Повторите после "
+                    "завершения или истечения времени ожидания."
+                )
+
+        for action in actions:
+            action.status = AccessActionStatus.SUPERSEDED.value
+            action.locked_at = None
+            action.processed_at = now
+            session.add(OwnerObligationAudit(
+                project_id=project_id, actor_id=actor_id,
+                action="abandon_orphan_access_action",
+                target_id=action.id,
+                reason=(
+                    "Owner explicitly retired an unreachable bot with no "
+                    "live payment, subscription, grant, access or invite "
+                    "obligations; Telegram physical state NOT verified."
+                ),
+            ))
+        # There must be NO opening between dropping orphan commands and
+        # stopping the customer poller. The supervisor still removes the
+        # encrypted token only after its own safe teardown.
+        bot.status = BotInstanceStatus.DELETING.value
+        await session.flush()
+        after = await count_retirement_blockers(session, project_id=project_id)
+        if after.has_blockers:
+            raise ValueError(
+                "Появились новые обязательства. Экстренное отключение отменено."
+            )
+        return len(actions)
 
 
 async def finalize_bot_retirement(
