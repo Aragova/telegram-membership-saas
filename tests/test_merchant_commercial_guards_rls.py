@@ -370,3 +370,59 @@ async def test_cross_owner_chat_reuse_is_flagged_but_not_blocked():
     finally:
         await engine.dispose()
         await admin_engine.dispose()
+
+
+async def test_purging_revenue_bearing_project_cannot_reset_same_channel():
+    """A historical paid channel survives hard deletion, without a merchant FK."""
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    key = f"history-guard:{uuid4()}"
+    try:
+        owner = await ensure_telegram_actor(
+            factory, telegram_id=_tid(), username=None, first_name=None,
+        )
+        old = await create_owner_project(factory, actor_id=owner, name="Old")
+        fresh = await create_owner_project(factory, actor_id=owner, name="New")
+        chat = _chat()
+
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=old),
+        ) as session:
+            session.add(Resource(
+                project_id=old, resource_type="telegram_channel",
+                external_id=chat, name="Historically paid",
+            ))
+
+        # The immutable ledger is the evidence after project/payment deletion.
+        async with admin_engine.begin() as admin:
+            await admin.execute(text(
+                "INSERT INTO platform_usage_events "
+                "(project_id,event_type,source_id,currency_code,amount,event_key) "
+                "VALUES (:project,'payment_approved',:source,'RUB',10,:key)"
+            ), {"project": old, "source": uuid4(), "key": key})
+
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=old),
+        ) as session:
+            await session.delete(await session.get(Project, old))
+
+        with pytest.raises(DBAPIError) as error:
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=fresh),
+            ) as session:
+                session.add(Resource(
+                    project_id=fresh, resource_type="telegram_channel",
+                    external_id=chat, name="Reset attempted",
+                ))
+                await session.flush()
+        assert getattr(error.value.orig, "sqlstate", None) == "P6702"
+        assert await _merchant(factory, owner, fresh)
+    finally:
+        async with admin_engine.begin() as admin:
+            await admin.execute(text(
+                "DELETE FROM platform_usage_events WHERE event_key=:key"
+            ), {"key": key})
+        await engine.dispose()
+        await admin_engine.dispose()
