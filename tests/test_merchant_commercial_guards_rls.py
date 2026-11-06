@@ -155,8 +155,8 @@ async def test_simultaneous_registrations_claim_single_account_slot():
         factory, telegram_id=_tid(), username=None, first_name=None,
     )
     try:
-        a = await create_owner_project(factory, actor_id=owner, name="A")
-        b = await create_owner_project(factory, actor_id=owner, name="B")
+        a = await create_owner_project(factory, actor_id=owner, name="Project A")
+        b = await create_owner_project(factory, actor_id=owner, name="Project B")
         async with admin_engine.begin() as admin:
             await admin.execute(text(
                 "INSERT INTO platform_owner_bot_limits "
@@ -191,8 +191,8 @@ async def test_trials_are_one_time_per_chosen_scope_and_immutable():
         stranger = await ensure_telegram_actor(
             factory, telegram_id=_tid(), username=None, first_name=None,
         )
-        a = await create_owner_project(factory, actor_id=owner, name="A")
-        b = await create_owner_project(factory, actor_id=owner, name="B")
+        a = await create_owner_project(factory, actor_id=owner, name="Project A")
+        b = await create_owner_project(factory, actor_id=owner, name="Project B")
         ma = await _merchant(factory, owner, a)
         mb = await _merchant(factory, owner, b)
 
@@ -341,7 +341,7 @@ async def test_cross_owner_chat_reuse_is_flagged_but_not_blocked():
             factory, telegram_id=_tid(), username=None, first_name=None,
         )
         a = await create_owner_project(factory, actor_id=first, name="From")
-        b = await create_owner_project(factory, actor_id=transferred, name="To")
+        b = await create_owner_project(factory, actor_id=transferred, name="New owner")
         chat = _chat()
         for owner, project in ((first, a), (transferred, b)):
             async with tenant_session_scope(
