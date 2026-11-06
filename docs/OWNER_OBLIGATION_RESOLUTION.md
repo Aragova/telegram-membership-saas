@@ -53,3 +53,50 @@ After exact-HEAD CI and Codex review and an authorized merge:
 **Known guardrail:** a pending invite ticket or failed access worker may still
 require resolution in the customer-bot runtime; the owner interface never marks
 physical revocation complete on its own.
+
+
+## BotFather deletion / undeliverable orphan access action (PR #62)
+
+A registered connected bot may be deleted in BotFather *before* ViMi Pay
+disconnects it. Its worker then cannot deliver queued Telegram access actions.
+Even with no active payments, subscriptions, grants, unrevoked customer access
+or pending invitations, the old retirement guard counted a `pending` action
+and blocked deletion forever.
+
+**Owner-only escape hatch**, available in the CENTRAL `@vimipay_bot` under
+`Управление подключением → Отключить бота → Управлять обязательствами`.
+When **only** access actions remain and the verified owner explicitly confirms
+the warning, ViMi Pay can retire the unreachable bot and abandon those
+undeliverable actions in one protected transaction. This is not automatic:
+
+- The owner confirms the Telegram bot is permanently unreachable/deleted.
+  Current `CustomerBotRuntimeHealth` must NOT show a recent running heartbeat.
+- Recheck the actual owner, selected project and BotInstance with tenant RLS,
+  transaction advisory lock and project/bot `FOR UPDATE` locks.
+- All other blockers **MUST** be zero: pending payments, active subscriptions,
+  grants, desired/unrevoked access and unprocessed invite tickets.
+- Only unfinished `pending`, `failed_retryable`, or stale `processing`
+  access actions qualify. A freshly processing Telegram action is denied.
+- Preserve each action row and its old error/attempt history; record
+  `status='superseded'` plus an immutable `owner_obligation_audit` entry
+  naming the owner and action. **Never** update `AccessState.actual_state`
+  or claim physical revocation/grant succeeded.
+- In the SAME transaction, mark the BotInstance `deleting`. The existing
+  supervisor must finish poller teardown before removing the encrypted token.
+  A final blockers count ensures no new obligation escaped. A second click
+  does not perform the operation again.
+- Historical customer/access rows mean the resulting disconnected project is
+  **archivable, not permanently deletable**. The owner can hide it from the
+  main list via Archive after bot teardown, retaining billing and access audit
+  records. Other connected bots and the central platform remain unaffected.
+- Does not require Telegram `getMe` to succeed: a dead or revoked BotFather
+  token cannot be used to perform a normal access cleanup. The owner makes an
+  explicit, auditable declaration; this is a *termination of ViMi Pay work*,
+  not verification of channel membership.
+
+This exception does NOT let an owner abandon a genuine paid subscription or
+an unrevoked customer membership to make the deletion button green. It is
+strictly for orphaned, unexecutable commands after all customer obligations
+are already clear. No migration is required; existing RLS/audit tables and
+normal BotInstance retirement are reused. First deploy to staging, preserving
+`compose.light100.yaml`; only central `bot` needs rebuild for its new UI.
