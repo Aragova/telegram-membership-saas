@@ -176,10 +176,11 @@ def extract_post(message: Message) -> tuple[str, str | None, list | None, str | 
         kind, file_id = "photo", message.photo[-1].file_id
     elif message.video:
         kind, file_id = "video", message.video.file_id
+    elif message.animation:
+        # Telegram sets document as well as animation for legacy clients.
+        kind, file_id = "animation", message.animation.file_id
     elif message.document:
         kind, file_id = "document", message.document.file_id
-    elif message.animation:
-        kind, file_id = "animation", message.animation.file_id
     elif message.text:
         kind, file_id = "text", None
     else:
