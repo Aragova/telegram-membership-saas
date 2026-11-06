@@ -36,6 +36,7 @@ from telegram_membership_saas.localization import current_language, recipient_la
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
+    retire_unreachable_bot_with_orphan_actions,
 )
 from telegram_membership_saas.modules.bots.service import (
     TOKEN_PATTERN,
@@ -1350,6 +1351,35 @@ def create_owner_setup_router(
                 "⏳ The connected bot processes access actions and invitations. "
                 "Check the status again when processing completes.",
             ))
+        if (
+            counts.access_actions > 0
+            and not any((
+                counts.requests, counts.subscriptions, counts.grants,
+                counts.access, counts.join_tickets,
+            ))
+        ):
+            lines.append(tr(
+                "\n⚠️ Если бот окончательно удалён в BotFather и не может "
+                "выполнить эту команду, владелец может отдельно подтвердить "
+                "его отключение. Статус реального доступа в Telegram "
+                "не будет подменён. История сохранится.",
+                "\n⚠️ If the bot was permanently deleted in BotFather and "
+                "cannot process this command, the owner may explicitly "
+                "authorize retirement. Actual Telegram access will NOT be "
+                "marked as verified. History is preserved.",
+            ))
+            overview = await setup_overview(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+            if overview.can_delete_bot:
+                for instance_id, _name, status in overview.bot_instances:
+                    if status != "deleting":
+                        rows.append([_button(
+                            tr("🗑 Отключить недоступного бота",
+                               "🗑 Retire unreachable bot"),
+                            "orphanask:" + project_ref + ":" + encode_uuid(instance_id),
+                            "danger",
+                        )])
         if not counts.has_blockers:
             lines.append(tr(
                 "\n✅ Блокировок больше нет. Можно вернуться к удалению.",
@@ -2114,6 +2144,7 @@ def create_owner_setup_router(
                 "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
@@ -2130,6 +2161,7 @@ def create_owner_setup_router(
                 "new", "projects", "archives", "bots", "connect", "oblist",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
@@ -2808,6 +2840,101 @@ def create_owner_setup_router(
                     ),
                 )
                 await show_bots(bot, user_id, actor_id, project_id)
+            elif action.startswith(("orphanask:", "orphanok:")):
+                kind, project_ref, instance_ref = action.split(":", 2)
+                if decode_uuid(project_ref) != project_id:
+                    raise ValueError(tr(
+                        "Меню другого подключения. Откройте «Мои боты» снова.",
+                        "Different connection. Reopen My bots.",
+                    ))
+                instance_id = decode_uuid(instance_ref)
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if (
+                    not overview.can_delete_bot
+                    or instance_id not in {
+                        ident for ident, _, status in overview.bot_instances
+                        if status != "deleting"
+                    }
+                ):
+                    raise PermissionError(tr(
+                        "Отключение доступно только владельцу действующего подключения",
+                        "Only the owner may retire the connected bot",
+                    ))
+                if kind == "orphanask":
+                    snapshot = await list_owner_obligations(
+                        factory, actor_id=actor_id, project_id=project_id,
+                    )
+                    blockers = snapshot.blockers
+                    if (
+                        not blockers.access_actions
+                        or any((
+                            blockers.requests, blockers.subscriptions,
+                            blockers.grants, blockers.access, blockers.join_tickets,
+                        ))
+                    ):
+                        raise ValueError(tr(
+                            "Есть другие обязательства. Обновите список.",
+                            "Other obligations remain. Refresh the list.",
+                        ))
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⚠️ <b>Отключить недоступного бота?</b>\n\n"
+                            "Используйте только если бот окончательно удалён "
+                            "в BotFather или больше не может выполнять команды.\n\n"
+                            "Незавершённые команды будут отмечены как "
+                            "<b>прекращённые без подтверждения выполнения</b>, "
+                            "а не успешно обработанные. "
+                            "ViMi Pay НЕ сможет подтвердить фактический доступ "
+                            "пользователей к каналам. Действующие оплаты, "
+                            "подписки и права доступа не затрагиваются. "
+                            "История останется для архива.\n\n"
+                            "Продолжить?",
+                            "⚠️ <b>Retire unreachable bot?</b>\n\n"
+                            "Use only if the bot was permanently deleted "
+                            "in BotFather or can no longer process commands.\n\n"
+                            "Pending commands will be recorded as "
+                            "<b>abandoned without execution confirmation</b>, "
+                            "never as successful. "
+                            "ViMi Pay CANNOT confirm actual channel membership. "
+                            "Active payments, subscriptions and grants are "
+                            "not changed. History remains for archiving.\n\n"
+                            "Continue?",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("🗑 Подтвердить отключение",
+                                   "🗑 Confirm retirement"),
+                                "orphanok:" + project_ref + ":" + instance_ref,
+                                "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "oblist")],
+                        ]),
+                    )
+                else:
+                    ended = await retire_unreachable_bot_with_orphan_actions(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        bot_instance_id=instance_id,
+                    )
+                    await bot.send_message(
+                        user_id, tr(
+                            "✅ Отключение запущено. Незавершённых команд "
+                            "прекращено: ",
+                            "✅ Retirement started. Pending commands retired: ",
+                        ) + str(ended) + tr(
+                            ".\nФинансовая история и неподтверждённое "
+                            "состояние Telegram-доступа сохранены. "
+                            "После остановки бота подключение с историей "
+                            "можно переместить в архив.",
+                            ".\nFinancial history and unverified Telegram "
+                            "access state are preserved. After the bot stops, "
+                            "the connection can be archived.",
+                        ),
+                    )
+                    await show_bots(bot, user_id, actor_id, project_id)
             elif action == "oblist":
                 await show_obligations(bot, user_id, actor_id, project_id)
             elif action.startswith("obpage:"):
