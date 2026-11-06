@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from aiogram.types import Message
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,6 +21,7 @@ from telegram_membership_saas.modules.broadcasts.models import (
     BroadcastDraft,
     BroadcastTemplate,
 )
+from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
 )
@@ -373,6 +374,10 @@ async def create_campaign(
         )
         if post is None:
             raise ValueError("Пост не найден")
+        # Serialize start across administrators and concurrent callbacks.
+        await session.scalar(
+            select(Project.id).where(Project.id == project_id).with_for_update()
+        )
         # Never enqueue two campaigns by rapid/double-tapping the button.
         existing = await session.scalar(select(BroadcastCampaign.id).where(
             BroadcastCampaign.project_id == project_id,
@@ -395,7 +400,7 @@ async def create_campaign(
         # participate only in future campaigns.
         recipients = select(
             func.gen_random_uuid(), BroadcastAudience.project_id,
-            campaign.id, BroadcastAudience.telegram_user_id,
+            literal(campaign.id), BroadcastAudience.telegram_user_id,
         ).where(
             BroadcastAudience.project_id == project_id,
             BroadcastAudience.telegram_bot_id == telegram_bot_id,
