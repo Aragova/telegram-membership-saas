@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     JSON,
@@ -15,7 +16,6 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
-    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,6 +52,7 @@ class BroadcastAudience(Base):
 class BroadcastTemplate(Base):
     __tablename__ = "broadcast_templates"
     __table_args__ = (
+        UniqueConstraint("id", "project_id", name="uq_broadcast_template_project"),
         CheckConstraint(
             "kind IN ('text','photo','video','document','animation')",
             name="ck_broadcast_template_kind",
@@ -85,6 +86,15 @@ class BroadcastTemplate(Base):
 
 class BroadcastDraft(Base):
     __tablename__ = "broadcast_drafts"
+    __table_args__ = (
+        CheckConstraint("mode IN ('create','replace','rename')",
+                        name="ck_broadcast_draft_mode"),
+        ForeignKeyConstraint(
+            ["template_id", "project_id"],
+            ["broadcast_templates.id", "broadcast_templates.project_id"],
+            name="fk_broadcast_draft_project_template",
+        ),
+    )
 
     project_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
@@ -96,21 +106,22 @@ class BroadcastDraft(Base):
     )
     telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
-    template_id: Mapped[UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("broadcast_templates.id", ondelete="SET NULL"),
-    )
+    template_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False,
     )
-    __table_args__ = (
-        CheckConstraint("mode IN ('create','replace','rename')",
-                        name="ck_broadcast_draft_mode"),
-    )
+
 
 
 class BroadcastCampaign(Base):
     __tablename__ = "broadcast_campaigns"
     __table_args__ = (
+        UniqueConstraint("id", "project_id", name="uq_broadcast_campaign_project"),
+        ForeignKeyConstraint(
+            ["template_id", "project_id"],
+            ["broadcast_templates.id", "broadcast_templates.project_id"],
+            name="fk_broadcast_campaign_project_template",
+        ),
         CheckConstraint("status IN ('running','paused','completed')",
                         name="ck_broadcast_campaign_status"),
         CheckConstraint(
@@ -127,10 +138,7 @@ class BroadcastCampaign(Base):
         nullable=False,
     )
     telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    template_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("broadcast_templates.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
+    template_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     created_by: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("telegram_users.id"), nullable=False,
     )
@@ -150,6 +158,11 @@ class BroadcastCampaign(Base):
 class BroadcastDelivery(Base):
     __tablename__ = "broadcast_deliveries"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["campaign_id", "project_id"],
+            ["broadcast_campaigns.id", "broadcast_campaigns.project_id"],
+            ondelete="CASCADE", name="fk_broadcast_delivery_project_campaign",
+        ),
         UniqueConstraint("campaign_id", "telegram_user_id",
                          name="uq_broadcast_delivery_recipient"),
         CheckConstraint(
@@ -165,10 +178,7 @@ class BroadcastDelivery(Base):
         Uuid(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
     )
-    campaign_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("broadcast_campaigns.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    campaign_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(
         String(16), server_default="pending", nullable=False,
