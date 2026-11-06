@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from html import escape
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -295,9 +295,11 @@ def create_broadcast_router(
                     raise ValueError("Недопустимая страница")
             if command not in ("home", "write", "forward"):
                 if command not in ("templates", "history"):
-                    if len(pieces) != 2:
+                    if len(pieces) != (3 if command == "sendok" else 2):
                         raise ValueError("Неизвестное действие")
                     post_id = decode_uuid(pieces[1])
+                    if command == "sendok":
+                        confirmation_key = decode_uuid(pieces[2])
 
             if command in ("write", "forward"):
                 # A broadcast editor must never consume a previous form's
@@ -348,7 +350,8 @@ def create_broadcast_router(
                          "” to all reachable users? Recipients: ") + str(total),
                     parse_mode="HTML", reply_markup=_keyboard([
                         [_button(tr("✅ Подтвердить рассылку", "✅ Confirm broadcast"),
-                                 "sendok:" + pieces[1], "success")],
+                                 "sendok:" + pieces[1] + ":" + encode_uuid(uuid4()),
+                                 "success")],
                         [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
                                  "post:" + pieces[1])],
                     ]),
@@ -357,6 +360,7 @@ def create_broadcast_router(
                 campaign, count = await create_campaign(
                     factory, project_id=project_id, actor_id=actor,
                     telegram_bot_id=bot.id, template_id=post_id,
+                    confirmation_key=confirmation_key,
                 )
                 await bot.send_message(
                     query.from_user.id,
