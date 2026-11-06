@@ -300,3 +300,16 @@ reported, not guessed. This is tenant GMV, not ViMi Pay revenue or bank
 verification. Requires Alembic 0028 before central-bot rebuild and
 platform owner database EXECUTE grant; existing customer bots unchanged.
 Details: [MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md).
+
+
+## PR #67 — protected commercial eligibility and optional quotas
+
+Migration 0029 adds optional owner-wide bot caps (no default policy), unique
+operator-controlled platform trial claims by Merchant ID or Telegram owner,
+deduplicated canonical-payment commission reservations (no fees charged),
+and platform-only cross-owner Chat ID review signals. Reuse of an already
+commercially active channel remains protected even after the old project
+was deleted. Different businesses and legitimate channel transfers are not
+auto-merged. No real billing/trials/limits are turned on. See
+[MERCHANT_CONTINUITY.md](MERCHANT_CONTINUITY.md). Deploy 0029 before any
+updated bot runtime; protect the live `compose.light100.yaml` setup.
