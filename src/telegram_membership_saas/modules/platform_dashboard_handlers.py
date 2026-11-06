@@ -353,6 +353,32 @@ def _merchant_text(snapshot) -> str:
     return "\n".join(lines)
 
 
+def _merchant_text_chunks(snapshot, *, limit: int = 3500) -> tuple[str, ...]:
+    """Split a financial report only between complete HTML-safe lines.
+
+    Telegram rejects a message longer than 4096 characters. Splitting on
+    rendered lines (never inside escaped amounts or tags) preserves every
+    currency, the summary and the final navigation keyboard.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in _merchant_text(snapshot).split("\n"):
+        if len(line) > limit:
+            raise ValueError("Merchant finance report line exceeds safe Telegram size")
+        required = len(line) + (1 if current else 0)
+        if current and size + required > limit:
+            chunks.append("\n".join(current))
+            current = []
+            size = 0
+            required = len(line)
+        current.append(line)
+        size += required
+    if current:
+        chunks.append("\n".join(current))
+    return tuple(chunks)
+
+
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
@@ -508,10 +534,12 @@ def create_platform_dashboard_router(
                 rows.append([_button(
                     tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0",
                 )])
-                await bot.send_message(
-                    query.from_user.id, _merchant_text(report),
-                    parse_mode="HTML", reply_markup=_keyboard(rows),
-                )
+                chunks = _merchant_text_chunks(report)
+                for index, chunk in enumerate(chunks):
+                    await bot.send_message(
+                        query.from_user.id, chunk, parse_mode="HTML",
+                        reply_markup=_keyboard(rows) if index == len(chunks) - 1 else None,
+                    )
             elif len(tokens) == 4 and tokens[1] == "bots":
                 _, _, period, page_token = tokens
                 if period not in PERIODS or not page_token.isascii() or (
