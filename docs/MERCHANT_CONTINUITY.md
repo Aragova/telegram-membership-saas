@@ -108,3 +108,58 @@ central bot. The migration grants runtime EXECUTE only on the fixed report
 for the existing runtime database role; `platform_bootstrap` may be rerun
 idempotently. No changes to payments, subscriptions, resources or live
 bot supervisors. Retain `compose.light100.yaml`.
+
+
+## PR #67 — commercial safety without activating paid billing
+
+Migration `0029_merchant_commercial_guards` creates four protected
+platform-only ledgers and new database guards. All four tables have FORCE
+RLS, no tenant policies and explicitly REVOKE default runtime table grants.
+
+- `platform_owner_bot_limits`: optional maximum **connected** bots per
+  original Telegram owner across **all** their distinct projects and
+  Merchant IDs. A missing row means unlimited (current default). Once an
+  operator explicitly configures a cap, a DB BEFORE INSERT trigger serializes
+  concurrent registrations using an owner-scoped transaction advisory lock
+  and blocks excess connections with SQLSTATE `P6701`. Disabled bots
+  remain connected and consume slots; deleting the bot releases its slot.
+  Updating an already-connected bot's token does not consume another slot.
+  There is no forced suspension of existing bots when a cap is lowered.
+- `merchant_platform_trial_claims`: protected lifetime history of future
+  **SaaS merchant** trial claims, completely separate from subscriber trial
+  entitlements. The configured trial policy chooses `owner` (one claim per
+  Telegram account across all independent businesses) or `merchant`
+  (one per Merchant ID). Scoped unique constraints enforce atomic,
+  concurrency-safe one-time use; SQL triggers reject mismatched owner IDs
+  and any UPDATE/DELETE. **There is no automatic trial offer or claim**.
+- `merchant_commission_reservations`: future billing **idempotency
+  reservations**, not charges. One canonical immutable Payment UUID may
+  be reserved once, after its event identity and historical Merchant ID are
+  verified by the database. No commission percentages, fees, invoices,
+  debits, subscriptions, collection or platform revenue are created. The
+  table starts empty and has no tenant-facing API.
+- `merchant_risk_observations`: append-only platform-only signals when a
+  historical Telegram Chat ID appears under a *different* owner. These
+  observations do not prove fraud or ownership; legitimate transfers are
+  **never automatically blocked or merged**. Operator review is necessary
+  before any trust/identity decisions. No private data is shown to tenants.
+
+The existing channel-history guard now also rejects a same-owner attempt
+to reuse a channel from a **purged** original project if immutable approved
+payments or prior SaaS trial claims/reservations prove commercial use.
+History-free purged projects remain reusable. This does not assume two
+businesses run by one Telegram account are the same business. The error
+directs the owner to platform support rather than a no-longer-existing
+project.
+
+**Limitations**: A fresh Telegram account with changed channel identity
+cannot reliably be correlated to a previous legal person without a separately
+verified transfer/identity process. Manually approved customer payments are
+not bank-verified; no fee can be calculated reliably from them without
+an approved platform policy and reconciliation. Neither trials nor limits
+are activated by this migration. Later operator interfaces must require
+explicit policy approval, auditable changes and rollout checks.
+
+Staging rollout: apply Alembic 0029 **before** rebuilding the central bot
+and the connected-bot supervisor; preserve `compose.light100.yaml`.
+Do not touch production or deploy/merge before explicit approval.
