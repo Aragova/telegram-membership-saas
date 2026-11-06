@@ -21,7 +21,7 @@ from aiogram.exceptions import (
     TelegramServerError,
 )
 from aiogram.types import MessageEntity
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
