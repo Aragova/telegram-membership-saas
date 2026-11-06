@@ -351,6 +351,32 @@ async def test_cross_owner_chat_reuse_is_flagged_but_not_blocked():
                     project_id=project, resource_type="telegram_channel",
                     external_id=chat, name="Transfer candidate",
                 ))
+        # Reactivating an already-stored inactive channel must also flag
+        # transfer history, not only a fresh resource INSERT.
+        reactivated_chat = _chat()
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=transferred, project_id=b),
+        ) as session:
+            resource = Resource(
+                project_id=b, resource_type="telegram_channel",
+                external_id=reactivated_chat, name="Reactivated candidate",
+                status="disabled",
+            )
+            session.add(resource)
+            await session.flush()
+            resource_id = resource.id
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=first, project_id=a),
+        ) as session:
+            session.add(Resource(
+                project_id=a, resource_type="telegram_channel",
+                external_id=reactivated_chat, name="Previous owner",
+            ))
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=transferred, project_id=b),
+        ) as session:
+            resource = await session.get(Resource, resource_id)
+            resource.status = "active"
         mb = await _merchant(factory, transferred, b)
         async with admin_engine.connect() as admin:
             records = (await admin.execute(text(
@@ -359,6 +385,11 @@ async def test_cross_owner_chat_reuse_is_flagged_but_not_blocked():
                 "AND risk_kind='historical_chat_other_owner'"
             ), {"merchant": mb, "chat": chat})).scalar_one()
             assert records == 1
+            activated = (await admin.execute(text(
+                "SELECT count(*) FROM merchant_risk_observations "
+                "WHERE merchant_id=:merchant AND telegram_chat_id=:chat"
+            ), {"merchant": mb, "chat": reactivated_chat})).scalar_one()
+            assert activated == 1
 
         async with tenant_session_scope(
             factory, TenantContext(user_id=transferred, project_id=b),
