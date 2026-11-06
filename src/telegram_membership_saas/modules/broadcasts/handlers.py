@@ -58,7 +58,8 @@ class StartAudienceMiddleware(BaseMiddleware):
 
     async def __call__(self, handler, event, data):
         if isinstance(event, Message) and event.from_user is not None:
-            raw = (event.text or "").split(maxsplit=1)[0].split("@", 1)[0]
+            parts = (event.text or "").strip().split(maxsplit=1)
+            raw = parts[0].split("@", 1)[0] if parts else ""
             bot = data.get("bot")
             if (
                 raw == "/start" and event.chat.type == "private"
