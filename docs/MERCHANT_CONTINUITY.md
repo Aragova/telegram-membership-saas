@@ -80,3 +80,31 @@ different channel IDs is addressed separately in PR #67.
 
 Rollout: migrate 0027 before restarting the new connected-bot supervisor;
 central bot and existing database rows require no destructive changes.
+
+
+## PR #66 — merchant-level historical financial reporting
+
+An owner-only, audited PostgreSQL function `platform_merchant_finances`
+aggregates original `payment_approved` events from the immutable usage
+ledger, grouping by permanent Merchant ID and **original currency**. Each
+unique Payment UUID is counted once, regardless of duplicated metering
+observations. Decimal amounts remain exact: no FX conversion.
+
+Attribution uses `merchant_project_periods` and the actual event timestamp,
+not the Telegram bot ID, username or Chat ID. It remains valid when a bot
+is removed or an old project is deleted. Rows that predate available
+merchant history are reported separately as **unattributable**, never
+silently assigned to the newest project.
+
+The central Platform Owner screen exposes a private RU/EN
+`💼 Финансы бизнесов` button with period selection and pagination.
+This data is not accessible to channel owners or buyers and cannot approve,
+modify or generate payments. The displayed amounts are admin-confirmed
+client turnover, **not independently verified bank deposits or ViMi Pay
+SaaS revenue**.
+
+Rollout: migration `0028_merchant_financial_report` before rebuilding the
+central bot. The migration grants runtime EXECUTE only on the fixed report
+for the existing runtime database role; `platform_bootstrap` may be rerun
+idempotently. No changes to payments, subscriptions, resources or live
+bot supervisors. Retain `compose.light100.yaml`.
