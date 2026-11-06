@@ -3,6 +3,8 @@
 Revision ID: 0032_tenant_broadcasts
 Revises: 0031_financial_record_integrity
 """
+# Generated DDL columns are intentionally kept inline for schema review.
+# ruff: noqa: E501
 from collections.abc import Sequence
 
 import sqlalchemy as sa
