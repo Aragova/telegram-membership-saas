@@ -73,6 +73,10 @@ _ERROR_EN = {
         "Open @vimipay_bot → My connections, restore the old connection "
         "from the archive if needed, and connect your new bot there. "
         "The financial history remains intact.",
+    "У этого канала есть финансовая история в удалённом подключении. "
+    "Обратитесь в поддержку ViMi Pay для безопасного восстановления.":
+        "This channel has financial history in a deleted connection. "
+        "Contact ViMi Pay support for safe recovery.",
     "Подключённый бот требует повторной проверки токена":
         "The connected bot requires token verification again.",
     "Поддерживаются только каналы и супергруппы":
