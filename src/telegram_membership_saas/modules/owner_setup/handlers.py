@@ -586,6 +586,7 @@ def create_owner_setup_router(
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
                 [_button(tr("🛡 Модераторы", "🛡 Moderators"), "modmanage")],
+                [_button(tr("🔁 Передать бота", "🔁 Transfer bot"), "transfer")],
                 [_button(tr("❔ Помощь", "❔ Help"), "help")],
                 [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
                          "dashboard")],
