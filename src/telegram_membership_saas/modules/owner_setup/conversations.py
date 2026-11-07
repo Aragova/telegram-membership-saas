@@ -20,8 +20,11 @@ from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
 from telegram_membership_saas.modules.projects.models import Project, ProjectStatus
 
 ADMIN_MESSAGE_HEADER = "✉️ ViMi Pay · Сообщение администратора"
+ADMIN_MESSAGE_HEADER_EN = "✉️ ViMi Pay · Message from admin"
 BUYER_REPLY_PROMPT = "✍️ ViMi Pay · Ответ администратору"
+BUYER_REPLY_PROMPT_EN = "✍️ ViMi Pay · Reply to admin"
 BUYER_MESSAGE_HEADER = "💬 ViMi Pay · Покупатель "
+BUYER_MESSAGE_HEADER_EN = "💬 ViMi Pay · Customer "
 MAX_DIALOG_TEXT = 3500
 
 
@@ -38,17 +41,22 @@ class BuyerConversation:
 def is_admin_message(text: str | None) -> bool:
     """Check an original bot-sent message's first line, not user content."""
     return bool(text and text.split("\n", 1)[0] in (
-        ADMIN_MESSAGE_HEADER, BUYER_REPLY_PROMPT,
+        ADMIN_MESSAGE_HEADER, ADMIN_MESSAGE_HEADER_EN,
+        BUYER_REPLY_PROMPT, BUYER_REPLY_PROMPT_EN,
     ))
 
 
 def parse_buyer_notification(text: str | None) -> int:
     """Extract the buyer's ID only from our bot-sent first-line marker."""
     first = (text or "").split("\n", 1)[0]
-    if not first.startswith(BUYER_MESSAGE_HEADER):
+    prefix = next((
+        marker for marker in (BUYER_MESSAGE_HEADER, BUYER_MESSAGE_HEADER_EN)
+        if first.startswith(marker)
+    ), None)
+    if prefix is None:
         raise ValueError("This is not a buyer conversation notification")
     telegram_id, customer_uuid = parse_customer_command(
-        first[len(BUYER_MESSAGE_HEADER):],
+        first[len(prefix):],
     )
     if telegram_id is None or customer_uuid is not None:
         raise ValueError("Invalid buyer message reference")
