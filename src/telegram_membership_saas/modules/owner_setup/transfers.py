@@ -13,24 +13,28 @@ from uuid import UUID, uuid4
 from aiogram import Bot
 from pydantic import SecretStr
 from sqlalchemy import func, or_, select, update
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
-    system_project_session_scope, tenant_session_scope,
+    system_project_session_scope,
+    tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.bots.service import encrypt_token, verify_telegram_bot
 from telegram_membership_saas.modules.entitlements.models import (
-    EntitlementGrant, EntitlementSource, EntitlementGrantStatus,
+    EntitlementGrant,
+    EntitlementGrantStatus,
+    EntitlementSource,
 )
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.transfer_models import (
     ProjectOwnershipTransfer,
 )
-from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.payments.models import (
-    PaymentMethod, PaymentMethodStatus, PaymentRequest, PaymentRequestStatus,
+    PaymentMethod,
+    PaymentMethodStatus,
+    PaymentRequest,
+    PaymentRequestStatus,
 )
 from telegram_membership_saas.modules.projects import Project, ProjectMember, ProjectStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
