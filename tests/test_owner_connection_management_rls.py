@@ -3,6 +3,7 @@ import os
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
@@ -26,6 +27,10 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
     owner_home,
+)
+from telegram_membership_saas.modules.owner_setup.transfers import (
+    cancel_transfer_invite,
+    create_transfer_invite,
 )
 from telegram_membership_saas.modules.projects import Project, ProjectMember
 from telegram_membership_saas.modules.resources import (
@@ -222,12 +227,6 @@ async def test_bot_attached_or_historical_connection_cannot_be_hard_deleted():
 
 
 async def test_cancelled_transfer_history_forces_archive_not_delete():
-    from telegram_membership_saas.modules.owner_setup.transfers import (
-        cancel_transfer_invite,
-        create_transfer_invite,
-    )
-    from sqlalchemy import select
-
     engine = build_engine(Settings())
     factory = build_session_factory(engine)
     try:
