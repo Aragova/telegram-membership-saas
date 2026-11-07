@@ -100,3 +100,25 @@ async def test_owner_transfer_control_only_in_connected_settings(monkeypatch):
     bot = _bot()
     await cb(q("settings"), bot)
     assert "own:transfer" in _buttons(bot)
+
+
+async def test_central_bot_shows_outgoing_accepted_transfer_to_old_owner(monkeypatch):
+    project, owner, recipient = uuid4(), uuid4(), uuid4()
+    item = _view(project, owner, recipient, status="accepted")
+    router = ui.create_transfer_router(MagicMock(), project_id=None)
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "list_transfer_invites", AsyncMock(return_value=(item,)))
+    monkeypatch.setattr(ui, "get_transfer_invite", AsyncMock(return_value=item))
+    bot = _bot()
+    await _cb(router)(_query("xfr:home"), bot)
+    buttons = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert any(
+        b.callback_data == "xfr:view:" + encode_uuid(item.id)
+        for row in buttons for b in row
+    )
+    await _cb(router)(_query("xfr:view:" + encode_uuid(item.id)), bot)
+    buttons = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert any(
+        b.callback_data == "xfr:finalask:" + encode_uuid(item.id)
+        for row in buttons for b in row
+    )
