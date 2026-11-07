@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from html import escape
@@ -78,6 +80,13 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
     find_buyer_conversation,
     is_admin_message,
     parse_buyer_notification,
+)
+from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
+    notify_support_of_buyer_reply,
+)
+from telegram_membership_saas.modules.owner_setup.moderators import (
+    list_project_moderators,
+    set_project_moderator,
 )
 from telegram_membership_saas.modules.owner_setup.currencies import (
     enable_owner_currency,
@@ -577,10 +586,57 @@ def create_owner_setup_router(
                 [_button(tr("📋 Готовность", "📋 Readiness"), "readiness"),
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
+                [_button(tr("🛡 Модераторы", "🛡 Moderators"), "modmanage")],
                 [_button(tr("❔ Помощь", "❔ Help"), "help")],
                 [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
                          "dashboard")],
             ]),
+        )
+
+    async def show_moderators(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, page: int = 0,
+    ) -> None:
+        total, people = await list_project_moderators(
+            factory, actor_id=actor_id, project_id=project_id, page=page,
+        )
+        buttons: list[list[InlineKeyboardButton]] = []
+        for account in people:
+            name = ("@" + account.username if account.username
+                    else str(account.telegram_id))
+            buttons.append([_button(
+                "🗑 " + name[:36],
+                "modremoveask:" + str(account.telegram_id), "danger",
+            )])
+        nav: list[InlineKeyboardButton] = []
+        if page:
+            nav.append(_button("◀️", "modmanage:" + str(page - 1)))
+        if (page + 1) * 8 < total:
+            nav.append(_button("▶️", "modmanage:" + str(page + 1)))
+        if nav:
+            buttons.append(nav)
+        buttons.extend([
+            [_button(tr("➕ Назначить модератора", "➕ Add moderator"),
+                     "modadd", "success")],
+            [_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")],
+        ])
+        await bot.send_message(
+            user_id,
+            tr("🛡 <b>Модераторы</b> · ", "🛡 <b>Moderators</b> · ")
+            + str(total) + "\n"
+            + tr(
+                "Модератор видит покупателей и ожидающие заявки "
+                "(без сумм и чеков), может писать сообщения и блокировать спам. "
+                "Оплаты, тарифы, рассылки, выдача доступа и управление "
+                "ботом ему недоступны.\n\n"
+                "После назначения сотрудник открывает /mod в этом боте.",
+                "Moderators see customers and pending requests "
+                "(no amounts or receipts), message buyers, and ban spam. "
+                "Payments, plans, broadcasts, grants and bot ownership "
+                "remain unavailable.\n\n"
+                "After assignment the moderator opens /mod in this bot.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(buttons),
         )
 
     async def show_invoice(
@@ -2487,6 +2543,16 @@ def create_owner_setup_router(
                 await bot.delete_message(message.chat.id, parent.message_id)
             except AiogramError:
                 pass
+        # Support inbox is best-effort; owner delivery above is authoritative.
+        try:
+            await notify_support_of_buyer_reply(
+                factory, bot=bot, project_id=fixed_project_id,
+                info=info, body=body,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Support notification failed; owner message was delivered",
+            )
         await bot.send_message(message.chat.id, tr(
             "✅ Ответ отправлен администратору.",
             "✅ Your reply has been sent to the administrator.",
@@ -2870,7 +2936,63 @@ def create_owner_setup_router(
             if project_id is None:
                 raise ValueError(tr("Сначала создайте или выберите проект",
                                     "Create or select a connection first"))
-            if action == "subscribers":
+            if action == "modmanage" or action.startswith("modmanage:"):
+                page = action.split(":", 1)[1] if ":" in action else "0"
+                if not page.isascii() or not page.isdecimal():
+                    raise ValueError("Неверная страница")
+                await show_moderators(
+                    bot, user_id, actor_id, project_id, page=int(page),
+                )
+            elif action == "modadd":
+                await list_project_moderators(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id, step="moderator_add",
+                    text=tr(
+                        "🛡 <b>Назначение модератора</b>\n\n"
+                        "Модератор должен открыть этот бот и отправить /mod, "
+                        "чтобы узнать свой Telegram ID.\n"
+                        "Пришлите сюда числовой Telegram ID сотрудника.",
+                        "🛡 <b>Add moderator</b>\n\n"
+                        "The moderator should open this bot and send /mod "
+                        "to see their Telegram ID.\n"
+                        "Send the employee's numeric Telegram ID.",
+                    ),
+                )
+            elif action.startswith(("modremoveask:", "modremoveok:")):
+                verb, value = action.split(":", 1)
+                if not value.isascii() or not value.isdecimal():
+                    raise ValueError("Неверный Telegram ID")
+                target = int(value)
+                await list_project_moderators(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if verb == "modremoveask":
+                    await bot.send_message(
+                        user_id,
+                        tr("Отозвать права модератора у ID ",
+                           "Revoke moderator access for ID ")
+                        + str(target) + "?",
+                        reply_markup=_markup([
+                            [_button(tr("✅ Отозвать", "✅ Revoke"),
+                                     "modremoveok:" + value, "danger")],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "modmanage")],
+                        ]),
+                    )
+                else:
+                    changed = await set_project_moderator(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        telegram_id=target, enabled=False,
+                    )
+                    await bot.send_message(
+                        user_id,
+                        tr("✅ Права отозваны.", "✅ Access revoked.") if changed
+                        else tr("Уже не модератор.", "Already not a moderator."),
+                    )
+                    await show_moderators(bot, user_id, actor_id, project_id)
+            elif action == "subscribers":
                 await show_subscribers(bot, user_id, actor_id, project_id)
             elif action.startswith("sublist:"):
                 _, status, page_text = action.split(":", 2)
@@ -4994,6 +5116,27 @@ def create_owner_setup_router(
             )
             return
         try:
+            if flow.step == "moderator_add":
+                if fixed_project_id is None or flow.project_id != fixed_project_id:
+                    raise PermissionError("Нельзя назначать модератора другого бота")
+                if (
+                    not text.isascii() or not text.isdecimal()
+                    or len(text) > 19
+                ):
+                    raise ValueError("Нужен числовой Telegram ID")
+                changed = await set_project_moderator(
+                    factory, actor_id=actor_id, project_id=fixed_project_id,
+                    telegram_id=int(text), enabled=True,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Модератор назначен.", "✅ Moderator added.") if changed
+                    else tr("Уже назначен.", "Already assigned."),
+                )
+                await show_moderators(
+                    bot, message.chat.id, actor_id, fixed_project_id,
+                )
+                return
             if flow.step == "subscriber_search":
                 needle = text.removeprefix("@").strip()
                 if (
@@ -5285,6 +5428,7 @@ def create_owner_setup_router(
                 "currency_custom_code": "methods",
                 "subscriber_search": "subscribers",
                 "subscriber_message": "subscribers",
+                "moderator_add": "modmanage",
             }.get(flow.step, "dashboard")
             if flow.step in ("method_rename", "method_edit"):
                 method_hex = flow.payload.get("method_id")
