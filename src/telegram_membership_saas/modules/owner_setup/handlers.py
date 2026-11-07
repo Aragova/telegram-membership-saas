@@ -2392,8 +2392,11 @@ def create_owner_setup_router(
                 "The normal input field stays available. "
                 "This mode expires in 3 minutes.",
             ),
-            reply_markup=_markup([[
-                _button(tr("✖️ Отмена", "✖️ Cancel"), "chat:cancel"),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text=tr("✖️ Отмена", "✖️ Cancel"),
+                    callback_data="chat:cancel",
+                ),
             ]]),
         )
 
