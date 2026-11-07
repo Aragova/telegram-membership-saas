@@ -237,6 +237,7 @@ async def save_from_message(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, actor_id: UUID, telegram_bot_id: int,
     message: Message | None = None, album: list[Message] | None = None,
+    expected_draft: tuple[str, UUID | None, datetime] | None = None,
 ) -> BroadcastTemplate:
     if (message is None) == (album is None):
         raise ValueError("Передайте один пост или один альбом")
@@ -262,6 +263,12 @@ async def save_from_message(
         )
         if draft is None or draft.mode not in ("create", "replace"):
             raise ValueError("Редактор закрыт. Начните создание заново.")
+        if expected_draft is not None and (
+            draft.mode != expected_draft[0]
+            or draft.template_id != expected_draft[1]
+            or draft.expires_at != expected_draft[2]
+        ):
+            raise ValueError("Редактор изменился. Отправьте альбом заново.")
         if draft.mode == "create":
             count = await session.scalar(select(func.count()).select_from(
                 BroadcastTemplate
