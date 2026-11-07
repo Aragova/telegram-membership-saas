@@ -13,6 +13,8 @@ from telegram_membership_saas.modules.owner_setup.moderators import (
     ModeratorReview,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+
+
 def _buyer():
     return ModeratorCustomer(
         id=uuid4(), telegram_id=12345678, username="testbuyer",
