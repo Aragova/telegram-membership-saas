@@ -53,6 +53,12 @@ def create_dispatcher(
             dispatcher.include_router(
                 create_platform_dashboard_router(session_factory)
             )
+        if project_id is None:
+            # Independent central BotFather-token handoff survives the
+            # connected bot's old credential being revoked.
+            dispatcher.include_router(create_transfer_router(
+                session_factory, project_id=None,
+            ))
         dispatcher.include_router(owner_router)
         if enable_access:
             dispatcher.include_router(create_telegram_access_router(session_factory))
