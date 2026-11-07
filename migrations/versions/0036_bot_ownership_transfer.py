@@ -208,6 +208,13 @@ def upgrade() -> None:
                             'Verified dual-consent and liability checks required'
                             USING ERRCODE = '42501';
                     END IF;
+                    -- Use the same owner-scoped lock as bot registration to
+                    -- serialize simultaneous incoming transfers and quota changes.
+                    PERFORM pg_advisory_xact_lock(
+                        hashtextextended(
+                            'vimi:owner-cap:' || NEW.owner_user_id::text, 0
+                        )
+                    );
                     IF EXISTS(
                         SELECT 1 FROM public.platform_owner_bot_limits lim
                         WHERE lim.owner_user_id = NEW.owner_user_id
@@ -215,7 +222,6 @@ def upgrade() -> None:
                             SELECT COUNT(*) FROM public.bot_instances b
                             JOIN public.projects p ON p.id = b.project_id
                             WHERE p.owner_user_id = NEW.owner_user_id
-                              AND b.status = 'registered'
                         ) > lim.max_connected_bots
                     ) THEN
                         RAISE EXCEPTION 'Recipient connected-bot quota exceeded'
