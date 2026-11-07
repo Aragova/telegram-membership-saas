@@ -5,8 +5,14 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, DateTime, ForeignKey, Index,
-    String, Uuid, text,
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
