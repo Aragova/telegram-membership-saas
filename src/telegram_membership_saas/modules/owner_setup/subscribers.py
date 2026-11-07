@@ -67,6 +67,13 @@ class SubscriberSubscription:
 
 
 @dataclass(frozen=True, slots=True)
+class ActiveSubscriptionPage:
+    total: int
+    page: int
+    subscriptions: tuple[SubscriberSubscription, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SubscriberPayment:
     id: UUID
     plan_name: str
@@ -427,6 +434,92 @@ async def subscriber_detail(
             total_invoices=total_invoices,
             pending_invoices=pending_invoices,
             is_banned=customer.is_banned,
+        )
+
+
+async def list_active_customer_subscriptions(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, customer_id: UUID, page: int = 0,
+) -> ActiveSubscriptionPage:
+    """Paginate *active* paid plans, independent of the short customer overview."""
+    if not 0 <= page <= 10000:
+        raise ValueError("Недопустимая страница подписок")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        project = await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        if project.owner_user_id != actor_id:
+            raise PermissionError("Аннулирование подписок доступно только владельцу")
+        await _owned_customer(session, project_id=project_id, customer_id=customer_id)
+        now = datetime.now(UTC)
+        predicates = (
+            Subscription.project_id == project_id,
+            Subscription.customer_id == customer_id,
+            Subscription.status == SubscriptionStatus.ACTIVE.value,
+            or_(Subscription.current_period_end.is_(None),
+                Subscription.current_period_end > now),
+        )
+        total = await session.scalar(
+            select(func.count(Subscription.id)).where(*predicates)
+        ) or 0
+        rows = (await session.execute(
+            select(Subscription, Plan.name)
+            .join(Plan, and_(
+                Plan.id == Subscription.plan_id,
+                Plan.project_id == Subscription.project_id,
+            ))
+            .where(*predicates)
+            .order_by(Subscription.created_at.desc(), Subscription.id.desc())
+            .offset(page * 8).limit(8)
+        )).all()
+        return ActiveSubscriptionPage(
+            total=total, page=page, subscriptions=tuple(
+                SubscriberSubscription(
+                    id=sub.id, plan_name=name, status=sub.status,
+                    period_end=sub.current_period_end,
+                ) for sub, name in rows
+            ),
+        )
+
+
+async def get_active_customer_subscription(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, customer_id: UUID, subscription_id: UUID,
+) -> SubscriberSubscription:
+    """Validate a chosen paid subscription by tenant-scoped ID, not a page cap."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        project = await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        if project.owner_user_id != actor_id:
+            raise PermissionError("Аннулирование подписок доступно только владельцу")
+        await _owned_customer(session, project_id=project_id, customer_id=customer_id)
+        now = datetime.now(UTC)
+        row = (await session.execute(
+            select(Subscription, Plan.name)
+            .join(Plan, and_(
+                Plan.id == Subscription.plan_id,
+                Plan.project_id == Subscription.project_id,
+            ))
+            .where(
+                Subscription.project_id == project_id,
+                Subscription.customer_id == customer_id,
+                Subscription.id == subscription_id,
+                Subscription.status == SubscriptionStatus.ACTIVE.value,
+                or_(Subscription.current_period_end.is_(None),
+                    Subscription.current_period_end > now),
+            )
+        )).one_or_none()
+        if row is None:
+            raise ValueError("Активная подписка этого покупателя не найдена")
+        sub, name = row
+        return SubscriberSubscription(
+            id=sub.id, plan_name=name, status=sub.status,
+            period_end=sub.current_period_end,
         )
 
 
