@@ -143,7 +143,9 @@ from telegram_membership_saas.modules.owner_setup.subscribers import (
     SUBSCRIBER_PAGE_SIZE,
     activate_manual_plan,
     customer_id_by_telegram_id,
+    get_active_customer_subscription,
     grant_manual_access,
+    list_active_customer_subscriptions,
     list_activatable_plans,
     list_subscriber_invoices,
     list_subscribers,
@@ -1385,17 +1387,21 @@ def create_owner_setup_router(
 
     async def show_customer_cancel_picker(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
-        customer_id: UUID, *, page: int = 0,
+        customer_id: UUID, *, page: int = 0, paid_page: int = 0,
     ) -> None:
         data = await subscriber_detail(
             factory, actor_id=actor_id, project_id=project_id,
             customer_id=customer_id, grant_page=page,
         )
+        active = await list_active_customer_subscriptions(
+            factory, actor_id=actor_id, project_id=project_id,
+            customer_id=customer_id, page=paid_page,
+        )
         if not data.owner_only_actions:
             raise PermissionError("Аннулирование доступно только владельцу")
         cid = encode_uuid(customer_id)
         rows: list[list[InlineKeyboardButton]] = []
-        for sub in data.subscriptions if page == 0 else ():
+        for sub in active.subscriptions if page == 0 else ():
             if sub.status == "active" and sub.id is not None:
                 rows.append([_button(
                     "💳 " + sub.plan_name[:36],
@@ -1428,18 +1434,32 @@ def create_owner_setup_router(
                 tr("Нет прав на этой странице", "No grants on this page"),
                 "subscriber:" + cid,
             )])
+        if paid_page or (paid_page + 1) * 8 < active.total:
+            paid_nav: list[InlineKeyboardButton] = []
+            if paid_page:
+                paid_nav.append(_button(
+                    "💳◀️", "subcancel:" + cid + ":" + str(paid_page - 1)
+                    + ":" + str(page),
+                ))
+            if (paid_page + 1) * 8 < active.total:
+                paid_nav.append(_button(
+                    "💳▶️", "subcancel:" + cid + ":" + str(paid_page + 1)
+                    + ":" + str(page),
+                ))
+            rows.append(paid_nav)
         if page or (page + 1) * 8 < data.total_grants:
-            navigation: list[InlineKeyboardButton] = []
+            grant_nav: list[InlineKeyboardButton] = []
             if page:
-                navigation.append(_button(
-                    "◀️", "subcancel:" + cid + ":" + str(page - 1),
+                grant_nav.append(_button(
+                    "🔑◀️", "subcancel:" + cid + ":" + str(paid_page)
+                    + ":" + str(page - 1),
                 ))
             if (page + 1) * 8 < data.total_grants:
-                navigation.append(_button(
-                    "▶️", "subcancel:" + cid + ":" + str(page + 1),
+                grant_nav.append(_button(
+                    "🔑▶️", "subcancel:" + cid + ":" + str(paid_page)
+                    + ":" + str(page + 1),
                 ))
-            if navigation:
-                rows.append(navigation)
+            rows.append(grant_nav)
         rows.append([_button(
             tr("⬅️ Карточка покупателя", "⬅️ Customer card"),
             "subscriber:" + cid,
@@ -2758,28 +2778,29 @@ def create_owner_setup_router(
                     )
             elif action.startswith("subcancel:"):
                 chunks = action.split(":")
-                if len(chunks) not in (2, 3):
+                if len(chunks) not in (2, 3, 4):
                     raise ValueError("Некорректная страница аннулирования")
-                page = chunks[2] if len(chunks) == 3 else "0"
-                if not page.isascii() or not page.isdecimal():
+                grant_page = chunks[3] if len(chunks) == 4 else (
+                    chunks[2] if len(chunks) == 3 else "0"
+                )
+                paid_page = chunks[2] if len(chunks) == 4 else "0"
+                if any(
+                    not part.isascii() or not part.isdecimal()
+                    for part in (grant_page, paid_page)
+                ):
                     raise ValueError("Некорректная страница аннулирования")
                 await show_customer_cancel_picker(
                     bot, user_id, actor_id, project_id,
-                    decode_uuid(chunks[1]), page=int(page),
+                    decode_uuid(chunks[1]), page=int(grant_page),
+                    paid_page=int(paid_page),
                 )
             elif action.startswith(("subendask:", "subendok:")):
                 verb, cid, sid = action.split(":", 2)
                 customer_id, subscription_id = decode_uuid(cid), decode_uuid(sid)
-                detail = await subscriber_detail(
+                sub = await get_active_customer_subscription(
                     factory, actor_id=actor_id, project_id=project_id,
-                    customer_id=customer_id,
+                    customer_id=customer_id, subscription_id=subscription_id,
                 )
-                sub = next((
-                    item for item in detail.subscriptions
-                    if item.id == subscription_id and item.status == "active"
-                ), None)
-                if not detail.owner_only_actions or sub is None:
-                    raise PermissionError("Подписка недоступна для аннулирования")
                 if verb == "subendask":
                     await bot.send_message(
                         user_id,
