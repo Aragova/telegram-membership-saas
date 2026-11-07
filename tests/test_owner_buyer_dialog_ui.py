@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from test_owner_subscribers_ui import _bot, _detail
 
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.conversations import (
@@ -15,7 +16,6 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
     is_admin_message,
     parse_buyer_notification,
 )
-from test_owner_subscribers_ui import _bot, _detail
 
 
 def _dialog_router(project):
