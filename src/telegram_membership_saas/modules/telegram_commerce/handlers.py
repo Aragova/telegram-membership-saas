@@ -145,7 +145,11 @@ def _review_keyboard(request_id: UUID) -> InlineKeyboardMarkup:
                     style="danger",
                     callback_data=f"reject:{token}",
                 ),
-            ]
+            ],
+            [InlineKeyboardButton(
+                text=tr("👤 Покупатель и счёт", "👤 Customer and invoice"),
+                callback_data="own:invoice:" + token,
+            )],
         ]
     )
 
