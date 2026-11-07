@@ -87,6 +87,11 @@ jobs:
                       "TO membership_runtime"
                   )
                   await connection.execute(
+                      "GRANT EXECUTE ON FUNCTION "
+                      "public.complete_bot_ownership_transfer(uuid,uuid) "
+                      "TO membership_runtime"
+                  )
+                  await connection.execute(
                       "GRANT EXECUTE ON FUNCTION public.list_customer_bot_targets() "
                       "TO membership_runtime"
                   )

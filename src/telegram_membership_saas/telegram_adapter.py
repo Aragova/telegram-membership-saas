@@ -14,6 +14,9 @@ from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
     create_moderator_router,
     render_moderator_menu_if_allowed,
 )
+from telegram_membership_saas.modules.owner_setup.transfer_handlers import (
+    create_transfer_router,
+)
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     create_platform_dashboard_router,
 )
@@ -50,6 +53,12 @@ def create_dispatcher(
             dispatcher.include_router(
                 create_platform_dashboard_router(session_factory)
             )
+        if project_id is None:
+            # Independent central BotFather-token handoff survives the
+            # connected bot's old credential being revoked.
+            dispatcher.include_router(create_transfer_router(
+                session_factory, project_id=None,
+            ))
         dispatcher.include_router(owner_router)
         if enable_access:
             dispatcher.include_router(create_telegram_access_router(session_factory))
@@ -113,6 +122,11 @@ def create_customer_dispatcher(
     ))
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
+    # Private transfer invitations and token proof must be handled before
+    # owner and buyer forms; only participants pass the service checks.
+    dispatcher.include_router(create_transfer_router(
+        session_factory, project_id=project_id,
+    ))
     # Support staff never enters the owner admin router. Handle their
     # /start, /menu, /u and mod:* actions in a narrowly scoped router first.
     dispatcher.include_router(create_moderator_router(

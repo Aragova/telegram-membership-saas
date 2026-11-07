@@ -3,6 +3,7 @@ import os
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
@@ -26,6 +27,10 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
     owner_home,
+)
+from telegram_membership_saas.modules.owner_setup.transfers import (
+    cancel_transfer_invite,
+    create_transfer_invite,
 )
 from telegram_membership_saas.modules.projects import Project, ProjectMember
 from telegram_membership_saas.modules.resources import (
@@ -217,5 +222,65 @@ async def test_bot_attached_or_historical_connection_cannot_be_hard_deleted():
             await restore_owner_connection(
                 factory, actor_id=owner, project_id=history_project,
             )
+    finally:
+        await engine.dispose()
+
+
+async def test_cancelled_transfer_history_forces_archive_not_delete():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner = await ensure_telegram_actor(
+            factory, telegram_id=tg_id(), username="transfer_history_owner",
+            first_name="Owner",
+        )
+        recipient_tid = tg_id()
+        recipient = await ensure_telegram_actor(
+            factory, telegram_id=recipient_tid, username="transfer_history_new",
+            first_name="Recipient",
+        )
+        project = await create_owner_project(
+            factory, actor_id=owner, name="Transfer history only",
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            bot = BotInstance(
+                project_id=project, telegram_bot_id=tg_id(),
+                username="historic_transfer_bot", display_name="History",
+                token_ciphertext="test-only",
+            )
+            session.add(bot)
+            await session.flush()
+            bot_row_id = bot.id
+        invite = await create_transfer_invite(
+            factory, actor_id=owner, project_id=project,
+            recipient_telegram_id=recipient_tid,
+        )
+        assert await cancel_transfer_invite(
+            factory, actor_id=recipient, transfer_id=invite.id,
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            bot = await session.scalar(select(BotInstance).where(
+                BotInstance.id == bot_row_id,
+            ))
+            await session.delete(bot)
+        disposition = await get_connection_disposition(
+            factory, actor_id=owner, project_id=project,
+        )
+        assert not disposition.has_bot
+        assert disposition.has_history
+        with pytest.raises(ValueError, match="архив"):
+            await remove_unused_connection(
+                factory, actor_id=owner, project_id=project,
+            )
+        await archive_owner_connection(
+            factory, actor_id=owner, project_id=project,
+        )
+        assert (project, "Transfer history only") in (
+            await list_archived_owner_connections(factory, actor_id=owner)
+        )
     finally:
         await engine.dispose()
