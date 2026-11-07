@@ -1139,15 +1139,16 @@ def create_owner_setup_router(
                 "expired": tr("Истёк", "Expired"),
             }.get(invoice.status, invoice.status)
             ref = invoice.id.hex[:10].upper()
+            amount = format_amount(Decimal(invoice.amount), 18)
             lines.append(
                 status_icon + " " + ref + " · " + escape(invoice.plan_name[:35])
-                + " · " + escape(invoice.amount + " " + invoice.currency)
+                + " · " + escape(amount + " " + invoice.currency)
                 + " · " + escape(status)
                 + " · " + subscriber_date(invoice.created_at, data.project_timezone)
             )
             rows.append([_button(
                 status_icon + " " + ref + " · "
-                + invoice.amount[:20] + " " + invoice.currency[:8],
+                + amount[:20] + " " + invoice.currency[:8],
                 "invoice:" + encode_uuid(invoice.id),
             )])
         if not data.invoices:
@@ -1214,12 +1215,12 @@ def create_owner_setup_router(
         for item in data.payments:
             lines.append(
                 "• " + escape(item.plan_name[:28]) + " · "
-                + escape(item.amount + " " + item.currency)
+                + escape(format_amount(Decimal(item.amount), 18) + " " + item.currency)
                 + " · " + subscriber_date(item.approved_at, data.project_timezone)
             )
         lines.extend([
             "", tr("🧾 Счетов: ", "🧾 Invoices: ") + str(data.total_invoices)
-            + tr(" · ожидают решения: ", " · awaiting action: ")
+            + tr(" · незавершённых: ", " · unfinished: ")
             + str(data.pending_invoices),
         ])
         lines.extend(["", tr("🔑 <b>Основания доступа</b>",
