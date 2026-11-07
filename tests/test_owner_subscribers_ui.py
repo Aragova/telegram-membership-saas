@@ -11,6 +11,8 @@ from telegram_membership_saas.modules.owner_setup.subscribers import (
     SubscriberAccess,
     SubscriberDetail,
     SubscriberGrant,
+    SubscriberInvoice,
+    SubscriberInvoicePage,
     SubscriberItem,
     SubscriberPage,
     SubscriberPayment,
@@ -278,3 +280,59 @@ async def test_subscriber_statuses_ru_en_and_buttons_are_translated(monkeypatch)
                 assert "Основания доступа" not in body
         finally:
             _language.reset(token)
+
+
+async def test_invoice_history_from_customer_card_is_compact_and_paginated(monkeypatch):
+    from dataclasses import replace
+
+    project, customer, resource = uuid4(), uuid4(), uuid4()
+    cb, _ = _callbacks(monkeypatch, project)
+    detail = replace(
+        _detail(customer, resource), total_invoices=9, pending_invoices=2,
+    )
+    monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(return_value=detail))
+    invoice = uuid4()
+    page = AsyncMock(return_value=SubscriberInvoicePage(
+        customer_id=customer, telegram_id=12345678,
+        username="buyer", first_name="Buyer", project_timezone="Europe/Moscow",
+        total=9, page=0, invoices=(
+            SubscriberInvoice(
+                id=invoice, status="waiting_review", amount="550",
+                currency="RUB", plan_name="Monthly 💎",
+                created_at=datetime.now(UTC),
+            ),
+        ),
+    ))
+    monkeypatch.setattr(ui, "list_subscriber_invoices", page)
+    bot = _bot()
+    cid = encode_uuid(customer)
+
+    await cb(_query("subscriber:" + cid), bot)
+    assert "Счетов: 9" in bot.send_message.await_args.args[1]
+    assert "own:subinvoices:" + cid + ":0" in _buttons(bot)
+
+    await cb(_query("subinvoices:" + cid + ":0"), bot)
+    actions = _buttons(bot)
+    assert "550 RUB" in bot.send_message.await_args.args[1]
+    assert "Monthly 💎" in bot.send_message.await_args.args[1]
+    assert "own:invoice:" + encode_uuid(invoice) in actions
+    assert "own:subinvoices:" + cid + ":1" in actions
+    assert "own:subscriber:" + cid in actions
+    assert all(len(key.encode()) <= 64 for key in actions)
+    assert page.await_args.kwargs["project_id"] == project
+    assert page.await_args.kwargs["customer_id"] == customer
+
+    await cb(_query("subinvoices:" + cid + ":1"), bot)
+    assert page.await_args.kwargs["page"] == 1
+
+
+async def test_invoice_history_is_denied_in_central_bot(monkeypatch):
+    customer = uuid4()
+    cb, _ = _callbacks(monkeypatch, None)
+    bot = _bot()
+    req = _query("subinvoices:" + encode_uuid(customer) + ":0")
+    await cb(req, bot)
+    req.answer.assert_awaited()
+    assert req.answer.await_args.kwargs.get("show_alert")
+    bot.send_message.assert_not_awaited()
+
