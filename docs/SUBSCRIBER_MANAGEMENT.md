@@ -292,8 +292,11 @@ never overwritten or deleted by this workflow.
   ownership.
 - Banning prevents future checkout and receipt submissions but never
   removes historic payments or already paid channel access.
-- PostgreSQL FORCE RLS remains in force. No database migration is
-  necessary because support/project membership already exists.
+- PostgreSQL FORCE RLS remains in force. A narrow audit-policy migration
+  `0035_support_moderation_audit` allows support users to insert only
+  `customer_ban`/`customer_unban` audit events for real customers in
+  their assigned project. Audit history remains immutable and audit SELECT
+  stays owner-only. No payment or subscription schema changes.
 
 ### Acceptance on staging
 1. Owner: Settings → Moderators → Add, enter test staff Telegram ID.
