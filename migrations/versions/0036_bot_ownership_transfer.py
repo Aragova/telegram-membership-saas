@@ -300,7 +300,7 @@ def upgrade() -> None:
         "FROM PUBLIC"
     )
     op.execute("""
-        DO $
+        DO $transfer_grant$
         BEGIN
             IF EXISTS (
                 SELECT 1 FROM pg_roles WHERE rolname = 'membership_runtime'
@@ -309,7 +309,7 @@ def upgrade() -> None:
                     public.complete_bot_ownership_transfer(uuid,uuid)
                 TO membership_runtime;
             END IF;
-        END $
+        END $transfer_grant$
     """)
 
 
