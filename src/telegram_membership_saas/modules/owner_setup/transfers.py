@@ -7,8 +7,8 @@ fresh token for the SAME bot and be admin of attached channels.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from secrets import compare_digest
 from datetime import UTC, datetime, timedelta
+from secrets import compare_digest
 from uuid import UUID, uuid4
 
 from aiogram import Bot
