@@ -68,6 +68,9 @@ from telegram_membership_saas.modules.owner_setup.connection_management import (
 from telegram_membership_saas.modules.owner_setup.currencies import (
     enable_owner_currency,
 )
+from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
+    parse_customer_command,
+)
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
@@ -138,6 +141,7 @@ from telegram_membership_saas.modules.owner_setup.subscribers import (
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     MANUAL_DURATIONS,
     SUBSCRIBER_PAGE_SIZE,
+    customer_id_by_telegram_id,
     grant_manual_access,
     list_subscriber_invoices,
     list_subscribers,
@@ -2122,6 +2126,47 @@ def create_owner_setup_router(
             user_id, tr("💱 Выберите валюту:", "💱 Choose a currency:"),
             reply_markup=_markup(rows),
         )
+
+    @router.message(
+        F.text.regexp(r"^/(?:u[0-9a-z]{1,13}|c[a-z2-7]{26})$")
+    )
+    async def customer_shortcut_handler(message: Message, bot: Bot) -> None:
+        """One tap on the command beside a buyer name opens their real card."""
+        if (
+            not _private(message)
+            or message.chat.id != message.from_user.id
+        ):
+            return
+        if fixed_project_id is None:
+            await bot.send_message(message.chat.id, tr(
+                "Откройте команду в подключённом боте.",
+                "Open the command in your connected bot.",
+            ))
+            return
+        actor_id = await actor(message.from_user)
+        if not await can_manage_project(
+            factory, actor_id=actor_id, project_id=fixed_project_id,
+        ):
+            await bot.send_message(message.chat.id, tr(
+                "Нет доступа к карточкам покупателей.",
+                "You cannot view customer cards.",
+            ))
+            return
+        try:
+            telegram_id, customer_id = parse_customer_command(message.text)
+            if customer_id is None:
+                customer_id = await customer_id_by_telegram_id(
+                    factory, actor_id=actor_id, project_id=fixed_project_id,
+                    telegram_id=telegram_id,
+                )
+            await show_subscriber_card(
+                bot, message.chat.id, actor_id, fixed_project_id, customer_id,
+            )
+        except (ValueError, PermissionError):
+            await bot.send_message(message.chat.id, tr(
+                "Покупатель не найден в этом боте.",
+                "Customer not found in this bot.",
+            ))
 
     @router.message(
         Command("start", "menu", "bots", "plans", "help", "support"),
