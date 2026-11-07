@@ -118,7 +118,8 @@ def create_transfer_router(
                 "придётся заново включить собственные способы оплаты.",
                 "🔁 <b>Bot management transfer</b>\n\n"
                 "Only this bot and its project move; other connections stay.\n"
-                "Accept and finalize via @vimipay_bot /transfer. The recipient must receive the bot in @BotFather and "
+                "Accept and finalize via @vimipay_bot /transfer. "
+                "The recipient must receive the bot in @BotFather and "
                 "be an admin in its channels.\n"
                 "Payments, subscriptions and history stay intact. "
                 "The new owner must configure their own payment methods.",
