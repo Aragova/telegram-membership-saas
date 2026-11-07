@@ -27,6 +27,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     ensure_telegram_actor,
 )
 from telegram_membership_saas.modules.owner_setup.subscribers import (
+    customer_id_by_telegram_id,
     grant_manual_access,
     list_subscribers,
     revoke_manual_access,
@@ -83,6 +84,36 @@ async def setup_subscriber(factory):
         await session.flush()
         cid, rid = customer.id, channel.id
     return owner, buyer, outsider, project, other_project, cid, rid, buyer_tid
+
+
+async def test_short_code_customer_lookup_requires_correct_tenant_and_manager():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, _, outsider, project, other, cid, _, buyer_tid = (
+            await setup_subscriber(factory)
+        )
+        assert await customer_id_by_telegram_id(
+            factory, actor_id=owner, project_id=project,
+            telegram_id=buyer_tid,
+        ) == cid
+        with pytest.raises((PermissionError, TenantAccessDenied)):
+            await customer_id_by_telegram_id(
+                factory, actor_id=outsider, project_id=project,
+                telegram_id=buyer_tid,
+            )
+        with pytest.raises(ValueError, match="Подписчик"):
+            await customer_id_by_telegram_id(
+                factory, actor_id=outsider, project_id=other,
+                telegram_id=buyer_tid,
+            )
+        with pytest.raises(ValueError, match="Подписчик"):
+            await customer_id_by_telegram_id(
+                factory, actor_id=owner, project_id=project,
+                telegram_id=tg_id(),
+            )
+    finally:
+        await engine.dispose()
 
 
 async def test_manual_grant_and_revoke_isolated_from_other_projects():
