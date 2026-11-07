@@ -14,6 +14,9 @@ from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
     create_moderator_router,
     render_moderator_menu_if_allowed,
 )
+from telegram_membership_saas.modules.owner_setup.transfer_handlers import (
+    create_transfer_router,
+)
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     create_platform_dashboard_router,
 )
