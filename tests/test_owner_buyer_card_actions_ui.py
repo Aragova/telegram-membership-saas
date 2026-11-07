@@ -216,3 +216,26 @@ async def test_old_active_subscription_paged_and_confirmed_by_id(monkeypatch):
     await cb(_query("subendok:" + cid + ":" + sub), bot)
     end.assert_awaited_once()
     assert end.await_args.kwargs["subscription_id"] == sid
+
+
+async def test_paid_options_remain_visible_on_nonzero_grant_page(monkeypatch):
+    project, customer, resource, subscription_id = (
+        uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    cb, _ = _callbacks(monkeypatch, project)
+    card = replace(_detail(customer, resource), total_grants=33)
+    monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(return_value=card))
+    active = SubscriberSubscription(
+        id=subscription_id, plan_name="Paid lifetime",
+        status="active", period_end=None,
+    )
+    monkeypatch.setattr(ui, "list_active_customer_subscriptions", AsyncMock(
+        return_value=ActiveSubscriptionPage(
+            total=1, page=0, subscriptions=(active,),
+        ),
+    ))
+    bot = _bot()
+    cid = encode_uuid(customer)
+    await cb(_query("subcancel:" + cid + ":0:4"), bot)
+    assert "own:subendask:" + cid + ":" + encode_uuid(subscription_id) in _buttons(bot)
+    assert "own:subcancel:" + cid + ":0:3" in _buttons(bot)
