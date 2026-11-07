@@ -83,7 +83,7 @@ def create_transfer_router(
         all_items = await list_transfer_invites(factory, actor_id=actor_id)
         relevant = [t for t in all_items
                     if project_id is None or t.project_id == project_id]
-        if not is_owner and not any(t.to_user_id == actor_id for t in relevant):
+        if not is_owner and not relevant:
             await bot.send_message(user_id, tr(
                 "🔁 Приглашений на передачу бота нет.",
                 "🔁 No bot transfer invitations.",
