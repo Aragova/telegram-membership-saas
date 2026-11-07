@@ -1371,11 +1371,11 @@ def create_owner_setup_router(
         )])
         await bot.send_message(
             user_id, tr(
-                "🔑 <b>Активация тарифа</b>\\n\\n"
+                "🔑 <b>Активация тарифа</b>\n\n"
                 "Выберите тариф для бесплатной выдачи. "
                 "Оплата и подписка не создаются, доступ действует "
                 "по сроку тарифа и может быть аннулирован.",
-                "🔑 <b>Activate plan</b>\\n\\n"
+                "🔑 <b>Activate plan</b>\n\n"
                 "Select a complimentary plan. No payment or paid "
                 "subscription is created. Access follows the plan "
                 "period and can be revoked.",
@@ -1432,11 +1432,11 @@ def create_owner_setup_router(
         )])
         await bot.send_message(
             user_id, tr(
-                "🗑 <b>Аннулировать доступ</b>\\n\\n"
+                "🗑 <b>Аннулировать доступ</b>\n\n"
                 "Выберите конкретный тариф или бесплатную выдачу. "
                 "Каждое действие потребует подтверждения. "
                 "История оплат сохраняется.",
-                "🗑 <b>Revoke access</b>\\n\\n"
+                "🗑 <b>Revoke access</b>\n\n"
                 "Select a specific paid subscription or complimentary "
                 "grant. Each action requires confirmation. "
                 "Payment history is preserved.",
@@ -2662,11 +2662,11 @@ def create_owner_setup_router(
                     step="subscriber_message",
                     payload={"customer_id": cid.hex},
                     text=tr(
-                        "✉️ <b>Сообщение покупателю</b>\\n\\n"
+                        "✉️ <b>Сообщение покупателю</b>\n\n"
                         "Отправьте текст, эмодзи или Telegram-ссылку. "
                         "Сообщение будет отправлено только этому покупателю. "
                         "Чтобы отменить, используйте /cancel.",
-                        "✉️ <b>Message customer</b>\\n\\n"
+                        "✉️ <b>Message customer</b>\n\n"
                         "Send text, emoji or Telegram links. "
                         "Only this buyer receives it. /cancel to exit.",
                     ),
@@ -2708,15 +2708,15 @@ def create_owner_setup_router(
                     await bot.send_message(
                         user_id,
                         tr(
-                            "⚠️ <b>Бесплатная активация</b>\\n",
-                            "⚠️ <b>Complimentary activation</b>\\n",
+                            "⚠️ <b>Бесплатная активация</b>\n",
+                            "⚠️ <b>Complimentary activation</b>\n",
                         ) + escape(plan.name) + " · "
                         + format_period(plan.duration_value, plan.duration_unit)
                         + tr(
-                            "\\n\\nПодтвердите выдачу. Это НЕ оплата. "
+                            "\n\nПодтвердите выдачу. Это НЕ оплата. "
                             "Права появятся в карточке, а финансовая история "
                             "и оплаченные подписки не изменятся.",
-                            "\\n\\nConfirm grant. This is NOT payment. "
+                            "\n\nConfirm grant. This is NOT payment. "
                             "Access will appear in the card without changing "
                             "approved payments or paid subscriptions.",
                         ),
@@ -2764,13 +2764,13 @@ def create_owner_setup_router(
                     await bot.send_message(
                         user_id,
                         tr(
-                            "⚠️ <b>Досрочно завершить оплаченную подписку?</b>\\n\\n",
-                            "⚠️ <b>End paid subscription early?</b>\\n\\n",
+                            "⚠️ <b>Досрочно завершить оплаченную подписку?</b>\n\n",
+                            "⚠️ <b>End paid subscription early?</b>\n\n",
                         ) + escape(sub.plan_name) + tr(
-                            "\\nЭто может лишить покупателя уже оплаченного "
+                            "\nЭто может лишить покупателя уже оплаченного "
                             "доступа. Согласуйте возврат отдельно. "
                             "Подтверждённые платежи не удаляются.",
-                            "\\nThis may revoke prepaid access. Handle any "
+                            "\nThis may revoke prepaid access. Handle any "
                             "refund separately. Confirmed payments remain.",
                         ),
                         parse_mode="HTML", reply_markup=_markup([
@@ -2853,10 +2853,10 @@ def create_owner_setup_router(
                     await bot.send_message(
                         user_id,
                         tr(
-                            "🚫 <b>Заблокировать покупателя?</b>\\n"
+                            "🚫 <b>Заблокировать покупателя?</b>\n"
                             "Новые счета и отправка чеков будут запрещены. "
                             "Ранее оплаченные права и платежи не стираются.",
-                            "🚫 <b>Ban customer?</b>\\n"
+                            "🚫 <b>Ban customer?</b>\n"
                             "New invoices and receipt submissions will be blocked. "
                             "Existing paid grants and payments remain.",
                         ) if banned else tr(
