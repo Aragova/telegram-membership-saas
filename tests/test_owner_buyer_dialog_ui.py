@@ -1,4 +1,6 @@
 """Telegram support conversations are two-way, private and tenant scoped."""
+from contextlib import asynccontextmanager
+from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -6,16 +8,31 @@ from uuid import uuid4
 import pytest
 from test_owner_subscribers_ui import _bot, _detail
 
+from telegram_membership_saas import localization
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.conversations import (
     ADMIN_MESSAGE_HEADER,
+    ADMIN_MESSAGE_HEADER_EN,
     BUYER_MESSAGE_HEADER,
+    BUYER_MESSAGE_HEADER_EN,
     BUYER_REPLY_PROMPT,
+    BUYER_REPLY_PROMPT_EN,
     BuyerConversation,
     customer_ref,
     is_admin_message,
     parse_buyer_notification,
 )
+
+
+@pytest.fixture(autouse=True)
+def fake_outbound_locale(monkeypatch):
+    """Use stable locale for unit tests without a database connection."""
+    @asynccontextmanager
+    async def locale(factory, telegram_id):
+        async with localization.recipient_language(None, telegram_id):
+            yield
+
+    monkeypatch.setattr(ui, "recipient_language", locale)
 
 
 def _dialog_router(project):
@@ -54,18 +71,23 @@ def test_trusted_dialog_first_line_and_customer_reference():
     code = customer_ref(buyer)
     assert code.startswith("/u")
     assert is_admin_message(ADMIN_MESSAGE_HEADER + "\n\nHello")
+    assert is_admin_message(ADMIN_MESSAGE_HEADER_EN + "\n\nHello")
     assert is_admin_message(BUYER_REPLY_PROMPT + "\n\nReply")
+    assert is_admin_message(BUYER_REPLY_PROMPT_EN + "\n\nReply")
     assert not is_admin_message("Hello\n" + ADMIN_MESSAGE_HEADER)
     assert parse_buyer_notification(
         BUYER_MESSAGE_HEADER + code + "\nHello"
     ) == buyer.customer_telegram_id
     with pytest.raises(ValueError):
         parse_buyer_notification("Random bot message " + code)
+    assert parse_buyer_notification(
+        BUYER_MESSAGE_HEADER_EN + code + "\nHello"
+    ) == buyer.customer_telegram_id
     with pytest.raises(ValueError):
         parse_buyer_notification(BUYER_MESSAGE_HEADER + "/u0")
 
 
-async def test_buyer_reply_button_opens_force_reply_for_customer(monkeypatch):
+async def test_reply_button_uses_nonsticky_one_shot_composer(monkeypatch):
     project = uuid4()
     buyer = _buyer()
     monkeypatch.setattr(ui, "find_buyer_conversation", AsyncMock(
@@ -83,7 +105,9 @@ async def test_buyer_reply_button_opens_force_reply_for_customer(monkeypatch):
     await handler(query, bot)
     assert bot.send_message.await_args.args[0] == 12345678
     assert bot.send_message.await_args.args[1].startswith(BUYER_REPLY_PROMPT)
-    assert bot.send_message.await_args.kwargs["reply_markup"].force_reply
+    controls = bot.send_message.await_args.kwargs["reply_markup"]
+    assert controls.inline_keyboard[0][0].callback_data == "chat:cancel"
+    assert "force_reply" not in str(controls.model_dump(exclude_none=True))
     query.answer.assert_awaited_once()
 
 
