@@ -139,6 +139,7 @@ from telegram_membership_saas.modules.owner_setup.subscribers import (
     MANUAL_DURATIONS,
     SUBSCRIBER_PAGE_SIZE,
     grant_manual_access,
+    list_subscriber_invoices,
     list_subscribers,
     revoke_manual_access,
     subscriber_detail,
@@ -151,8 +152,12 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     list_owner_methods,
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
+from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.projects.models import Project
-from telegram_membership_saas.modules.telegram_admin.service import change_project_timezone
+from telegram_membership_saas.modules.telegram_admin.service import (
+    _require_project_manager,
+    change_project_timezone,
+)
 from telegram_membership_saas.modules.telegram_commerce.handlers import (
     _review_keyboard,
     _review_text,
@@ -521,19 +526,28 @@ def create_owner_setup_router(
         async with tenant_session_scope(
             factory, TenantContext(user_id=actor_id, project_id=project_id),
         ) as session:
-            project = await session.scalar(
-                select(Project).where(Project.id == project_id)
+            project = await _require_project_manager(
+                session, project_id=project_id, actor_user_id=actor_id,
             )
-            if project is None or project.owner_user_id != actor_id:
-                raise PermissionError("Invoice details are owner-only")
             request = await session.scalar(
                 select(PaymentRequest).where(
                     PaymentRequest.id == request_id,
                     PaymentRequest.project_id == project_id,
                 )
             )
-        if request is None:
-            raise ValueError(tr("Счёт не найден", "Invoice not found"))
+            if request is None:
+                raise ValueError(tr("Счёт не найден", "Invoice not found"))
+            plan_name = await session.scalar(
+                select(Plan.name).where(
+                    Plan.project_id == project_id, Plan.id == request.plan_id,
+                )
+            )
+            method_name = await session.scalar(
+                select(PaymentMethod.name).where(
+                    PaymentMethod.project_id == project_id,
+                    PaymentMethod.id == request.payment_method_id,
+                )
+            )
         names = {
             "waiting_confirmation": tr("Ожидает оплату", "Awaiting payment"),
             "waiting_review": tr("Чек на проверке", "Receipt under review"),
@@ -550,9 +564,11 @@ def create_owner_setup_router(
             + tr("№ ", "Ref ") + request.id.hex[:10].upper() + "\n"
             + tr("🕒 Создан: ", "🕒 Created: ")
             + f"{ends:%d.%m.%Y %H:%M} ({escape(project.timezone)})\n"
-            + tr("📦 Срок: ", "📦 Period: ")
+            + tr("📦 Тариф: ", "📦 Plan: ") + escape(plan_name or "—") + "\n"
+            + tr("📅 Срок: ", "📅 Period: ")
             + escape(format_period(request.duration_value, request.duration_unit)) + "\n"
-            + "💳 <b>" + escape(format_amount(request.final_amount, 18))
+            + tr("💳 Способ: ", "💳 Method: ") + escape(method_name or "—") + "\n"
+            + "💰 <b>" + escape(format_amount(request.final_amount, 18))
             + " " + escape(request.currency_code) + "</b>\n"
             + tr("Статус: ", "Status: ") + escape(status),
             parse_mode="HTML",
@@ -561,6 +577,8 @@ def create_owner_setup_router(
                     tr("👤 Подписчик", "👤 Subscriber"),
                     "subscriber:" + encode_uuid(request.customer_id),
                 )],
+                [_button(tr("⬅️ Счета покупателя", "⬅️ Customer invoices"),
+                         "subinvoices:" + encode_uuid(request.customer_id) + ":0")],
                 [_button(tr("⬅️ Панель администратора", "⬅️ Dashboard"), "dashboard")],
             ]),
         )
@@ -1086,6 +1104,75 @@ def create_owner_setup_router(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
         )
 
+    async def show_subscriber_invoices(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        customer_id: UUID, *, page: int = 0,
+    ) -> None:
+        data = await list_subscriber_invoices(
+            factory, actor_id=actor_id, project_id=project_id,
+            customer_id=customer_id, page=page,
+        )
+        who = subscriber_label(
+            data.telegram_id, data.username, data.first_name,
+        )
+        lines = [
+            "🧾 <b>" + tr("Счета покупателя", "Customer invoices") + "</b>",
+            "👤 " + escape(who) + " · ID " + str(data.telegram_id),
+            tr("Всего счетов: ", "Total invoices: ") + str(data.total),
+        ]
+        rows: list[list[InlineKeyboardButton]] = []
+        for invoice in data.invoices:
+            status_icon = {
+                "waiting_confirmation": "⏳",
+                "waiting_review": "🕒",
+                "approved": "✅",
+                "rejected": "❌",
+                "cancelled": "⚪",
+                "expired": "⌛",
+            }.get(invoice.status, "📄")
+            status = {
+                "waiting_confirmation": tr("Ожидает оплату", "Awaiting payment"),
+                "waiting_review": tr("На проверке", "Under review"),
+                "approved": tr("Подтверждён", "Approved"),
+                "rejected": tr("Отклонён", "Rejected"),
+                "cancelled": tr("Отменён", "Cancelled"),
+                "expired": tr("Истёк", "Expired"),
+            }.get(invoice.status, invoice.status)
+            ref = invoice.id.hex[:10].upper()
+            lines.append(
+                status_icon + " " + ref + " · " + escape(invoice.plan_name[:35])
+                + " · " + escape(invoice.amount + " " + invoice.currency)
+                + " · " + escape(status)
+                + " · " + subscriber_date(invoice.created_at, data.project_timezone)
+            )
+            rows.append([_button(
+                status_icon + " " + ref + " · "
+                + invoice.amount[:20] + " " + invoice.currency[:8],
+                "invoice:" + encode_uuid(invoice.id),
+            )])
+        if not data.invoices:
+            lines.append(tr("Счетов пока нет.", "No invoices yet."))
+        if data.total > 8:
+            nav = []
+            prefix = "subinvoices:" + encode_uuid(customer_id) + ":"
+            if page:
+                nav.append(_button("◀️", prefix + str(page - 1)))
+            if (page + 1) * 8 < data.total:
+                nav.append(_button("▶️", prefix + str(page + 1)))
+            if nav:
+                rows.append(nav)
+        rows.append([_button(
+            tr("👤 Карточка покупателя", "👤 Customer card"),
+            "subscriber:" + encode_uuid(customer_id),
+        )])
+        rows.append([_button(
+            tr("⬅️ Подписчики", "⬅️ Subscribers"), "subscribers",
+        )])
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_markup(rows),
+        )
+
     async def show_subscriber_card(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         customer_id: UUID, *, history_page: int = 0,
@@ -1130,6 +1217,11 @@ def create_owner_setup_router(
                 + escape(item.amount + " " + item.currency)
                 + " · " + subscriber_date(item.approved_at, data.project_timezone)
             )
+        lines.extend([
+            "", tr("🧾 Счетов: ", "🧾 Invoices: ") + str(data.total_invoices)
+            + tr(" · ожидают решения: ", " · awaiting action: ")
+            + str(data.pending_invoices),
+        ])
         lines.extend(["", tr("🔑 <b>Основания доступа</b>",
                              "🔑 <b>Access grants</b>")
                       + " · " + str(data.total_grants)])
@@ -1162,7 +1254,10 @@ def create_owner_setup_router(
                     mark + " " + escape(entry.resource_name[:35])
                     + " · " + escape(access_label)
                 )
-        rows: list[list[InlineKeyboardButton]] = []
+        rows: list[list[InlineKeyboardButton]] = [[_button(
+            tr("🧾 История счетов", "🧾 Invoice history"),
+            "subinvoices:" + encode_uuid(customer_id) + ":0",
+        )]]
         if data.total_payments > 5:
             nav: list[InlineKeyboardButton] = []
             if history_page:
@@ -2359,6 +2454,14 @@ def create_owner_setup_router(
                 cid = decode_uuid(action.split(":", 1)[1])
                 await show_subscriber_card(
                     bot, user_id, actor_id, project_id, cid,
+                )
+            elif action.startswith("subinvoices:"):
+                _, cid, page_text = action.split(":", 2)
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Недопустимая страница счетов")
+                await show_subscriber_invoices(
+                    bot, user_id, actor_id, project_id,
+                    decode_uuid(cid), page=int(page_text),
                 )
             elif action.startswith("subhistory:"):
                 _, cid, page_text = action.split(":", 2)

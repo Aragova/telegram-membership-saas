@@ -90,3 +90,32 @@ live paying customers merely to simulate a test.
 ### Additional safeguards verified by review
 
 Manual grants recheck bot-retirement state under the existing checkout-retirement lock; once a bot is marked deleting, no new manual entitlement is created. Active access grants are paginated (8 per page), so a grant older than 30 newer paid or manual entitlements can still be found and revoked. Both cases are covered by dedicated PostgreSQL and UI regression tests.
+
+## Stage 2 — buyer card / invoice navigation (PR after broadcasts)
+
+- Reuse the existing `ProjectCustomer` card and `PaymentRequest` ledger.
+  There is **no second customer database** and no new financial, payment
+  approval, subscription or access-grant writes.
+- The connected bot's existing subscriber card now shows counts of all buyer
+  invoices and unpaid/review-pending invoices, plus one **Invoice history**
+  action. History is paginated (8 per page) and includes unpaid, in-review,
+  approved, rejected, cancelled and expired invoices, with status and the
+  original request's frozen amount/currency.
+- Each invoice in this buyer-scoped list opens the existing `own:invoice`
+  detail. Detail displays request reference, current plan label, original
+  duration and amount, payment method, creation time and status. **A new
+  invoice is never represented as a confirmed payment.** From detail the
+  admin can navigate back to the buyer card or invoice list.
+- The existing Telegram manual-receipt review message receives a
+  **Customer and invoice** shortcut below the original Approve/Reject
+  actions. It is an informational shortcut only and never invokes approval.
+  New-invoice notifications already link to the same screens.
+- All callback reads are limited to this connected bot's project, require
+  an authorized project manager, and are validated against `PaymentRequest`
+  and `ProjectCustomer` in the existing tenant session with FORCE RLS.
+  The central bot is not allowed to open these screens.
+- Keep the manual access confirmation controls in the existing buyer card;
+  do not add payment cancellation, subscription grants or refund actions to
+  invoice detail. Actual payment review remains in the original safe path.
+- UI RU/EN. No schema migration. Roll out the customer-supervisor only
+  after exact-head checks, review, approval and staging tests.

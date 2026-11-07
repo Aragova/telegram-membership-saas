@@ -23,7 +23,7 @@ from telegram_membership_saas.modules.entitlements import (
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
-from telegram_membership_saas.modules.payments import Payment
+from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.subscriptions import Subscription, SubscriptionStatus
@@ -90,6 +90,28 @@ class SubscriberAccess:
 
 
 @dataclass(frozen=True, slots=True)
+class SubscriberInvoice:
+    id: UUID
+    status: str
+    amount: str
+    currency: str
+    created_at: datetime
+    plan_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubscriberInvoicePage:
+    customer_id: UUID
+    telegram_id: int
+    username: str | None
+    first_name: str | None
+    project_timezone: str
+    total: int
+    page: int
+    invoices: tuple[SubscriberInvoice, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SubscriberDetail:
     customer_id: UUID
     telegram_id: int
@@ -106,6 +128,8 @@ class SubscriberDetail:
     grant_page: int
     access: tuple[SubscriberAccess, ...]
     resources: tuple[tuple[UUID, str], ...]
+    total_invoices: int = 0
+    pending_invoices: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +284,19 @@ async def subscriber_detail(
             .order_by(Subscription.created_at.desc(), Subscription.id.desc())
             .limit(15)
         )).all()
+        total_invoices = await session.scalar(
+            select(func.count(PaymentRequest.id)).where(
+                PaymentRequest.project_id == project_id,
+                PaymentRequest.customer_id == customer_id,
+            )
+        ) or 0
+        pending_invoices = await session.scalar(
+            select(func.count(PaymentRequest.id)).where(
+                PaymentRequest.project_id == project_id,
+                PaymentRequest.customer_id == customer_id,
+                PaymentRequest.status.in_(("waiting_confirmation", "waiting_review")),
+            )
+        ) or 0
         total_payments = await session.scalar(
             select(func.count(Payment.id)).where(
                 Payment.project_id == project_id, Payment.customer_id == customer_id,
@@ -343,6 +380,53 @@ async def subscriber_detail(
                 actual=state.actual_state,
             ) for state, name in actual),
             resources=tuple(resources),
+            total_invoices=total_invoices,
+            pending_invoices=pending_invoices,
+        )
+
+
+async def list_subscriber_invoices(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, customer_id: UUID, page: int = 0,
+) -> SubscriberInvoicePage:
+    """Read-only project-scoped invoice history for an existing buyer."""
+    if not 0 <= page <= 10000:
+        raise ValueError("Недопустимая страница счетов")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        project = await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        customer, user = await _owned_customer(
+            session, project_id=project_id, customer_id=customer_id,
+        )
+        condition = (
+            PaymentRequest.project_id == project_id,
+            PaymentRequest.customer_id == customer.id,
+        )
+        total = await session.scalar(
+            select(func.count(PaymentRequest.id)).where(*condition)
+        ) or 0
+        rows = (await session.execute(
+            select(PaymentRequest, Plan.name)
+            .join(Plan, and_(
+                Plan.id == PaymentRequest.plan_id,
+                Plan.project_id == PaymentRequest.project_id,
+            ))
+            .where(*condition)
+            .order_by(PaymentRequest.created_at.desc(), PaymentRequest.id.desc())
+            .offset(page * 8).limit(8)
+        )).all()
+        return SubscriberInvoicePage(
+            customer_id=customer.id, telegram_id=user.telegram_user_id,
+            username=user.username, first_name=user.first_name,
+            project_timezone=project.timezone, total=total, page=page,
+            invoices=tuple(SubscriberInvoice(
+                id=request.id, status=request.status,
+                amount=str(request.final_amount), currency=request.currency_code,
+                created_at=request.created_at, plan_name=plan_name,
+            ) for request, plan_name in rows),
         )
 
 
