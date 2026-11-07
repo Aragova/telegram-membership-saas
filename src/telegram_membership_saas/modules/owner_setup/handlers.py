@@ -152,6 +152,7 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     list_owner_methods,
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
+from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
@@ -534,8 +535,19 @@ def create_owner_setup_router(
                     PaymentRequest.project_id == project_id,
                 )
             )
-        if request is None:
-            raise ValueError(tr("Счёт не найден", "Invoice not found"))
+            if request is None:
+                raise ValueError(tr("Счёт не найден", "Invoice not found"))
+            plan_name = await session.scalar(
+                select(Plan.name).where(
+                    Plan.project_id == project_id, Plan.id == request.plan_id,
+                )
+            )
+            method_name = await session.scalar(
+                select(PaymentMethod.name).where(
+                    PaymentMethod.project_id == project_id,
+                    PaymentMethod.id == request.payment_method_id,
+                )
+            )
         names = {
             "waiting_confirmation": tr("Ожидает оплату", "Awaiting payment"),
             "waiting_review": tr("Чек на проверке", "Receipt under review"),
@@ -552,9 +564,11 @@ def create_owner_setup_router(
             + tr("№ ", "Ref ") + request.id.hex[:10].upper() + "\n"
             + tr("🕒 Создан: ", "🕒 Created: ")
             + f"{ends:%d.%m.%Y %H:%M} ({escape(project.timezone)})\n"
-            + tr("📦 Срок: ", "📦 Period: ")
+            + tr("📦 Тариф: ", "📦 Plan: ") + escape(plan_name or "—") + "\n"
+            + tr("📅 Срок: ", "📅 Period: ")
             + escape(format_period(request.duration_value, request.duration_unit)) + "\n"
-            + "💳 <b>" + escape(format_amount(request.final_amount, 18))
+            + tr("💳 Способ: ", "💳 Method: ") + escape(method_name or "—") + "\n"
+            + "💰 <b>" + escape(format_amount(request.final_amount, 18))
             + " " + escape(request.currency_code) + "</b>\n"
             + tr("Статус: ", "Status: ") + escape(status),
             parse_mode="HTML",
