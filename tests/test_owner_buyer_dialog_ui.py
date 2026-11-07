@@ -1,6 +1,5 @@
 """Telegram support conversations are two-way, private and tenant scoped."""
 from contextlib import asynccontextmanager
-from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
