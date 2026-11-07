@@ -5,15 +5,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+from test_owner_subscribers_ui import _bot, _buttons, _callbacks, _detail, _query
+
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     ManualPlanItem,
     SubscriberSubscription,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
-from test_owner_subscribers_ui import _bot, _buttons, _callbacks, _detail, _query
-
-
 async def test_ban_needs_confirmation_and_is_owner_only(monkeypatch):
     project, customer, resource = uuid4(), uuid4(), uuid4()
     cb, _ = _callbacks(monkeypatch, project)
