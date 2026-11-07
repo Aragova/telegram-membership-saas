@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from html import escape
@@ -81,13 +80,6 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
     is_admin_message,
     parse_buyer_notification,
 )
-from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
-    notify_support_of_buyer_reply,
-)
-from telegram_membership_saas.modules.owner_setup.moderators import (
-    list_project_moderators,
-    set_project_moderator,
-)
 from telegram_membership_saas.modules.owner_setup.currencies import (
     enable_owner_currency,
 )
@@ -105,6 +97,13 @@ from telegram_membership_saas.modules.owner_setup.method_management import (
     detach_owner_method_currency,
     edit_owner_method_instructions,
     rename_owner_method,
+)
+from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
+    notify_support_of_buyer_reply,
+)
+from telegram_membership_saas.modules.owner_setup.moderators import (
+    list_project_moderators,
+    set_project_moderator,
 )
 from telegram_membership_saas.modules.owner_setup.network_profiles import (
     get_project_import_status,
