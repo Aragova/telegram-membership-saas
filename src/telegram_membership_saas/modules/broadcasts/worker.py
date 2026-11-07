@@ -20,7 +20,7 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from aiogram.types import MessageEntity
+from aiogram.types import InputMediaPhoto, InputMediaVideo, MessageEntity
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -44,6 +44,22 @@ async def _send_post(bot: Bot, *, user_id: int, content) -> None:
         [MessageEntity.model_validate(e) for e in content.entities]
         if content.entities else None
     )
+    if content.kind == "album":
+        items = content.media_items or []
+        if not 2 <= len(items) <= 10:
+            raise ValueError("Invalid stored broadcast album")
+        media = []
+        for index, item in enumerate(items):
+            if item.get("type") not in ("photo", "video") or not item.get("file_id"):
+                raise ValueError("Invalid stored album element")
+            media_type = InputMediaPhoto if item["type"] == "photo" else InputMediaVideo
+            fields = {"media": item["file_id"]}
+            if index == 0 and content.text:
+                fields["caption"] = content.text
+                fields["caption_entities"] = entities
+            media.append(media_type(**fields))
+        await bot.send_media_group(chat_id=user_id, media=media)
+        return
     if content.kind == "text":
         await bot.send_message(
             chat_id=user_id, text=content.text or "", entities=entities,
@@ -200,7 +216,7 @@ async def deliver_broadcast_once(
                 BroadcastAudience.telegram_user_id == user_id,
                 BroadcastAudience.last_started_at <= claimed_at,
             ).values(status="blocked", blocked_at=datetime.now(UTC)))
-    return True
+    return len(campaign.media_items or []) if campaign.kind == "album" else True
 
 
 async def run_broadcast_loop(
@@ -219,4 +235,6 @@ async def run_broadcast_loop(
         except Exception:
             logger.exception("Broadcast delivery iteration failed")
             sent = False
-        await asyncio.sleep(ACTIVE_SECONDS if sent else IDLE_SECONDS)
+        # A Telegram album contains several actual messages in one API call.
+        # Keep the per-bot average at no more than 2 messages per second.
+        await asyncio.sleep(ACTIVE_SECONDS * sent if sent else IDLE_SECONDS)
