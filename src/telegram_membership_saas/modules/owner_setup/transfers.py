@@ -7,6 +7,7 @@ fresh token for the SAME bot and be admin of attached channels.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from secrets import compare_digest
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -15,12 +16,17 @@ from pydantic import SecretStr
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
-from telegram_membership_saas.modules.bots.service import encrypt_token, verify_telegram_bot
+from telegram_membership_saas.modules.bots.service import (
+    decrypt_token,
+    encrypt_token,
+    verify_telegram_bot,
+)
 from telegram_membership_saas.modules.entitlements.models import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -204,16 +210,32 @@ async def _verify_recipient_channel_admin(
             Project.owner_user_id == transfer.from_user_id,
             Project.status == ProjectStatus.ACTIVE.value,
         ))
-        bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+        bot_row = await session.scalar(select(BotInstance).where(
             BotInstance.project_id == transfer.project_id,
             BotInstance.status == BotInstanceStatus.REGISTERED.value,
         ))
+        bot_id = bot_row.telegram_bot_id if bot_row else None
+        installed_cipher = bot_row.token_ciphertext if bot_row else None
         chats = (await session.scalars(select(Resource.external_id).where(
             Resource.project_id == transfer.project_id,
             Resource.status == ResourceStatus.ACTIVE.value,
         ))).all()
     if project is None or bot_id != transfer.bot_id or not chats:
         raise ValueError("Подключение или привязанные каналы изменились")
+    if installed_cipher is None:
+        raise ValueError("Нет установленного токена бота")
+    try:
+        previous_token = decrypt_token(
+            installed_cipher, key=get_settings().bot_token_encryption_key,
+        )
+    except Exception:
+        raise ValueError(
+            "Сохранённый токен нельзя проверить. Восстановите подключение."
+        ) from None
+    if compare_digest(previous_token, token):
+        raise ValueError(
+            "Нельзя использовать прежний токен. Выпустите новый в @BotFather."
+        )
     try:
         client = Bot(token=token)
         try:
