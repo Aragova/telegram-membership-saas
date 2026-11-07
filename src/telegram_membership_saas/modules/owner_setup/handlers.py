@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from html import escape
 from secrets import randbelow
+from time import monotonic
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -14,7 +15,6 @@ from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
-    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -68,8 +68,11 @@ from telegram_membership_saas.modules.owner_setup.connection_management import (
 )
 from telegram_membership_saas.modules.owner_setup.conversations import (
     ADMIN_MESSAGE_HEADER,
+    ADMIN_MESSAGE_HEADER_EN,
     BUYER_MESSAGE_HEADER,
+    BUYER_MESSAGE_HEADER_EN,
     BUYER_REPLY_PROMPT,
+    BUYER_REPLY_PROMPT_EN,
     MAX_DIALOG_TEXT,
     customer_ref,
     find_buyer_conversation,
@@ -311,16 +314,26 @@ class SetupReplyFilter(BaseFilter):
 
 
 class BuyerConversationReplyFilter(BaseFilter):
-    """Only replies to actual messages from this bot, not arbitrary user text."""
+    """Accept an authentic bot reply or the next message after Reply was tapped.
+
+    A pending single-message window replaces ForceReply: Telegram's native
+    reply composer cannot be reliably dismissed by Bot API messages.
+    """
+
+    def __init__(self, pending_until: dict[int, float] | None = None) -> None:
+        self.pending_until = pending_until if pending_until is not None else {}
 
     async def __call__(self, message: Message, bot: Bot) -> bool:
         if not _private(message) or not message.text or message.text.startswith("/"):
             return False
         parent = message.reply_to_message
-        return bool(
-            parent and parent.from_user and parent.from_user.id == bot.id
-            and is_admin_message(parent.text)
-        )
+        if parent is not None:
+            # Never consume a checkout receipt or an unrelated quoted message.
+            return bool(
+                parent.from_user and parent.from_user.id == bot.id
+                and is_admin_message(parent.text)
+            )
+        return self.pending_until.get(message.from_user.id, 0) > monotonic()
 
 
 class OwnerConversationReplyFilter(BaseFilter):
@@ -419,6 +432,9 @@ def create_owner_setup_router(
     ] | None = None,
 ) -> Router:
     router = Router(name="owner-tenant" if fixed_project_id else "central-registrar")
+    # One reply at a time per buyer inside this connected bot. No sticky
+    # Telegram ForceReply UI, no new database/migration.
+    pending_buyer_replies: dict[int, float] = {}
     router.callback_query.middleware(
         ClearOwnerInputOnNavigation(factory, fixed_project_id),
     )
@@ -2326,18 +2342,23 @@ def create_owner_setup_router(
         )
 
     async def send_to_customer(bot: Bot, target_id: int, text: str) -> None:
-        """Keep reply route available on every outbound owner text."""
-        await bot.send_message(
-            target_id,
-            ADMIN_MESSAGE_HEADER + "\n\n" + text
-            + "\n\n↩️ Ответьте на сообщение или нажмите кнопку."
-            + "\nReply to this message or tap the button.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="↩️ Ответить / Reply", callback_data="chat:reply",
+        """Use the *buyer's* language for a new one-to-one support message."""
+        async with recipient_language(factory, target_id):
+            await bot.send_message(
+                target_id,
+                tr(ADMIN_MESSAGE_HEADER, ADMIN_MESSAGE_HEADER_EN)
+                + "\n\n" + text
+                + "\n\n" + tr(
+                    "↩️ Ответьте на это сообщение или нажмите кнопку.",
+                    "↩️ Reply to this message or tap the button.",
                 ),
-            ]]),
-        )
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text=tr("↩️ Ответить", "↩️ Reply"),
+                        callback_data="chat:reply",
+                    ),
+                ]]),
+            )
 
     @router.callback_query(F.data == "chat:reply")
     async def buyer_reply_button(query: CallbackQuery, bot: Bot) -> None:
@@ -2357,26 +2378,48 @@ def create_owner_setup_router(
                 "Обращение недоступно.", "Messaging is unavailable.",
             ), show_alert=True)
             return
+        pending_buyer_replies[query.from_user.id] = monotonic() + 180
         await query.answer()
         await bot.send_message(
             query.from_user.id,
-            BUYER_REPLY_PROMPT
+            tr(BUYER_REPLY_PROMPT, BUYER_REPLY_PROMPT_EN)
             + "\n\n"
             + tr(
-                "Введите сообщение администратору (до 3500 символов).",
-                "Type your reply to the administrator (up to 3500 characters).",
+                "Напишите ответ следующим сообщением (до 3500 символов). "
+                "После отправки обычное поле ввода восстановится. "
+                "Режим действует 3 минуты.",
+                "Send your reply as the next message (up to 3500 characters). "
+                "The normal input field stays available. "
+                "This mode expires in 3 minutes.",
             ),
-            reply_markup=ForceReply(
-                input_field_placeholder=tr(
-                    "Ответ администратору", "Reply to administrator",
-                ),
-            ),
+            reply_markup=_markup([[
+                _button(tr("✖️ Отмена", "✖️ Cancel"), "chat:cancel"),
+            ]]),
         )
 
-    @router.message(BuyerConversationReplyFilter())
+    @router.callback_query(F.data == "chat:cancel")
+    async def buyer_cancel_reply(query: CallbackQuery, bot: Bot) -> None:
+        if (
+            fixed_project_id is None or query.message is None
+            or query.message.chat.type != "private"
+            or query.message.chat.id != query.from_user.id
+        ):
+            await query.answer()
+            return
+        pending_buyer_replies.pop(query.from_user.id, None)
+        await query.answer(tr("Отменено", "Canceled"))
+        await bot.send_message(
+            query.from_user.id,
+            tr("✖️ Ответ отменён.", "✖️ Reply canceled."),
+        )
+
+    @router.message(BuyerConversationReplyFilter(pending_buyer_replies))
     async def buyer_conversation_reply(message: Message, bot: Bot) -> None:
         if fixed_project_id is None:
             return
+        # Consume the one-shot window. The next ordinary message will not
+        # be intercepted after this reply, including checkout interactions.
+        pending_buyer_replies.pop(message.from_user.id, None)
         info = await find_buyer_conversation(
             factory, project_id=fixed_project_id,
             telegram_id=message.from_user.id,
@@ -2397,32 +2440,50 @@ def create_owner_setup_router(
         identity = ("@" + info.username) if info.username else (
             info.first_name or str(info.customer_telegram_id)
         )
-        title = BUYER_MESSAGE_HEADER + customer_ref(info)
-        notify = (
-            title + "\n👤 " + identity[:70]
-            + " · ID " + str(info.customer_telegram_id)
-            + "\n\n" + body
-        )
         try:
-            await bot.send_message(
-                info.owner_telegram_id, notify,
-                reply_markup=_markup([[
-                    _button(
-                        tr("✉️ Ответить", "✉️ Reply"),
-                        "submsg:" + encode_uuid(info.customer_id),
-                    ),
-                    _button(
-                        tr("👤 Карточка", "👤 Customer card"),
-                        "subscriber:" + encode_uuid(info.customer_id),
-                    ),
-                ]]),
-            )
+            # Owner's language can differ from buyer's language.
+            async with recipient_language(factory, info.owner_telegram_id):
+                title = tr(BUYER_MESSAGE_HEADER, BUYER_MESSAGE_HEADER_EN)
+                notify = (
+                    title + customer_ref(info) + "\n👤 " + identity[:70]
+                    + " · ID " + str(info.customer_telegram_id)
+                    + "\n\n" + body
+                )
+                await bot.send_message(
+                    info.owner_telegram_id, notify,
+                    reply_markup=_markup([[
+                        _button(
+                            tr("✉️ Ответить", "✉️ Reply"),
+                            "submsg:" + encode_uuid(info.customer_id),
+                        ),
+                        _button(
+                            tr("👤 Карточка", "👤 Customer card"),
+                            "subscriber:" + encode_uuid(info.customer_id),
+                        ),
+                    ]]),
+                )
         except AiogramError:
             await bot.send_message(message.chat.id, tr(
                 "⚠️ Не удалось передать сообщение администратору.",
                 "⚠️ The message could not be delivered to the administrator.",
             ))
             return
+        # Legacy prompts forced a native quote UI. Removing the bot's
+        # old prompt may clear it in Telegram clients, but is best-effort.
+        parent = message.reply_to_message
+        if (
+            parent is not None and parent.from_user
+            and parent.from_user.id == bot.id
+            and parent.text
+            and parent.text.split("\n", 1)[0] in (
+                BUYER_REPLY_PROMPT, BUYER_REPLY_PROMPT_EN,
+            )
+            and getattr(parent, "message_id", None) is not None
+        ):
+            try:
+                await bot.delete_message(message.chat.id, parent.message_id)
+            except AiogramError:
+                pass
         await bot.send_message(message.chat.id, tr(
             "✅ Ответ отправлен администратору.",
             "✅ Your reply has been sent to the administrator.",
