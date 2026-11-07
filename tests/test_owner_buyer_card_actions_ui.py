@@ -174,7 +174,7 @@ async def test_older_manual_activation_can_be_revoked_from_page_four(monkeypatch
     ask = "own:sra:" + cid + ":" + aid + ":4"
     confirm = "own:srk:" + cid + ":" + aid + ":4"
     assert ask in actions
-    assert "own:subcancel:" + cid + ":3" in actions
+    assert "own:subcancel:" + cid + ":0:3" in actions
     assert all(len(action.encode()) <= 64 for action in actions)
     await cb(_query(ask.removeprefix("own:")), bot)
     assert confirm in _buttons(bot)
