@@ -182,3 +182,74 @@ async def test_owner_moderators_settings_and_remove_confirmation(monkeypatch):
     remove.assert_awaited_once()
     assert remove.await_args.kwargs["actor_id"] == owner
     assert remove.await_args.kwargs["enabled"] is False
+
+
+async def test_mod_command_abandons_old_reply_target(monkeypatch):
+    project, buyer = uuid4(), _buyer()
+    monkeypatch.setattr(mod_ui, "ensure_telegram_actor", AsyncMock(
+        return_value=uuid4(),
+    ))
+    monkeypatch.setattr(mod_ui, "can_use_moderator_panel", AsyncMock(
+        return_value=True,
+    ))
+    monkeypatch.setattr(mod_ui, "find_moderator_customer", AsyncMock(
+        return_value=buyer,
+    ))
+    router = _router(project)
+    cb = _callback(router)
+    bot = _bot()
+    composing = next(h for h in router.message.handlers
+                     if h.callback.__name__ == "moderator_compose")
+    filt = composing.filters[0].callback
+    message = SimpleNamespace(
+        text="Отправить это не надо",
+        chat=SimpleNamespace(type="private", id=123),
+        from_user=SimpleNamespace(
+            id=123, username="mod", first_name="Moderator",
+        ),
+        reply_to_message=None,
+    )
+    await cb(_query_mod("compose:" + encode_uuid(buyer.id)), bot)
+    assert await filt(message)
+    command = next(h.callback for h in router.message.handlers
+                   if h.callback.__name__ == "moderator_command")
+    message.text = "/mod"
+    await command(message, bot)
+    message.text = "Отправить это не надо"
+    assert not await filt(message)
+
+
+async def test_customer_card_allows_owner_only_moderator_change(monkeypatch):
+    project, customer, resource = uuid4(), uuid4(), uuid4()
+    from test_owner_subscribers_ui import _detail
+
+    cb, owner = _callbacks(monkeypatch, project)
+    card = _detail(customer, resource)
+    monkeypatch.setattr(owner_ui, "subscriber_detail", AsyncMock(
+        return_value=card,
+    ))
+    toggle = AsyncMock(return_value=True)
+    monkeypatch.setattr(owner_ui, "set_project_moderator", toggle)
+    bot = _bot()
+    cid = encode_uuid(customer)
+    await cb(_query("subscriber:" + cid), bot)
+    assert "own:submod:" + cid in _buttons(bot)
+    await cb(_query("submod:" + cid), bot)
+    assert "own:submodconfirm:" + cid + ":1" in _buttons(bot)
+    assert "own:submodconfirm:" + cid + ":0" in _buttons(bot)
+    toggle.assert_not_awaited()
+    await cb(_query("submodconfirm:" + cid + ":1"), bot)
+    toggle.assert_awaited_once()
+    assert toggle.await_args.kwargs["actor_id"] == owner
+    assert toggle.await_args.kwargs["telegram_id"] == card.telegram_id
+    assert toggle.await_args.kwargs["enabled"] is True
+
+    from dataclasses import replace
+
+    owner_ui.subscriber_detail.return_value = replace(
+        card, owner_only_actions=False,
+    )
+    req = _query("submodconfirm:" + cid + ":0")
+    await cb(req, bot)
+    assert req.answer.await_args.kwargs["show_alert"]
+    assert toggle.await_count == 1
