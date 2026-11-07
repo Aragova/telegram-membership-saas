@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 from aiogram import Bot
 from pydantic import SecretStr
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
@@ -345,16 +345,13 @@ async def finalize_transfer(
         )
         bot.token_ciphertext = item.encrypted_new_token
         await session.flush()
-        # SQL UPDATE without RETURNING: old owner stops seeing the project
-        # under FORCE RLS as soon as the ownership change is committed.
-        result = await session.execute(
-            update(Project)
-            .where(Project.id == project_id, Project.owner_user_id == actor_id)
-            .values(owner_user_id=item.to_user_id)
-            .execution_options(synchronize_session=False)
-        )
-        if result.rowcount != 1:
-            raise RuntimeError("Владелец изменился. Передача отменена")
+        # A normal UPDATE is forbidden by projects FORCE RLS as soon as
+        # the old owner stops being able to SELECT the changed row. Only
+        # this narrowly privileged DB function performs the final update,
+        # revalidates both participants and consumes the consent record.
+        await session.execute(text(
+            "SELECT public.complete_bot_ownership_transfer(:pid, :tid)"
+        ), {"pid": project_id, "tid": transfer_id})
         # Merchant SECURITY DEFINER project trigger atomically closes the
         # old owner's historical period, opens the new one, and consumes the
         # ACCEPTED transfer (clearing the encrypted pending token).
