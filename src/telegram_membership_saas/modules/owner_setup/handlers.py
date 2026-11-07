@@ -66,12 +66,6 @@ from telegram_membership_saas.modules.owner_setup.connection_management import (
     rename_owner_connection,
     restore_owner_connection,
 )
-from telegram_membership_saas.modules.owner_setup.currencies import (
-    enable_owner_currency,
-)
-from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
-    parse_customer_command,
-)
 from telegram_membership_saas.modules.owner_setup.conversations import (
     ADMIN_MESSAGE_HEADER,
     BUYER_MESSAGE_HEADER,
@@ -81,6 +75,12 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
     find_buyer_conversation,
     is_admin_message,
     parse_buyer_notification,
+)
+from telegram_membership_saas.modules.owner_setup.currencies import (
+    enable_owner_currency,
+)
+from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
+    parse_customer_command,
 )
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
