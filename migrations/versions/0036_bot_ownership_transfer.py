@@ -173,11 +173,40 @@ def upgrade() -> None:
                           WHERE bot.project_id = OLD.id
                             AND bot.telegram_bot_id = t.telegram_bot_id
                             AND bot.status = 'registered'
+                            AND bot.token_ciphertext = t.encrypted_new_token
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM public.payment_methods method
+                          WHERE method.project_id = OLD.id AND method.status = 'active'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM public.payment_requests request
+                          WHERE request.project_id = OLD.id
+                            AND request.status IN ('waiting_confirmation', 'waiting_review')
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM public.entitlement_grants grant_row
+                          WHERE grant_row.project_id = OLD.id
+                            AND grant_row.source = 'owner_service'
+                            AND grant_row.status = 'active'
                       )
                     ORDER BY t.created_at DESC LIMIT 1 FOR UPDATE;
                     IF approved IS NULL THEN
-                        RAISE EXCEPTION 'Verified dual-consent transfer required'
+                        RAISE EXCEPTION 'Verified dual-consent transfer and liability checks required'
                             USING ERRCODE = '42501';
+                    END IF;
+                    IF EXISTS(
+                        SELECT 1 FROM public.platform_owner_bot_limits lim
+                        WHERE lim.owner_user_id = NEW.owner_user_id
+                        AND (
+                            SELECT COUNT(*) FROM public.bot_instances b
+                            JOIN public.projects p ON p.id = b.project_id
+                            WHERE p.owner_user_id = NEW.owner_user_id
+                              AND b.status = 'registered'
+                        ) > lim.max_connected_bots
+                    ) THEN
+                        RAISE EXCEPTION 'Recipient connected-bot quota exceeded'
+                            USING ERRCODE = 'P6701';
                     END IF;
                     UPDATE public.merchant_project_periods
                     SET ended_at = GREATEST(now(), started_at)
