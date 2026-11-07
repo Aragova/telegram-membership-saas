@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments import PaymentRequest, PaymentRequestStatus
@@ -16,9 +16,7 @@ from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.projects import (
     Project, ProjectMember, ProjectMemberRole, ProjectStatus,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import (
-    checkout_retirement_lock,
-)
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 
@@ -316,3 +314,21 @@ async def set_moderated_customer_ban(
             reason="Решение модератора: новые счета/чеки запрещены; оплаченный доступ сохранён",
         ))
         return True
+
+
+async def project_support_recipients(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+) -> tuple[int, ...]:
+    """Trusted project worker notification; no access token is embedded."""
+    async with system_project_session_scope(factory, project_id) as session:
+        rows = (await session.scalars(
+            select(TelegramUser.telegram_user_id)
+            .join(ProjectMember, ProjectMember.user_id == TelegramUser.id)
+            .join(Project, Project.id == ProjectMember.project_id)
+            .where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.role == ProjectMemberRole.SUPPORT.value,
+                Project.status == ProjectStatus.ACTIVE.value,
+            )
+        )).all()
+        return tuple(rows)
