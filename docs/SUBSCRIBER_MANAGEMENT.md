@@ -119,3 +119,30 @@ Manual grants recheck bot-retirement state under the existing checkout-retiremen
   invoice detail. Actual payment review remains in the original safe path.
 - UI RU/EN. No schema migration. Roll out the customer-supervisor only
   after exact-head checks, review, approval and staging tests.
+
+
+## One-tap customer command in invoice alerts
+
+- New **invoice created** notifications show the stable customer command directly
+  next to the customer's username/first name, e.g. `👤 @buyer · /u3tz8ab`.
+  Telegram recognizes slash commands as tappable bot commands; tapping sends it
+  to that *same connected bot*. No search or intermediate invoice menu is needed.
+- The duplicate **Subscriber** and **Invoice** inline buttons are removed from
+  new invoice notifications. Their original customer-card/invoice-history
+  pages remain available from the subscriber directory and card.
+- For new invoices the compact `/u...` reference is reversible base36 of the
+  Telegram numeric user ID. For *already queued* notifications missing that
+  historical field, `/c...` is a canonical base32 UUID reference.
+  Neither is a bearer credential or financial authorization.
+- The command handler only accepts a canonical ID in a private chat and only
+  in that connected project's bot. It verifies an actual project manager and
+  resolves an exact `ProjectCustomer` under tenant RLS. A central-bot,
+  unrelated-project, unauthorized or missing buyer lookup never reveals the
+  customer. Manual and paid access controls are unchanged.
+- No schema migration and no change to invoice, payment, subscription or access
+  writes. Previously sent Telegram messages retain their old inline buttons;
+  new notifications use the compact command format.
+- Verify on staging with a **test invoice** from a test customer. Tap its
+  `/u...` code from the owner's Telegram client; ensure it opens the card
+  directly, with `🧾 История счетов` inside. Verify a non-manager cannot open
+  it even if they know the command, and other project bots cannot resolve it.

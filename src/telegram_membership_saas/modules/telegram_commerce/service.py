@@ -427,6 +427,7 @@ async def create_checkout_for_telegram_user(
                 project_id=project_id,
                 request_id=request.id,
                 customer_id=customer.id,
+                customer_telegram_id=user.telegram_user_id,
                 username=user.username,
                 first_name=user.first_name,
                 plan_name=option.plan_name,

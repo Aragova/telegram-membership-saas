@@ -173,6 +173,32 @@ def _search_predicate(text: str):
     )
 
 
+async def customer_id_by_telegram_id(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, telegram_id: int,
+) -> UUID:
+    """Resolve a short command only inside an authorized manager's tenant."""
+    if not 0 < telegram_id <= 2**63 - 1:
+        raise ValueError("Invalid Telegram ID")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        customer_id = await session.scalar(
+            select(ProjectCustomer.id)
+            .join(TelegramUser, TelegramUser.id == ProjectCustomer.user_id)
+            .where(
+                ProjectCustomer.project_id == project_id,
+                TelegramUser.telegram_user_id == telegram_id,
+            )
+        )
+        if customer_id is None:
+            raise ValueError("Подписчик не найден в этом боте")
+        return customer_id
+
+
 async def list_subscribers(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, page: int = 0,
