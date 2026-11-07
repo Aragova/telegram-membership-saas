@@ -151,6 +151,7 @@ def create_moderator_router(
     async def moderator_command(message: Message, bot: Bot) -> None:
         if message.chat.type != "private":
             return
+        pending.pop(message.from_user.id, None)
         allowed = await render_moderator_menu_if_allowed(
             bot, message.from_user, factory, project_id,
         )
