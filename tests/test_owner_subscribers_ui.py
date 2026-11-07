@@ -277,7 +277,7 @@ async def test_subscriber_statuses_ru_en_and_buttons_are_translated(monkeypatch)
                 for b in row
             ]
             assert any(
-                ("Grant manual access" if language == "en" else "Выдать ручной доступ")
+                ("Activate" if language == "en" else "Активировать")
                 in label for label in labels
             )
             if language == "en":
