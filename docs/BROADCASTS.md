@@ -9,9 +9,14 @@ Only inside an administrator's own **connected bot**:
   (`t.me/...`), rich text entities and links.
 - ↪️ Forward an existing text/photo/video/document/animation message to
   the same bot. Copy its body, caption, UTF-16 Telegram entities and media
-  `file_id` into an independently reusable template. A protected message
-  is rejected. One message per template; a multi-message media album is
-  explicitly rejected instead of silently dropping files.
+  `file_id` into an independently reusable template. Protected posts
+  are rejected. Telegram photo/video albums (2–10 items) are supported as
+  **one saved post** with a single optional caption and media in message order.
+  Each album arrives as separate updates; the editor waits 1.5 seconds after
+  the last update before saving it, so the admin gets one preview/error.
+  An in-flight batch may need to be resent if the supervisor restarts during
+  that collection window. Documents, GIFs, text and single media remain
+  supported exactly as before.
 - Each saved post has a preview, **send-to-all confirmation**, replace
   content, rename and remove-from-library controls. Removing a saved post
   does not change past campaign snapshots or the delivery journal.
@@ -84,3 +89,20 @@ confirmation, so fresh /start events join **subsequent campaigns**.
 
 No production changes, SaaS fees, new payment methods, file-store services,
 S3, multimedia downloads or broad permission changes.
+
+## Album enhancement (PR after stage 1)
+
+- Migration `0033_broadcast_media_albums` adds optional JSON media-element lists to
+  saved posts and immutable campaign snapshots. Existing media and delivery
+  rows are unchanged; no data is removed. Downgrade is intentionally blocked
+  while album records exist rather than deleting financial/delivery evidence.
+- A caption and its Telegram entities are preserved, then sent with the first
+  photo/video in the group using `sendMediaGroup`. Duplicate messages
+  and unsupported/broken album formats are rejected as a single batch.
+- The broadcast worker spaces recipient sends by the number of media elements
+  (2 elements per second average, before Telegram retry-after cooldown).
+  Delivery status remains per recipient, not per attachment. A Telegram
+  group-send timeout can have an uncertain outcome: it is never retried
+  automatically to avoid duplicate marketing posts.
+- Verify on staging using test users before live broadcasts. Test mixed
+  photo+video albums, rich caption, preview, save/edit, repeat and progress.
