@@ -133,6 +133,7 @@ def create_broadcast_router(
                 post = await save_from_message(
                     factory, project_id=project_id, actor_id=actor,
                     telegram_bot_id=bot.id, album=messages,
+                    expected_draft=batch["draft"],
                 )
                 await bot.send_message(
                     key[1], tr("✅ Альбом сохранён.", "✅ Album saved."),
@@ -462,7 +463,12 @@ def create_broadcast_router(
             return
         if message.media_group_id:
             key = (bot.id, message.chat.id, str(message.media_group_id))
-            batch = album_inbox.setdefault(key, {"messages": {}, "task": None})
+            batch = album_inbox.setdefault(
+                key, {
+                    "messages": {}, "task": None,
+                    "draft": (draft.mode, draft.template_id, draft.expires_at),
+                },
+            )
             batch["messages"][message.message_id] = message
             previous = batch["task"]
             if previous is not None:
