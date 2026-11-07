@@ -1,4 +1,5 @@
 """Buyer card actions: safe dialogs, role checks and no fake payment events."""
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -108,6 +109,14 @@ async def test_cancel_paid_subscription_has_explicit_confirmation(monkeypatch):
 
 
 async def test_owner_message_targets_one_verified_customer(monkeypatch):
+    from telegram_membership_saas.localization import recipient_language
+
+    @asynccontextmanager
+    async def locale(factory, telegram_id):
+        async with recipient_language(None, telegram_id):
+            yield
+
+    monkeypatch.setattr(ui, "recipient_language", locale)
     project, customer, resource = uuid4(), uuid4(), uuid4()
     cb, owner = _callbacks(monkeypatch, project)
     monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(
