@@ -141,11 +141,15 @@ from telegram_membership_saas.modules.owner_setup.subscribers import (
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     MANUAL_DURATIONS,
     SUBSCRIBER_PAGE_SIZE,
+    activate_manual_plan,
     customer_id_by_telegram_id,
     grant_manual_access,
+    list_activatable_plans,
     list_subscriber_invoices,
     list_subscribers,
     revoke_manual_access,
+    revoke_manual_plan,
+    set_customer_ban,
     subscriber_detail,
 )
 from telegram_membership_saas.modules.owner_setup.tenant_admin import (
@@ -1226,6 +1230,8 @@ def create_owner_setup_router(
             "", tr("🧾 Счетов: ", "🧾 Invoices: ") + str(data.total_invoices)
             + tr(" · незавершённых: ", " · unfinished: ")
             + str(data.pending_invoices),
+            ("🚫 " + tr("Заблокирован", "Banned") if data.is_banned
+             else "✅ " + tr("Не заблокирован", "Not banned")),
         ])
         lines.extend(["", tr("🔑 <b>Основания доступа</b>",
                              "🔑 <b>Access grants</b>")
@@ -1259,10 +1265,29 @@ def create_owner_setup_router(
                     mark + " " + escape(entry.resource_name[:35])
                     + " · " + escape(access_label)
                 )
-        rows: list[list[InlineKeyboardButton]] = [[_button(
+        rows: list[list[InlineKeyboardButton]] = []
+        if data.owner_only_actions:
+            cid_ref = encode_uuid(customer_id)
+            rows.extend([
+                [_button(tr("✉️ Написать сообщение", "✉️ Send message"),
+                         "submsg:" + cid_ref)],
+                [
+                    _button(tr("🔑 Активировать", "🔑 Activate"),
+                            "subactivate:" + cid_ref, "success"),
+                    _button(tr("🗑 Аннулировать", "🗑 Revoke"),
+                            "subcancel:" + cid_ref, "danger"),
+                ],
+                [_button(
+                    tr("✅ Разблокировать", "✅ Unban") if data.is_banned
+                    else tr("🚫 Заблокировать", "🚫 Ban"),
+                    "subbanask:" + cid_ref + (":0" if data.is_banned else ":1"),
+                    "success" if data.is_banned else "danger",
+                )],
+            ])
+        rows.append([_button(
             tr("🧾 История счетов", "🧾 Invoice history"),
             "subinvoices:" + encode_uuid(customer_id) + ":0",
-        )]]
+        )])
         if data.total_payments > 5:
             nav: list[InlineKeyboardButton] = []
             if history_page:
@@ -1293,21 +1318,6 @@ def create_owner_setup_router(
                 ))
             if grant_nav:
                 rows.append(grant_nav)
-        if data.owner_only_actions:
-            rows.append([_button(
-                tr("➕ Выдать ручной доступ", "➕ Grant manual access"),
-                "subgrantstart:" + encode_uuid(customer_id), "success",
-            )])
-            for grant in data.grants:
-                if grant.source == "manual":
-                    rows.append([_button(
-                        tr("🗑 Отозвать ручной доступ · ",
-                           "🗑 Revoke manual access · ")
-                        + grant.resource_name[:25],
-                        "subrevoke:" + encode_uuid(customer_id)
-                        + ":" + encode_uuid(grant.id)
-                        + ":" + str(grant_page), "danger",
-                    )])
         rows.append([_button(
             tr("🔄 Обновить карточку", "🔄 Refresh"),
             "subscriber:" + encode_uuid(customer_id),
