@@ -54,6 +54,11 @@ class EntitlementGrant(Base):
             ["resources.id", "resources.project_id"],
             name="fk_entitlement_grants_resource_project",
         ),
+        ForeignKeyConstraint(
+            ["manual_plan_id", "project_id"],
+            ["plans.id", "plans.project_id"],
+            name="fk_entitlement_grants_manual_plan_project",
+        ),
         CheckConstraint(
             "source IN ('payment', 'manual', 'owner_service', 'promocode', 'trial', "
             "'referral', 'import', 'compensation')",
@@ -88,6 +93,11 @@ class EntitlementGrant(Base):
     resource_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), index=True, nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     source_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    # Non-paid activation of a published plan; manual source and grant
+    # remain separate from Payment and Subscription accounting.
+    manual_plan_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True,
+    )
     status: Mapped[str] = mapped_column(
         String(16),
         default=EntitlementGrantStatus.ACTIVE.value,

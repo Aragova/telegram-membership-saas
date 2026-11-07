@@ -142,14 +142,18 @@ async def test_subscriber_card_has_history_and_owner_only_manual_actions(monkeyp
     assert "550.000000000000000000" not in text
     assert "Premium" in text
     assert "Channel" in text
-    assert "own:subgrantstart:" + encode_uuid(customer) in actions
-    assert any(x.startswith("own:subrevoke:") for x in actions)
+    cid = encode_uuid(customer)
+    assert "own:subactivate:" + cid in actions
+    assert "own:subcancel:" + cid in actions
+    assert "own:submsg:" + cid in actions
+    assert "own:subbanask:" + cid + ":1" in actions
 
     detail.return_value = _detail(customer, resource, owner=False)
     await cb(_query("subscriber:" + encode_uuid(customer)), bot)
     actions = _buttons(bot)
-    assert not any(x.startswith(("own:subgrantstart:", "own:subrevoke:"))
-                   for x in actions)
+    assert not any(x.startswith((
+        "own:subactivate:", "own:subcancel:", "own:submsg:", "own:subbanask:",
+    )) for x in actions)
     assert "own:subscribers" in actions
 
 
@@ -241,7 +245,7 @@ async def test_older_manual_grant_can_be_revoked_from_paginated_list(monkeypatch
     cid, gid = encode_uuid(customer), encode_uuid(target)
     await cb(_query("subgrantpage:" + cid + ":4"), bot)
     actions = _buttons(bot)
-    assert "own:subrevoke:" + cid + ":" + gid + ":4" in actions
+    assert "own:subcancel:" + cid in actions
     assert "own:subgrantpage:" + cid + ":3" in actions
     assert all(len(a.encode("utf-8")) <= 64 for a in actions)
     await cb(_query("subrevoke:" + cid + ":" + gid + ":4"), bot)
@@ -273,7 +277,7 @@ async def test_subscriber_statuses_ru_en_and_buttons_are_translated(monkeypatch)
                 for b in row
             ]
             assert any(
-                ("Grant manual access" if language == "en" else "Выдать ручной доступ")
+                ("Activate" if language == "en" else "Активировать")
                 in label for label in labels
             )
             if language == "en":

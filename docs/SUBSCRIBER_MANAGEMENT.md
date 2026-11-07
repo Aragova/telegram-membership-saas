@@ -146,3 +146,57 @@ Manual grants recheck bot-retirement state under the existing checkout-retiremen
   `/u...` code from the owner's Telegram client; ensure it opens the card
   directly, with `🧾 История счетов` inside. Verify a non-manager cannot open
   it even if they know the command, and other project bots cannot resolve it.
+
+## Buyer management completion — owner card actions
+
+The previous read-only card was not a full admin console. Keep the one-tap
+`/u...` buyer navigation; add the following real operations from the existing
+card, all **owner-only** and within that connected bot's project:
+
+- **Message customer** — use the existing bot-scoped 15-minute text wizard.
+  Only plain text, emoji and links are sent to the exact `ProjectCustomer`
+  Telegram ID; Telegram delivery errors are surfaced, without pretending
+  a message arrived. No message, receipt, or personal file archive is created.
+- **Ban / unban** — project-local `ProjectCustomer.is_banned`; a real
+  PostgreSQL migration (0034). Ban and checkout share an advisory transaction
+  lock to stop post-ban invoice races. The checkout service checks the ban
+  before creating an invoice, and both the receipt prompt and receipt
+  submission check it before forwarding evidence. The ban does not delete
+  confirmed Payments, Subscriptions or Entitlement Grants. It does not
+  forcibly kick a paying customer from their channel; owners can separately
+  resolve a paid subscription with appropriate refund handling.
+- **Activate plan** — select a published plan, then explicitly confirm.
+  This produces atomic manual grants for all active resources referenced
+  by the plan, with the plan's real calendar-period duration and timezone.
+  The `manual_plan_id` field on `entitlement_grants` retains the plan
+  provenance. This is a **complimentary entitlement**, not an approved
+  payment or a fake Subscription. Multiple source grants share one activation
+  UUID and are revoked as one unit. Duplicate active activation is rejected.
+  A separate single-channel grant action remains available in the picker.
+- **Revoke** — picker selects a particular active paid Subscription or
+  complimentary grant. Early ending of a paid subscription reuses the
+  pre-existing `end_owner_subscription` service and a strong confirmation,
+  preserves financial history, and warns about refunds outside ViMi Pay.
+  Free manual-plan activations and single-resource manual grants use their
+  respective targeted revocation functions. Different paid grants or owner
+  service rights remain unaffected.
+- **Existing invoice history, payments, refresh, directory and short customer
+  command** remain available, but are not duplicated across card screens.
+
+Moderator access and a full ownership transfer are **separate protected
+workflows**, not fake/inert card buttons. Moderator must define permissions
+and revocation; transfer must verify both account owners and the BotFather
+ownership boundary, preserve MerchantIdentity and all payment history,
+and never transfer a bot through an unconfirmed buyer callback.
+
+### Staging acceptance
+1. Merge only after exact-head CI and Codex review.
+2. Rebuild the app image with mounted migrations as in prior staging runs,
+   apply `0034_buyer_management`, then update only `customer-supervisor`
+   using `compose.light100.yaml`.
+3. Use a test customer: ban/unban, attempt invoice and receipt when banned,
+   send one private message, activate and revoke complimentary plan,
+   test confirmation of a paid subscription **only with test data**.
+4. Verify actual Payments/Subscriptions/Entitlement Grants are unchanged
+   by a ban or message; project isolation and 100-bot light configuration
+   remain intact.

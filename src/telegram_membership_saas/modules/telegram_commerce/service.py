@@ -386,6 +386,10 @@ async def create_checkout_for_telegram_user(
         project_id=project_id,
         user_id=user.id,
     )
+    # Serialize checkout with owner ban; no PaymentRequest for banned buyers.
+    await session.refresh(customer)
+    if customer.is_banned:
+        raise PermissionError("Владелец заблокировал покупки в этом боте")
     request = await create_payment_request(
         session,
         project_id=project_id,
@@ -495,6 +499,7 @@ async def require_awaiting_receipt_for_telegram_user(
     telegram_user_id: int,
 ) -> None:
     """Verify a receipt prompt belongs to the buyer without submitting the request."""
+    await checkout_retirement_lock(session, project_id)
     await _require_active_project(session, project_id)
     customer = await _customer_for_telegram_user(
         session,
@@ -503,6 +508,8 @@ async def require_awaiting_receipt_for_telegram_user(
     )
     if customer is None:
         raise PermissionError("Payment request does not belong to this Telegram user")
+    if customer.is_banned:
+        raise PermissionError("Владелец заблокировал отправку чеков")
     request = await session.scalar(
         select(PaymentRequest).where(
             PaymentRequest.id == request_id,
@@ -522,6 +529,7 @@ async def submit_checkout_for_telegram_user(
     request_id: UUID,
     telegram_user_id: int,
 ) -> SubmissionResult:
+    await checkout_retirement_lock(session, project_id)
     customer = await _customer_for_telegram_user(
         session,
         project_id=project_id,
@@ -529,6 +537,8 @@ async def submit_checkout_for_telegram_user(
     )
     if customer is None:
         raise PermissionError("Payment request does not belong to this Telegram user")
+    if customer.is_banned:
+        raise PermissionError("Владелец заблокировал отправку чеков")
 
     request = await session.scalar(
         select(PaymentRequest)

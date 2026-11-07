@@ -221,10 +221,11 @@ async def test_payment_request_requires_buyer_and_waiting_confirmation(monkeypat
     request_id = uuid4()
     customer_id = uuid4()
     monkeypatch.setattr(commerce_service, "_require_active_project", AsyncMock())
+    monkeypatch.setattr(commerce_service, "checkout_retirement_lock", AsyncMock())
     monkeypatch.setattr(
         commerce_service,
         "_customer_for_telegram_user",
-        AsyncMock(return_value=SimpleNamespace(id=customer_id)),
+        AsyncMock(return_value=SimpleNamespace(id=customer_id, is_banned=False)),
     )
     session = SimpleNamespace(
         scalar=AsyncMock(
