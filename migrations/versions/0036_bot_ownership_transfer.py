@@ -249,6 +249,70 @@ def upgrade() -> None:
     """)
 
 
+    # A plain tenant UPDATE is intentionally blocked by projects FORCE RLS:
+    # the old owner must not SELECT the row under its new owner after UPDATE.
+    # A narrow privileged function performs only the checked, consumed
+    # transfer and leaves the merchant history trigger in control.
+    op.execute(f"""
+        CREATE FUNCTION public.complete_bot_ownership_transfer(
+            target_project uuid, transfer_id uuid
+        ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public AS $transfer$
+        DECLARE
+            actor uuid := {USER};
+            scope uuid := {SCOPE};
+            project_owner uuid;
+            recipient uuid;
+        BEGIN
+            IF actor IS NULL OR scope IS DISTINCT FROM target_project THEN
+                RAISE EXCEPTION 'Transfer scope denied' USING ERRCODE = '42501';
+            END IF;
+            SELECT owner_user_id INTO project_owner
+            FROM public.projects
+            WHERE id = target_project AND status = 'active'
+            FOR UPDATE;
+            IF project_owner IS NULL OR project_owner IS DISTINCT FROM actor THEN
+                RAISE EXCEPTION 'Only the current owner can finalize'
+                    USING ERRCODE = '42501';
+            END IF;
+            SELECT to_user_id INTO recipient
+            FROM public.project_ownership_transfers
+            WHERE id = transfer_id AND project_id = target_project
+              AND from_user_id = actor AND status = 'accepted'
+              AND expires_at > now() AND encrypted_new_token IS NOT NULL
+            FOR UPDATE;
+            IF recipient IS NULL THEN
+                RAISE EXCEPTION 'Recipient consent missing' USING ERRCODE = '42501';
+            END IF;
+            -- merchant_track_project performs final token/payee/liability
+            -- checks, writes both historical owner periods and consumes
+            -- the accepted invitation in this same transaction.
+            UPDATE public.projects SET owner_user_id = recipient
+            WHERE id = target_project AND owner_user_id = actor;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'Project owner changed during transfer'
+                    USING ERRCODE = '42501';
+            END IF;
+        END $transfer$
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION public.complete_bot_ownership_transfer(uuid,uuid) "
+        "FROM PUBLIC"
+    )
+    op.execute("""
+        DO $
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_roles WHERE rolname = 'membership_runtime'
+            ) THEN
+                GRANT EXECUTE ON FUNCTION
+                    public.complete_bot_ownership_transfer(uuid,uuid)
+                TO membership_runtime;
+            END IF;
+        END $
+    """)
+
+
 def downgrade() -> None:
     # Completed transfers must retain immutable merchant history. A rollback
     # cannot silently erase the consent/ownership audit records.
@@ -291,6 +355,7 @@ def downgrade() -> None:
             RAISE EXCEPTION 'Invalid merchant project operation';
         END $merchant$
     """)
+    op.execute("DROP FUNCTION public.complete_bot_ownership_transfer(uuid,uuid)")
     op.execute("DROP TRIGGER trg_guard_project_ownership_transfer ON project_ownership_transfers")
     op.execute("DROP FUNCTION public.guard_project_ownership_transfer()")
     op.drop_index("ix_project_transfers_recipient", table_name="project_ownership_transfers")
