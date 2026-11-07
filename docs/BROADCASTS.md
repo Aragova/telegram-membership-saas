@@ -12,10 +12,13 @@ Only inside an administrator's own **connected bot**:
   `file_id` into an independently reusable template. Protected posts
   are rejected. Telegram photo/video albums (2–10 items) are supported as
   **one saved post** with a single optional caption and media in message order.
-  Each album arrives as separate updates; the editor waits 1.5 seconds after
-  the last update before saving it, so the admin gets one preview/error.
-  An in-flight batch may need to be resent if the supervisor restarts during
-  that collection window. Documents, GIFs, text and single media remain
+  Each album arrives as separate updates. After 1.5 seconds without a
+  new element, the editor offers **Save album / Discard album** and shows
+  the item count. It does NOT save partial albums automatically. Later
+  elements invalidate previous confirmation buttons and trigger a fresh
+  count prompt; the admin explicitly confirms the full group before it
+  consumes the draft. An unconfirmed batch may need to be resent if the
+  supervisor restarts. Documents, GIFs, text and single media remain
   supported exactly as before.
 - Each saved post has a preview, **send-to-all confirmation**, replace
   content, rename and remove-from-library controls. Removing a saved post
