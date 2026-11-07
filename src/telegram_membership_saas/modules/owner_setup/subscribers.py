@@ -24,9 +24,10 @@ from telegram_membership_saas.modules.entitlements import (
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments import Payment, PaymentRequest
-from telegram_membership_saas.modules.plans import Plan
+from telegram_membership_saas.modules.plans import Plan, PlanResource, PlanStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.subscriptions import Subscription, SubscriptionStatus
+from telegram_membership_saas.modules.subscriptions.service import calculate_period_end
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
@@ -62,6 +63,7 @@ class SubscriberSubscription:
     plan_name: str
     status: str
     period_end: datetime | None
+    id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +82,9 @@ class SubscriberGrant:
     resource_name: str
     source: str
     valid_until: datetime | None
+    source_id: UUID | None = None
+    manual_plan_id: UUID | None = None
+    manual_plan_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +135,16 @@ class SubscriberDetail:
     resources: tuple[tuple[UUID, str], ...]
     total_invoices: int = 0
     pending_invoices: int = 0
+    is_banned: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ManualPlanItem:
+    id: UUID
+    name: str
+    duration_value: int | None
+    duration_unit: str
+    resource_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,7 +366,9 @@ async def subscriber_detail(
             select(func.count(EntitlementGrant.id)).where(*grant_where)
         ) or 0
         grants = (await session.execute(
-            select(EntitlementGrant, Resource.name)
+            select(EntitlementGrant, Resource.name, Plan.name)
+            .outerjoin(Plan, and_(Plan.id == EntitlementGrant.manual_plan_id,
+                                  Plan.project_id == EntitlementGrant.project_id))
             .join(Resource, and_(
                 Resource.id == EntitlementGrant.resource_id,
                 Resource.project_id == EntitlementGrant.project_id,
@@ -387,7 +404,7 @@ async def subscriber_detail(
             owner_only_actions=project.owner_user_id == actor_id,
             subscriptions=tuple(SubscriberSubscription(
                 plan_name=name, status=sub.status,
-                period_end=sub.current_period_end,
+                period_end=sub.current_period_end, id=sub.id,
             ) for sub, name in subscriptions),
             payments=tuple(SubscriberPayment(
                 id=payment.id, plan_name=name,
@@ -399,8 +416,9 @@ async def subscriber_detail(
             grants=tuple(SubscriberGrant(
                 id=grant.id, resource_id=grant.resource_id,
                 resource_name=name, source=grant.source,
-                valid_until=grant.valid_until,
-            ) for grant, name in grants),
+                valid_until=grant.valid_until, source_id=grant.source_id,
+                manual_plan_id=grant.manual_plan_id, manual_plan_name=plan_name,
+            ) for grant, name, plan_name in grants),
             access=tuple(SubscriberAccess(
                 resource_name=name, desired=state.desired_access,
                 actual=state.actual_state,
@@ -408,6 +426,7 @@ async def subscriber_detail(
             resources=tuple(resources),
             total_invoices=total_invoices,
             pending_invoices=pending_invoices,
+            is_banned=customer.is_banned,
         )
 
 
