@@ -14,7 +14,10 @@ from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerO
 from telegram_membership_saas.modules.payments import PaymentRequest, PaymentRequestStatus
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.projects import (
-    Project, ProjectMember, ProjectMemberRole, ProjectStatus,
+    Project,
+    ProjectMember,
+    ProjectMemberRole,
+    ProjectStatus,
 )
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
