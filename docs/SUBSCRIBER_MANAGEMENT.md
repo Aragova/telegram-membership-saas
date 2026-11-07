@@ -232,3 +232,29 @@ normal reply-to-message gesture on the admin message.
   owner receives buyer text with the correct /u reference, owner replies
   back, and buyer sees it. Check a blocked buyer and another connected bot
   cannot route a reply. Do not broadcast or touch real paid subscriptions.
+
+## Dialog UX follow-up: one-shot reply and recipient-only RU/EN
+
+- The support **Reply** button now enables a **3-minute, one-message reply
+  mode** without Telegram `ForceReply`. A normal text message from the
+  buyer is routed once to their own project's owner and consumes the mode;
+  it does not leave a sticky native reply composer. There is an explicit
+  **Cancel** button. Replying directly to an original owner message also
+  remains supported.
+- Pending composer state is temporary within the running connected bot.
+  If the supervisor restarts or the time window expires, tap Reply again.
+  A quoted checkout prompt/receipt is not treated as a support reply.
+  There is no migration, scheduled job or new message database.
+- The bot chooses each **outgoing message recipient's saved RU/EN language**:
+  owner -> buyer uses buyer preference; buyer -> owner uses owner preference.
+  The message heading, explanatory line and Reply controls agree in one
+  language. Both old Russian and new English bot-message headings remain
+  valid for Telegram's native quoted replies.
+- For historical ForceReply prompts, successfully relayed replies attempt
+  to delete the previous bot prompt if Telegram allows. Telegram's API
+  cannot guarantee clearing an existing client's quoted-message bar
+  across devices; users may need to tap **×** on an already open old reply.
+  New button-initiated replies no longer produce that UI.
+- Verify both language directions (RU/EN), reply/cancel/expiry, a normal
+  next-message response, direct quote of an owner message, and successful
+  relay of a reply to an older Russian ForceReply prompt.
