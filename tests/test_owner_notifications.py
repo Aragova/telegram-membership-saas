@@ -22,7 +22,6 @@ from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_notifications import (
     OwnerNotificationDelivery,
-    _invoice_keyboard,
     _invoice_text,
     deliver_one_owner_notification,
     queue_invoice_created,
@@ -40,6 +39,7 @@ def _payload():
         "customer_id": uuid4().hex,
         "username": "buyer<script>",
         "first_name": "Alex & Co",
+        "telegram_id": 8353774845,
         "plan_name": "1 месяц",
         "duration_value": 1,
         "duration_unit": "month",
@@ -67,11 +67,13 @@ def test_invoice_text_is_localized_safe_and_not_paid(language, heading, awaiting
         assert "&lt;script&gt;" in text
         assert "&amp; Co" in text
         assert "Оплата подтверждена" not in text
-        callbacks = [
-            b.callback_data for row in _invoice_keyboard(_payload()).inline_keyboard for b in row
-        ]
-        assert all(len(callback) <= 64 for callback in callbacks)
-        assert any(value.startswith("own:invoice:") for value in callbacks)
+        from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
+            customer_command,
+        )
+        assert customer_command(
+            telegram_id=8353774845, customer_id=uuid4(),
+        ) in text
+        assert "👤 " in text
     finally:
         _language.reset(token)
 
@@ -128,6 +130,8 @@ async def test_durable_invoice_queue_owner_only_and_project_rls():
         bot.send_message.assert_awaited_once()
         text = bot.send_message.await_args.args[1]
         assert "Счёт сформирован" in text
+        assert "/c" in text  # previously queued notifications lack telegram_id
+        assert "reply_markup" not in bot.send_message.await_args.kwargs
 
         with pytest.raises(TenantAccessDenied):
             async with tenant_session_scope(
