@@ -1,15 +1,17 @@
 """Real PostgreSQL tests for dual-consent bot transfer and merchant continuity."""
 import os
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
+from test_owner_subscribers_rls import setup_subscriber, tg_id
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
-    build_engine, build_session_factory, tenant_session_scope,
+    build_engine,
+    build_session_factory,
+    tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots.models import BotInstance
 from telegram_membership_saas.modules.bots.service import VerifiedBot
@@ -20,8 +22,6 @@ from telegram_membership_saas.modules.owner_setup.transfer_models import (
 from telegram_membership_saas.modules.payments.models import PaymentMethod
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
-from test_owner_subscribers_rls import setup_subscriber, tg_id
-
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL")
     or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
