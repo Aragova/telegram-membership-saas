@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select
+from test_owner_subscribers_rls import setup_subscriber
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory, tenant_session_scope
@@ -21,7 +22,6 @@ from telegram_membership_saas.modules.payments import (
 from telegram_membership_saas.modules.plans import DurationUnit, Plan, PlanStatus
 from telegram_membership_saas.modules.pricing import replace_active_plan_price
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
-from test_owner_subscribers_rls import setup_subscriber
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"), reason="Requires real migrated PostgreSQL",
