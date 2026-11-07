@@ -9,7 +9,7 @@ from aiogram.types import Chat, Message, MessageEntity, User
 from telegram_membership_saas.modules.broadcasts.handlers import (
     StartAudienceMiddleware,
 )
-from telegram_membership_saas.modules.broadcasts.service import extract_post
+from telegram_membership_saas.modules.broadcasts.service import extract_album, extract_post
 from telegram_membership_saas.modules.broadcasts.worker import _send_post
 
 
@@ -68,6 +68,71 @@ def test_protected_forward_or_album_is_rejected_not_partially_saved():
         extract_post(_post(text="First", group="same-album"))
     with pytest.raises(ValueError, match="Поддерживаются"):
         extract_post(_post())
+
+
+def _album_item(*, number: int, kind: str = "photo", caption: str | None = None,
+                group: str = "media-1", protected: bool = False):
+    item = _post(caption=caption, group=group, protected=protected)
+    item.message_id = number
+    if kind == "photo":
+        item.photo = [SimpleNamespace(file_id=f"photo-{number}")]
+    elif kind == "video":
+        item.video = SimpleNamespace(file_id=f"video-{number}")
+    return item
+
+
+def test_album_captures_every_photo_and_video_in_order_with_caption():
+    msgs = [
+        _album_item(number=4, kind="video"),
+        _album_item(number=2, caption="Новый альбом 🌷"),
+        _album_item(number=3),
+    ]
+    kind, caption, entities, file_id, items = extract_album(msgs)
+    assert kind == "album" and caption == "Новый альбом 🌷"
+    assert entities is None and file_id is None
+    assert items == [
+        {"type": "photo", "file_id": "photo-2"},
+        {"type": "photo", "file_id": "photo-3"},
+        {"type": "video", "file_id": "video-4"},
+    ]
+
+
+def test_album_rejects_partial_protected_or_mixed_groups():
+    with pytest.raises(ValueError, match="2 до 10"):
+        extract_album([_album_item(number=1)])
+    with pytest.raises(ValueError, match="защищ"):
+        extract_album([_album_item(number=1, protected=True),
+                       _album_item(number=2)])
+    with pytest.raises(ValueError, match="одному альбому"):
+        extract_album([_album_item(number=1, group="a"),
+                       _album_item(number=2, group="b")])
+    with pytest.raises(ValueError, match="подпись"):
+        extract_album([_album_item(number=1, caption="a"),
+                       _album_item(number=2, caption="b")])
+    with pytest.raises(ValueError, match="только фото и видео"):
+        extract_album([_album_item(number=1), _album_item(number=2, kind="unknown")])
+
+
+async def test_broadcast_worker_sends_album_as_one_group():
+    bot = SimpleNamespace(send_media_group=AsyncMock())
+    await _send_post(
+        bot, user_id=789,
+        content=SimpleNamespace(
+            kind="album", text="Описание 🩷", entities=None, file_id=None,
+            media_items=[
+                {"type": "photo", "file_id": "a"},
+                {"type": "video", "file_id": "b"},
+            ],
+        ),
+    )
+    bot.send_media_group.assert_awaited_once()
+    kwargs = bot.send_media_group.await_args.kwargs
+    assert kwargs["chat_id"] == 789
+    assert len(kwargs["media"]) == 2
+    assert kwargs["media"][0].media == "a"
+    assert kwargs["media"][0].caption == "Описание 🩷"
+    assert kwargs["media"][1].media == "b"
+    assert kwargs["media"][1].caption is None
 
 
 async def test_broadcast_worker_uses_entities_not_unescaped_html():
