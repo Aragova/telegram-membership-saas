@@ -97,12 +97,12 @@ async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sec
         settings_actions = {b.callback_data for b in settings_buttons}
         assert settings_actions == {
             "own:notifications", "own:readiness", "own:timezone",
-            "own:network", "own:help", "own:dashboard",
+            "own:network", "own:modmanage", "own:help", "own:dashboard",
         }
         assert next(
             b.text for b in settings_buttons if b.callback_data == "own:dashboard"
         ) == back_label
-        assert len(bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard) == 5
+        assert len(bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard) == 6
     finally:
         _language.reset(token)
 
