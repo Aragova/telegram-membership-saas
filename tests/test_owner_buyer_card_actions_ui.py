@@ -10,6 +10,7 @@ from test_owner_subscribers_ui import _bot, _buttons, _callbacks, _detail, _quer
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     ManualPlanItem,
+    SubscriberGrant,
     SubscriberSubscription,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
@@ -133,3 +134,38 @@ async def test_owner_message_targets_one_verified_customer(monkeypatch):
         call.args == (12345678, "Привет 👋 https://t.me/example")
         for call in bot.send_message.await_args_list
     )
+
+
+async def test_older_manual_activation_can_be_revoked_from_page_four(monkeypatch):
+    project, customer, resource, plan, activation = (
+        uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    cb, _ = _callbacks(monkeypatch, project)
+    detail = replace(
+        _detail(customer, resource),
+        grants=(SubscriberGrant(
+            id=uuid4(), resource_id=resource, resource_name="Channel",
+            source="manual", valid_until=None, source_id=activation,
+            manual_plan_id=plan, manual_plan_name="Premium",
+        ),),
+        total_grants=33, grant_page=4,
+    )
+    monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(return_value=detail))
+    revoke = AsyncMock(return_value=SimpleNamespace(changed=True))
+    monkeypatch.setattr(ui, "revoke_manual_plan", revoke)
+    bot = _bot()
+    cid, aid = encode_uuid(customer), encode_uuid(activation)
+    await cb(_query("subcancel:" + cid + ":4"), bot)
+    actions = _buttons(bot)
+    ask = "own:sra:" + cid + ":" + aid + ":4"
+    confirm = "own:srk:" + cid + ":" + aid + ":4"
+    assert ask in actions
+    assert "own:subcancel:" + cid + ":3" in actions
+    assert all(len(action.encode()) <= 64 for action in actions)
+    await cb(_query(ask.removeprefix("own:")), bot)
+    assert confirm in _buttons(bot)
+    assert revoke.await_count == 0
+    await cb(_query(confirm.removeprefix("own:")), bot)
+    revoke.assert_awaited_once()
+    assert revoke.await_args.kwargs["activation_id"] == activation
+    assert ui.subscriber_detail.await_args.kwargs["grant_page"] == 0
