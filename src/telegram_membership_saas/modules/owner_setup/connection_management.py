@@ -27,6 +27,9 @@ from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.outbox import OutboxEvent
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
+from telegram_membership_saas.modules.owner_setup.transfer_models import (
+    ProjectOwnershipTransfer,
+)
 from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions import Subscription
@@ -40,6 +43,7 @@ PROTECTED_HISTORY = (
     PaymentRequest, Payment, Subscription, EntitlementGrant,
     ProjectCustomer, EffectiveAccess, AccessState, AccessAction,
     TelegramJoinTicket, OutboxEvent, OwnerObligationAudit,
+    ProjectOwnershipTransfer,
 )
 
 
