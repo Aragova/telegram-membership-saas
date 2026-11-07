@@ -13,19 +13,26 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.owner_setup.conversations import (
-    ADMIN_MESSAGE_HEADER, ADMIN_MESSAGE_HEADER_EN, BuyerConversation, customer_ref,
+    ADMIN_MESSAGE_HEADER,
+    ADMIN_MESSAGE_HEADER_EN,
+    BuyerConversation,
+    customer_ref,
 )
 from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
     parse_customer_command,
 )
 from telegram_membership_saas.modules.owner_setup.moderators import (
-    can_use_moderator_panel, find_moderator_customer,
-    list_moderator_customers, list_moderator_reviews,
-    project_support_recipients, set_moderated_customer_ban,
+    can_use_moderator_panel,
+    find_moderator_customer,
+    list_moderator_customers,
+    list_moderator_reviews,
+    project_support_recipients,
+    set_moderated_customer_ban,
 )
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.telegram_commerce.service import (
-    decode_uuid, encode_uuid,
+    decode_uuid,
+    encode_uuid,
 )
 
 log = logging.getLogger(__name__)
