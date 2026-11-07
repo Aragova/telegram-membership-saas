@@ -3,15 +3,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from test_owner_subscribers_ui import _bot, _buttons, _callbacks, _query
+
 from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 from telegram_membership_saas.modules.owner_setup import moderator_handlers as mod_ui
 from telegram_membership_saas.modules.owner_setup.moderators import (
-    ModeratorAccount, ModeratorCustomer, ModeratorReview,
+    ModeratorAccount,
+    ModeratorCustomer,
+    ModeratorReview,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
-from test_owner_subscribers_ui import _bot, _buttons, _callbacks, _query
-
-
 def _buyer():
     return ModeratorCustomer(
         id=uuid4(), telegram_id=12345678, username="testbuyer",
@@ -135,6 +136,7 @@ async def test_moderator_compose_uses_one_message_and_drops_on_revocation(monkey
     assert await filt(message)
     # Simulate the saved buyer language without database access.
     from contextlib import asynccontextmanager
+
     from telegram_membership_saas.localization import recipient_language
     @asynccontextmanager
     async def locale(factory, telegram_id):
