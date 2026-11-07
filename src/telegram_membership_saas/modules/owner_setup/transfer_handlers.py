@@ -9,7 +9,10 @@ from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
-    CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -20,12 +23,17 @@ from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots.service import TOKEN_PATTERN
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.owner_setup.transfers import (
-    accept_transfer_invite, cancel_transfer_invite, create_transfer_invite,
-    finalize_transfer, get_transfer_invite, list_transfer_invites,
+    accept_transfer_invite,
+    cancel_transfer_invite,
+    create_transfer_invite,
+    finalize_transfer,
+    get_transfer_invite,
+    list_transfer_invites,
 )
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.modules.telegram_commerce.service import (
-    decode_uuid, encode_uuid,
+    decode_uuid,
+    encode_uuid,
 )
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -340,7 +348,7 @@ def create_transfer_router(
                 ))
                 return
             try:
-                item = await accept_transfer_invite(
+                await accept_transfer_invite(
                     factory, actor_id=actor_id,
                     actor_telegram_id=uid, transfer_id=tid,
                     fresh_token=message.text,
