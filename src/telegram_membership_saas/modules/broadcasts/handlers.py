@@ -120,31 +120,40 @@ def create_broadcast_router(
     # within this one bot router and finalize once the short burst settles.
     album_inbox: dict[tuple[int, int, str], dict] = {}
 
-    async def flush_album(key: tuple[int, int, str], bot: Bot, actor: UUID) -> None:
+    def drop_albums(bot_id: int, chat_id: int) -> None:
+        for key in list(album_inbox):
+            if key[0] == bot_id and key[1] == chat_id:
+                batch = album_inbox.pop(key)
+                if batch["task"] is not None:
+                    batch["task"].cancel()
+
+    async def flush_album(key: tuple[int, int, str], bot: Bot) -> None:
         try:
             await asyncio.sleep(1.5)
-            batch = album_inbox.pop(key, None)
+            batch = album_inbox.get(key)
             if batch is None:
                 return
-            messages = sorted(
-                batch["messages"].values(), key=lambda item: item.message_id,
+            # Telegram supplies no album length. Never silently consume a
+            # draft based on a quiet period: admin verifies item count.
+            total = len(batch["messages"])
+            token = encode_uuid(batch["token"])
+            await bot.send_message(
+                key[1],
+                tr(
+                    "📷 Получено вложений: ", "📷 Media items received: ",
+                ) + str(total) + tr(
+                    "\nПроверьте количество и сохраните весь альбом.",
+                    "\nVerify the count before saving the entire album.",
+                ),
+                reply_markup=_keyboard([
+                    [_button(tr("✅ Сохранить альбом", "✅ Save album"),
+                             "albumok:" + token, "success")],
+                    [_button(tr("🗑 Отменить альбом", "🗑 Discard album"),
+                             "albumcancel:" + token, "danger")],
+                ]),
             )
-            try:
-                post = await save_from_message(
-                    factory, project_id=project_id, actor_id=actor,
-                    telegram_bot_id=bot.id, album=messages,
-                    expected_draft=batch["draft"],
-                )
-                await bot.send_message(
-                    key[1], tr("✅ Альбом сохранён.", "✅ Album saved."),
-                )
-                await post_detail(bot, key[1], actor, post.id)
-            except (ValueError, PermissionError) as exc:
-                # One error per group, not one duplicate warning per element.
-                await bot.send_message(key[1], "⚠️ " + str(exc)[:350])
         except asyncio.CancelledError:
             return
-
 
     async def identify(user) -> UUID:
         return await ensure_telegram_actor(
@@ -332,6 +341,7 @@ def create_broadcast_router(
                         confirmation_key = decode_uuid(pieces[2])
 
             if command in ("write", "forward"):
+                drop_albums(bot.id, query.from_user.id)
                 # A broadcast editor must never consume a previous form's
                 # payment credentials or plan-creation replies.
                 await cancel_owner_flow(
@@ -354,14 +364,43 @@ def create_broadcast_router(
                     "photo/video or album, caption and formatting.",
                 ))
             elif command == "home":
+                drop_albums(bot.id, query.from_user.id)
                 await cancel_draft(factory, project_id=project_id, actor_id=actor)
                 await main(bot, query.from_user.id, actor)
             elif command == "templates":
+                drop_albums(bot.id, query.from_user.id)
                 await cancel_draft(factory, project_id=project_id, actor_id=actor)
                 await templates(bot, query.from_user.id, actor, int(pieces[1]))
             elif command == "history":
+                drop_albums(bot.id, query.from_user.id)
                 await cancel_draft(factory, project_id=project_id, actor_id=actor)
                 await history(bot, query.from_user.id, actor, int(pieces[1]))
+            elif command in ("albumok", "albumcancel"):
+                key = next((key for key, batch in album_inbox.items()
+                            if key[0] == bot.id and key[1] == query.from_user.id
+                            and batch["token"] == post_id), None)
+                if key is None:
+                    raise ValueError("Альбом изменён или отменён. Используйте последнее подтверждение.")
+                batch = album_inbox.pop(key)
+                if batch["task"] is not None:
+                    batch["task"].cancel()
+                if command == "albumcancel":
+                    await bot.send_message(query.from_user.id, tr(
+                        "🗑 Альбом отменён. Можете отправить новый.",
+                        "🗑 Album discarded. You can send another.",
+                    ))
+                else:
+                    messages = sorted(batch["messages"].values(),
+                                      key=lambda item: item.message_id)
+                    post = await save_from_message(
+                        factory, project_id=project_id, actor_id=actor,
+                        telegram_bot_id=bot.id, album=messages,
+                        expected_draft=batch["draft"],
+                    )
+                    await bot.send_message(query.from_user.id, tr(
+                        "✅ Альбом сохранён.", "✅ Album saved.",
+                    ))
+                    await post_detail(bot, query.from_user.id, actor, post.id)
             elif command == "post":
                 await post_detail(bot, query.from_user.id, actor, post_id)
             elif command == "sendask":
@@ -399,6 +438,7 @@ def create_broadcast_router(
                 )
                 await campaign_detail(bot, query.from_user.id, actor, campaign.id)
             elif command in ("edit", "rename"):
+                drop_albums(bot.id, query.from_user.id)
                 await cancel_owner_flow(
                     factory, actor_id=actor, bot_scope_id=bot.id,
                 )
@@ -465,15 +505,18 @@ def create_broadcast_router(
             key = (bot.id, message.chat.id, str(message.media_group_id))
             batch = album_inbox.setdefault(
                 key, {
-                    "messages": {}, "task": None,
+                    "messages": {}, "task": None, "token": uuid4(),
                     "draft": (draft.mode, draft.template_id, draft.expires_at),
                 },
             )
+            # Each new element invalidates earlier confirmation buttons.
+            if message.message_id not in batch["messages"]:
+                batch["token"] = uuid4()
             batch["messages"][message.message_id] = message
             previous = batch["task"]
             if previous is not None:
                 previous.cancel()
-            batch["task"] = asyncio.create_task(flush_album(key, bot, actor))
+            batch["task"] = asyncio.create_task(flush_album(key, bot))
             return
         try:
             if draft.mode == "rename":
