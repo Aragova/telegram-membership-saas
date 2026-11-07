@@ -116,6 +116,11 @@ def create_customer_dispatcher(
     ))
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
+    # Private transfer invitations and token proof must be handled before
+    # owner and buyer forms; only participants pass the service checks.
+    dispatcher.include_router(create_transfer_router(
+        session_factory, project_id=project_id,
+    ))
     # Support staff never enters the owner admin router. Handle their
     # /start, /menu, /u and mod:* actions in a narrowly scoped router first.
     dispatcher.include_router(create_moderator_router(
