@@ -220,3 +220,178 @@ async def test_reply_filter_requires_real_bot_message_in_private_chat():
     msg.reply_to_message.text = ADMIN_MESSAGE_HEADER
     msg.text = "/start"
     assert not await f(msg, bot)
+
+
+async def test_plain_next_reply_is_captured_once_and_composer_is_not_forced(monkeypatch):
+    project, buyer = uuid4(), _buyer()
+    monkeypatch.setattr(ui, "find_buyer_conversation", AsyncMock(return_value=buyer))
+    router = _dialog_router(project)
+    callback = _handler(router, "buyer_reply_button", callbacks=True)
+    handler_entry = next(
+        h for h in router.message.handlers
+        if h.callback.__name__ == "buyer_conversation_reply"
+    )
+    filt = next(
+        f.callback for f in handler_entry.filters
+        if isinstance(f.callback, ui.BuyerConversationReplyFilter)
+    )
+    reply_handler = handler_entry.callback
+    bot = _bot()
+    query = SimpleNamespace(
+        data="chat:reply",
+        message=SimpleNamespace(chat=SimpleNamespace(
+            type="private", id=12345678,
+        )),
+        from_user=_user(12345678), answer=AsyncMock(),
+    )
+    plain = _message(uid=12345678, text="Привет! 👋")
+    assert not await filt(plain, bot)
+    await callback(query, bot)
+    prompt = bot.send_message.await_args
+    assert "force_reply" not in str(prompt.kwargs["reply_markup"].model_dump())
+    assert await filt(plain, bot)
+    await reply_handler(plain, bot)
+    assert not await filt(plain, bot)
+    assert any(call.args[0] == 123 for call in bot.send_message.await_args_list)
+
+
+async def test_reply_mode_can_be_canceled_and_other_replies_are_not_stolen(monkeypatch):
+    project, buyer = uuid4(), _buyer()
+    monkeypatch.setattr(ui, "find_buyer_conversation", AsyncMock(return_value=buyer))
+    router = _dialog_router(project)
+    activate = _handler(router, "buyer_reply_button", callbacks=True)
+    cancel = _handler(router, "buyer_cancel_reply", callbacks=True)
+    handler_entry = next(
+        h for h in router.message.handlers
+        if h.callback.__name__ == "buyer_conversation_reply"
+    )
+    filt = next(
+        f.callback for f in handler_entry.filters
+        if isinstance(f.callback, ui.BuyerConversationReplyFilter)
+    )
+    bot = _bot()
+    query = SimpleNamespace(
+        data="chat:reply",
+        message=SimpleNamespace(chat=SimpleNamespace(
+            type="private", id=12345678,
+        )),
+        from_user=_user(12345678), answer=AsyncMock(),
+    )
+    await activate(query, bot)
+    quoted_receipt = _message(
+        uid=12345678, text="receipt ref", parent="🧾 Payment request",
+    )
+    quoted_receipt.reply_to_message.from_user.id = bot.id
+    assert not await filt(quoted_receipt, bot)
+    plain = _message(uid=12345678, text="Test reply")
+    assert await filt(plain, bot)
+    query.data = "chat:cancel"
+    await cancel(query, bot)
+    assert not await filt(plain, bot)
+
+
+async def test_english_buyer_gets_only_english_in_message_and_reply_prompt(monkeypatch):
+    buyer = _buyer()
+    project, actor = uuid4(), uuid4()
+    monkeypatch.setattr(ui, "find_buyer_conversation", AsyncMock(
+        return_value=buyer,
+    ))
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor))
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+    monkeypatch.setattr(ui, "customer_id_by_telegram_id", AsyncMock(
+        return_value=buyer.customer_id,
+    ))
+    monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(
+        return_value=_detail(buyer.customer_id, uuid4()),
+    ))
+
+    @asynccontextmanager
+    async def english_buyer_locale(factory, telegram_id):
+        token = localization._language.set(
+            "en" if telegram_id == buyer.customer_telegram_id else "ru",
+        )
+        try:
+            yield
+        finally:
+            localization._language.reset(token)
+
+    monkeypatch.setattr(ui, "recipient_language", english_buyer_locale)
+    router = _dialog_router(project)
+    bot = _bot()
+    owner_reply = _handler(router, "owner_conversation_reply")
+    previous = BUYER_MESSAGE_HEADER + customer_ref(buyer)
+    await owner_reply(_message(
+        uid=123, text="Hello there!", parent=previous,
+    ), bot)
+    sent = next(call for call in bot.send_message.await_args_list
+                if call.args[0] == buyer.customer_telegram_id)
+    assert sent.args[1].startswith(ADMIN_MESSAGE_HEADER_EN)
+    assert "Reply to this message" in sent.args[1]
+    assert "Ответьте" not in sent.args[1]
+    assert sent.kwargs["reply_markup"].inline_keyboard[0][0].text == "↩️ Reply"
+
+    # Incoming callback is already localized by LanguageMiddleware.
+    button = _handler(router, "buyer_reply_button", callbacks=True)
+    query = SimpleNamespace(
+        data="chat:reply",
+        message=SimpleNamespace(chat=SimpleNamespace(
+            type="private", id=buyer.customer_telegram_id,
+        )),
+        from_user=_user(buyer.customer_telegram_id), answer=AsyncMock(),
+    )
+    token = localization._language.set("en")
+    try:
+        await button(query, bot)
+    finally:
+        localization._language.reset(token)
+    assert bot.send_message.await_args.args[1].startswith(BUYER_REPLY_PROMPT_EN)
+    assert "Введите сообщение" not in bot.send_message.await_args.args[1]
+
+
+async def test_english_owner_notification_uses_owner_locale(monkeypatch):
+    project, buyer = uuid4(), _buyer()
+    monkeypatch.setattr(ui, "find_buyer_conversation", AsyncMock(
+        return_value=buyer,
+    ))
+
+    @asynccontextmanager
+    async def locale(factory, telegram_id):
+        token = localization._language.set(
+            "en" if telegram_id == buyer.owner_telegram_id else "ru",
+        )
+        try:
+            yield
+        finally:
+            localization._language.reset(token)
+
+    monkeypatch.setattr(ui, "recipient_language", locale)
+    handler = _handler(_dialog_router(project), "buyer_conversation_reply")
+    bot = _bot()
+    await handler(_message(
+        uid=buyer.customer_telegram_id, text="Yes",
+        parent=ADMIN_MESSAGE_HEADER,
+    ), bot)
+    outgoing = next(c for c in bot.send_message.await_args_list
+                    if c.args[0] == buyer.owner_telegram_id)
+    assert outgoing.args[1].startswith(BUYER_MESSAGE_HEADER_EN)
+    assert [b.text for b in outgoing.kwargs["reply_markup"].inline_keyboard[0]] == [
+        "✉️ Reply", "👤 Customer card",
+    ]
+
+
+async def test_legacy_force_reply_prompt_is_deleted_after_answer(monkeypatch):
+    project, buyer = uuid4(), _buyer()
+    monkeypatch.setattr(ui, "find_buyer_conversation", AsyncMock(
+        return_value=buyer,
+    ))
+    handler = _handler(_dialog_router(project), "buyer_conversation_reply")
+    bot = _bot()
+    bot.delete_message = AsyncMock()
+    message = _message(
+        uid=buyer.customer_telegram_id, text="Answer from old prompt",
+        parent=BUYER_REPLY_PROMPT + "\n\nPlease reply",
+    )
+    message.reply_to_message.message_id = 42
+    message.reply_to_message.from_user.id = bot.id
+    await handler(message, bot)
+    bot.delete_message.assert_awaited_once_with(buyer.customer_telegram_id, 42)
