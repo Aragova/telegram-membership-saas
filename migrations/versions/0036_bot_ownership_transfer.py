@@ -25,6 +25,7 @@ def upgrade() -> None:
         sa.Column("from_user_id", sa.Uuid(), sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("to_user_id", sa.Uuid(), sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("telegram_bot_id", sa.BigInteger(), nullable=False),
+        sa.Column("bot_username", sa.String(64), nullable=False),
         sa.Column("status", sa.String(16), nullable=False, server_default="pending"),
         sa.Column("encrypted_new_token", sa.String(4096), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -83,6 +84,7 @@ def upgrade() -> None:
                 OR NEW.from_user_id IS DISTINCT FROM OLD.from_user_id
                 OR NEW.to_user_id IS DISTINCT FROM OLD.to_user_id
                 OR NEW.telegram_bot_id IS DISTINCT FROM OLD.telegram_bot_id
+                OR NEW.bot_username IS DISTINCT FROM OLD.bot_username
                 OR NEW.created_at IS DISTINCT FROM OLD.created_at
                 OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
             THEN
