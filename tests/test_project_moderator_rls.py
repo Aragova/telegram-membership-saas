@@ -8,7 +8,6 @@ from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
     build_engine, build_session_factory, tenant_session_scope,
 )
-from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.moderators import (
     can_use_moderator_panel,
     find_moderator_customer,
@@ -27,7 +26,7 @@ from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.payments.request_service import (
     require_payment_permission,
 )
-from telegram_membership_saas.modules.projects import Permission, ProjectMember
+from telegram_membership_saas.modules.projects import Permission
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 from test_owner_subscribers_rls import setup_subscriber, tg_id
 
@@ -103,7 +102,7 @@ async def test_support_is_project_local_can_ban_and_never_manage_payments_or_acc
         with pytest.raises((PermissionError, TenantAccessDenied)):
             await grant_manual_access(
                 factory, actor_id=staff, project_id=project,
-                customer_id=cid, resource_id=resource, duration_days=7,
+                customer_id=cid, resource_id=resource, days=7,
             )
         with pytest.raises((PermissionError, TenantAccessDenied)):
             await list_subscribers(
