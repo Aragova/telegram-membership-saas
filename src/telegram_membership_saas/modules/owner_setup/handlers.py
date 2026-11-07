@@ -1330,6 +1330,120 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+    async def show_manual_plan_picker(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        customer_id: UUID, *, page: int = 0,
+    ) -> None:
+        detail = await subscriber_detail(
+            factory, actor_id=actor_id, project_id=project_id,
+            customer_id=customer_id,
+        )
+        if not detail.owner_only_actions:
+            raise PermissionError("Тариф может активировать только владелец")
+        plans = await list_activatable_plans(
+            factory, actor_id=actor_id, project_id=project_id,
+            customer_id=customer_id, page=page,
+        )
+        cid = encode_uuid(customer_id)
+        rows = [[_button(
+            "📦 " + plan.name[:36] + " · " + format_period(
+                plan.duration_value, plan.duration_unit,
+            ),
+            "subactask:" + cid + ":" + encode_uuid(plan.id),
+        )] for plan in plans]
+        if len(plans) == 8:
+            rows.append([_button(
+                tr("➡️ Далее", "➡️ Next"),
+                "subactivate:" + cid + ":" + str(page + 1),
+            )])
+        if page:
+            rows.append([_button(
+                tr("⬅️ Назад", "⬅️ Previous"),
+                "subactivate:" + cid + ":" + str(page - 1),
+            )])
+        rows.append([_button(
+            tr("🔑 Доступ к отдельному каналу", "🔑 Single-channel access"),
+            "subgrantstart:" + cid,
+        )])
+        rows.append([_button(
+            tr("⬅️ Карточка покупателя", "⬅️ Customer card"),
+            "subscriber:" + cid,
+        )])
+        await bot.send_message(
+            user_id, tr(
+                "🔑 <b>Активация тарифа</b>\\n\\n"
+                "Выберите тариф для бесплатной выдачи. "
+                "Оплата и подписка не создаются, доступ действует "
+                "по сроку тарифа и может быть аннулирован.",
+                "🔑 <b>Activate plan</b>\\n\\n"
+                "Select a complimentary plan. No payment or paid "
+                "subscription is created. Access follows the plan "
+                "period and can be revoked.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_customer_cancel_picker(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        customer_id: UUID,
+    ) -> None:
+        data = await subscriber_detail(
+            factory, actor_id=actor_id, project_id=project_id,
+            customer_id=customer_id,
+        )
+        if not data.owner_only_actions:
+            raise PermissionError("Аннулирование доступно только владельцу")
+        cid = encode_uuid(customer_id)
+        rows: list[list[InlineKeyboardButton]] = []
+        for sub in data.subscriptions:
+            if sub.status == "active" and sub.id is not None:
+                rows.append([_button(
+                    "💳 " + sub.plan_name[:36],
+                    "subendask:" + cid + ":" + encode_uuid(sub.id),
+                    "danger",
+                )])
+        manual_plans: set[UUID] = set()
+        for grant in data.grants:
+            if grant.source != "manual":
+                continue
+            if grant.manual_plan_id is not None and grant.source_id is not None:
+                if grant.source_id in manual_plans:
+                    continue
+                manual_plans.add(grant.source_id)
+                rows.append([_button(
+                    "🔑 " + (grant.manual_plan_name or "Тариф")[:36],
+                    "subrevplanask:" + cid + ":" + encode_uuid(grant.source_id),
+                    "danger",
+                )])
+            elif grant.manual_plan_id is None:
+                rows.append([_button(
+                    "🔑 " + grant.resource_name[:36],
+                    "subrevoke:" + cid + ":" + encode_uuid(grant.id) + ":0",
+                    "danger",
+                )])
+        if not rows:
+            rows.append([_button(
+                tr("Нет активных тарифов или ручных прав", "No active grants"),
+                "subscriber:" + cid,
+            )])
+        rows.append([_button(
+            tr("⬅️ Карточка покупателя", "⬅️ Customer card"),
+            "subscriber:" + cid,
+        )])
+        await bot.send_message(
+            user_id, tr(
+                "🗑 <b>Аннулировать доступ</b>\\n\\n"
+                "Выберите конкретный тариф или бесплатную выдачу. "
+                "Каждое действие потребует подтверждения. "
+                "История оплат сохраняется.",
+                "🗑 <b>Revoke access</b>\\n\\n"
+                "Select a specific paid subscription or complimentary "
+                "grant. Each action requires confirmation. "
+                "Payment history is preserved.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
     async def show_manual_resource_picker(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         customer_id: UUID, *, page: int = 0,
