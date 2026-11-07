@@ -1385,17 +1385,17 @@ def create_owner_setup_router(
 
     async def show_customer_cancel_picker(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
-        customer_id: UUID,
+        customer_id: UUID, *, page: int = 0,
     ) -> None:
         data = await subscriber_detail(
             factory, actor_id=actor_id, project_id=project_id,
-            customer_id=customer_id,
+            customer_id=customer_id, grant_page=page,
         )
         if not data.owner_only_actions:
             raise PermissionError("Аннулирование доступно только владельцу")
         cid = encode_uuid(customer_id)
         rows: list[list[InlineKeyboardButton]] = []
-        for sub in data.subscriptions:
+        for sub in data.subscriptions if page == 0 else ():
             if sub.status == "active" and sub.id is not None:
                 rows.append([_button(
                     "💳 " + sub.plan_name[:36],
@@ -1412,20 +1412,34 @@ def create_owner_setup_router(
                 manual_plans.add(grant.source_id)
                 rows.append([_button(
                     "🔑 " + (grant.manual_plan_name or "Тариф")[:36],
-                    "subrevplanask:" + cid + ":" + encode_uuid(grant.source_id),
+                    "sra:" + cid + ":" + encode_uuid(grant.source_id)
+                    + ":" + str(page),
                     "danger",
                 )])
             elif grant.manual_plan_id is None:
                 rows.append([_button(
                     "🔑 " + grant.resource_name[:36],
-                    "subrevoke:" + cid + ":" + encode_uuid(grant.id) + ":0",
+                    "subrevoke:" + cid + ":" + encode_uuid(grant.id)
+                    + ":" + str(page),
                     "danger",
                 )])
         if not rows:
             rows.append([_button(
-                tr("Нет активных тарифов или ручных прав", "No active grants"),
+                tr("Нет прав на этой странице", "No grants on this page"),
                 "subscriber:" + cid,
             )])
+        if page or (page + 1) * 8 < data.total_grants:
+            navigation: list[InlineKeyboardButton] = []
+            if page:
+                navigation.append(_button(
+                    "◀️", "subcancel:" + cid + ":" + str(page - 1),
+                ))
+            if (page + 1) * 8 < data.total_grants:
+                navigation.append(_button(
+                    "▶️", "subcancel:" + cid + ":" + str(page + 1),
+                ))
+            if navigation:
+                rows.append(navigation)
         rows.append([_button(
             tr("⬅️ Карточка покупателя", "⬅️ Customer card"),
             "subscriber:" + cid,
@@ -2743,9 +2757,15 @@ def create_owner_setup_router(
                         bot, user_id, actor_id, project_id, customer_id,
                     )
             elif action.startswith("subcancel:"):
+                chunks = action.split(":")
+                if len(chunks) not in (2, 3):
+                    raise ValueError("Некорректная страница аннулирования")
+                page = chunks[2] if len(chunks) == 3 else "0"
+                if not page.isascii() or not page.isdecimal():
+                    raise ValueError("Некорректная страница аннулирования")
                 await show_customer_cancel_picker(
                     bot, user_id, actor_id, project_id,
-                    decode_uuid(action.split(":", 1)[1]),
+                    decode_uuid(chunks[1]), page=int(page),
                 )
             elif action.startswith(("subendask:", "subendok:")):
                 verb, cid, sid = action.split(":", 2)
@@ -2802,19 +2822,22 @@ def create_owner_setup_router(
                     await show_subscriber_card(
                         bot, user_id, actor_id, project_id, customer_id,
                     )
-            elif action.startswith(("subrevplanask:", "subrevplanok:")):
-                verb, cid, source = action.split(":", 2)
+            elif action.startswith(("sra:", "srk:")):
+                verb, cid, source, page_text = action.split(":", 3)
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Некорректная страница аннулирования")
+                page = int(page_text)
                 customer_id, activation_id = decode_uuid(cid), decode_uuid(source)
                 detail = await subscriber_detail(
                     factory, actor_id=actor_id, project_id=project_id,
-                    customer_id=customer_id,
+                    customer_id=customer_id, grant_page=page,
                 )
                 if not detail.owner_only_actions or activation_id not in {
                     g.source_id for g in detail.grants
                     if g.manual_plan_id is not None
                 }:
                     raise PermissionError("Бесплатная активация недоступна")
-                if verb == "subrevplanask":
+                if verb == "sra":
                     await bot.send_message(
                         user_id, tr(
                             "⚠️ Отозвать эту бесплатную активацию? "
@@ -2824,7 +2847,8 @@ def create_owner_setup_router(
                         ), reply_markup=_markup([
                             [_button(
                                 tr("🗑 Подтвердить", "🗑 Confirm"),
-                                "subrevplanok:" + cid + ":" + source, "danger",
+                                "srk:" + cid + ":" + source + ":" + page_text,
+                                "danger",
                             )],
                             [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
                                      "subscriber:" + cid)],
