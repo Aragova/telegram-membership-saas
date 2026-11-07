@@ -594,3 +594,230 @@ async def revoke_manual_access(
             changed=True, grant_id=grant.id,
             telegram_id=user.telegram_user_id,
         )
+
+
+async def set_customer_ban(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, customer_id: UUID, banned: bool,
+) -> bool:
+    """Owner-only per-project ban: no deletion or paid entitlement revocation."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        project = await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id, lock=True,
+        )
+        if project.owner_user_id != actor_id:
+            raise PermissionError("Блокировать покупателей может только владелец")
+        customer, _ = await _owned_customer(
+            session, project_id=project_id, customer_id=customer_id,
+        )
+        if customer.user_id == actor_id:
+            raise ValueError("Нельзя заблокировать владельца")
+        await session.refresh(customer, with_for_update=True)
+        if customer.is_banned == banned:
+            return False
+        customer.is_banned = banned
+        customer.banned_at = datetime.now(UTC) if banned else None
+        customer.banned_by_user_id = actor_id if banned else None
+        session.add(OwnerObligationAudit(
+            project_id=project_id, actor_id=actor_id,
+            action="customer_ban" if banned else "customer_unban",
+            target_id=customer.id,
+            reason="Запрет новых счетов и отправки чеков; оплаченный доступ сохранён",
+        ))
+        return True
+
+
+async def list_activatable_plans(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, customer_id: UUID, page: int = 0,
+) -> tuple[ManualPlanItem, ...]:
+    if not 0 <= page <= 100:
+        raise ValueError("Недопустимая страница тарифов")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        project = await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        if project.owner_user_id != actor_id:
+            raise PermissionError("Выдавать бесплатные тарифы может только владелец")
+        await _owned_customer(session, project_id=project_id, customer_id=customer_id)
+        rows = (await session.execute(
+            select(Plan.id, Plan.name, Plan.duration_value, Plan.duration_unit,
+                   func.count(Resource.id))
+            .join(PlanResource, and_(
+                PlanResource.plan_id == Plan.id,
+                PlanResource.project_id == Plan.project_id,
+            ))
+            .join(Resource, and_(
+                Resource.id == PlanResource.resource_id,
+                Resource.project_id == PlanResource.project_id,
+            ))
+            .where(
+                Plan.project_id == project_id,
+                Plan.status == PlanStatus.ACTIVE.value,
+                Resource.status == ResourceStatus.ACTIVE.value,
+            )
+            .group_by(Plan.id)
+            .order_by(Plan.sort_order, Plan.created_at, Plan.id)
+            .offset(page * 8).limit(8)
+        )).all()
+        return tuple(ManualPlanItem(
+            id=pid, name=name, duration_value=value,
+            duration_unit=unit, resource_count=count,
+        ) for pid, name, value, unit, count in rows)
+
+
+async def activate_manual_plan(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, customer_id: UUID, plan_id: UUID,
+) -> ManualAccessChange:
+    """Grant all plan resources atomically without inventing a payment."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        project = await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id, lock=True,
+        )
+        if project.owner_user_id != actor_id:
+            raise PermissionError("Активировать тариф может только владелец")
+        if await session.scalar(select(BotInstance.id).where(
+            BotInstance.project_id == project_id,
+            BotInstance.status == BotInstanceStatus.DELETING.value,
+        ).limit(1)) is not None:
+            raise ValueError("Бот отключается. Выдача новых прав недоступна")
+        customer, user = await _owned_customer(
+            session, project_id=project_id, customer_id=customer_id,
+        )
+        if customer.user_id == actor_id:
+            raise ValueError("Владельцу уже выдан служебный доступ")
+        if customer.is_banned:
+            raise ValueError("Сначала снимите блокировку покупателя")
+        plan = await session.scalar(
+            select(Plan).where(
+                Plan.project_id == project_id, Plan.id == plan_id,
+                Plan.status == PlanStatus.ACTIVE.value,
+            )
+        )
+        if plan is None:
+            raise ValueError("Тариф недоступен")
+        targets = (await session.scalars(
+            select(Resource.id)
+            .join(PlanResource, and_(
+                PlanResource.resource_id == Resource.id,
+                PlanResource.project_id == Resource.project_id,
+            ))
+            .where(
+                PlanResource.project_id == project_id,
+                PlanResource.plan_id == plan_id,
+                Resource.status == ResourceStatus.ACTIVE.value,
+            ).order_by(Resource.id)
+        )).all()
+        if not targets:
+            raise ValueError("У тарифа нет активных каналов")
+        now = datetime.now(UTC)
+        active = await session.scalar(
+            select(EntitlementGrant.id).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.customer_id == customer_id,
+                EntitlementGrant.manual_plan_id == plan_id,
+                EntitlementGrant.source == EntitlementSource.MANUAL.value,
+                EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+                EntitlementGrant.valid_from <= now,
+                or_(EntitlementGrant.valid_until.is_(None),
+                    EntitlementGrant.valid_until > now),
+            ).limit(1)
+        )
+        if active:
+            raise ValueError("Этот тариф уже выдан бесплатно — сначала аннулируйте его")
+        expiry = calculate_period_end(
+            now, timezone_name=project.timezone,
+            duration_value=plan.duration_value, duration_unit=plan.duration_unit,
+        )
+        activation_id = uuid4()
+        for target in targets:
+            session.add(EntitlementGrant(
+                project_id=project_id, customer_id=customer_id,
+                resource_id=target, source=EntitlementSource.MANUAL.value,
+                source_id=activation_id, manual_plan_id=plan_id,
+                status=EntitlementGrantStatus.ACTIVE.value,
+                valid_from=now, valid_until=expiry,
+            ))
+        await session.flush()
+        for target in targets:
+            await reconcile_access_target(
+                session, project_id=project_id, customer_id=customer_id,
+                resource_id=target,
+            )
+        session.add(OwnerObligationAudit(
+            project_id=project_id, actor_id=actor_id,
+            action="manual_plan_activate", target_id=activation_id,
+            reason="Бесплатная выдача тарифа без записи об оплате: " + plan.name[:110],
+        ))
+        return ManualAccessChange(
+            changed=True, grant_id=activation_id,
+            telegram_id=user.telegram_user_id,
+        )
+
+
+async def revoke_manual_plan(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, customer_id: UUID,
+    activation_id: UUID,
+) -> ManualAccessChange:
+    """Undo only one complimentary plan activation, never paid grants."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        project = await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id, lock=True,
+        )
+        if project.owner_user_id != actor_id:
+            raise PermissionError("Аннулировать доступ может только владелец")
+        _, user = await _owned_customer(
+            session, project_id=project_id, customer_id=customer_id,
+        )
+        grants = (await session.scalars(
+            select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.customer_id == customer_id,
+                EntitlementGrant.source_id == activation_id,
+                EntitlementGrant.source == EntitlementSource.MANUAL.value,
+                EntitlementGrant.manual_plan_id.is_not(None),
+            ).with_for_update()
+        )).all()
+        if not grants:
+            raise ValueError("Ручная активация не найдена")
+        now = datetime.now(UTC)
+        targets = set()
+        for grant in grants:
+            if grant.status != EntitlementGrantStatus.ACTIVE.value:
+                continue
+            grant.status = EntitlementGrantStatus.REVOKED.value
+            grant.revoked_at = max(now, grant.valid_from)
+            targets.add(grant.resource_id)
+        if not targets:
+            return ManualAccessChange(
+                changed=False, grant_id=activation_id,
+                telegram_id=user.telegram_user_id,
+            )
+        await session.flush()
+        for target in sorted(targets):
+            await reconcile_access_target(
+                session, project_id=project_id,
+                customer_id=customer_id, resource_id=target,
+            )
+        session.add(OwnerObligationAudit(
+            project_id=project_id, actor_id=actor_id,
+            action="manual_plan_revoke", target_id=activation_id,
+            reason="Отозвана только бесплатная активация тарифа; платежи сохранены",
+        ))
+        return ManualAccessChange(
+            changed=True, grant_id=activation_id,
+            telegram_id=user.telegram_user_id,
+        )
