@@ -247,7 +247,7 @@ async def test_plain_next_reply_is_captured_once_and_composer_is_not_forced(monk
     assert not await filt(plain, bot)
     await callback(query, bot)
     prompt = bot.send_message.await_args
-    assert "force_reply" not in str(prompt.kwargs["reply_markup"].model_dump())
+    assert "force_reply" not in prompt.kwargs["reply_markup"].model_dump(exclude_none=True)
     assert await filt(plain, bot)
     await reply_handler(plain, bot)
     assert not await filt(plain, bot)
