@@ -1,6 +1,7 @@
 """Compact broadcast editor, saved posts and history in a connected bot."""
 from __future__ import annotations
 
+import asyncio
 from html import escape
 from uuid import UUID, uuid4
 
@@ -115,6 +116,34 @@ def create_broadcast_router(
     factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
 ) -> Router:
     router = Router(name="customer-broadcasts")
+    # Telegram delivers album elements as separate updates. Collect them
+    # within this one bot router and finalize once the short burst settles.
+    album_inbox: dict[tuple[int, int, str], dict] = {}
+
+    async def flush_album(key: tuple[int, int, str], bot: Bot, actor: UUID) -> None:
+        try:
+            await asyncio.sleep(1.5)
+            batch = album_inbox.pop(key, None)
+            if batch is None:
+                return
+            messages = sorted(
+                batch["messages"].values(), key=lambda item: item.message_id,
+            )
+            try:
+                post = await save_from_message(
+                    factory, project_id=project_id, actor_id=actor,
+                    telegram_bot_id=bot.id, album=messages,
+                )
+                await bot.send_message(
+                    key[1], tr("✅ Альбом сохранён.", "✅ Album saved."),
+                )
+                await post_detail(bot, key[1], actor, post.id)
+            except (ValueError, PermissionError) as exc:
+                # One error per group, not one duplicate warning per element.
+                await bot.send_message(key[1], "⚠️ " + str(exc)[:350])
+        except asyncio.CancelledError:
+            return
+
 
     async def identify(user) -> UUID:
         return await ensure_telegram_actor(
@@ -313,15 +342,15 @@ def create_broadcast_router(
                 )
                 await bot.send_message(query.from_user.id, tr(
                     "✏️ Напишите пост с эмодзи и Telegram-ссылками. "
-                    "Можно также отправить фото или видео с подписью. "
+                    "Можно также отправить фото, видео или альбом с подписью. "
                     "Для выхода нажмите «Рассылки».",
                     "✏️ Send a post with emoji and Telegram links, or send "
-                    "a photo/video with a caption. Use Broadcasts to exit.",
+                    "a photo/video or album with a caption. Use Broadcasts to exit.",
                 ) if command == "write" else tr(
                     "↪️ Перешлите готовый пост сюда. Сохраним текст, "
-                    "фото или видео с подписью и форматированием.",
+                    "фото, видео или альбом с подписью и форматированием.",
                     "↪️ Forward a ready-made post here. We'll save its text, "
-                    "photo/video, caption and formatting.",
+                    "photo/video or album, caption and formatting.",
                 ))
             elif command == "home":
                 await cancel_draft(factory, project_id=project_id, actor_id=actor)
@@ -379,8 +408,8 @@ def create_broadcast_router(
                     template_id=post_id,
                 )
                 await bot.send_message(query.from_user.id, tr(
-                    "Отправьте новую версию поста (текст или медиа с подписью).",
-                    "Send the replacement post (text or media with caption).",
+                    "Отправьте новую версию поста (текст, медиа или альбом с подписью).",
+                    "Send the replacement post (text, media or album with caption).",
                 ) if command == "edit" else tr(
                     "Отправьте новое название для сохранённого поста.",
                     "Send a new name for the saved post.",
@@ -430,6 +459,15 @@ def create_broadcast_router(
             actor_id=actor, telegram_bot_id=bot.id,
         )
         if draft is None:
+            return
+        if message.media_group_id:
+            key = (bot.id, message.chat.id, str(message.media_group_id))
+            batch = album_inbox.setdefault(key, {"messages": {}, "task": None})
+            batch["messages"][message.message_id] = message
+            previous = batch["task"]
+            if previous is not None:
+                previous.cancel()
+            batch["task"] = asyncio.create_task(flush_album(key, bot, actor))
             return
         try:
             if draft.mode == "rename":
