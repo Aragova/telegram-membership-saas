@@ -82,7 +82,7 @@ def _detail(customer, resource, *, owner=True, paid=False):
             plan_name="Premium", status="active", period_end=None,
         ),) if paid else (),
         payments=(SubscriberPayment(
-            id=uuid4(), plan_name="Premium", amount="550",
+            id=uuid4(), plan_name="Premium", amount="550.000000000000000000",
             currency="RUB", approved_at=datetime.now(UTC),
         ),) if paid else (),
         total_payments=1 if paid else 0, history_page=0,
@@ -139,6 +139,7 @@ async def test_subscriber_card_has_history_and_owner_only_manual_actions(monkeyp
     text = bot.send_message.await_args.args[1]
     actions = _buttons(bot)
     assert "550 RUB" in text
+    assert "550.000000000000000000" not in text
     assert "Premium" in text
     assert "Channel" in text
     assert "own:subgrantstart:" + encode_uuid(customer) in actions
@@ -297,8 +298,8 @@ async def test_invoice_history_from_customer_card_is_compact_and_paginated(monke
         username="buyer", first_name="Buyer", project_timezone="Europe/Moscow",
         total=9, page=0, invoices=(
             SubscriberInvoice(
-                id=invoice, status="waiting_review", amount="550",
-                currency="RUB", plan_name="Monthly 💎",
+                id=invoice, status="waiting_review", amount="7.000000000000000000",
+                currency="EUR", plan_name="Monthly 💎",
                 created_at=datetime.now(UTC),
             ),
         ),
@@ -313,9 +314,12 @@ async def test_invoice_history_from_customer_card_is_compact_and_paginated(monke
 
     await cb(_query("subinvoices:" + cid + ":0"), bot)
     actions = _buttons(bot)
-    assert "550 RUB" in bot.send_message.await_args.args[1]
+    assert "7 EUR" in bot.send_message.await_args.args[1]
+    assert "7.000000000000000000" not in bot.send_message.await_args.args[1]
     assert "Monthly 💎" in bot.send_message.await_args.args[1]
     assert "own:invoice:" + encode_uuid(invoice) in actions
+    assert any("7 EUR" in b.text for row in bot.send_message.await_args.kwargs[
+        "reply_markup"].inline_keyboard for b in row)
     assert "own:subinvoices:" + cid + ":1" in actions
     assert "own:subscriber:" + cid in actions
     assert all(len(key.encode()) <= 64 for key in actions)
