@@ -195,7 +195,7 @@ async def test_old_active_subscription_paged_and_confirmed_by_id(monkeypatch):
     old_paid = SubscriberSubscription(
         id=sid, plan_name="Legacy lifetime", status="active", period_end=None,
     )
-    pages = AsyncMock(side_effect=lambda **kwargs: ActiveSubscriptionPage(
+    pages = AsyncMock(side_effect=lambda *args, **kwargs: ActiveSubscriptionPage(
         total=17, page=kwargs["page"],
         subscriptions=(old_paid,) if kwargs["page"] == 2 else (),
     ))
