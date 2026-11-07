@@ -10,7 +10,6 @@ from uuid import UUID, uuid4
 
 from aiogram import Bot
 from aiogram.exceptions import AiogramError, TelegramForbiddenError, TelegramRetryAfter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -32,6 +31,7 @@ from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.db_base import Base
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.identity.models import TelegramUser
+from telegram_membership_saas.modules.owner_setup.customer_shortcodes import customer_command
 from telegram_membership_saas.modules.projects.models import Project
 
 
@@ -168,6 +168,7 @@ async def queue_invoice_created(
     customer_id: UUID, username: str | None, first_name: str | None,
     plan_name: str, duration_value: int | None, duration_unit: str,
     amount: str, currency: str, method: str,
+    customer_telegram_id: int | None = None,
 ) -> None:
     """Exactly one queued event for this real request, committed with checkout."""
     preferences = await read_owner_settings(session, project_id)
@@ -185,6 +186,7 @@ async def queue_invoice_created(
             "plan_name": plan_name, "duration_value": duration_value,
             "duration_unit": duration_unit, "amount": amount,
             "currency": currency, "method": method,
+            "telegram_id": customer_telegram_id,
         },
     )
 
@@ -201,6 +203,10 @@ def _invoice_text(payload: dict) -> str:
     person = ("@" + escape(username) if username else tr("Покупатель", "Customer"))
     if first_name:
         person += " · " + escape(first_name)
+    command = customer_command(
+        telegram_id=payload.get("telegram_id"),
+        customer_id=UUID(hex=payload["customer_id"]),
+    )
     period = format_period(payload["duration_value"], payload["duration_unit"])
     custom_title = payload.get("plan_name") or ""
     if not custom_title or is_period_only_plan_name(
@@ -212,7 +218,7 @@ def _invoice_text(payload: dict) -> str:
     invoice_ref = str(payload["request_id"])[:10].upper()
     return (
         tr("🧾 <b>Счёт сформирован</b>\n\n", "🧾 <b>Payment invoice created</b>\n\n")
-        + "👤 " + person + "\n"
+        + "👤 " + person + " · " + command + "\n"
         + tr("📦 Подписка: ", "📦 Subscription: ") + label + "\n"
         + "💳 <b>" + escape(payload["amount"]) + " "
         + escape(payload["currency"]) + "</b> · "
@@ -221,22 +227,6 @@ def _invoice_text(payload: dict) -> str:
         + tr("№ ", "Ref ") + invoice_ref
     )
 
-
-def _invoice_keyboard(payload: dict) -> InlineKeyboardMarkup:
-    # Existing bot-scoped subscriber and review callbacks perform role checks.
-    from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
-
-    customer = UUID(hex=payload["customer_id"])
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=tr("👤 Подписчик", "👤 Subscriber"),
-            callback_data="own:subscriber:" + encode_uuid(customer),
-        )],
-        [InlineKeyboardButton(
-            text=tr("🧾 Счёт", "🧾 Invoice"),
-            callback_data="own:invoice:" + encode_uuid(UUID(hex=payload["request_id"])),
-        )],
-    ])
 
 
 async def deliver_one_owner_notification(
@@ -280,7 +270,6 @@ async def deliver_one_owner_notification(
             if kind == "invoice":
                 await bot.send_message(
                     recipient, _invoice_text(payload), parse_mode="HTML",
-                    reply_markup=_invoice_keyboard(payload),
                 )
             elif kind == "expiry":
                 from telegram_membership_saas.modules.owner_expiry import (
