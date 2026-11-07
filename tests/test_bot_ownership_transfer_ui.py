@@ -4,10 +4,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from test_owner_subscribers_ui import _bot, _buttons, _callbacks
+from test_owner_subscribers_ui import _query as q
+
 from telegram_membership_saas.modules.owner_setup import transfer_handlers as ui
 from telegram_membership_saas.modules.owner_setup.transfers import TransferView
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
-from test_owner_subscribers_ui import _bot
 
 
 def _view(project, owner, recipient, *, status="pending"):
@@ -93,9 +95,6 @@ async def test_transfer_token_not_used_when_telegram_cannot_delete_message(monke
 
 
 async def test_owner_transfer_control_only_in_connected_settings(monkeypatch):
-    from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
-    from test_owner_subscribers_ui import _callbacks, _buttons, _query as q
-
     project = uuid4()
     cb, _ = _callbacks(monkeypatch, project)
     bot = _bot()
