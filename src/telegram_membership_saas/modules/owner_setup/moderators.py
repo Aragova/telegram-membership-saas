@@ -315,6 +315,7 @@ async def set_moderated_customer_ban(
             action="customer_ban" if banned else "customer_unban",
             target_id=customer_id,
             reason="Решение модератора: новые счета/чеки запрещены; оплаченный доступ сохранён",
+            created_at=datetime.now(UTC),
         ))
         return True
 
