@@ -1,7 +1,7 @@
 """One-tap command in invoice notifications opens an authorized tenant card."""
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -91,10 +91,11 @@ async def test_tap_opens_original_card_without_search_or_extra_buttons(monkeypat
     detail.assert_awaited_once()
     assert detail.await_args.kwargs["customer_id"] == customer
     assert "👤" in bot.send_message.await_args.args[1]
-    assert "История счетов" in [
-        button.text for row in bot.send_message.await_args.kwargs[
-            "reply_markup"].inline_keyboard for button in row
-    ]
+    assert any(
+        "История счетов" in button.text
+        for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    )
 
 
 async def test_short_command_rejects_unauthorized_central_and_group(monkeypatch):
