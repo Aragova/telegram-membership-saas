@@ -15,19 +15,23 @@ outside ViMi Pay first. These proofs do not certify legal ownership.
 
 ## Flow
 
-1. Previous owner in their connected bot: **Settings → Transfer bot**.
+1. Previous owner in the connected bot: **Settings → Transfer bot**.
    Enter the recipient's numeric Telegram ID. Recipient must have interacted
-   with the bot (opened `/start`). Creates a 48-hour pending invitation.
-2. Recipient: `/transfer` in **that bot**, examines the specific invitation,
-   and confirms the transfer after performing the external BotFather transfer.
-   They submit a fresh bot token. The bot immediately deletes the Telegram
-   message; failure to delete means **no acceptance**, and the token must
-   be rotated in BotFather.
+   with this connected bot (`/start`); the invitation is valid for 48 hours.
+   Both parties then move to **central @vimipay_bot → /transfer**.
+2. Recipient uses `/start` then `/transfer` in **central @vimipay_bot**,
+   which remains available after BotFather revokes the old connected-bot token.
+   After the external BotFather ownership transfer, they submit a genuinely
+   NEW bot token there. The central bot deletes the Telegram message immediately;
+   if deletion fails, no acceptance occurs and the token must be rotated again.
+   The prior owner's stored token is decrypted and compared in constant time
+   with the submitted token; reuse is rejected.
 3. Telegram `getMe` must return the exact old numeric bot identity and
    `getChatMember` must confirm recipient is an administrator of each
    active attached channel. The token is Fernet-encrypted while the request
    awaits final approval, never returned in UI/callbacks.
-4. Previous owner: `/transfer` → Accepted → **Finalize** → explicit
+4. Previous owner: **central @vimipay_bot → /transfer** → Accepted →
+   **Finalize** → explicit
    **final confirmation**. Finalization is atomic under project checkout
    lock, project row lock and transaction. Preconditions: current owner
    unchanged, correct bot ID, unexpired accepted request, no unfinished
@@ -57,8 +61,10 @@ outside ViMi Pay first. These proofs do not certify legal ownership.
   unfinished payment requests resolved and no service grants remain.
 - Merchant history is immutable. A separate historical owner period is
   created without changing `merchant_id` or any older settled invoices.
-- The DB trigger enforces a recipient's explicitly configured connected-bot
-  quota, if any; there is **no default limit**.
+- The DB trigger enforces the recipient's explicitly configured connected-bot
+  quota, if any, using the same per-owner advisory lock as bot registration
+  and counting all non-removed bot rows, including deleting ones. There is
+  **no default limit**.
 - Old owner can cancel or recipient can decline while invitation is open.
   One open invitation per project; expired invitations are invalid and
   automatically cleared upon a new owner attempt.
@@ -72,9 +78,11 @@ outside ViMi Pay first. These proofs do not certify legal ownership.
 
 - Create recipient account and add it as channel admin before acceptance;
   perform the external BotFather transfer for a **test bot** only.
-- Owner creates invite; third-party actor cannot view/accept/finalize.
-  Recipient submits a wrong bot token (rejected), then correct new token;
-  owner explicitly finalizes.
+- Owner creates invite in connected bot and **switches to central @vimipay_bot**.
+  Recipient opens @vimipay_bot; third-party actor cannot view/accept/finalize.
+  Rotate token (old connected bot will temporarily stop polling), then submit
+  wrong and correct **new** token through the independently running central
+  bot. The old credential must be rejected. The owner finalizes centrally.
 - Verify owner changes only for that bot; new `/menu` owner panel and
   former owner's loss of access. Confirm supervisor restarts token version.
 - Verify payment methods all disabled, previous financial records and active
