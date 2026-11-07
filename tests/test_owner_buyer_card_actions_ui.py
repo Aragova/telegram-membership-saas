@@ -9,6 +9,7 @@ from test_owner_subscribers_ui import _bot, _buttons, _callbacks, _detail, _quer
 
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.subscribers import (
+    ActiveSubscriptionPage,
     ManualPlanItem,
     SubscriberGrant,
     SubscriberSubscription,
@@ -82,6 +83,14 @@ async def test_cancel_paid_subscription_has_explicit_confirmation(monkeypatch):
         ),
     ))
     monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(return_value=card))
+    monkeypatch.setattr(ui, "list_active_customer_subscriptions", AsyncMock(
+        return_value=ActiveSubscriptionPage(
+            total=1, page=0, subscriptions=card.subscriptions,
+        ),
+    ))
+    monkeypatch.setattr(ui, "get_active_customer_subscription", AsyncMock(
+        return_value=card.subscriptions[0],
+    ))
     end = AsyncMock(return_value=SimpleNamespace(
         changed=True, telegram_id=None, message="",
     ))
@@ -151,6 +160,11 @@ async def test_older_manual_activation_can_be_revoked_from_page_four(monkeypatch
         total_grants=33, grant_page=4,
     )
     monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(return_value=detail))
+    monkeypatch.setattr(ui, "list_active_customer_subscriptions", AsyncMock(
+        return_value=ActiveSubscriptionPage(
+            total=0, page=0, subscriptions=(),
+        ),
+    ))
     revoke = AsyncMock(return_value=SimpleNamespace(changed=True))
     monkeypatch.setattr(ui, "revoke_manual_plan", revoke)
     bot = _bot()
@@ -169,3 +183,36 @@ async def test_older_manual_activation_can_be_revoked_from_page_four(monkeypatch
     revoke.assert_awaited_once()
     assert revoke.await_args.kwargs["activation_id"] == activation
     assert ui.subscriber_detail.await_args.kwargs["grant_page"] == 0
+
+
+async def test_old_active_subscription_paged_and_confirmed_by_id(monkeypatch):
+    project, customer, resource, sid = uuid4(), uuid4(), uuid4(), uuid4()
+    cb, _ = _callbacks(monkeypatch, project)
+    # The short card does not list the old subscription at all.
+    monkeypatch.setattr(ui, "subscriber_detail", AsyncMock(
+        return_value=_detail(customer, resource),
+    ))
+    old_paid = SubscriberSubscription(
+        id=sid, plan_name="Legacy lifetime", status="active", period_end=None,
+    )
+    pages = AsyncMock(side_effect=lambda **kwargs: ActiveSubscriptionPage(
+        total=17, page=kwargs["page"],
+        subscriptions=(old_paid,) if kwargs["page"] == 2 else (),
+    ))
+    monkeypatch.setattr(ui, "list_active_customer_subscriptions", pages)
+    check = AsyncMock(return_value=old_paid)
+    monkeypatch.setattr(ui, "get_active_customer_subscription", check)
+    end = AsyncMock(return_value=SimpleNamespace(
+        changed=True, telegram_id=None, message="",
+    ))
+    monkeypatch.setattr(ui, "end_owner_subscription", end)
+    cid, sub = encode_uuid(customer), encode_uuid(sid)
+    bot = _bot()
+    await cb(_query("subcancel:" + cid + ":2:0"), bot)
+    assert "own:subendask:" + cid + ":" + sub in _buttons(bot)
+    assert "own:subcancel:" + cid + ":1:0" in _buttons(bot)
+    await cb(_query("subendask:" + cid + ":" + sub), bot)
+    check.assert_awaited_once()
+    await cb(_query("subendok:" + cid + ":" + sub), bot)
+    end.assert_awaited_once()
+    assert end.await_args.kwargs["subscription_id"] == sid
