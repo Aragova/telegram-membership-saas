@@ -10,6 +10,10 @@ from telegram_membership_saas.modules.broadcasts.handlers import (
     create_broadcast_router,
 )
 from telegram_membership_saas.modules.owner_setup.handlers import create_owner_setup_router
+from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
+    create_moderator_router,
+    render_moderator_menu_if_allowed,
+)
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     create_platform_dashboard_router,
 )
@@ -88,6 +92,10 @@ def create_customer_dispatcher(
     async def render_main_menu(bot, user):
         if await owner_menu_renderers[0](bot, user):
             return
+        if await render_moderator_menu_if_allowed(
+            bot, user, session_factory, project_id,
+        ):
+            return
         # The user is a buyer, not an admin. Show the same live catalog
         # as /menu, without inventing a second navigation UI.
         from telegram_membership_saas.modules.telegram_commerce.handlers import (
@@ -105,6 +113,11 @@ def create_customer_dispatcher(
     ))
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
+    # Support staff never enters the owner admin router. Handle their
+    # /start, /menu, /u and mod:* actions in a narrowly scoped router first.
+    dispatcher.include_router(create_moderator_router(
+        session_factory, project_id=project_id,
+    ))
     dispatcher.include_router(owner_router)
     dispatcher.include_router(create_broadcast_router(
         session_factory, project_id=project_id,

@@ -258,3 +258,56 @@ normal reply-to-message gesture on the admin message.
 - Verify both language directions (RU/EN), reply/cancel/expiry, a normal
   next-message response, direct quote of an owner message, and successful
   relay of a reply to an older Russian ForceReply prompt.
+
+
+## Support moderators — constrained tenant role (stage 2)
+
+A connected subscription bot's owner can now manage **🛡 Moderators**
+under **⚙️ Settings**. A staff member must first open the very same bot
+and send `/mod` to see their numeric Telegram ID; the owner assigns
+that ID. Members are stored in the existing `project_members` table
+with **support** role, exclusively for this project. The role may be
+revoked with a second confirmation. Existing non-support roles are
+never overwritten or deleted by this workflow.
+
+- A staff member enters the **separate /mod panel**. Their `/menu`,
+  `/start`, and customer `/u...` commands are routed to that limited
+  panel. Language changes return to the same staff panel.
+- Supported operations: paged customer directory, customer card with
+  Telegram identity/ban state/invoice count; one-to-one plain text,
+  emoji and Telegram links; project-local ban/unban with confirmation
+  and an immutable audit. The buyer's reply is sent to both the owner
+  and all currently assigned moderators, with one-tap customer/message
+  controls.
+- The staff request view lists only pending-review **customer identity,
+  plan label and count**. It does **not** expose receipt files,
+  bank instructions, amounts or approval/rejection controls.
+- Staff cannot use owner `own:...` actions or finance review callbacks.
+  All staff actions recheck project-specific support membership at
+  execution time; a deleted member loses access instantly. No staff
+  privilege is inherited across other connected bots.
+- **No support role** receives plan/pricing edits, payment decisions,
+  subscription activations or revocations, manual access grants,
+  broadcasts, statistics, owner settings, bot tokens, transfers or
+  ownership.
+- Banning prevents future checkout and receipt submissions but never
+  removes historic payments or already paid channel access.
+- PostgreSQL FORCE RLS remains in force. A narrow audit-policy migration
+  `0035_support_moderation_audit` allows support users to insert only
+  `customer_ban`/`customer_unban` audit events for real customers in
+  their assigned project. Audit history remains immutable and audit SELECT
+  stays owner-only. No payment or subscription schema changes.
+
+### Acceptance on staging
+1. Owner: Settings → Moderators → Add, enter test staff Telegram ID.
+2. Test staff: `/mod`, open a customer, exchange text messages and
+   inspect the redacted pending-review queue.
+3. Test confirm/cancel of ban on a **test** buyer. Never ban an existing
+   paying customer for acceptance.
+4. Ensure staff cannot reach owner `own:` menus or approve/reject
+   payments, including with saved old callbacks.
+5. Revoke staff, then test previously opened buttons and `/mod` again.
+6. Check the same staff has no access in a different connected bot.
+
+Bot/project ownership transfer is a separate high-risk stage, not a
+privilege provided to moderators.
