@@ -38,7 +38,7 @@ def _cb(router):
 async def test_recipient_accept_requires_token_and_old_owner_final_confirmation(monkeypatch):
     project, owner, recipient = uuid4(), uuid4(), uuid4()
     item = _view(project, owner, recipient)
-    router = ui.create_transfer_router(MagicMock(), project_id=project)
+    router = ui.create_transfer_router(MagicMock(), project_id=None)
     bot = _bot()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=recipient))
     monkeypatch.setattr(ui, "get_transfer_invite", AsyncMock(return_value=item))
@@ -74,7 +74,7 @@ async def test_recipient_accept_requires_token_and_old_owner_final_confirmation(
 async def test_transfer_token_not_used_when_telegram_cannot_delete_message(monkeypatch):
     project, owner, recipient = uuid4(), uuid4(), uuid4()
     item = _view(project, owner, recipient)
-    router = ui.create_transfer_router(MagicMock(), project_id=project)
+    router = ui.create_transfer_router(MagicMock(), project_id=None)
     bot = _bot()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=recipient))
     monkeypatch.setattr(ui, "get_transfer_invite", AsyncMock(return_value=item))
