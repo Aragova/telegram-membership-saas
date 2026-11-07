@@ -1396,6 +1396,8 @@ def create_owner_setup_router(
                     "subbanask:" + cid_ref + (":0" if data.is_banned else ":1"),
                     "success" if data.is_banned else "danger",
                 )],
+                [_button(tr("🛡 Доступ модератора", "🛡 Moderator access"),
+                         "submod:" + cid_ref)],
             ])
         rows.append([_button(
             tr("🧾 История счетов", "🧾 Invoice history"),
@@ -3053,6 +3055,59 @@ def create_owner_setup_router(
                 await show_subscriber_card(
                     bot, user_id, actor_id, project_id,
                     decode_uuid(cid), grant_page=int(page_text),
+                )
+            elif action.startswith("submod:"):
+                customer_id = decode_uuid(action.split(":", 1)[1])
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    customer_id=customer_id,
+                )
+                if not detail.owner_only_actions:
+                    raise PermissionError("Только владелец управляет модераторами")
+                cid = encode_uuid(customer_id)
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "🛡 <b>Роль модератора</b>\n\n"
+                        "Покупатель получит доступ к переписке и блокировке "
+                        "спама, а также просмотру заявок без сумм и чеков. "
+                        "Оплаты, тарифы и владение ботом недоступны.\n"
+                        "Выберите действие для Telegram ID ",
+                        "🛡 <b>Moderator role</b>\n\n"
+                        "The customer may message buyers, ban spam and view "
+                        "redacted requests. Payments, plans and bot ownership "
+                        "remain unavailable.\nChoose action for Telegram ID ",
+                    ) + str(detail.telegram_id),
+                    parse_mode="HTML", reply_markup=_markup([
+                        [_button(tr("✅ Назначить", "✅ Appoint"),
+                                 "submodconfirm:" + cid + ":1", "success")],
+                        [_button(tr("🗑 Отозвать", "🗑 Revoke"),
+                                 "submodconfirm:" + cid + ":0", "danger")],
+                        [_button(tr("⬅️ Карточка", "⬅️ Customer card"),
+                                 "subscriber:" + cid)],
+                    ]),
+                )
+            elif action.startswith("submodconfirm:"):
+                _, cid, flag = action.split(":", 2)
+                if flag not in ("0", "1"):
+                    raise ValueError("Неверное действие")
+                customer_id = decode_uuid(cid)
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    customer_id=customer_id,
+                )
+                if not detail.owner_only_actions:
+                    raise PermissionError("Только владелец управляет модераторами")
+                changed = await set_project_moderator(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    telegram_id=detail.telegram_id, enabled=flag == "1",
+                )
+                await bot.send_message(user_id, (
+                    tr("✅ Права изменены.", "✅ Permissions changed.") if changed
+                    else tr("Изменений нет.", "No changes.")
+                ))
+                await show_subscriber_card(
+                    bot, user_id, actor_id, project_id, customer_id,
                 )
             elif action.startswith("submsg:"):
                 cid = decode_uuid(action.split(":", 1)[1])
