@@ -200,3 +200,35 @@ and never transfer a bot through an unconfirmed buyer callback.
 4. Verify actual Payments/Subscriptions/Entitlement Grants are unchanged
    by a ban or message; project isolation and 100-bot light configuration
    remain intact.
+
+## Two-way direct messaging (buyer ↔ owner)
+
+The buyer card's **Write message** action now starts a real conversation,
+not a one-way blind `send_message`. The owner composes the existing
+text/emoji/Telegram-link message, and the customer receives it with a
+**↩️ Ответить / Reply** inline button and visible reply instructions.
+Customers may either use the button (ForceReply composer) or Telegram's
+normal reply-to-message gesture on the admin message.
+
+- A buyer's reply must be in their private chat, to a real message sent by
+  the **same connected bot** with a recognized conversation prefix. Plain
+  messages, payment receipts and slash commands are never intercepted.
+- A project-scoped read resolves the buyer's real ProjectCustomer and owner.
+  Only non-banned customers in the current active project can send a reply.
+  The owner's chat receives `💬 Покупатель /u...` with sender identity,
+  the submitted text, **✉️ Ответить** and **👤 Карточка**.
+- The owner may reply using that button (the original `subscriber_message`
+  flow) or by Telegram's native reply to this bot notification. Both routes
+  re-check current project ownership and customer identity. A support-role
+  or random user cannot replay a copied reference to send messages.
+- Telegram itself stores the message conversation in its chats. No new
+  message table, no migration, and no changes to payments, subscriptions,
+  financial history or moderation decisions. No claims of delivery are made
+  if Telegram refuses the send.
+- Phase one accepts text, emoji and Telegram links up to 3500 characters.
+  Media messages are deliberately not forwarded as text; richer media
+  support and an optional opt-in conversation history can follow after testing.
+- Staging acceptance: owner sends a test message, buyer taps Reply,
+  owner receives buyer text with the correct /u reference, owner replies
+  back, and buyer sees it. Check a blocked buyer and another connected bot
+  cannot route a reply. Do not broadcast or touch real paid subscriptions.

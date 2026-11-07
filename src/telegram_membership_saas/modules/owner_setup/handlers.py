@@ -14,6 +14,7 @@ from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
+    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -64,6 +65,16 @@ from telegram_membership_saas.modules.owner_setup.connection_management import (
     remove_unused_connection,
     rename_owner_connection,
     restore_owner_connection,
+)
+from telegram_membership_saas.modules.owner_setup.conversations import (
+    ADMIN_MESSAGE_HEADER,
+    BUYER_MESSAGE_HEADER,
+    BUYER_REPLY_PROMPT,
+    MAX_DIALOG_TEXT,
+    customer_ref,
+    find_buyer_conversation,
+    is_admin_message,
+    parse_buyer_notification,
 )
 from telegram_membership_saas.modules.owner_setup.currencies import (
     enable_owner_currency,
@@ -297,6 +308,35 @@ class SetupReplyFilter(BaseFilter):
             reply_message_id=origin.message_id if origin is not None else None,
             bot_scope_id=bot.id if self.fixed_project_id else 0,
         )
+
+
+class BuyerConversationReplyFilter(BaseFilter):
+    """Only replies to actual messages from this bot, not arbitrary user text."""
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if not _private(message) or not message.text or message.text.startswith("/"):
+            return False
+        parent = message.reply_to_message
+        return bool(
+            parent and parent.from_user and parent.from_user.id == bot.id
+            and is_admin_message(parent.text)
+        )
+
+
+class OwnerConversationReplyFilter(BaseFilter):
+    """Owner can reply directly to the bot's contextual buyer notification."""
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if not _private(message) or not message.text or message.text.startswith("/"):
+            return False
+        parent = message.reply_to_message
+        if not parent or not parent.from_user or parent.from_user.id != bot.id:
+            return False
+        try:
+            parse_buyer_notification(parent.text)
+        except ValueError:
+            return False
+        return True
 
 
 class ClearOwnerInputOnNavigation(BaseMiddleware):
@@ -2284,6 +2324,152 @@ def create_owner_setup_router(
             user_id, tr("💱 Выберите валюту:", "💱 Choose a currency:"),
             reply_markup=_markup(rows),
         )
+
+    async def send_to_customer(bot: Bot, target_id: int, text: str) -> None:
+        """Keep reply route available on every outbound owner text."""
+        await bot.send_message(
+            target_id,
+            ADMIN_MESSAGE_HEADER + "\n\n" + text
+            + "\n\n↩️ Ответьте на сообщение или нажмите кнопку."
+            + "\nReply to this message or tap the button.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="↩️ Ответить / Reply", callback_data="chat:reply",
+                ),
+            ]]),
+        )
+
+    @router.callback_query(F.data == "chat:reply")
+    async def buyer_reply_button(query: CallbackQuery, bot: Bot) -> None:
+        if (
+            fixed_project_id is None or query.message is None
+            or query.message.chat.type != "private"
+            or query.message.chat.id != query.from_user.id
+        ):
+            await query.answer()
+            return
+        info = await find_buyer_conversation(
+            factory, project_id=fixed_project_id,
+            telegram_id=query.from_user.id,
+        )
+        if info is None or info.is_banned:
+            await query.answer(tr(
+                "Обращение недоступно.", "Messaging is unavailable.",
+            ), show_alert=True)
+            return
+        await query.answer()
+        await bot.send_message(
+            query.from_user.id,
+            BUYER_REPLY_PROMPT
+            + "\n\n"
+            + tr(
+                "Введите сообщение администратору (до 3500 символов).",
+                "Type your reply to the administrator (up to 3500 characters).",
+            ),
+            reply_markup=ForceReply(
+                input_field_placeholder=tr(
+                    "Ответ администратору", "Reply to administrator",
+                ),
+            ),
+        )
+
+    @router.message(BuyerConversationReplyFilter())
+    async def buyer_conversation_reply(message: Message, bot: Bot) -> None:
+        if fixed_project_id is None:
+            return
+        info = await find_buyer_conversation(
+            factory, project_id=fixed_project_id,
+            telegram_id=message.from_user.id,
+        )
+        if info is None or info.is_banned:
+            await bot.send_message(message.chat.id, tr(
+                "🚫 Отправка сообщений недоступна.",
+                "🚫 Messaging is unavailable.",
+            ))
+            return
+        body = (message.text or "").strip()
+        if not 1 <= len(body) <= MAX_DIALOG_TEXT:
+            await bot.send_message(message.chat.id, tr(
+                "Сообщение должно содержать от 1 до 3500 символов.",
+                "Message must contain 1–3500 characters.",
+            ))
+            return
+        identity = ("@" + info.username) if info.username else (
+            info.first_name or str(info.customer_telegram_id)
+        )
+        title = BUYER_MESSAGE_HEADER + customer_ref(info)
+        notify = (
+            title + "\n👤 " + identity[:70]
+            + " · ID " + str(info.customer_telegram_id)
+            + "\n\n" + body
+        )
+        try:
+            await bot.send_message(
+                info.owner_telegram_id, notify,
+                reply_markup=_markup([[
+                    _button(
+                        tr("✉️ Ответить", "✉️ Reply"),
+                        "submsg:" + encode_uuid(info.customer_id),
+                    ),
+                    _button(
+                        tr("👤 Карточка", "👤 Customer card"),
+                        "subscriber:" + encode_uuid(info.customer_id),
+                    ),
+                ]]),
+            )
+        except AiogramError:
+            await bot.send_message(message.chat.id, tr(
+                "⚠️ Не удалось передать сообщение администратору.",
+                "⚠️ The message could not be delivered to the administrator.",
+            ))
+            return
+        await bot.send_message(message.chat.id, tr(
+            "✅ Ответ отправлен администратору.",
+            "✅ Your reply has been sent to the administrator.",
+        ))
+
+    @router.message(OwnerConversationReplyFilter())
+    async def owner_conversation_reply(message: Message, bot: Bot) -> None:
+        if fixed_project_id is None:
+            return
+        telegram_id = parse_buyer_notification(message.reply_to_message.text)
+        actor_id = await actor(message.from_user)
+        if not await can_manage_project(
+            factory, actor_id=actor_id, project_id=fixed_project_id,
+        ):
+            await bot.send_message(message.chat.id, tr(
+                "Нет прав для отправки сообщений покупателям.",
+                "You cannot message customers.",
+            ))
+            return
+        try:
+            customer_id = await customer_id_by_telegram_id(
+                factory, actor_id=actor_id, project_id=fixed_project_id,
+                telegram_id=telegram_id,
+            )
+            detail = await subscriber_detail(
+                factory, actor_id=actor_id, project_id=fixed_project_id,
+                customer_id=customer_id,
+            )
+            if not detail.owner_only_actions:
+                raise PermissionError("Только владелец может отвечать покупателю")
+            body = (message.text or "").strip()
+            if not 1 <= len(body) <= MAX_DIALOG_TEXT:
+                raise ValueError("Сообщение должно содержать от 1 до 3500 символов")
+            await send_to_customer(bot, detail.telegram_id, body)
+        except (ValueError, PermissionError) as exc:
+            await bot.send_message(message.chat.id, "⚠️ " + str(exc))
+            return
+        except AiogramError:
+            await bot.send_message(message.chat.id, tr(
+                "⚠️ Не удалось доставить ответ покупателю.",
+                "⚠️ The reply could not be delivered to the customer.",
+            ))
+            return
+        await bot.send_message(message.chat.id, tr(
+            "✅ Ответ отправлен покупателю.",
+            "✅ Reply sent to customer.",
+        ))
 
     @router.message(
         F.text.regexp(r"^/(?:u[0-9a-z]{1,13}|c[a-z2-7]{26})$")
@@ -4776,7 +4962,7 @@ def create_owner_setup_router(
                 if not detail.owner_only_actions:
                     raise PermissionError("Отправлять сообщения может только владелец")
                 try:
-                    await bot.send_message(detail.telegram_id, text)
+                    await send_to_customer(bot, detail.telegram_id, text)
                 except AiogramError:
                     await bot.send_message(
                         message.chat.id,

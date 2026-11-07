@@ -140,7 +140,10 @@ async def test_owner_message_targets_one_verified_customer(monkeypatch):
     )
     await handler(message, bot)
     assert any(
-        call.args == (12345678, "Привет 👋 https://t.me/example")
+        call.args[0] == 12345678
+        and "Привет 👋 https://t.me/example" in call.args[1]
+        and call.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+            == "chat:reply"
         for call in bot.send_message.await_args_list
     )
 
