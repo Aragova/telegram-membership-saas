@@ -1401,7 +1401,7 @@ def create_owner_setup_router(
             raise PermissionError("Аннулирование доступно только владельцу")
         cid = encode_uuid(customer_id)
         rows: list[list[InlineKeyboardButton]] = []
-        for sub in active.subscriptions if page == 0 else ():
+        for sub in active.subscriptions:
             if sub.status == "active" and sub.id is not None:
                 rows.append([_button(
                     "💳 " + sub.plan_name[:36],
