@@ -380,7 +380,9 @@ def create_broadcast_router(
                             if key[0] == bot.id and key[1] == query.from_user.id
                             and batch["token"] == post_id), None)
                 if key is None:
-                    raise ValueError("Альбом изменён или отменён. Используйте последнее подтверждение.")
+                    raise ValueError(
+                        "Альбом изменён или отменён. Используйте последнее подтверждение."
+                    )
                 batch = album_inbox.pop(key)
                 if batch["task"] is not None:
                     batch["task"].cancel()
