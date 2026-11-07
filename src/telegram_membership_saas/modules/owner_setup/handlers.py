@@ -4718,6 +4718,38 @@ def create_owner_setup_router(
                     search=needle,
                 )
                 return
+            if flow.step == "subscriber_message":
+                if fixed_project_id is None or flow.project_id != fixed_project_id:
+                    raise PermissionError("Сообщение другого проекта отправлять нельзя")
+                if not 1 <= len(text) <= 3500:
+                    raise ValueError("Текст сообщения должен содержать 1–3500 символов")
+                customer_id = UUID(hex=flow.payload["customer_id"])
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=fixed_project_id,
+                    customer_id=customer_id,
+                )
+                if not detail.owner_only_actions:
+                    raise PermissionError("Отправлять сообщения может только владелец")
+                try:
+                    await bot.send_message(detail.telegram_id, text)
+                except AiogramError:
+                    await bot.send_message(
+                        message.chat.id,
+                        tr("⚠️ Сообщение не доставлено. Возможно, покупатель "
+                           "заблокировал бота.",
+                           "⚠️ Not delivered. The customer may have blocked the bot."),
+                    )
+                else:
+                    await bot.send_message(
+                        message.chat.id,
+                        tr("✅ Сообщение отправлено покупателю.",
+                           "✅ Message sent to customer."),
+                    )
+                await show_subscriber_card(
+                    bot, message.chat.id, actor_id,
+                    fixed_project_id, customer_id,
+                )
+                return
             if flow.step == "new_bot_token":
                 if not TOKEN_PATTERN.fullmatch(text):
                     raise ValueError(
@@ -4957,6 +4989,7 @@ def create_owner_setup_router(
                 "connection_rename": "bots",
                 "currency_custom_code": "methods",
                 "subscriber_search": "subscribers",
+                "subscriber_message": "subscribers",
             }.get(flow.step, "dashboard")
             if flow.step in ("method_rename", "method_edit"):
                 method_hex = flow.payload.get("method_id")
