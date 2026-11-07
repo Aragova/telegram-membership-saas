@@ -17,9 +17,11 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     for table in ("broadcast_templates", "broadcast_campaigns"):
         op.add_column(table, sa.Column("media_items", sa.JSON(), nullable=True))
-        op.drop_constraint(f"ck_broadcast_{'template' if table == 'broadcast_templates' else 'campaign'}_kind", table, type_="check")
+        suffix = "template" if table == "broadcast_templates" else "campaign"
+        name = f"ck_broadcast_{suffix}_kind"
+        op.drop_constraint(name, table, type_="check")
         op.create_check_constraint(
-            f"ck_broadcast_{'template' if table == 'broadcast_templates' else 'campaign'}_kind",
+            name,
             table, "kind IN ('text','photo','video','document','animation','album')",
         )
 
@@ -35,9 +37,11 @@ def downgrade() -> None:
         )).scalar()
         if present:
             raise RuntimeError("Cannot downgrade broadcast albums with existing data")
-        op.drop_constraint(f"ck_broadcast_{'template' if table == 'broadcast_templates' else 'campaign'}_kind", table, type_="check")
+        suffix = "template" if table == "broadcast_templates" else "campaign"
+        name = f"ck_broadcast_{suffix}_kind"
+        op.drop_constraint(name, table, type_="check")
         op.create_check_constraint(
-            f"ck_broadcast_{'template' if table == 'broadcast_templates' else 'campaign'}_kind",
+            name,
             table, "kind IN ('text','photo','video','document','animation')",
         )
         op.drop_column(table, "media_items")
