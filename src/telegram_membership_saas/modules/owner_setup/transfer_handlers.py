@@ -52,7 +52,7 @@ def _button(label: str, data: str, *, danger: bool = False) -> InlineKeyboardBut
 
 
 def create_transfer_router(
-    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID | None,
 ) -> Router:
     router = Router(name="secure-owner-transfer")
     recipient_entry: dict[int, float] = {}
@@ -65,6 +65,8 @@ def create_transfer_router(
         )
 
     async def _is_owner(actor_id: UUID) -> bool:
+        if project_id is None:
+            return False
         async with tenant_session_scope(
             factory, TenantContext(user_id=actor_id),
         ) as session:
@@ -79,7 +81,8 @@ def create_transfer_router(
     async def _show_home(bot: Bot, user_id: int, actor_id: UUID) -> None:
         is_owner = await _is_owner(actor_id)
         all_items = await list_transfer_invites(factory, actor_id=actor_id)
-        relevant = [t for t in all_items if t.project_id == project_id]
+        relevant = [t for t in all_items
+                    if project_id is None or t.project_id == project_id]
         if not is_owner and not any(t.to_user_id == actor_id for t in relevant):
             await bot.send_message(user_id, tr(
                 "🔁 Приглашений на передачу бота нет.",
@@ -109,13 +112,13 @@ def create_transfer_router(
                 "🔁 <b>Передача управления ботом</b>\n\n"
                 "Здесь передаётся только этот бот и его проект. "
                 "Подключения других каналов не меняются.\n"
-                "Получатель должен предварительно получить бота через "
+                "Подтверждение — в @vimipay_bot /transfer. Получатель должен получить бота через "
                 "@BotFather и быть администратором его каналов.\n"
                 "Платежи, подписки и история сохраняются. Новому владельцу "
                 "придётся заново включить собственные способы оплаты.",
                 "🔁 <b>Bot management transfer</b>\n\n"
                 "Only this bot and its project move; other connections stay.\n"
-                "The recipient must first receive the bot in @BotFather and "
+                "Accept and finalize via @vimipay_bot /transfer. The recipient must receive the bot in @BotFather and "
                 "be an admin in its channels.\n"
                 "Payments, subscriptions and history stay intact. "
                 "The new owner must configure their own payment methods.",
@@ -128,17 +131,17 @@ def create_transfer_router(
         item = await get_transfer_invite(
             factory, actor_id=actor_id, transfer_id=transfer_id,
         )
-        if item.project_id != project_id:
+        if project_id is not None and item.project_id != project_id:
             raise PermissionError("Эта передача относится к другому боту")
         owner = item.from_user_id == actor_id
         buttons: list[list[InlineKeyboardButton]] = []
         token = encode_uuid(item.id)
-        if not owner and item.status == "pending":
+        if project_id is None and not owner and item.status == "pending":
             buttons.append([_button(
                 tr("✅ Подтвердить и ввести токен", "✅ Confirm and enter token"),
                 "accept:" + token,
             )])
-        if owner and item.status == "accepted":
+        if project_id is None and owner and item.status == "accepted":
             buttons.append([_button(
                 tr("✅ Завершить передачу", "✅ Finalize transfer"),
                 "finalask:" + token,
@@ -188,8 +191,8 @@ def create_transfer_router(
             if action == "home":
                 await _show_home(bot, query.from_user.id, actor_id)
             elif action == "start":
-                if not await _is_owner(actor_id):
-                    raise PermissionError("Передачу начинает только владелец")
+                if project_id is None or not await _is_owner(actor_id):
+                    raise PermissionError("Начните передачу в подключённом боте")
                 recipient_entry[query.from_user.id] = monotonic() + 180
                 await bot.send_message(
                     query.from_user.id,
@@ -211,10 +214,12 @@ def create_transfer_router(
                     decode_uuid(action.split(":", 1)[1]),
                 )
             elif action.startswith("accept:"):
+                if project_id is not None:
+                    raise PermissionError("Подтвердите в @vimipay_bot → /transfer")
                 tid = decode_uuid(action.split(":", 1)[1])
                 item = await get_transfer_invite(factory, actor_id=actor_id,
                                                   transfer_id=tid)
-                if item.project_id != project_id or item.to_user_id != actor_id:
+                if item.to_user_id != actor_id:
                     raise PermissionError("Это приглашение не для вас")
                 if item.status != "pending":
                     raise ValueError("Это приглашение уже обработано")
@@ -241,7 +246,7 @@ def create_transfer_router(
                 verb, value = action.split(":", 1)
                 tid = decode_uuid(value)
                 item = await get_transfer_invite(factory, actor_id=actor_id, transfer_id=tid)
-                if item.project_id != project_id:
+                if project_id is not None and item.project_id != project_id:
                     raise PermissionError("Чужой бот")
                 if verb == "cancelask":
                     await bot.send_message(
@@ -259,10 +264,12 @@ def create_transfer_router(
                     )
                     await _show_home(bot, query.from_user.id, actor_id)
             elif action.startswith(("finalask:", "finalok:")):
+                if project_id is not None:
+                    raise PermissionError("Завершите через @vimipay_bot → /transfer")
                 verb, value = action.split(":", 1)
                 tid = decode_uuid(value)
                 item = await get_transfer_invite(factory, actor_id=actor_id, transfer_id=tid)
-                if item.project_id != project_id or item.from_user_id != actor_id:
+                if item.from_user_id != actor_id:
                     raise PermissionError("Только текущий владелец")
                 if verb == "finalask":
                     await bot.send_message(
@@ -290,7 +297,7 @@ def create_transfer_router(
                     )
                 else:
                     await finalize_transfer(
-                        factory, actor_id=actor_id, project_id=project_id,
+                        factory, actor_id=actor_id, project_id=item.project_id,
                         transfer_id=tid,
                     )
                     await bot.send_message(
@@ -316,9 +323,11 @@ def create_transfer_router(
                 return False
             now = monotonic()
             return (
-                recipient_entry.get(message.from_user.id, 0) > now
+                (project_id is not None
+                 and recipient_entry.get(message.from_user.id, 0) > now)
                 or (
-                    message.from_user.id in token_entry
+                    project_id is None
+                    and message.from_user.id in token_entry
                     and token_entry[message.from_user.id][1] > now
                 )
             )
@@ -365,7 +374,7 @@ def create_transfer_router(
             ))
             return
 
-        if recipient_entry.pop(uid, 0) <= monotonic():
+        if project_id is None or recipient_entry.pop(uid, 0) <= monotonic():
             return
         tid = message.text.strip()
         if not tid.isascii() or not tid.isdecimal() or len(tid) > 19:
@@ -383,10 +392,11 @@ def create_transfer_router(
             await bot.send_message(message.chat.id, "⚠️ " + str(exc))
             return
         await bot.send_message(message.chat.id, tr(
-            "✅ Приглашение создано. Получатель открывает этого бота "
-            "и отправляет /transfer. Срок — 48 часов.",
-            "✅ Invitation created. Recipient opens this bot "
-            "and sends /transfer. Valid for 48 hours.",
+            "✅ Приглашение создано. Получатель и владелец "
+            "завершают передачу в @vimipay_bot через /transfer. "
+            "Срок — 48 часов.",
+            "✅ Invitation created. Both accounts finish the transfer "
+            "in @vimipay_bot via /transfer. Valid for 48 hours.",
         ))
         try:
             await bot.send_message(
@@ -395,15 +405,15 @@ def create_transfer_router(
                     "📥 Вам предложили управление ботом @",
                     "📥 You have been invited to manage @",
                 ) + invite.bot_username
-                + tr("\nОткройте /transfer, чтобы подтвердить передачу.",
-                     "\nOpen /transfer to confirm the transfer."),
+                + tr("\nОткройте @vimipay_bot → /transfer для подтверждения.",
+                     "\nOpen @vimipay_bot → /transfer to confirm."),
             )
         except AiogramError:
             await bot.send_message(message.chat.id, tr(
                 "Получатель пока не принимает сообщения бота. "
-                "Попросите его самостоятельно открыть /transfer.",
+                "Попросите его открыть @vimipay_bot → /transfer.",
                 "Recipient cannot receive messages yet. "
-                "Ask them to open /transfer themselves.",
+                "Ask them to open @vimipay_bot → /transfer.",
             ))
 
     return router
