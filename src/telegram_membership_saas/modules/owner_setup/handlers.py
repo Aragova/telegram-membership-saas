@@ -2649,6 +2649,238 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     decode_uuid(cid), grant_page=int(page_text),
                 )
+            elif action.startswith("submsg:"):
+                cid = decode_uuid(action.split(":", 1)[1])
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    customer_id=cid,
+                )
+                if not detail.owner_only_actions:
+                    raise PermissionError("Сообщения покупателям отправляет владелец")
+                await prompt(
+                    bot, user_id, actor_id,
+                    step="subscriber_message",
+                    payload={"customer_id": cid.hex},
+                    text=tr(
+                        "✉️ <b>Сообщение покупателю</b>\\n\\n"
+                        "Отправьте текст, эмодзи или Telegram-ссылку. "
+                        "Сообщение будет отправлено только этому покупателю. "
+                        "Чтобы отменить, используйте /cancel.",
+                        "✉️ <b>Message customer</b>\\n\\n"
+                        "Send text, emoji or Telegram links. "
+                        "Only this buyer receives it. /cancel to exit.",
+                    ),
+                )
+            elif action.startswith("subactivate:"):
+                parts = action.split(":")
+                if len(parts) not in (2, 3):
+                    raise ValueError("Неверная страница тарифов")
+                page_text = parts[2] if len(parts) == 3 else "0"
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Неверная страница тарифов")
+                await show_manual_plan_picker(
+                    bot, user_id, actor_id, project_id,
+                    decode_uuid(parts[1]), page=int(page_text),
+                )
+            elif action.startswith(("subactask:", "subactok:")):
+                verb, cid, pid = action.split(":", 2)
+                customer_id, plan_id = decode_uuid(cid), decode_uuid(pid)
+                if verb == "subactask":
+                    detail = await subscriber_detail(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id,
+                    )
+                    if not detail.owner_only_actions:
+                        raise PermissionError("Только владелец может выдавать тариф")
+                    async with tenant_session_scope(
+                        factory, TenantContext(
+                            user_id=actor_id, project_id=project_id,
+                        ),
+                    ) as session:
+                        plan = await session.scalar(
+                            select(Plan).where(
+                                Plan.project_id == project_id,
+                                Plan.id == plan_id, Plan.status == "active",
+                            )
+                        )
+                    if plan is None:
+                        raise ValueError("Тариф больше недоступен")
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⚠️ <b>Бесплатная активация</b>\\n",
+                            "⚠️ <b>Complimentary activation</b>\\n",
+                        ) + escape(plan.name) + " · "
+                        + format_period(plan.duration_value, plan.duration_unit)
+                        + tr(
+                            "\\n\\nПодтвердите выдачу. Это НЕ оплата. "
+                            "Права появятся в карточке, а финансовая история "
+                            "и оплаченные подписки не изменятся.",
+                            "\\n\\nConfirm grant. This is NOT payment. "
+                            "Access will appear in the card without changing "
+                            "approved payments or paid subscriptions.",
+                        ),
+                        parse_mode="HTML", reply_markup=_markup([
+                            [_button(
+                                tr("✅ Активировать", "✅ Activate"),
+                                "subactok:" + cid + ":" + pid, "success",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "subscriber:" + cid)],
+                        ]),
+                    )
+                else:
+                    await activate_manual_plan(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id, plan_id=plan_id,
+                    )
+                    await bot.send_message(
+                        user_id,
+                        tr("✅ Тариф активирован без оплаты.",
+                           "✅ Plan activated without payment."),
+                    )
+                    await show_subscriber_card(
+                        bot, user_id, actor_id, project_id, customer_id,
+                    )
+            elif action.startswith("subcancel:"):
+                await show_customer_cancel_picker(
+                    bot, user_id, actor_id, project_id,
+                    decode_uuid(action.split(":", 1)[1]),
+                )
+            elif action.startswith(("subendask:", "subendok:")):
+                verb, cid, sid = action.split(":", 2)
+                customer_id, subscription_id = decode_uuid(cid), decode_uuid(sid)
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    customer_id=customer_id,
+                )
+                sub = next((
+                    item for item in detail.subscriptions
+                    if item.id == subscription_id and item.status == "active"
+                ), None)
+                if not detail.owner_only_actions or sub is None:
+                    raise PermissionError("Подписка недоступна для аннулирования")
+                if verb == "subendask":
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⚠️ <b>Досрочно завершить оплаченную подписку?</b>\\n\\n",
+                            "⚠️ <b>End paid subscription early?</b>\\n\\n",
+                        ) + escape(sub.plan_name) + tr(
+                            "\\nЭто может лишить покупателя уже оплаченного "
+                            "доступа. Согласуйте возврат отдельно. "
+                            "Подтверждённые платежи не удаляются.",
+                            "\\nThis may revoke prepaid access. Handle any "
+                            "refund separately. Confirmed payments remain.",
+                        ),
+                        parse_mode="HTML", reply_markup=_markup([
+                            [_button(
+                                tr("🗑 Завершить подписку", "🗑 End subscription"),
+                                "subendok:" + cid + ":" + sid, "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "subscriber:" + cid)],
+                        ]),
+                    )
+                else:
+                    result = await end_owner_subscription(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        subscription_id=subscription_id,
+                    )
+                    if result.telegram_id is not None and result.changed:
+                        try:
+                            await bot.send_message(
+                                result.telegram_id, result.message,
+                            )
+                        except AiogramError:
+                            pass
+                    await bot.send_message(
+                        user_id,
+                        tr("✅ Подписка завершена; история оплат сохранена.",
+                           "✅ Subscription ended; payment history preserved."),
+                    )
+                    await show_subscriber_card(
+                        bot, user_id, actor_id, project_id, customer_id,
+                    )
+            elif action.startswith(("subrevplanask:", "subrevplanok:")):
+                verb, cid, source = action.split(":", 2)
+                customer_id, activation_id = decode_uuid(cid), decode_uuid(source)
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    customer_id=customer_id,
+                )
+                if not detail.owner_only_actions or activation_id not in {
+                    g.source_id for g in detail.grants
+                    if g.manual_plan_id is not None
+                }:
+                    raise PermissionError("Бесплатная активация недоступна")
+                if verb == "subrevplanask":
+                    await bot.send_message(
+                        user_id, tr(
+                            "⚠️ Отозвать эту бесплатную активацию? "
+                            "Оплаченные права и платежи сохраняются.",
+                            "⚠️ Revoke this complimentary plan? "
+                            "Paid rights and payment records remain.",
+                        ), reply_markup=_markup([
+                            [_button(
+                                tr("🗑 Подтвердить", "🗑 Confirm"),
+                                "subrevplanok:" + cid + ":" + source, "danger",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "subscriber:" + cid)],
+                        ]),
+                    )
+                else:
+                    await revoke_manual_plan(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id, activation_id=activation_id,
+                    )
+                    await show_subscriber_card(
+                        bot, user_id, actor_id, project_id, customer_id,
+                    )
+            elif action.startswith(("subbanask:", "subbanok:")):
+                verb, cid, flag = action.split(":", 2)
+                if flag not in ("0", "1"):
+                    raise ValueError("Неверный режим блокировки")
+                customer_id, banned = decode_uuid(cid), flag == "1"
+                detail = await subscriber_detail(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    customer_id=customer_id,
+                )
+                if not detail.owner_only_actions:
+                    raise PermissionError("Только владелец может блокировать")
+                if verb == "subbanask":
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "🚫 <b>Заблокировать покупателя?</b>\\n"
+                            "Новые счета и отправка чеков будут запрещены. "
+                            "Ранее оплаченные права и платежи не стираются.",
+                            "🚫 <b>Ban customer?</b>\\n"
+                            "New invoices and receipt submissions will be blocked. "
+                            "Existing paid grants and payments remain.",
+                        ) if banned else tr(
+                            "✅ Разблокировать покупателя? Новые покупки снова доступны.",
+                            "✅ Unban customer? New purchases will be allowed again.",
+                        ),
+                        parse_mode="HTML", reply_markup=_markup([
+                            [_button(
+                                tr("✅ Подтвердить", "✅ Confirm"),
+                                "subbanok:" + cid + ":" + flag,
+                                "danger" if banned else "success",
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "subscriber:" + cid)],
+                        ]),
+                    )
+                else:
+                    await set_customer_ban(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        customer_id=customer_id, banned=banned,
+                    )
+                    await show_subscriber_card(
+                        bot, user_id, actor_id, project_id, customer_id,
+                    )
             elif action.startswith("subgrantstart:"):
                 await show_manual_resource_picker(
                     bot, user_id, actor_id, project_id,
