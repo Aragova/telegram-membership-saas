@@ -39,6 +39,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     create_checkout_for_telegram_user,
 )
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
+
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"), reason="Requires migrated PostgreSQL",
 )
