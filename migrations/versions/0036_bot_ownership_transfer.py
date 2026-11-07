@@ -21,14 +21,26 @@ def upgrade() -> None:
     op.create_table(
         "project_ownership_transfers",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("from_user_id", sa.Uuid(), sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("to_user_id", sa.Uuid(), sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column(
+            "project_id", sa.Uuid(),
+            sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False,
+        ),
+        sa.Column(
+            "from_user_id", sa.Uuid(),
+            sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False,
+        ),
+        sa.Column(
+            "to_user_id", sa.Uuid(),
+            sa.ForeignKey("telegram_users.id", ondelete="RESTRICT"), nullable=False,
+        ),
         sa.Column("telegram_bot_id", sa.BigInteger(), nullable=False),
         sa.Column("bot_username", sa.String(64), nullable=False),
         sa.Column("status", sa.String(16), nullable=False, server_default="pending"),
         sa.Column("encrypted_new_token", sa.String(4096), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True),
+            nullable=False, server_default=sa.func.now(),
+        ),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("accepted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
@@ -192,7 +204,8 @@ def upgrade() -> None:
                       )
                     ORDER BY t.created_at DESC LIMIT 1 FOR UPDATE;
                     IF approved IS NULL THEN
-                        RAISE EXCEPTION 'Verified dual-consent transfer and liability checks required'
+                        RAISE EXCEPTION
+                            'Verified dual-consent and liability checks required'
                             USING ERRCODE = '42501';
                     END IF;
                     IF EXISTS(
