@@ -196,12 +196,56 @@ def extract_post(message: Message) -> tuple[str, str | None, list | None, str | 
     return kind, body, serialized, file_id
 
 
+def extract_album(messages: list[Message]) -> tuple[str, str | None, list | None, None, list]:
+    """Serialize one Telegram photo/video group in message order.
+
+    Albums must be delivered as one sendMediaGroup, not partially saved.
+    Telegram can send its elements as separate updates in arbitrary order.
+    """
+    if not 2 <= len(messages) <= 10:
+        raise ValueError("Альбом должен содержать от 2 до 10 фото или видео")
+    groups = {message.media_group_id for message in messages}
+    if len(groups) != 1 or None in groups:
+        raise ValueError("Сообщения должны принадлежать одному альбому")
+    if len({message.message_id for message in messages}) != len(messages):
+        raise ValueError("В альбоме обнаружены повторяющиеся сообщения")
+    items = []
+    captioned = []
+    for message in sorted(messages, key=lambda item: item.message_id):
+        if message.has_protected_content:
+            raise ValueError("Этот альбом защищён от копирования в Telegram")
+        if message.photo:
+            items.append({"type": "photo", "file_id": message.photo[-1].file_id})
+        elif message.video:
+            items.append({"type": "video", "file_id": message.video.file_id})
+        else:
+            raise ValueError("В альбоме поддерживаются только фото и видео")
+        if message.caption or message.caption_entities:
+            captioned.append(message)
+    if len(captioned) > 1:
+        raise ValueError("Используйте одну общую подпись для альбома")
+    caption = captioned[0] if captioned else None
+    entities = (
+        [entity.model_dump(mode="json", exclude_none=True)
+         for entity in caption.caption_entities]
+        if caption and caption.caption_entities else None
+    )
+    return "album", caption.caption if caption else None, entities, None, items
+
+
 async def save_from_message(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, actor_id: UUID, telegram_bot_id: int,
-    message: Message,
+    message: Message | None = None, album: list[Message] | None = None,
+    expected_draft: tuple[str, UUID | None, datetime] | None = None,
 ) -> BroadcastTemplate:
-    kind, body, entities, file_id = extract_post(message)
+    if (message is None) == (album is None):
+        raise ValueError("Передайте один пост или один альбом")
+    if album is not None:
+        kind, body, entities, file_id, media_items = extract_album(album)
+    else:
+        kind, body, entities, file_id = extract_post(message)
+        media_items = None
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -219,6 +263,12 @@ async def save_from_message(
         )
         if draft is None or draft.mode not in ("create", "replace"):
             raise ValueError("Редактор закрыт. Начните создание заново.")
+        if expected_draft is not None and (
+            draft.mode != expected_draft[0]
+            or draft.template_id != expected_draft[1]
+            or draft.expires_at != expected_draft[2]
+        ):
+            raise ValueError("Редактор изменился. Отправьте альбом заново.")
         if draft.mode == "create":
             count = await session.scalar(select(func.count()).select_from(
                 BroadcastTemplate
@@ -232,11 +282,13 @@ async def save_from_message(
             title = " ".join((body or "").split())[:64] or {
                 "photo": "Фотография", "video": "Видео",
                 "document": "Документ", "animation": "GIF",
+                "album": "Альбом",
             }.get(kind, "Новый пост")
             record = BroadcastTemplate(
                 project_id=project_id, telegram_bot_id=telegram_bot_id,
                 created_by=actor_id, name=title,
                 kind=kind, text=body, entities=entities, file_id=file_id,
+                media_items=media_items,
             )
             session.add(record)
         else:
@@ -249,6 +301,7 @@ async def save_from_message(
             record.text = body
             record.entities = entities
             record.file_id = file_id
+            record.media_items = media_items
         await session.delete(draft)
         await session.flush()
         return record
@@ -409,6 +462,7 @@ async def create_campaign(
             confirmation_key=confirmation_key,
             kind=post.kind, text=post.text,
             entities=post.entities, file_id=post.file_id,
+            media_items=post.media_items,
         )
         session.add(campaign)
         await session.flush()

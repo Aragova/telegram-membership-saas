@@ -54,7 +54,7 @@ class BroadcastTemplate(Base):
     __table_args__ = (
         UniqueConstraint("id", "project_id", name="uq_broadcast_template_project"),
         CheckConstraint(
-            "kind IN ('text','photo','video','document','animation')",
+            "kind IN ('text','photo','video','document','animation','album')",
             name="ck_broadcast_template_kind",
         ),
         CheckConstraint("status IN ('active','archived')",
@@ -76,6 +76,7 @@ class BroadcastTemplate(Base):
     text: Mapped[str | None] = mapped_column(Text)
     entities: Mapped[list | None] = mapped_column(JSON)
     file_id: Mapped[str | None] = mapped_column(String(512))
+    media_items: Mapped[list | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(
         String(16), server_default="active", nullable=False,
     )
@@ -129,7 +130,7 @@ class BroadcastCampaign(Base):
         CheckConstraint("status IN ('running','paused','completed')",
                         name="ck_broadcast_campaign_status"),
         CheckConstraint(
-            "kind IN ('text','photo','video','document','animation')",
+            "kind IN ('text','photo','video','document','animation','album')",
             name="ck_broadcast_campaign_kind",
         ),
         Index("ix_broadcast_campaigns_project_status",
@@ -151,6 +152,7 @@ class BroadcastCampaign(Base):
     text: Mapped[str | None] = mapped_column(Text)
     entities: Mapped[list | None] = mapped_column(JSON)
     file_id: Mapped[str | None] = mapped_column(String(512))
+    media_items: Mapped[list | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(
         String(16), server_default="running", nullable=False,
     )

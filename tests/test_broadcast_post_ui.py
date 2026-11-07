@@ -1,7 +1,9 @@
 """Broadcast post serialization, /start capture and Telegram payload tests."""
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from aiogram.types import Chat, Message, MessageEntity, User
@@ -9,7 +11,7 @@ from aiogram.types import Chat, Message, MessageEntity, User
 from telegram_membership_saas.modules.broadcasts.handlers import (
     StartAudienceMiddleware,
 )
-from telegram_membership_saas.modules.broadcasts.service import extract_post
+from telegram_membership_saas.modules.broadcasts.service import extract_album, extract_post
 from telegram_membership_saas.modules.broadcasts.worker import _send_post
 
 
@@ -70,6 +72,71 @@ def test_protected_forward_or_album_is_rejected_not_partially_saved():
         extract_post(_post())
 
 
+def _album_item(*, number: int, kind: str = "photo", caption: str | None = None,
+                group: str = "media-1", protected: bool = False):
+    item = _post(caption=caption, group=group, protected=protected)
+    item.message_id = number
+    if kind == "photo":
+        item.photo = [SimpleNamespace(file_id=f"photo-{number}")]
+    elif kind == "video":
+        item.video = SimpleNamespace(file_id=f"video-{number}")
+    return item
+
+
+def test_album_captures_every_photo_and_video_in_order_with_caption():
+    msgs = [
+        _album_item(number=4, kind="video"),
+        _album_item(number=2, caption="Новый альбом 🌷"),
+        _album_item(number=3),
+    ]
+    kind, caption, entities, file_id, items = extract_album(msgs)
+    assert kind == "album" and caption == "Новый альбом 🌷"
+    assert entities is None and file_id is None
+    assert items == [
+        {"type": "photo", "file_id": "photo-2"},
+        {"type": "photo", "file_id": "photo-3"},
+        {"type": "video", "file_id": "video-4"},
+    ]
+
+
+def test_album_rejects_partial_protected_or_mixed_groups():
+    with pytest.raises(ValueError, match="2 до 10"):
+        extract_album([_album_item(number=1)])
+    with pytest.raises(ValueError, match="защищ"):
+        extract_album([_album_item(number=1, protected=True),
+                       _album_item(number=2)])
+    with pytest.raises(ValueError, match="одному альбому"):
+        extract_album([_album_item(number=1, group="a"),
+                       _album_item(number=2, group="b")])
+    with pytest.raises(ValueError, match="подпись"):
+        extract_album([_album_item(number=1, caption="a"),
+                       _album_item(number=2, caption="b")])
+    with pytest.raises(ValueError, match="только фото и видео"):
+        extract_album([_album_item(number=1), _album_item(number=2, kind="unknown")])
+
+
+async def test_broadcast_worker_sends_album_as_one_group():
+    bot = SimpleNamespace(send_media_group=AsyncMock())
+    await _send_post(
+        bot, user_id=789,
+        content=SimpleNamespace(
+            kind="album", text="Описание 🩷", entities=None, file_id=None,
+            media_items=[
+                {"type": "photo", "file_id": "a"},
+                {"type": "video", "file_id": "b"},
+            ],
+        ),
+    )
+    bot.send_media_group.assert_awaited_once()
+    kwargs = bot.send_media_group.await_args.kwargs
+    assert kwargs["chat_id"] == 789
+    assert len(kwargs["media"]) == 2
+    assert kwargs["media"][0].media == "a"
+    assert kwargs["media"][0].caption == "Описание 🩷"
+    assert kwargs["media"][1].media == "b"
+    assert kwargs["media"][1].caption is None
+
+
 async def test_broadcast_worker_uses_entities_not_unescaped_html():
     bot = SimpleNamespace(
         send_message=AsyncMock(), send_photo=AsyncMock(),
@@ -110,6 +177,75 @@ async def test_broadcast_worker_uses_entities_not_unescaped_html():
     )
     bot.send_animation.assert_awaited_once()
     assert bot.send_animation.await_args.kwargs["animation"] == "real-animation"
+
+
+async def test_router_keeps_album_uncommitted_until_explicit_confirmation(monkeypatch):
+    from telegram_membership_saas.modules.broadcasts import handlers
+
+    actor = uuid4()
+    project = uuid4()
+    monkeypatch.setattr(handlers, "ensure_telegram_actor",
+                        AsyncMock(return_value=actor))
+    monkeypatch.setattr(handlers, "can_manage_project",
+                        AsyncMock(return_value=True))
+    monkeypatch.setattr(handlers, "get_draft", AsyncMock(return_value=SimpleNamespace(
+        mode="create", template_id=None,
+        expires_at=datetime.now(UTC) + timedelta(minutes=20),
+    )))
+    store = AsyncMock()
+    monkeypatch.setattr(handlers, "save_from_message", store)
+
+    router = handlers.create_broadcast_router(None, project_id=project)
+    receive = next(
+        h.callback for h in router.message.handlers
+        if h.callback.__name__ == "receive_broadcast_post"
+    )
+    callback = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "broadcast_callback"
+    )
+    user = SimpleNamespace(id=1234, username=None, first_name="Admin")
+    chat = SimpleNamespace(id=1234, type="private")
+    bot = SimpleNamespace(id=5678, send_message=AsyncMock())
+
+    def media(number):
+        item = _album_item(number=number)
+        item.from_user = user
+        item.chat = chat
+        return item
+
+    await receive(media(1), bot)
+    await receive(media(2), bot)
+    await asyncio.sleep(1.75)
+    store.assert_not_awaited()
+    first_prompt = bot.send_message.await_args_list[-1]
+    assert "2" in first_prompt.args[1]
+    old_confirm = first_prompt.kwargs["reply_markup"].inline_keyboard[0][0].callback_data
+
+    # A delayed third update arrives after the initial quiet period.
+    await receive(media(3), bot)
+    await asyncio.sleep(1.75)
+    store.assert_not_awaited()
+    last_prompt = bot.send_message.await_args_list[-1]
+    assert "3" in last_prompt.args[1]
+    assert old_confirm != last_prompt.kwargs[
+        "reply_markup"].inline_keyboard[0][0].callback_data
+
+    alert = AsyncMock()
+    query = SimpleNamespace(
+        data=old_confirm, from_user=user,
+        message=SimpleNamespace(chat=chat), answer=alert,
+    )
+    await callback(query, bot)
+    alert.assert_awaited_once()
+    assert alert.await_args.kwargs["show_alert"] is True
+    store.assert_not_awaited()
+
+    # Discard current batch; it must never be persisted implicitly.
+    query.data = last_prompt.kwargs[
+        "reply_markup"].inline_keyboard[1][0].callback_data
+    await callback(query, bot)
+    store.assert_not_awaited()
 
 
 async def test_start_middleware_only_registers_private_start(monkeypatch):

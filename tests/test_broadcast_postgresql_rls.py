@@ -28,6 +28,7 @@ from telegram_membership_saas.modules.broadcasts.service import (
     audience_count,
     campaign_stats,
     create_campaign,
+    get_draft,
     get_template,
     list_templates,
     record_bot_start,
@@ -235,6 +236,129 @@ async def test_real_bot_audience_saved_posts_and_delivery_are_tenant_isolated():
     finally:
         await engine.dispose()
 
+
+
+async def test_album_template_and_campaign_keep_independent_snapshots():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, project, bot_id = await _project_with_bot(factory)
+        buyer = _tid()
+        await record_bot_start(
+            factory, project_id=project, telegram_bot_id=bot_id,
+            telegram_user_id=buyer,
+        )
+        await start_draft(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id,
+        )
+        first = _post(None)
+        first.message_id = 101
+        first.media_group_id = "group-abc"
+        first.photo = [SimpleNamespace(file_id="photo-owned-by-bot")]
+        first.caption = "Caption 🎉"
+        second = _post(None)
+        second.message_id = 102
+        second.media_group_id = "group-abc"
+        second.video = SimpleNamespace(file_id="video-owned-by-bot")
+        saved = await save_from_message(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, album=[second, first],
+        )
+        assert saved.kind == "album"
+        assert saved.media_items == [
+            {"type": "photo", "file_id": "photo-owned-by-bot"},
+            {"type": "video", "file_id": "video-owned-by-bot"},
+        ]
+        campaign, count = await create_campaign(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, template_id=saved.id,
+            confirmation_key=uuid4(),
+        )
+        assert count == 1
+        assert campaign.kind == "album"
+        assert campaign.text == "Caption 🎉"
+        assert campaign.media_items == saved.media_items
+
+        bot = SimpleNamespace(send_media_group=AsyncMock())
+        assert await deliver_broadcast_once(
+            factory, project_id=project, telegram_bot_id=bot_id, bot=bot,
+        )
+        bot.send_media_group.assert_awaited_once()
+        _, stats = await campaign_stats(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, campaign_id=campaign.id,
+        )
+        assert stats == {"sent": 1}
+
+        # The campaign payload stays available after library removal.
+        await archive_template(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, template_id=saved.id,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            stored = await session.get(BroadcastCampaign, campaign.id)
+            assert stored.media_items == campaign.media_items
+    finally:
+        await engine.dispose()
+
+
+async def test_pending_album_cannot_overwrite_another_editor_draft():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, project, bot_id = await _project_with_bot(factory)
+        await start_draft(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id,
+        )
+        existing = await save_from_message(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, message=_post("Original content"),
+        )
+        # The group starts while the owner is creating a new post.
+        await start_draft(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id,
+        )
+        old_draft = await get_draft(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id,
+        )
+        first = _post(None)
+        first.message_id = 1
+        first.media_group_id = "old-group"
+        first.photo = [SimpleNamespace(file_id="photo-1")]
+        second = _post(None)
+        second.message_id = 2
+        second.media_group_id = "old-group"
+        second.photo = [SimpleNamespace(file_id="photo-2")]
+
+        # The owner switches editor before the album aggregation flush.
+        await start_draft(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, mode="replace", template_id=existing.id,
+        )
+        with pytest.raises(ValueError, match="изменился"):
+            await save_from_message(
+                factory, project_id=project, actor_id=owner,
+                telegram_bot_id=bot_id, album=[first, second],
+                expected_draft=(
+                    old_draft.mode, old_draft.template_id, old_draft.expires_at,
+                ),
+            )
+        unchanged = await get_template(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id, template_id=existing.id,
+        )
+        assert unchanged.text == "Original content"
+        active = await get_draft(
+            factory, project_id=project, actor_id=owner,
+            telegram_bot_id=bot_id,
+        )
+        assert active.mode == "replace" and active.template_id == existing.id
+    finally:
+        await engine.dispose()
 
 
 async def test_telegram_429_pauses_every_pending_recipient_for_this_bot():
