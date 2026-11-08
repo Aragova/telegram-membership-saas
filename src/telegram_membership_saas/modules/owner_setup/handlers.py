@@ -59,10 +59,6 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_method_screen,
     preview_offer_screen,
 )
-from telegram_membership_saas.modules.telegram_commerce.rich_ui import (
-    rich_subscription_offer_html,
-    send_rich_subscription_offer,
-)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     archive_owner_connection,
     get_connection_disposition,
@@ -197,6 +193,10 @@ from telegram_membership_saas.modules.telegram_admin.service import (
 from telegram_membership_saas.modules.telegram_commerce.handlers import (
     _review_keyboard,
     _review_text,
+)
+from telegram_membership_saas.modules.telegram_commerce.rich_ui import (
+    rich_subscription_offer_html,
+    send_rich_subscription_offer,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
