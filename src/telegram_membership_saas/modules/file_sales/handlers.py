@@ -23,6 +23,9 @@ from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.file_sales.manual_handlers import (
     show_file_payment_options,
 )
+from telegram_membership_saas.modules.file_sales.manual_service import (
+    available_price_currencies, price_editor_options, set_manual_price,
+)
 from telegram_membership_saas.modules.file_sales.models import FileAsset
 from telegram_membership_saas.modules.file_sales.recovery import (
     recover_buyer_stars,
@@ -228,11 +231,23 @@ def create_file_sales_router(
         text = (
             "📦 <b>" + escape(item.name) + "</b>\n"
             + (escape(item.description) + "\n" if item.description else "")
-            + tr("💰 Цена: ", "💰 Price: ") + str(item.stars_price) + " ⭐\n"
+            + (tr("⭐ Цена Stars: ", "⭐ Stars price: ")
+               + str(item.stars_price) + " ⭐\n"
+               if item.stars_price is not None else "")
             + tr("📎 Файлов: ", "📎 Files: ") + str(count)
         )
         code = encode_uuid(item.id)
         if who:
+            prices = await price_editor_options(
+                factory, project_id=project_id, bot_id=bot.id,
+                product_id=item_id, actor_id=who,
+            )
+            if any(amount is not None for _, amount in prices):
+                text += "\n" + tr("💱 Ручные цены: ", "💱 Manual prices: ")
+                text += ", ".join(
+                    escape(str(amount) + " " + code)
+                    for code, amount in prices if amount is not None
+                )
             text += "\n" + tr("Статус: ", "Status: ") + escape(item.status)
             rows = []
             if item.status == "draft":
@@ -423,6 +438,27 @@ def create_file_sales_router(
                             "/files — отмена.",
                             "✏️ Send the product title next. /files cancels."),
                 )
+            elif action.startswith("initcurrency:"):
+                if not admin:
+                    raise PermissionError("Нет прав")
+                state = pending.get(uid)
+                if not state or state.get("stage") != "currency":
+                    raise ValueError("Срок выбора валюты истёк")
+                code = action.split(":", 1)[1]
+                choices = await available_price_currencies(
+                    factory, project_id=project_id, bot_id=bot.id, actor_id=who,
+                )
+                if code != "XTR" and code not in choices:
+                    raise ValueError("Валюта недоступна")
+                state["currency"] = code
+                state["stage"] = "price"
+                state["expires"] = monotonic() + ENTRY_SECONDS
+                await bot.send_message(
+                    uid,
+                    tr("💰 Укажите цену файла в ", "💰 Enter file price in ")
+                    + code + tr(" следующим сообщением.",
+                                " in your next message."),
+                )
             elif action.startswith(("ap:", "item:")):
                 admin_view, token = action.split(":", 1)
                 if admin_view == "ap" and not admin:
@@ -595,20 +631,52 @@ def create_file_sales_router(
                 if not message.text or not 1 <= len(message.text.strip()) <= 120:
                     raise ValueError("Название товара — от 1 до 120 символов")
                 state["name"] = message.text.strip()
-                state["stage"] = "price"
+                state["stage"] = "currency"
+                choices = await available_price_currencies(
+                    factory, project_id=project_id, bot_id=bot.id, actor_id=who,
+                )
+                from telegram_membership_saas.modules.telegram_commerce.storefront import (
+                    CURRENCY_ICONS,
+                )
+                rows = [[_button(
+                    CURRENCY_ICONS.get(code, "💱") + " " + code,
+                    "initcurrency:" + code, "success",
+                )] for code in choices]
+                rows.append([_button("⭐ Telegram Stars", "initcurrency:XTR")])
                 await bot.send_message(
-                    uid, tr("⭐ Укажите цену в Stars целым числом (1–250000).",
-                            "⭐ Enter the price in Stars (integer 1–250000)."),
+                    uid, tr("💰 Выберите валюту первой цены файла. "
+                            "Дополнительные валюты добавите в карточке.",
+                            "💰 Select the first file price currency. "
+                            "You can add others in the product card."),
+                    reply_markup=_keyboard(rows),
                 )
             elif stage == "price":
                 text = message.text or ""
-                if not text.isascii() or not text.isdecimal():
-                    raise ValueError("Укажите целое число Stars")
-                product = await create_product(
-                    factory, project_id=project_id, bot_id=bot.id,
-                    actor_id=who, folder_id=state["folder"],
-                    name=state["name"], stars=int(text),
-                )
+                currency = state["currency"]
+                if currency == "XTR":
+                    if not text.isascii() or not text.isdecimal():
+                        raise ValueError("Укажите целое число Stars")
+                    stars = int(text)
+                    if not 1 <= stars <= 250000:
+                        raise ValueError("Цена Stars: от 1 до 250000")
+                    product = await create_product(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, folder_id=state["folder"],
+                        name=state["name"], stars=stars,
+                    )
+                else:
+                    # Draft is created without a Stars price. The currency
+                    # amount is explicitly validated and stored separately.
+                    product = await create_product(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, folder_id=state["folder"],
+                        name=state["name"], stars=None,
+                    )
+                    await set_manual_price(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, product_id=product.id,
+                        currency=currency, value=text,
+                    )
                 pending.pop(uid, None)
                 await detail(bot, uid, product.id, who)
             elif stage in ("editname", "editdescription", "editprice"):
