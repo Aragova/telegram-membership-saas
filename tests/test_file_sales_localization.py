@@ -147,8 +147,10 @@ async def test_file_receipt_admin_notification_uses_reviewer_language(monkeypatc
     admin_text = admin.args[1] if len(admin.args) > 1 else admin.kwargs["text"]
     assert "Verify receipt of funds." in admin_text
     assert buttons == ["✅ Approve", "❌ Reject"]
-    buyer = next(call for call in bot.send_message.await_args_list
-                 if call.args[0] == 123)
+    buyer = next(
+        call for call in bot.send_message.await_args_list
+        if (call.args[0] if call.args else call.kwargs.get("chat_id")) == 123
+    )
     assert "Чек зарегистрирован" in buyer.args[1]
 
 
