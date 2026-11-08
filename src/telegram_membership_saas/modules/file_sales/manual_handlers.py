@@ -50,17 +50,17 @@ from telegram_membership_saas.modules.file_sales.service import (
     view_product,
 )
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
+from telegram_membership_saas.modules.telegram_commerce.storefront import (
+    CURRENCY_ICONS,
+    CURRENCY_ORDER,
+)
 from telegram_membership_saas.payment_review_ui import (
     rich_file_close_warning,
     rich_file_review,
     rich_file_review_result,
     rich_file_reviews_queue,
     send_payment_review,
-)
-from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
-from telegram_membership_saas.modules.telegram_commerce.storefront import (
-    CURRENCY_ICONS,
-    CURRENCY_ORDER,
 )
 
 log = logging.getLogger(__name__)
