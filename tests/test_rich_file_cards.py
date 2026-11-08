@@ -1,4 +1,5 @@
 """Opt-in Rich Messages preview must not change real checkout or callbacks."""
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -141,7 +142,7 @@ async def test_owner_preview_is_read_only_and_restricted(monkeypatch):
         ), 1,
     )))
     monkeypatch.setattr(admin_ui, "price_editor_options", AsyncMock(
-        return_value=(("RUB", 100),),
+        return_value=(("RUB", Decimal("100.000000000000000000")),),
     ))
     preview = AsyncMock(return_value=True)
     monkeypatch.setattr(admin_ui, "send_file_card", preview)
@@ -159,6 +160,10 @@ async def test_owner_preview_is_read_only_and_restricted(monkeypatch):
     await handler(query, bot)
     preview.assert_awaited_once()
     assert preview.await_args.kwargs["preview"] is True
+    assert preview.await_args.kwargs["rich_html"].count("100 RUB") == 1
+    assert "100.000000000000000000" not in preview.await_args.kwargs["rich_html"]
+    assert "100 RUB" in preview.await_args.kwargs["legacy_html"]
+    assert "Предпросмотр оформления товара" in preview.await_args.kwargs["rich_html"]
     # The owner fallback must display real line breaks, not a literal backslash-n.
     legacy = preview.await_args.kwargs["legacy_html"]
     assert "\n" in legacy
@@ -172,3 +177,44 @@ async def test_owner_preview_is_read_only_and_restricted(monkeypatch):
     await handler(query, bot)
     preview.assert_awaited_once()
     assert query.answer.await_args.kwargs["show_alert"] is True
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected"),
+    [
+        (Decimal("100.000000000000000000"), "100"),
+        (Decimal("100.250000000000000000"), "100.25"),
+        (Decimal("0.010000000000000000"), "0.01"),
+        (Decimal("0.000000000000000001"), "0.000000000000000001"),
+        (Decimal("0E-18"), "0"),
+        (Decimal("1000"), "1000"),
+    ],
+)
+def test_rich_preview_amount_drops_only_insignificant_zeros(amount, expected):
+    assert admin_ui._compact_preview_price(amount) == expected
+
+
+@pytest.mark.parametrize(
+    ("locale", "preview_prompt", "checkout_prompt"),
+    [
+        ("ru", "✨ Предпросмотр оформления товара", "👇 Выберите способ оплаты ниже"),
+        ("en", "✨ Product design preview", "👇 Select a payment method below"),
+    ],
+)
+def test_rich_preview_caption_is_distinct_from_real_checkout(
+    locale, preview_prompt, checkout_prompt,
+):
+    token = localization._language.set(locale)
+    try:
+        data = dict(
+            product_name="Video", description="Demo",
+            price="100 RUB", file_count=1,
+        )
+        preview_html = rich_ui.rich_file_card_html(**data, preview=True)
+        checkout_html = rich_ui.rich_file_card_html(**data)
+    finally:
+        localization._language.reset(token)
+    assert preview_prompt in preview_html
+    assert checkout_prompt not in preview_html
+    assert checkout_prompt in checkout_html
+    assert preview_prompt not in checkout_html

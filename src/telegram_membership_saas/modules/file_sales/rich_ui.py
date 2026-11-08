@@ -26,13 +26,17 @@ def rich_file_checkout_enabled(bot_id: int) -> bool:
 
 def rich_file_card_html(
     *, product_name: str, description: str | None, price: str,
-    file_count: int,
+    file_count: int, preview: bool = False,
 ) -> str:
     """Rich HTML for supported Telegram clients, never interpolating raw user HTML."""
     title = tr("💎 Покупка файла", "💎 File purchase")
     label_price = tr("💰 Цена", "💰 Price")
     label_files = tr("📎 Файлов", "📎 Files")
-    prompt = tr("👇 Выберите способ оплаты ниже", "👇 Select a payment method below")
+    prompt = (
+        tr("✨ Предпросмотр оформления товара", "✨ Product design preview")
+        if preview else
+        tr("👇 Выберите способ оплаты ниже", "👇 Select a payment method below")
+    )
     parts = [
         "<h3>" + title + "</h3>",
         "<p>📦 <b>" + escape(product_name) + "</b></p>",
