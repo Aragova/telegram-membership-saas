@@ -350,7 +350,7 @@ def offer_screen(
 
 def rich_catalog_html(
     offers: tuple[BuyerOffer, ...], *, currency: str | None = None,
-    page: int = 0,
+    page: int = 0, notice: str | None = None,
 ) -> str | None:
     """A native Rich plan table using the exact eligible catalog subset.
 
@@ -365,11 +365,16 @@ def rich_catalog_html(
     total_pages = max(1, (len(selected) + PAGE_SIZE - 1) // PAGE_SIZE)
     current_page = max(0, min(page, total_pages - 1))
     visible = selected[current_page * PAGE_SIZE:(current_page + 1) * PAGE_SIZE]
-    parts = [
+    parts = []
+    if notice:
+        # Keep the post-cancellation notification in the same Rich screen.
+        # Escape unexpected markup rather than treating it as Telegram HTML.
+        parts.append("<blockquote><b>" + escape(notice) + "</b></blockquote>")
+    parts.extend([
         "<h3>" + tr("💎 Подписки", "💎 Subscriptions") + "</h3>",
         "<p>" + tr("🌍 Валюта: ", "🌍 Currency: ")
         + _currency_icon(chosen) + " <b>" + escape(chosen) + "</b></p>",
-    ]
+    ])
     active_resource: str | None = None
     for offer in visible:
         if offer.resource_label != active_resource:
