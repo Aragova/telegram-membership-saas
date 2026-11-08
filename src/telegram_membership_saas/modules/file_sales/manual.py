@@ -38,7 +38,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     _reviewer_telegram_ids,
     format_amount,
 )
-from telegram_membership_saas.modules.identity import upsert_telegram_user
+from telegram_membership_saas.modules.telegram_commerce.service import upsert_telegram_user
 from telegram_membership_saas.tenant_context import TenantContext
 
 FIAT_CODES = ("RUB", "USD", "EUR", "UAH", "BYN")
@@ -292,6 +292,33 @@ async def submit_manual_receipt(
         return order, reviewers
 
 
+async def mark_manual_receipt_forwarded(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    bot_id: int, buyer_id: int, order_id: UUID,
+) -> None:
+    async with system_project_session_scope(factory, project_id) as session:
+        order = await _manual_for_buyer(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, order_id=order_id, lock=True,
+        )
+        if order.status == "waiting_review" and order.receipt_forwarded_at is None:
+            order.receipt_forwarded_at = datetime.now(UTC)
+
+
+async def cancel_manual_order(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    bot_id: int, buyer_id: int, order_id: UUID,
+) -> None:
+    async with system_project_session_scope(factory, project_id) as session:
+        order = await _manual_for_buyer(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, order_id=order_id, lock=True,
+        )
+        if order.status != "waiting_confirmation":
+            raise ValueError("Заявка уже отправлена или обработана")
+        order.status = "cancelled"
+
+
 async def review_manual_file_order(
     factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
     bot_id: int, reviewer_id: int, reviewer_name: str | None,
@@ -317,8 +344,8 @@ async def review_manual_file_order(
         target = "paid" if approve else "rejected"
         if order.status == target:
             return order, False
-        if order.status != "waiting_review":
-            raise ValueError("Счёт уже обработан или чек ещё не отправлен")
+        if order.status != "waiting_review" or order.receipt_forwarded_at is None:
+            raise ValueError("Счёт не ожидает проверки или чек не доставлен")
         order.status = target
         order.reviewed_by = reviewer.id
         if approve:
@@ -346,6 +373,7 @@ async def pending_manual_reviews(
                 FileManualPurchase.project_id == project_id,
                 FileManualPurchase.telegram_bot_id == bot_id,
                 FileManualPurchase.status == "waiting_review",
+                FileManualPurchase.receipt_forwarded_at.is_not(None),
             ).order_by(FileManualPurchase.submitted_at, FileManualPurchase.id)
             .limit(30)
         )).all())
