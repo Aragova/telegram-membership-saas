@@ -110,7 +110,7 @@ class FilePurchase(Base):
             ["product_id", "project_id"],
             ["file_sale_products.id", "file_sale_products.project_id"],
             name="fk_file_purchase_product_project",
-            ondelete="RESTRICT",
+            ondelete="CASCADE",
         ),
         CheckConstraint("status IN ('pending','paid')",
                         name="ck_file_purchase_status"),
@@ -123,7 +123,7 @@ class FilePurchase(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     project_id: Mapped[UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False,
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
     )
     product_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
