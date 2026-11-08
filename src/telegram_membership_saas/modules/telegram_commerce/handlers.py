@@ -891,7 +891,8 @@ def create_telegram_commerce_router(
         await _send_catalog(
             bot, chat_id=callback.from_user.id,
             session_factory=session_factory, project_id=project_id,
-            notice=tr("❌ Заявка отменена.", "❌ Request canceled."),
+            notice=tr("❌ Заявка на оплату отменена.",
+                      "❌ Your payment request was canceled."),
         )
 
     async def _review_callback(
