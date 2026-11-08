@@ -9,6 +9,7 @@ import inspect
 import logging
 from decimal import Decimal
 from html import escape
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -16,16 +17,17 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.types import InlineKeyboardMarkup, ReplyParameters
 
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.modules.telegram_commerce.service import (
-    ReviewItem,
-    ReviewResult,
-    format_amount,
-)
 from telegram_membership_saas.rich_messages import (
     InputRichMessage,
     classic_messages,
     rich_enabled,
 )
+
+if TYPE_CHECKING:
+    from telegram_membership_saas.modules.telegram_commerce.service import (
+        ReviewItem,
+        ReviewResult,
+    )
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ def rich_subscription_review(
         _row("Telegram ID", item.customer_telegram_user_id),
         _row(tr("🎟 Тариф", "🎟 Plan"), item.plan_name),
         _row(tr("💰 Сумма", "💰 Amount"),
-             format_amount(item.amount, 18) + " " + item.currency_code),
+             _money(item.amount) + " " + item.currency_code),
         _row(tr("💳 Способ", "💳 Method"), item.payment_method_name),
         _row(tr("🔖 Заявка", "🔖 Request"), item.request_id),
         "</table>",
@@ -92,7 +94,7 @@ def rich_subscription_review_result(result: ReviewResult, *, approve: bool) -> s
              _name(item.customer_username, item.customer_telegram_user_id)),
         _row(tr("🎟 Тариф", "🎟 Plan"), item.plan_name),
         _row(tr("💰 Сумма", "💰 Amount"),
-             format_amount(item.amount, 18) + " " + item.currency_code),
+             _money(item.amount) + " " + item.currency_code),
         _row(tr("🔖 Заявка", "🔖 Request"), item.request_id),
         _row(tr("Статус", "Status"), tr("Подтверждена", "Approved")
              if approve else tr("Отклонена", "Rejected")),
