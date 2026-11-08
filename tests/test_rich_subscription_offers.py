@@ -302,3 +302,84 @@ def test_owner_offer_preview_includes_rich_action_without_unsafe_callbacks():
         "own:pvrich:" + encode_uuid(offer.option.plan_price_id) + ":0"
     ) in callbacks
     assert all(not x.startswith(("buy:", "offer:", "cat:")) for x in callbacks)
+
+
+@pytest.mark.parametrize(("language", "notice_text"), [
+    ("ru", "❌ Заявка отменена."),
+    ("en", "❌ Request canceled."),
+])
+async def test_cancellation_notice_preserves_rich_subscription_catalog(
+    monkeypatch, language, notice_text,
+):
+    offer = _offer(name="1 месяц", price="500")
+    @asynccontextmanager
+    async def scope(*_a, **_k):
+        yield MagicMock()
+
+    monkeypatch.setattr(buyer_ui, "system_project_session_scope", scope)
+    monkeypatch.setattr(
+        buyer_ui, "list_buyer_offers", AsyncMock(return_value=(offer,)),
+    )
+    monkeypatch.setattr(buyer_ui, "rich_subscription_enabled", lambda _id: True)
+    rich_send = AsyncMock(return_value=True)
+    fallback = AsyncMock()
+    monkeypatch.setattr(buyer_ui, "send_rich_subscription_offer", rich_send)
+    monkeypatch.setattr(buyer_ui, "_send_screen", fallback)
+    bot = _bot()
+    token = localization._language.set(language)
+    try:
+        result = await buyer_ui._send_catalog(
+            bot, chat_id=100, session_factory=MagicMock(),
+            project_id=uuid4(), notice=notice_text,
+        )
+    finally:
+        localization._language.reset(token)
+    assert result is True
+    rich_send.assert_awaited_once()
+    fallback.assert_not_awaited()
+    kwargs = rich_send.await_args.kwargs
+    html = kwargs["rich_html"]
+    assert "<blockquote><b>" + notice_text + "</b></blockquote>" in html
+    assert "<table bordered compact>" in html
+    assert "500 RUB" in html
+    assert kwargs["message_id"] is None
+    _, legacy_keyboard = buyer_ui.catalog_screen((offer,))
+    assert _callbacks(kwargs["reply_markup"]) == _callbacks(legacy_keyboard)
+
+
+def test_rich_catalog_cancellation_notice_is_html_escaped():
+    offer = _offer()
+    html = buyer_ui.rich_catalog_html(
+        (offer,), notice="❌ Отменено <script> & html",
+    )
+    assert "<blockquote><b>❌ Отменено &lt;script&gt; &amp; html</b></blockquote>" in html
+    assert "<script>" not in html
+    assert "<table bordered compact>" in html
+
+
+async def test_cancellation_notice_classic_fallback_is_unchanged(monkeypatch):
+    offer = _offer(name="1 месяц", price="500")
+    @asynccontextmanager
+    async def scope(*_a, **_k):
+        yield MagicMock()
+
+    monkeypatch.setattr(buyer_ui, "system_project_session_scope", scope)
+    monkeypatch.setattr(
+        buyer_ui, "list_buyer_offers", AsyncMock(return_value=(offer,)),
+    )
+    monkeypatch.setattr(buyer_ui, "rich_subscription_enabled", lambda _id: True)
+    rich_send = AsyncMock(return_value=False)
+    screen = AsyncMock()
+    monkeypatch.setattr(buyer_ui, "send_rich_subscription_offer", rich_send)
+    monkeypatch.setattr(buyer_ui, "_send_screen", screen)
+    await buyer_ui._send_catalog(
+        _bot(), chat_id=100, session_factory=MagicMock(),
+        project_id=uuid4(), notice="❌ Request canceled.",
+    )
+    rich_send.assert_awaited_once()
+    screen.assert_awaited_once()
+    assert "❌ Request canceled." in screen.await_args.kwargs["text"]
+    _, legacy_keyboard = buyer_ui.catalog_screen((offer,))
+    assert _callbacks(screen.await_args.kwargs["keyboard"]) == _callbacks(
+        legacy_keyboard,
+    )
