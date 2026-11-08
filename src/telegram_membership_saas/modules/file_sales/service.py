@@ -304,6 +304,15 @@ async def change_product_status(
             ))
             if folder is None:
                 raise ValueError("Папка архивирована")
+            if item.stars_price is None:
+                manual_prices = await session.scalar(select(func.count(
+                    FileManualPrice.product_id,
+                )).where(
+                    FileManualPrice.project_id == project_id,
+                    FileManualPrice.product_id == product_id,
+                )) or 0
+                if not manual_prices:
+                    raise ValueError("Укажите хотя бы одну цену перед публикацией")
         item.status = status
 
 
