@@ -338,7 +338,7 @@ async def _send_catalog(
         if selected is not None and await send_rich_subscription_offer(
             bot, chat_id=chat_id,
             rich_html=rich_subscription_offer_html(selected),
-            reply_markup=keyboard,
+            reply_markup=keyboard, message_id=message_id,
         ):
             return True
     await _send_screen(
