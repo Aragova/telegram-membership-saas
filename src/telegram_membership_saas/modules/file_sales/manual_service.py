@@ -24,6 +24,9 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileFolder,
     FilePurchase,
 )
+from telegram_membership_saas.modules.file_sales.payment_control_models import (
+    FileSaleMethodVisibility,
+)
 from telegram_membership_saas.modules.file_sales.service import _owner, _product, _ready
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.payments import (
@@ -54,8 +57,15 @@ def money(amount: Decimal, precision: int) -> str:
 
 
 async def _methods(
-    session: AsyncSession, *, project_id: UUID, product_id: UUID,
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+    product_id: UUID,
 ) -> tuple[ManualMethod, ...]:
+    blocked = select(FileSaleMethodVisibility.method_id).where(
+        FileSaleMethodVisibility.project_id == project_id,
+        FileSaleMethodVisibility.telegram_bot_id == bot_id,
+        FileSaleMethodVisibility.method_id == PaymentMethod.id,
+        FileSaleMethodVisibility.enabled.is_(False),
+    ).correlate(PaymentMethod).exists()
     rows = (await session.execute(
         select(FileManualPrice, CurrencyAsset, PaymentMethod)
         .join(
@@ -80,6 +90,7 @@ async def _methods(
             FileManualPrice.product_id == product_id,
             PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
             CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+            ~blocked,
         )
         .order_by(CurrencyAsset.code, PaymentMethod.sort_order, PaymentMethod.name)
     )).all()
@@ -99,7 +110,10 @@ async def available_methods(
         product = await _product(session, project_id, bot_id, product_id)
         if product.status != "published":
             raise ValueError("Товар снят с продажи")
-        return await _methods(session, project_id=project_id, product_id=product_id)
+        return await _methods(
+            session, project_id=project_id, bot_id=bot_id,
+            product_id=product_id,
+        )
 
 
 async def can_review_file_payments(
@@ -273,7 +287,10 @@ async def create_manual_order(
         ).limit(1))
         if approved:
             return approved, True
-        options = await _methods(session, project_id=project_id, product_id=product_id)
+        options = await _methods(
+            session, project_id=project_id, bot_id=bot_id,
+            product_id=product_id,
+        )
         chosen = next((x for x in options if
                        x.currency == currency and x.method_id == method_id), None)
         if chosen is None:
