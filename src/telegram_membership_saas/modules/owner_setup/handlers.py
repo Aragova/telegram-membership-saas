@@ -548,13 +548,13 @@ def create_owner_setup_router(
                 label, action = next_step
                 rows.append([_button(label, action, "success")])
             rows.extend([
+                # Consistent row-based colors: blue / green / blue / green / blue.
                 [_button("📢 Каналы", "resources"),
-                 _button("💳 Оплата", "methods", "success")],
+                 _button("💳 Оплата", "methods")],
                 [_button("📦 Тарифы", "plans", "success"),
-                 _button("📋 Заявки", "reviews")],
+                 _button("📋 Заявки", "reviews", "success")],
                 [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
-                 _button(tr("📊 Статистика", "📊 Statistics"),
-                         "statistics:7", "success")],
+                 _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
                 [InlineKeyboardButton(
                     text=tr("📨 Рассылки", "📨 Broadcasts"),
                     callback_data="bc:home", style="success",
@@ -563,8 +563,7 @@ def create_owner_setup_router(
                     callback_data="fs:home", style="success",
                 )],
                 [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview"),
-                 _button(tr("⚙️ Настройки", "⚙️ Settings"), "settings",
-                         "success")],
+                 _button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
                 [InlineKeyboardButton(
                     text="🌐 Language / Язык", callback_data="lng:menu",
                     style="success",
