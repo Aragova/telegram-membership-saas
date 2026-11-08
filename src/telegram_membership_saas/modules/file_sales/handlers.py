@@ -105,7 +105,7 @@ def _media_id(message: Message) -> tuple[str, str] | None:
 
 async def _deliver(
     bot: Bot, *, user_id: int, assets: tuple[FileAsset, ...],
-    title: str, purchase_id: UUID,
+    title: str, purchase_id: UUID, redownload: str = "get",
 ) -> None:
     await bot.send_message(
         user_id,
@@ -127,7 +127,7 @@ async def _deliver(
            "📦 You can download these files again using /myfiles."),
         reply_markup=_keyboard([[
             _button(tr("📥 Получить повторно", "📥 Download again"),
-                    "get:" + encode_uuid(purchase_id)),
+                    redownload + ":" + encode_uuid(purchase_id)),
         ]]),
     )
 
@@ -473,7 +473,7 @@ def create_file_sales_router(
         )
         await _deliver(
             bot, user_id=uid, assets=assets,
-            title=order.product_name, purchase_id=order.id,
+            title=order.product_name, purchase_id=order.id, redownload="mget",
         )
         await mark_manual_delivery(
             factory, project_id=project_id, bot_id=bot.id,
@@ -497,6 +497,10 @@ def create_file_sales_router(
         if navigation:
             rows.append(navigation)
         if page == 0:
+            rows.append([_button(
+                tr("💳 Ручные покупки", "💳 Manual purchases"),
+                "manualmine",
+            )])
             rows.append([_button(
                 tr("🔄 Проверить оплату Stars", "🔄 Recover Stars payment"),
                 "recover",
@@ -572,6 +576,8 @@ def create_file_sales_router(
                     reply_markup=_keyboard([
                         [_button(tr("📁 Папки и товары", "📁 Folders and products"),
                                  "adminfolders")],
+                        [_button(tr("🧾 Заявки по файлам", "🧾 File payment reviews"),
+                                 "reviews")],
                         [_button(tr("⬅️ Магазин", "⬅️ Shop"), "home")],
                     ]),
                 )
@@ -664,6 +670,35 @@ def create_file_sales_router(
                                 "ap:" + encode_uuid(product), "success"),
                     ]]),
                 )
+            elif action.startswith("prices:"):
+                if not admin:
+                    raise PermissionError("Недостаточно прав")
+                await show_price_editor(
+                    bot, uid, decode_uuid(action.split(":", 1)[1]),
+                )
+            elif action.startswith("price:"):
+                if not admin:
+                    raise PermissionError("Недостаточно прав")
+                _, token, currency = action.split(":", 2)
+                if currency not in FIAT_CODES:
+                    raise ValueError("Неизвестная валюта")
+                product_id = decode_uuid(token)
+                await view_product(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    product_id=product_id, actor_id=who,
+                )
+                pending[uid] = {
+                    "stage": "manualprice", "product": product_id,
+                    "currency": currency, "expires": monotonic() + ENTRY_SECONDS,
+                }
+                await bot.send_message(
+                    uid, tr(
+                        "💰 Отправьте сумму в ", "💰 Enter the price in ",
+                    ) + currency + tr(
+                        " следующим сообщением. Например: 500 или 12.50.",
+                        " in the next message. Example: 500 or 12.50.",
+                    ),
+                )
             elif action.startswith(("publish:", "archive:")):
                 if not admin:
                     raise PermissionError("Нет прав")
@@ -675,7 +710,7 @@ def create_file_sales_router(
                     status="published" if verb == "publish" else "archived",
                 )
                 await detail(bot, uid, product, who)
-            elif action.startswith("buy:"):
+            elif action.startswith("stars:") or action.startswith("buy:"):
                 product = decode_uuid(action.split(":", 1)[1])
                 order = await create_stars_order(
                     factory, project_id=project_id,
@@ -696,6 +731,91 @@ def create_file_sales_router(
                                          amount=order.amount),
                         ], provider_token="",
                     )
+            elif action.startswith("checkout:"):
+                parts = action.split(":")
+                if len(parts) not in (2, 3):
+                    raise ValueError("Некорректный товар")
+                await payment_selector(
+                    bot, uid, decode_uuid(parts[1]),
+                    parts[2] if len(parts) == 3 else None,
+                )
+            elif action.startswith("method:"):
+                _, product_token, currency, method_token = action.split(":", 3)
+                order = await create_manual_file_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    buyer_id=uid, product_id=decode_uuid(product_token),
+                    currency=currency, method_id=decode_uuid(method_token),
+                )
+                if order.status == "paid":
+                    await deliver_manual(bot, uid, order.id)
+                else:
+                    await bot.send_message(
+                        uid,
+                        tr("💳 <b>Оплата файла</b>\n\n",
+                           "💳 <b>File payment</b>\n\n")
+                        + "📦 <b>" + escape(order.product_name) + "</b>\n"
+                        + "💰 <b>" + format(order.amount, "f")
+                        + " " + escape(order.currency_code) + "</b>\n"
+                        + tr("Способ: ", "Method: ")
+                        + escape(order.payment_method_name) + "\n\n"
+                        + escape(order.instruction) + "\n\n"
+                        + tr(
+                            "После перевода нажмите «Я оплатил» и прикрепите чек. "
+                            "Администратор проверит поступление средств и выдаст файлы.",
+                            "After transfer, tap I have paid and send your receipt. "
+                            "An administrator checks the transfer before file delivery.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_keyboard([
+                            [_button(tr("✅ Я оплатил", "✅ I have paid"),
+                                     "mpaid:" + encode_uuid(order.id), "success")],
+                            [_button(tr("Отменить заявку", "Cancel order"),
+                                     "mcancel:" + encode_uuid(order.id), "danger")],
+                            [_button(tr("⬅️ К оплате", "⬅️ Payment methods"),
+                                     "checkout:" + product_token)],
+                        ]),
+                    )
+            elif action.startswith("mpaid:"):
+                order_id = decode_uuid(action.split(":", 1)[1])
+                await require_manual_receipt(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    buyer_id=uid, order_id=order_id,
+                )
+                await bot.send_message(
+                    uid, RECEIPT_PROMPT_PREFIX + encode_uuid(order_id)
+                    + "\n" + tr(
+                        "Ответьте на это сообщение фотографией чека или документом "
+                        "PDF/JPG/PNG/WEBP. Без чека заявка не будет отправлена.",
+                        "Reply with a receipt photo or PDF/JPG/PNG/WEBP document. "
+                        "Your order will not be reviewed without an attachment.",
+                    ),
+                    reply_markup=ForceReply(
+                        selective=True,
+                        input_field_placeholder=tr(
+                            "Прикрепите чек", "Attach receipt",
+                        ),
+                    ),
+                )
+            elif action.startswith("mcancel:"):
+                await cancel_manual_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    buyer_id=uid,
+                    order_id=decode_uuid(action.split(":", 1)[1]),
+                )
+                await bot.send_message(
+                    uid, tr("Заявка отменена.", "Order cancelled."),
+                )
+            elif action.startswith("mmine:"):
+                raw = action.split(":", 1)[1]
+                if not raw.isascii() or not raw.isdecimal() or int(raw) > 10000:
+                    raise ValueError("Неверная страница")
+                await manual_history(bot, uid, int(raw))
+            elif action == "manualmine":
+                await manual_history(bot, uid)
+            elif action.startswith("mget:"):
+                await deliver_manual(
+                    bot, uid, decode_uuid(action.split(":", 1)[1]),
+                )
             elif action == "mine" or action.startswith("mine:"):
                 raw = action.split(":", 1)[1] if ":" in action else "0"
                 if not raw.isascii() or not raw.isdecimal():
@@ -777,8 +897,12 @@ def create_file_sales_router(
                 state["name"] = message.text.strip()
                 state["stage"] = "price"
                 await bot.send_message(
-                    uid, tr("⭐ Укажите цену в Stars целым числом (1–250000).",
-                            "⭐ Enter the price in Stars (integer 1–250000)."),
+                    uid, tr(
+                        "⭐ Укажите цену Stars (0 — отключить Stars; "
+                        "цены RUB/USD/EUR/UAH/BYN задаются отдельно в товаре).",
+                        "⭐ Set Stars price (0 disables Stars; "
+                        "configure RUB/USD/EUR/UAH/BYN separately).",
+                    ),
                 )
             elif stage == "price":
                 text = message.text or ""
@@ -806,6 +930,17 @@ def create_file_sales_router(
                 )
                 pending.pop(uid, None)
                 await detail(bot, uid, updated.id, who)
+            elif stage == "manualprice":
+                if not message.text:
+                    raise ValueError("Введите цену текстом")
+                await set_file_price(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=who, product_id=state["product"],
+                    currency=state["currency"], value=message.text,
+                )
+                product_id = state["product"]
+                pending.pop(uid, None)
+                await show_price_editor(bot, uid, product_id)
             elif stage == "upload":
                 media = _media_id(message)
                 if media is None:
