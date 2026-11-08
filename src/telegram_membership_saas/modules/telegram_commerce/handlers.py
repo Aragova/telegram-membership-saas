@@ -22,14 +22,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
-from telegram_membership_saas.manual_checkout_ui import (
-    manual_checkout_rich_html,
-    send_manual_checkout,
-)
 from telegram_membership_saas.localization import (
     current_language,
     recipient_language,
     tr,
+)
+from telegram_membership_saas.manual_checkout_ui import (
+    manual_checkout_rich_html,
+    send_manual_checkout,
 )
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.account import (
