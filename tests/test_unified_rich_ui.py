@@ -235,3 +235,106 @@ def test_complete_rich_catalog_uses_real_prices_and_localization(
     assert "500 RUB" in html and "10 USD" not in html
     assert "ONLY &lt;YOU&gt; &amp; FULL" in html
     assert html.count("1 месяц") <= 1
+
+
+async def test_old_aiogram_without_rich_type_still_starts_in_classic_mode(monkeypatch):
+    monkeypatch.setattr(rich, "get_settings", lambda: _settings())
+    monkeypatch.setattr(rich, "InputRichMessage", None)
+    classic = AsyncMock()
+    monkeypatch.setattr(Bot, "send_message", classic)
+    bot = _bot()
+    try:
+        await bot.send_message(
+            123, "💎 <b>Old</b>", parse_mode="HTML", reply_markup=_keyboard(),
+        )
+        classic.assert_awaited_once()
+        assert not rich._eligible("text", {"reply_markup": _keyboard()})
+    finally:
+        await bot.session.close()
+
+
+@pytest.mark.parametrize("prefix", [
+    "💬 ViMi Pay · Покупатель /u12345",
+    "💬 ViMi Pay · Customer /u12345",
+    "✉️ ViMi Pay · Сообщение администратора",
+    "✉️ ViMi Pay · Message from admin",
+    "✍️ ViMi Pay · Ответ администратору",
+    "✍️ ViMi Pay · Reply to admin",
+])
+async def test_native_support_replies_remain_readable_text(monkeypatch, prefix):
+    monkeypatch.setattr(rich, "get_settings", lambda: _settings())
+    rich_send = AsyncMock()
+    classic = AsyncMock()
+    monkeypatch.setattr(RichUiBot, "send_rich_message", rich_send)
+    monkeypatch.setattr(Bot, "send_message", classic)
+    bot = _bot()
+    try:
+        await bot.send_message(
+            123, prefix + "\nReply safely",
+            reply_markup=_keyboard(),
+        )
+        rich_send.assert_not_awaited()
+        classic.assert_awaited_once()
+    finally:
+        await bot.session.close()
+
+
+async def test_both_explicit_previews_obey_platform_rollback(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from telegram_membership_saas.modules.file_sales import rich_ui as file_rich
+    from telegram_membership_saas.modules.telegram_commerce import rich_ui as plan_rich
+
+    settings = _settings(False)
+    monkeypatch.setattr(file_rich, "get_settings", lambda: settings)
+    monkeypatch.setattr(plan_rich, "get_settings", lambda: settings)
+    bot = MagicMock(id=123)
+    bot.send_message = AsyncMock()
+    bot.send_rich_message = AsyncMock()
+    markup = _keyboard()
+    assert not await file_rich.send_file_card(
+        bot, chat_id=123, rich_html="<h3>Rich</h3>",
+        legacy_html="<b>Classic</b>", reply_markup=markup, preview=True,
+    )
+    assert not await plan_rich.send_rich_subscription_offer(
+        bot, chat_id=123, rich_html="<h3>Rich</h3>",
+        reply_markup=markup, preview=True,
+    )
+    bot.send_rich_message.assert_not_awaited()
+    bot.send_message.assert_awaited_once()
+
+
+async def test_shared_language_selector_uses_rich_capable_bot(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from telegram_membership_saas.localization import create_language_router
+
+    router = create_language_router(MagicMock())
+    command = next(
+        item.callback for item in router.message.handlers
+        if item.callback.__name__ == "language_command"
+    )
+    callback = next(
+        item.callback for item in router.callback_query.handlers
+        if item.callback.__name__ == "language_menu"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    user = SimpleNamespace(id=123)
+    msg = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=123),
+        from_user=user, answer=AsyncMock(),
+    )
+    await command(msg, bot)
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    msg.answer.assert_not_awaited()
+    bot.send_message.reset_mock()
+    query = SimpleNamespace(
+        from_user=user, message=msg, answer=AsyncMock(),
+    )
+    await callback(query, bot)
+    bot.send_message.assert_awaited_once()
+    query.answer.assert_awaited_once()
+    msg.answer.assert_not_awaited()
