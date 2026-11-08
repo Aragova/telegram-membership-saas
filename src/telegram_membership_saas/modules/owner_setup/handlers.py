@@ -549,21 +549,22 @@ def create_owner_setup_router(
                 rows.append([_button(label, action, "success")])
             rows.extend([
                 [_button("📢 Каналы", "resources"),
-                 _button("💳 Оплата", "methods")],
-                [_button("📦 Тарифы", "plans"),
+                 _button("💳 Оплата", "methods", "success")],
+                [_button("📦 Тарифы", "plans", "success"),
                  _button("📋 Заявки", "reviews")],
                 [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
-                 _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
+                 _button(tr("📊 Статистика", "📊 Statistics"),
+                         "statistics:7", "success")],
                 [InlineKeyboardButton(
                     text=tr("📨 Рассылки", "📨 Broadcasts"),
-                    callback_data="bc:home",
-                )],
-                [InlineKeyboardButton(
+                    callback_data="bc:home", style="success",
+                ), InlineKeyboardButton(
                     text=tr("📂 Продажа файлов", "📂 File sales"),
-                    callback_data="fs:home",
+                    callback_data="fs:home", style="success",
                 )],
-                [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview")],
-                [_button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
+                [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview"),
+                 _button(tr("⚙️ Настройки", "⚙️ Settings"), "settings",
+                         "success")],
                 [InlineKeyboardButton(
                     text="🌐 Language / Язык", callback_data="lng:menu",
                     style="success",

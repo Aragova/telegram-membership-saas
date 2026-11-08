@@ -110,13 +110,13 @@ def create_customer_dispatcher(
             bot, user, session_factory, project_id,
         ):
             return
-        # The user is a buyer, not an admin. Show the same live catalog
-        # as /menu, without inventing a second navigation UI.
+        # Language changes reopen the actual /menu: either the classic
+        # subscription catalog or the channel + published-folder home.
         from telegram_membership_saas.modules.telegram_commerce.handlers import (
-            _send_catalog,
+            _send_buyer_start,
         )
 
-        await _send_catalog(
+        await _send_buyer_start(
             bot, chat_id=user.id, session_factory=session_factory,
             project_id=project_id,
         )

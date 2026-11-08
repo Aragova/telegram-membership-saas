@@ -16,6 +16,7 @@ from aiogram.types import (
     Message,
     ReplyParameters,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
@@ -24,6 +25,8 @@ from telegram_membership_saas.localization import (
     recipient_language,
     tr,
 )
+from telegram_membership_saas.modules.file_sales.service import list_folders
+from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.account import (
     ACCOUNT_MAX_PAGE,
     account_home_screen,
@@ -48,6 +51,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     submit_checkout_for_telegram_user,
 )
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
+    buyer_root_screen,
     catalog_screen,
     list_buyer_offers,
     offer_screen,
@@ -326,6 +330,38 @@ async def _send_catalog(
     return True
 
 
+async def _send_buyer_start(
+    bot: Bot, *, chat_id: int,
+    session_factory: async_sessionmaker[AsyncSession], project_id: UUID,
+) -> None:
+    """Only show file folders if this bot has at least one published good."""
+    folders = await list_folders(
+        session_factory, project_id=project_id, bot_id=bot.id,
+    )
+    if not folders:
+        # Restore the pre-file-sales buyer /start exactly: subscription catalog.
+        await _send_catalog(
+            bot, chat_id=chat_id, session_factory=session_factory,
+            project_id=project_id,
+        )
+        return
+
+    async with system_project_session_scope(session_factory, project_id) as session:
+        channel_name = await session.scalar(
+            select(Resource.name).where(
+                Resource.project_id == project_id,
+                Resource.status == ResourceStatus.ACTIVE.value,
+            ).order_by(Resource.created_at, Resource.id).limit(1)
+        )
+    text, keyboard = buyer_root_screen(
+        channel_name or tr("Подписки", "Subscriptions"),
+        tuple((folder.id, folder.name) for folder in folders),
+    )
+    await _send_screen(
+        bot, chat_id=chat_id, text=text, keyboard=keyboard,
+    )
+
+
 def _buyer_screen_callback(callback: CallbackQuery) -> bool:
     return bool(
         callback.message is not None
@@ -354,12 +390,32 @@ def create_telegram_commerce_router(
         if message.from_user is None or message.chat.type != "private":
             return
         await refresh_menu(bot, message.from_user.id)
+        command = (message.text or "").split(maxsplit=1)[0].split("@")[0].lower()
+        if command == "/plans":
+            await _send_catalog(
+                bot, chat_id=message.from_user.id,
+                session_factory=session_factory, project_id=project_id,
+            )
+        else:
+            await _send_buyer_start(
+                bot, chat_id=message.from_user.id,
+                session_factory=session_factory, project_id=project_id,
+            )
+
+    @router.callback_query(F.data == "buyer:channel")
+    async def buyer_channel_callback(callback: CallbackQuery, bot: Bot) -> None:
+        if not _buyer_screen_callback(callback):
+            await callback.answer(
+                tr("Откройте личный чат с ботом", "Open your private chat"),
+                show_alert=True,
+            )
+            return
         await _send_catalog(
-            bot,
-            chat_id=message.from_user.id,
-            session_factory=session_factory,
-            project_id=project_id,
+            bot, chat_id=callback.from_user.id,
+            session_factory=session_factory, project_id=project_id,
+            message_id=callback.message.message_id,
         )
+        await callback.answer()
 
     async def send_account(
         bot: Bot, *, user_id: int, section: str = "home",
