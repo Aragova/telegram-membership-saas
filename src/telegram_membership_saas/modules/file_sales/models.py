@@ -164,6 +164,7 @@ class FileManualPurchase(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    receipt_forwarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
