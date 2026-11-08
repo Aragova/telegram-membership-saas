@@ -443,6 +443,34 @@ def create_file_sales_router(
                     "mreject:" + code, "danger"),
         ]])
 
+    async def show_manual_reviews(
+        bot: Bot, uid: int, username: str | None, first_name: str | None,
+    ) -> None:
+        # The service enforces PAYMENT_VIEW, including payment_manager role.
+        items = await pending_manual_reviews(
+            factory, project_id=project_id, bot_id=bot.id,
+            reviewer_id=uid, reviewer_name=username,
+            reviewer_first_name=first_name,
+        )
+        if not items:
+            await bot.send_message(
+                uid, tr("🧾 Новых заявок по файлам нет.",
+                        "🧾 No pending file payments."),
+            )
+        for order in items:
+            await bot.send_message(
+                uid,
+                tr("🧾 <b>Оплата файла — проверка</b>\n",
+                   "🧾 <b>File payment review</b>\n")
+                + "📦 " + escape(order.product_name) + "\n"
+                + "💰 " + format(order.amount, "f")
+                + " " + escape(order.currency_code) + "\n"
+                + "💳 " + escape(order.payment_method_name) + "\n"
+                + "👤 " + str(order.telegram_user_id),
+                parse_mode="HTML",
+                reply_markup=manual_review_buttons(order.id),
+            )
+
     async def manual_history(bot: Bot, uid: int, page: int = 0) -> None:
         total, orders = await list_manual_paid(
             factory, project_id=project_id, bot_id=bot.id,
@@ -535,6 +563,22 @@ def create_file_sales_router(
         pending.pop(message.from_user.id, None)
         admin, _ = await is_owner(message.from_user, bot)
         await home(bot, message.from_user.id, admin)
+
+    @router.message(Command("filereviews"))
+    async def file_reviews_command(message: Message, bot: Bot) -> None:
+        if message.from_user is None or message.chat.type != "private":
+            return
+        try:
+            await show_manual_reviews(
+                bot, message.from_user.id,
+                message.from_user.username, message.from_user.first_name,
+            )
+        except PermissionError:
+            await bot.send_message(
+                message.from_user.id,
+                tr("Недостаточно прав для проверки оплат.",
+                   "You are not authorized to review payments."),
+            )
 
     @router.message(Command("myfiles"))
     async def my_files_command(message: Message, bot: Bot) -> None:
@@ -671,31 +715,10 @@ def create_file_sales_router(
                     ]]),
                 )
             elif action == "reviews":
-                if not admin:
-                    raise PermissionError("Недостаточно прав")
-                items = await pending_manual_reviews(
-                    factory, project_id=project_id, bot_id=bot.id,
-                    reviewer_id=uid, reviewer_name=query.from_user.username,
-                    reviewer_first_name=query.from_user.first_name,
+                await show_manual_reviews(
+                    bot, uid, query.from_user.username,
+                    query.from_user.first_name,
                 )
-                if not items:
-                    await bot.send_message(
-                        uid, tr("🧾 Новых заявок по файлам нет.",
-                                "🧾 No pending file payments."),
-                    )
-                for order in items:
-                    await bot.send_message(
-                        uid,
-                        tr("🧾 <b>Оплата файла — проверка</b>\n",
-                           "🧾 <b>File payment review</b>\n")
-                        + "📦 " + escape(order.product_name) + "\n"
-                        + "💰 " + format(order.amount, "f")
-                        + " " + escape(order.currency_code) + "\n"
-                        + "💳 " + escape(order.payment_method_name) + "\n"
-                        + "👤 " + str(order.telegram_user_id),
-                        parse_mode="HTML",
-                        reply_markup=manual_review_buttons(order.id),
-                    )
             elif action.startswith(("mapprove:", "mreject:")):
                 approve = action.startswith("mapprove:")
                 order_id = decode_uuid(action.split(":", 1)[1])
