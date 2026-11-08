@@ -26,7 +26,10 @@ log = logging.getLogger(__name__)
 
 def rich_subscription_enabled(bot_id: int) -> bool:
     """Explicit bot-ID allowlist; empty setting keeps all subscriptions classic."""
-    configured = get_settings().rich_subscription_checkout_bot_ids
+    settings = get_settings()
+    if hasattr(settings, "rich_messages_enabled"):
+        return settings.rich_messages_enabled
+    configured = settings.rich_subscription_checkout_bot_ids
     return str(bot_id) in {
         part.strip() for part in configured.split(",") if part.strip()
     }
