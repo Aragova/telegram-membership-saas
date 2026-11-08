@@ -384,14 +384,18 @@ def create_file_sales_router(
             actor_id=actor, product_id=item_id,
         )
         price = next(
-            (format(amount, "f") + " " + currency
-             for currency, amount in prices if amount is not None),
+            (
+                (lambda value: value.rstrip("0").rstrip(".") if "." in value else value)(
+                    format(amount, "f"),
+                ) + " " + currency
+                for currency, amount in prices if amount is not None
+            ),
             str(item.stars_price) + " XTR"
             if item.stars_price is not None else tr("Цена не задана", "Price not set"),
         )
         rich = rich_file_card_html(
             product_name=item.name, description=item.description,
-            price=price, file_count=count,
+            price=price, file_count=count, preview=True,
         )
         legacy = (
             tr("✨ <b>Предпросмотр нового оформления</b>\n",
