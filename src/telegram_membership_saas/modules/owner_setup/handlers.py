@@ -130,6 +130,12 @@ from telegram_membership_saas.modules.owner_setup.plan_management import (
     edit_owner_draft_resource,
     rename_owner_plan,
 )
+from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
+    rich_owner_statistics,
+    rich_subscriber_card,
+    rich_subscriber_invoices,
+    send_owner_rich,
+)
 from telegram_membership_saas.modules.owner_setup.service import (
     SetupFlow,
     advance_flow,
@@ -865,8 +871,9 @@ def create_owner_setup_router(
             [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
                      "dashboard")],
         ]
-        await bot.send_message(
-            user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+        await send_owner_rich(
+            bot, chat_id=user_id, rich_html=rich_owner_statistics(stats),
+            classic_html=text, reply_markup=_markup(rows),
         )
 
     async def show_network_profile(
@@ -1299,9 +1306,10 @@ def create_owner_setup_router(
         rows.append([_button(
             tr("⬅️ Подписчики", "⬅️ Subscribers"), "subscribers",
         )])
-        await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
-            reply_markup=_markup(rows),
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=rich_subscriber_invoices(data, who=who),
+            classic_html="\n".join(lines), reply_markup=_markup(rows),
         )
 
     async def show_subscriber_card(
@@ -1449,9 +1457,10 @@ def create_owner_setup_router(
         rows.append([_button(
             tr("⬅️ Подписчики", "⬅️ Subscribers"), "subscribers",
         )])
-        await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
-            reply_markup=_markup(rows),
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=rich_subscriber_card(data, who=who),
+            classic_html="\n".join(lines), reply_markup=_markup(rows),
         )
 
     async def show_manual_plan_picker(
