@@ -53,6 +53,8 @@ from telegram_membership_saas.modules.file_sales.service import (
     list_products,
     list_purchases_page,
     mark_file_delivery,
+    mark_refunded_stars,
+    pending_stars_refunds,
     precheckout_allowed,
     purchased_assets,
     update_draft_product,
@@ -533,6 +535,10 @@ def create_file_sales_router(
                 tr("🔄 Проверить оплату Stars", "🔄 Recover Stars payment"),
                 "recover",
             )])
+        rows.append([_button(
+            tr("🔄 Проверить возврат Stars", "🔄 Retry Stars refund"),
+            "refunds",
+        )])
         rows.append([_button(tr("⬅️ Магазин", "⬅️ Shop"), "home")])
         await bot.send_message(
             uid, tr("📦 Купленных файлов: ", "📦 Purchased files: ")
@@ -555,6 +561,43 @@ def create_file_sales_router(
             factory, project_id=project_id, bot_id=bot.id,
             buyer_id=uid, purchase_id=order.id,
         )
+
+    async def complete_pending_stars_refund(
+        bot: Bot, uid: int, purchase,
+    ) -> None:
+        """Retry Telegram-issued refund without unlocking duplicate files."""
+        if purchase.status != "refund_pending" or not purchase.telegram_charge_id:
+            return
+        try:
+            refunded = await bot.refund_star_payment(
+                user_id=uid, telegram_payment_charge_id=purchase.telegram_charge_id,
+            )
+            if not refunded:
+                raise ValueError("Telegram не подтвердил возврат Stars")
+            await mark_refunded_stars(
+                factory, project_id=project_id, bot_id=bot.id,
+                buyer_id=uid, purchase_id=purchase.id,
+                charge_id=purchase.telegram_charge_id,
+            )
+            await bot.send_message(
+                uid, tr(
+                    "✅ Повторное списание Stars возвращено. "
+                    "Файл остаётся доступен по ручной оплате.",
+                    "✅ Duplicate Stars were refunded. "
+                    "Your manually purchased file remains available.",
+                ),
+            )
+        except Exception:
+            log.exception("CRITICAL: Stars refund pending for purchase %s", purchase.id)
+            await bot.send_message(
+                uid, tr(
+                    "⚠️ Возврат Stars пока не завершён. "
+                    "Откройте /myfiles → «Проверить возврат Stars» "
+                    "или обратитесь в /support.",
+                    "⚠️ Stars refund is still pending. "
+                    "Open /myfiles → Retry Stars refund or use /support.",
+                ),
+            )
 
     @router.message(Command("files", "file", "shop"))
     async def files_command(message: Message, bot: Bot) -> None:
@@ -896,6 +939,17 @@ def create_file_sales_router(
                 if not raw.isascii() or not raw.isdecimal():
                     raise ValueError("Неверная страница")
                 await my_files(bot, uid, int(raw))
+            elif action == "refunds":
+                pending_refunds = await pending_stars_refunds(
+                    factory, project_id=project_id, bot_id=bot.id, buyer_id=uid,
+                )
+                if not pending_refunds:
+                    await bot.send_message(
+                        uid, tr("✅ Ожидающих возвратов Stars нет.",
+                                "✅ No pending Stars refunds."),
+                    )
+                for refund in pending_refunds:
+                    await complete_pending_stars_refund(bot, uid, refund)
             elif action == "recover":
                 # Independent evidence comes from Telegram's actual Stars ledger.
                 # The buyer cannot forge the transaction id or receipt.
@@ -1167,6 +1221,12 @@ def create_file_sales_router(
                 )
             except AiogramError:
                 log.exception("Could not warn buyer about unrecorded Stars charge")
+            return
+        if purchase.status in ("refund_pending", "refunded"):
+            if purchase.status == "refund_pending":
+                await complete_pending_stars_refund(
+                    bot, message.from_user.id, purchase,
+                )
             return
         try:
             await deliver_paid(bot, message.from_user.id, purchase.id)
