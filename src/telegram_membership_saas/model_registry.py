@@ -9,6 +9,9 @@ from telegram_membership_saas.modules.broadcasts import (
     BroadcastTemplate,
 )
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
+from telegram_membership_saas.modules.file_sales.payment_control_models import (
+    FileSaleMethodVisibility,
+)
 from telegram_membership_saas.modules.file_sales import (
     FileAsset,
     FileFolder,
@@ -59,6 +62,7 @@ __all__ = [
     "FileFolder",
     "FileProduct",
     "FilePurchase",
+    "FileSaleMethodVisibility",
     "MerchantChannelPeriod",
     "MerchantIdentity",
     "MerchantProjectPeriod",
