@@ -308,6 +308,12 @@ async def submit_manual_receipt(
 ) -> tuple[FileManualPurchase, tuple[int, ...]]:
     async with system_project_session_scope(factory, project_id) as session:
         await _ready(session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id)
+        # Serialize competing receipts for the same file/buyer.
+        initial = await _manual_for_buyer(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, order_id=order_id,
+        )
+        await _product(session, project_id, bot_id, initial.product_id, lock=True)
         order = await _manual_for_buyer(
             session, project_id=project_id, bot_id=bot_id,
             buyer_id=buyer_id, order_id=order_id, lock=True,
@@ -315,6 +321,26 @@ async def submit_manual_receipt(
         if order.status not in ("waiting_confirmation", "waiting_review"):
             raise ValueError("Счёт уже закрыт")
         if order.status == "waiting_confirmation":
+            sibling = await session.scalar(select(FileManualPurchase.id).where(
+                FileManualPurchase.project_id == project_id,
+                FileManualPurchase.telegram_bot_id == bot_id,
+                FileManualPurchase.telegram_user_id == buyer_id,
+                FileManualPurchase.product_id == order.product_id,
+                FileManualPurchase.id != order.id,
+                FileManualPurchase.status.in_(("paid", "waiting_review")),
+            ).limit(1))
+            if sibling:
+                raise ValueError("Этот файл уже оплачен или другой чек ожидает проверки")
+            siblings = (await session.scalars(select(FileManualPurchase).where(
+                FileManualPurchase.project_id == project_id,
+                FileManualPurchase.telegram_bot_id == bot_id,
+                FileManualPurchase.telegram_user_id == buyer_id,
+                FileManualPurchase.product_id == order.product_id,
+                FileManualPurchase.id != order.id,
+                FileManualPurchase.status == "waiting_confirmation",
+            ).with_for_update())).all()
+            for superseded in siblings:
+                superseded.status = "cancelled"
             order.status = "waiting_review"
             order.submitted_at = datetime.now(UTC)
         await session.flush()
