@@ -15,16 +15,15 @@ from aiogram.types import (
     ReplyParameters,
 )
 
+from telegram_membership_saas import payment_review_ui as ui
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.file_sales import manual_handlers as files
-from telegram_membership_saas.modules.owner_setup import handlers as owner
 from telegram_membership_saas.modules.telegram_commerce import handlers as commerce
 from telegram_membership_saas.modules.telegram_commerce.service import (
     ReviewItem,
     ReviewResult,
     encode_uuid,
 )
-from telegram_membership_saas import payment_review_ui as ui
 
 
 def _review():
