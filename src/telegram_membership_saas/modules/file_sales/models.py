@@ -172,8 +172,7 @@ class FileManualPurchase(Base):
     receipt_forwarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewed_by: Mapped[UUID | None] = mapped_column(
-        ForeignKey("telegram_users.id", ondelete="RESTRICT"),
-        Uuid(as_uuid=True),
+        Uuid(as_uuid=True), ForeignKey("telegram_users.id", ondelete="RESTRICT"),
     )
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
