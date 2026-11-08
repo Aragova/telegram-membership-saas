@@ -35,6 +35,10 @@ from telegram_membership_saas.modules.file_sales.manual_service import (
 from telegram_membership_saas.modules.file_sales.payment_controls import (
     file_stars_enabled,
 )
+from telegram_membership_saas.modules.file_sales.rich_ui import (
+    rich_file_card_html,
+    send_file_card,
+)
 from telegram_membership_saas.modules.file_sales.service import (
     mark_file_delivery,
     purchased_assets,
@@ -174,8 +178,7 @@ async def show_file_payment_options(
               for x in options if x.currency == chosen), "")
         if chosen else str(product.stars_price) + " ⭐"
     )
-    await bot.send_message(
-        buyer_id,
+    legacy_html = (
         tr("💎 <b>Оформление покупки файла</b>\n\n",
            "💎 <b>File purchase checkout</b>\n\n")
         + "📦 <b>" + escape(product.name) + "</b>\n"
@@ -184,8 +187,16 @@ async def show_file_payment_options(
         ) else "")
         + tr("💰 Цена: ", "💰 Price: ") + escape(price_label) + "\n\n"
         + tr("👇 <b>Как вам удобнее оплатить?</b>",
-             "👇 <b>How would you like to pay?</b>"),
-        parse_mode="HTML", reply_markup=_keyboard(rows),
+             "👇 <b>How would you like to pay?</b>")
+    )
+    await send_file_card(
+        bot, chat_id=buyer_id,
+        rich_html=rich_file_card_html(
+            product_name=product.name,
+            description=getattr(product, "description", None),
+            price=price_label, file_count=count,
+        ),
+        legacy_html=legacy_html, reply_markup=_keyboard(rows),
     )
 
 
