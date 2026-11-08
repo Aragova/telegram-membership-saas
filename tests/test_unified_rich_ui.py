@@ -343,15 +343,15 @@ async def test_shared_language_selector_uses_rich_capable_bot(monkeypatch):
 
 def test_rich_html_multiline_preserves_visual_breaks_and_preformatted_code():
     body = (
-        "💎 <b>Checkout</b>\\n\\n"
-        "Pay 100 RUB\\nBank number: 123 456\\n\\n"
-        "<pre>code\\nwith deliberate indentation</pre>\\n"
+        "💎 <b>Checkout</b>\n\n"
+        "Pay 100 RUB\nBank number: 123 456\n\n"
+        "<pre>code\nwith deliberate indentation</pre>\n"
         "Then tap Paid"
     )
     html = rich.to_rich_html(body)
     assert "<h3>💎 <b>Checkout</b></h3>" in html
     assert "Pay 100 RUB<br>Bank number: 123 456" in html
-    assert "<pre>code\\nwith deliberate indentation</pre>" in html
+    assert "<pre>code\nwith deliberate indentation</pre>" in html
     assert "Then tap Paid" in html
     assert "<br>with deliberate indentation</pre>" not in html
 
