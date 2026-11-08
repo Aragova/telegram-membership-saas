@@ -36,7 +36,10 @@ def test_buyer_root_screen_keeps_channel_first_and_folder_names_verbatim():
                 "lng:menu",
             ]
             assert "Выберите канал" in text if language == "ru" else "Choose the channel" in text
-            assert not any(b.callback_data in ("account:home", "account:support", "fs:shop") for b in buttons)
+            assert not any(
+                b.callback_data in ("account:home", "account:support", "fs:shop")
+                for b in buttons
+            )
         finally:
             _language.reset(token)
 
