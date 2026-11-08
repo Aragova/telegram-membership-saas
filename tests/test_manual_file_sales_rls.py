@@ -20,7 +20,7 @@ from telegram_membership_saas.modules.file_sales.manual_models import FileManual
 from telegram_membership_saas.modules.payments import PaymentMethod, PaymentMethodCurrency
 from telegram_membership_saas.modules.pricing import CurrencyAsset
 from telegram_membership_saas.modules.subscriptions import Subscription
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"), reason="Requires PostgreSQL RLS",
@@ -79,7 +79,7 @@ async def test_manual_file_checkout_freezes_price_and_requires_owner_approval():
             factory, project_id=project, bot_id=bot_id, actor_id=owner,
             product_id=product.id, kind="document", file_id="private-file",
         )
-        with pytest.raises((PermissionError, ValueError)):
+        with pytest.raises((PermissionError, ValueError, TenantAccessDenied)):
             await manual.set_manual_price(
                 factory, project_id=project, bot_id=bot_id,
                 actor_id=outsider, product_id=product.id,
