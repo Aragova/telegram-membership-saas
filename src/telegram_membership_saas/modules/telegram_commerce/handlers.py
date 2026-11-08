@@ -390,7 +390,9 @@ def create_telegram_commerce_router(
         if message.from_user is None or message.chat.type != "private":
             return
         await refresh_menu(bot, message.from_user.id)
-        command = (message.text or "").split(maxsplit=1)[0].split("@")[0].lower()
+        # Aiogram Command accepts captions on media messages too.
+        source = message.text or message.caption or "/start"
+        command = source.split(maxsplit=1)[0].split("@")[0].lower()
         if command == "/plans":
             await _send_catalog(
                 bot, chat_id=message.from_user.id,

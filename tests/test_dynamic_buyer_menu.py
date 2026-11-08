@@ -145,3 +145,14 @@ async def test_buyer_start_and_menu_route_dynamically_but_plans_remain_direct(mo
     message.text = "/plans"
     await handler(message, bot)
     catalog.assert_awaited_once()
+
+    # Aiogram Command matches media captions as well as normal text.
+    message.text, message.caption = None, "/plans"
+    await handler(message, bot)
+    assert catalog.await_count == 2
+    message.caption = "/start"
+    await handler(message, bot)
+    assert home.await_count == 3
+    message.caption = None
+    await handler(message, bot)
+    assert home.await_count == 4
