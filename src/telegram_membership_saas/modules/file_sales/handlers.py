@@ -318,6 +318,168 @@ def create_file_sales_router(
             uid, text, parse_mode="HTML", reply_markup=_keyboard(rows),
         )
 
+    async def show_price_editor(bot: Bot, uid: int, product_id: UUID) -> None:
+        item, _ = await view_product(
+            factory, project_id=project_id, bot_id=bot.id,
+            product_id=product_id, actor_id=(await actor_id_for_owner(uid)),
+        )
+        prices = await list_file_prices(
+            factory, project_id=project_id, bot_id=bot.id,
+            product_id=product_id, owner=True,
+        )
+        entries = {currency: (amount, precision) for currency, amount, precision in prices}
+        lines = [
+            tr("💳 <b>Цены товара</b>", "💳 <b>File prices</b>"),
+            "📦 " + escape(item.name),
+            ("⭐ Stars: " + str(item.stars_price)
+             if item.stars_price else tr("⭐ Stars отключены", "⭐ Stars disabled")),
+            "",
+            tr("Выберите валюту и задайте стоимость вручную:",
+               "Choose a currency and enter its price:"),
+        ]
+        rows = []
+        for code in FIAT_CODES:
+            amount = entries.get(code)
+            label = CURRENCY_FLAGS[code] + " " + code
+            if amount:
+                label += " · " + format_amount(amount[0], min(amount[1], 4))
+            rows.append([_button(
+                label, "price:" + encode_uuid(product_id) + ":" + code,
+                "success" if amount else "primary",
+            )])
+        rows.append([_button(
+            tr("⬅️ Товар", "⬅️ Product"),
+            "ap:" + encode_uuid(product_id),
+        )])
+        await bot.send_message(
+            uid, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_keyboard(rows),
+        )
+
+    async def actor_id_for_owner(uid: int) -> UUID:
+        # The project permission is rechecked by the mutation service.
+        return await ensure_telegram_actor(
+            factory, telegram_id=uid, username=None, first_name=None,
+        )
+
+    async def payment_selector(
+        bot: Bot, uid: int, product_id: UUID, currency: str | None = None,
+    ) -> None:
+        item, _ = await view_product(
+            factory, project_id=project_id, bot_id=bot.id, product_id=product_id,
+        )
+        options = await list_file_methods(
+            factory, project_id=project_id, bot_id=bot.id, product_id=product_id,
+        )
+        enabled = [code for code in FIAT_CODES if any(
+            option.currency == code for option in options
+        )]
+        selected = currency if currency in enabled else (
+            "RUB" if "RUB" in enabled else enabled[0] if enabled else None
+        )
+        amount = next(
+            (option for option in options if option.currency == selected), None,
+        )
+        rows: list[list[InlineKeyboardButton]] = []
+        if enabled:
+            picker = [
+                _button(
+                    ("🟢" if code == selected else "") + CURRENCY_FLAGS[code] + code,
+                    "checkout:" + encode_uuid(product_id) + ":" + code,
+                    "success" if code == selected else "primary",
+                )
+                for code in enabled
+            ]
+            rows.append(picker)
+        if selected:
+            for option in options:
+                if option.currency != selected:
+                    continue
+                rows.append([_button(
+                    "💳 " + option.method_name[:40] + " " + CURRENCY_FLAGS[selected],
+                    "method:" + encode_uuid(product_id) + ":" + selected
+                    + ":" + encode_uuid(option.method_id),
+                    "success",
+                )])
+        if item.stars_price > 0:
+            rows.append([_button(
+                "⭐ Telegram Stars · " + str(item.stars_price) + " XTR",
+                "stars:" + encode_uuid(product_id), "success",
+            )])
+        rows.append([_button(tr("⬅️ Товары", "⬅️ Products"),
+                             "folder:" + encode_uuid(item.folder_id))])
+        summary = [
+            tr("💎 <b>Оформление покупки файла</b>",
+               "💎 <b>File checkout</b>"),
+            tr("✨ Отличный выбор! Осталось выбрать удобный способ оплаты.",
+               "✨ Great choice! Select your preferred payment method."),
+            "",
+            "📦 <b>" + escape(item.name) + "</b>",
+        ]
+        if amount is not None:
+            summary.append(
+                "💰 <b>"
+                + format_amount(amount.amount, min(amount.precision, 4))
+                + " " + selected + "</b>"
+            )
+        elif item.stars_price:
+            summary.append("💰 <b>" + str(item.stars_price) + " ⭐</b>")
+        summary += ["", tr("👇 Как вам удобнее оплатить?",
+                           "👇 How would you like to pay?")]
+        if not options and item.stars_price <= 0:
+            summary.append(tr("Способы оплаты пока не настроены.",
+                              "No payment methods are available yet."))
+        await bot.send_message(
+            uid, "\n".join(summary), parse_mode="HTML",
+            reply_markup=_keyboard(rows),
+        )
+
+    def manual_review_buttons(order_id: UUID) -> InlineKeyboardMarkup:
+        code = encode_uuid(order_id)
+        return _keyboard([[
+            _button(tr("✅ Подтвердить", "✅ Approve"),
+                    "mapprove:" + code, "success"),
+            _button(tr("🚫 Отклонить", "🚫 Reject"),
+                    "mreject:" + code, "danger"),
+        ]])
+
+    async def manual_history(bot: Bot, uid: int, page: int = 0) -> None:
+        total, orders = await list_manual_paid(
+            factory, project_id=project_id, bot_id=bot.id,
+            buyer_id=uid, page=page,
+        )
+        rows = [[_button(
+            "📥 " + order.product_name[:40] + " · "
+            + format(order.amount, "f") + " " + order.currency_code,
+            "mget:" + encode_uuid(order.id),
+        )] for order in orders]
+        pager = []
+        if page > 0:
+            pager.append(_button("◀️", "mmine:" + str(page - 1)))
+        if (page + 1) * 8 < total:
+            pager.append(_button("▶️", "mmine:" + str(page + 1)))
+        if pager:
+            rows.append(pager)
+        rows.append([_button(tr("⬅️ Мои файлы", "⬅️ My files"), "mine")])
+        await bot.send_message(
+            uid, tr("📥 Ручных покупок: ", "📥 Manual purchases: ") + str(total),
+            reply_markup=_keyboard(rows),
+        )
+
+    async def deliver_manual(bot: Bot, uid: int, order_id: UUID) -> None:
+        order, assets = await purchased_manual_assets(
+            factory, project_id=project_id, bot_id=bot.id,
+            buyer_id=uid, order_id=order_id,
+        )
+        await _deliver(
+            bot, user_id=uid, assets=assets,
+            title=order.product_name, purchase_id=order.id,
+        )
+        await mark_manual_delivery(
+            factory, project_id=project_id, bot_id=bot.id,
+            buyer_id=uid, order_id=order.id,
+        )
+
     async def my_files(bot: Bot, uid: int, page: int = 0) -> None:
         total, items = await list_purchases_page(
             factory, project_id=project_id, bot_id=bot.id,
