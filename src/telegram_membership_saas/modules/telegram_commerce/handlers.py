@@ -73,6 +73,18 @@ ALLOWED_RECEIPT_MIME_TYPES = frozenset(
 )
 
 
+async def list_folders(*args, **kwargs):
+    """Load file folders lazily without a module-level circular import.
+
+    Keep the established handler-level interface patchable in tests.
+    """
+    from telegram_membership_saas.modules.file_sales.service import (
+        list_folders as load_folders,
+    )
+
+    return await load_folders(*args, **kwargs)
+
+
 def _receipt_request_id(message: Message, *, bot_id: int) -> UUID | None:
     """Derive the request ID from the bot's original ForceReply prompt, never user text."""
     if message.chat.type != "private":
@@ -371,9 +383,6 @@ async def _send_buyer_start(
     session_factory: async_sessionmaker[AsyncSession], project_id: UUID,
 ) -> None:
     """Only show file folders if this bot has at least one published good."""
-    # Lazy import avoids commerce -> file_sales -> telegram_admin -> commerce cycle.
-    from telegram_membership_saas.modules.file_sales.service import list_folders
-
     folders = await list_folders(
         session_factory, project_id=project_id, bot_id=bot.id,
     )
