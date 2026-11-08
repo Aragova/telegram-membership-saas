@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from html import escape
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -22,7 +23,38 @@ from telegram_membership_saas.config import get_settings
 log = logging.getLogger(__name__)
 
 _skip_rich: ContextVar[bool] = ContextVar("skip_rich", default=False)
-_HEADING = re.compile(r"^\s*(?:<b>|<strong>)?.{1,120}$")
+_HEADING = re.compile(r"^\s*.{1,120}$")
+_ROW = re.compile(r"^(.{2,65}?):\s+(.+)$")
+_STATISTICS = (
+    "ViMi Pay · Платформа", "ViMi Pay · Platform",
+    "Статистика · ViMi Pay", "Statistics · ViMi Pay",
+    "Мои покупки", "My purchases",
+)
+
+
+def _tableize_metrics(lines: list[str]) -> list[str]:
+    """Only first-party statistical summaries, never owner payment instructions."""
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        group: list[tuple[str, str]] = []
+        while i < len(lines):
+            match = _ROW.fullmatch(lines[i])
+            if match is None:
+                break
+            group.append((match.group(1), match.group(2)))
+            i += 1
+        if len(group) >= 2:
+            result.append("<table bordered compact>")
+            for label, value in group:
+                result.append("<tr><th>" + label + "</th><td>" + value + "</td></tr>")
+            result.append("</table>")
+        else:
+            result.extend(label + ": " + value for label, value in group)
+        if i < len(lines):
+            result.append(lines[i])
+            i += 1
+    return result
 
 
 @contextmanager
@@ -59,7 +91,12 @@ def to_rich_html(legacy_html: str) -> str:
     ):
         return legacy_html
     title = "<h3>" + first + "</h3>"
-    return title + ("\n" + lines[1] if len(lines) == 2 else "")
+    if len(lines) == 1:
+        return title
+    body = lines[1].split("\n")
+    if any(marker in first for marker in _STATISTICS):
+        body = _tableize_metrics(body)
+    return title + "\n" + "\n".join(body)
 
 
 def _eligible(text: str, kwargs: dict) -> bool:
@@ -68,7 +105,7 @@ def _eligible(text: str, kwargs: dict) -> bool:
         rich_enabled()
         and not _skip_rich.get()
         and isinstance(kwargs.get("reply_markup"), InlineKeyboardMarkup)
-        and kwargs.get("parse_mode") == "HTML"
+        and kwargs.get("parse_mode") in ("HTML", None)
         and isinstance(text, str)
         and bool(text.strip())
         and len(text.encode("utf-8")) < 32768
@@ -110,7 +147,9 @@ class RichUiBot(Bot):
                 try:
                     return await self.send_rich_message(
                         chat_id=chat_id,
-                        rich_message=InputRichMessage(html=to_rich_html(text)),
+                        rich_message=InputRichMessage(html=to_rich_html(
+                            text if kwargs.get("parse_mode") == "HTML" else escape(text),
+                        )),
                         **_supported_send_arguments(kwargs),
                     )
                 except TelegramBadRequest as exc:
@@ -134,7 +173,9 @@ class RichUiBot(Bot):
                 try:
                     return await self(EditMessageText(
                         text=None,
-                        rich_message=InputRichMessage(html=to_rich_html(text)),
+                        rich_message=InputRichMessage(html=to_rich_html(
+                            text if kwargs.get("parse_mode") == "HTML" else escape(text),
+                        )),
                         chat_id=kwargs.get("chat_id"),
                         message_id=kwargs.get("message_id"),
                         inline_message_id=kwargs.get("inline_message_id"),
