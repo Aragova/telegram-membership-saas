@@ -41,7 +41,7 @@ from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 logger = logging.getLogger(__name__)
 
 
-class ObservedCustomerBot(Bot):
+class ObservedCustomerBot(RichUiBot):
     """Report only successful getUpdates responses, even when there are no updates."""
 
     def __init__(
