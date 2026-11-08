@@ -47,6 +47,11 @@ RECEIPT_PREFIX = "FILE_PAYMENT_RECEIPT:"
 ENTRY_SECONDS = 900
 
 
+def _short_amount(value) -> str:
+    rendered = format(value, "f")
+    return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+
 def _button(label: str, callback: str, style: str = "primary") -> InlineKeyboardButton:
     return InlineKeyboardButton(text=label, callback_data="fm:" + callback, style=style)
 
@@ -171,7 +176,7 @@ async def show_manual_prices(
     code = encode_uuid(product_id)
     rows = [[_button(
         CURRENCY_ICONS.get(currency, "💱") + " " + currency
-        + (" · " + str(amount) if amount is not None else " · ➕"),
+        + (" · " + _short_amount(amount) if amount is not None else " · ➕"),
         "setprice:" + code + ":" + currency,
         "success" if amount is not None else "primary",
     )] for currency, amount in options]
@@ -273,7 +278,7 @@ def create_manual_file_router(
                         tr("💎 <b>Оформление покупки файла</b>\n",
                            "💎 <b>File purchase checkout</b>\n")
                         + "📦 <b>" + escape(order.product_name) + "</b>\n"
-                        + "💰 <b>" + escape(str(order.amount))
+                        + "💰 <b>" + escape(_short_amount(order.amount))
                         + " " + escape(order.currency_code) + "</b>\n"
                         + tr("💳 Способ: ", "💳 Method: ")
                         + escape(order.payment_method_name) + "\n\n"
@@ -357,7 +362,7 @@ def create_manual_file_router(
                 )
                 rows = [[_button(
                     "📋 " + item.product_name[:26] + " · "
-                    + str(item.amount) + " " + item.currency_code,
+                    + _short_amount(item.amount) + " " + item.currency_code,
                     "review:" + encode_uuid(item.id),
                 )] for item in items]
                 await bot.send_message(
@@ -387,7 +392,7 @@ def create_manual_file_router(
                     await bot.send_document(uid, order.receipt_file_id)
                 await bot.send_message(
                     uid, "📦 <b>" + escape(order.product_name) + "</b>\n"
-                    + "💰 " + escape(str(order.amount)) + " "
+                    + "💰 " + escape(_short_amount(order.amount)) + " "
                     + escape(order.currency_code) + "\n"
                     + "💳 " + escape(order.payment_method_name),
                     parse_mode="HTML",
@@ -488,7 +493,7 @@ def create_manual_file_router(
                     await bot.send_document(reviewer, order.receipt_file_id)
                 await bot.send_message(
                     reviewer, "🧾 <b>" + escape(order.product_name) + "</b>\n"
-                    + "💰 " + escape(str(order.amount)) + " "
+                    + "💰 " + escape(_short_amount(order.amount)) + " "
                     + escape(order.currency_code) + "\n"
                     + tr("Проверьте поступление средств.",
                          "Verify receipt of funds."),
