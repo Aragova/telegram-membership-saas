@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.manual_checkout_ui import (
     manual_checkout_rich_html,
+    retire_cancelled_checkout,
     send_manual_checkout,
 )
 from telegram_membership_saas.modules.file_sales.manual_service import (
@@ -406,6 +407,9 @@ def create_manual_file_router(
                     factory, project_id=project_id, bot_id=bot.id,
                     buyer_id=uid, order_id=decode_uuid(action.split(":")[1]),
                 )
+                # Retire only this successfully canceled checkout card.
+                # Original file instructions stay unchanged in the message.
+                await retire_cancelled_checkout(bot, callback=query)
                 await bot.send_message(uid, tr("Заявка отменена.", "Order canceled."))
             elif action.startswith("prices:") or action.startswith("setprice:"):
                 actor = await ensure_telegram_actor(
