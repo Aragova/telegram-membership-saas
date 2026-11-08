@@ -5,6 +5,7 @@ services remain unchanged. No retries on transport failures to avoid doubles.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from html import escape
 
