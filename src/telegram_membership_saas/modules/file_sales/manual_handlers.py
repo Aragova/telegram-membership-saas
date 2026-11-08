@@ -23,6 +23,7 @@ from telegram_membership_saas.modules.file_sales.manual_service import (
     available_methods,
     close_pending_manual_order,
     create_manual_order,
+    load_manual_review,
     money,
     pending_manual_reviews,
     price_editor_options,
@@ -354,14 +355,19 @@ def create_manual_file_router(
                         + currency + tr(" следующим сообщением. /menu — отмена.",
                                         " in your next message. /menu cancels."),
                     )
-            elif action == "reviews":
+            elif action == "reviews" or action.startswith("reviews:"):
+                token = action.split(":", 1)[1] if ":" in action else "0"
+                if not token.isascii() or not token.isdecimal():
+                    raise ValueError("Неверная страница")
+                page = int(token)
                 actor = await ensure_telegram_actor(
                     factory, telegram_id=uid,
                     username=query.from_user.username,
                     first_name=query.from_user.first_name,
                 )
-                items = await pending_manual_reviews(
-                    factory, project_id=project_id, bot_id=bot.id, actor_id=actor,
+                total, items = await pending_manual_reviews(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=actor, page=page,
                 )
                 rows = [[_button(
                     ("🕓 " if item.status == "pending" else "📨 ")
@@ -369,12 +375,24 @@ def create_manual_file_router(
                     + _short_amount(item.amount) + " " + item.currency_code,
                     "review:" + encode_uuid(item.id),
                 )] for item in items]
+                navigation = []
+                if page > 0:
+                    navigation.append(_button(
+                        tr("⬅️ Назад", "⬅️ Back"), "reviews:" + str(page - 1),
+                    ))
+                if (page + 1) * 8 < total:
+                    navigation.append(_button(
+                        tr("Далее ➡️", "Next ➡️"), "reviews:" + str(page + 1),
+                    ))
+                if navigation:
+                    rows.append(navigation)
                 await bot.send_message(
                     uid,
                     tr("🧾 <b>Заявки на оплату файлов</b>",
                        "🧾 <b>File payment reviews</b>")
                     + ("\n" + tr("Нет новых заявок.", "No pending reviews.")
-                       if not items else ""),
+                       if not total else "\n" + tr("Страница ", "Page ")
+                       + str(page + 1) + " / " + str((total + 7) // 8)),
                     parse_mode="HTML", reply_markup=_keyboard(rows),
                 )
             elif action.startswith("review:"):
@@ -383,13 +401,11 @@ def create_manual_file_router(
                     username=query.from_user.username,
                     first_name=query.from_user.first_name,
                 )
-                items = await pending_manual_reviews(
-                    factory, project_id=project_id, bot_id=bot.id, actor_id=actor,
-                )
                 order_id = decode_uuid(action.split(":")[1])
-                order = next((x for x in items if x.id == order_id), None)
-                if order is None:
-                    raise ValueError("Заявка уже обработана или недоступна")
+                order = await load_manual_review(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=actor, order_id=order_id,
+                )
                 if order.receipt_kind == "photo":
                     await bot.send_photo(uid, order.receipt_file_id)
                 elif order.receipt_kind == "document":
@@ -422,10 +438,11 @@ def create_manual_file_router(
                     first_name=query.from_user.first_name,
                 )
                 order_id = decode_uuid(action.split(":")[1])
-                items = await pending_manual_reviews(
-                    factory, project_id=project_id, bot_id=bot.id, actor_id=actor,
+                order = await load_manual_review(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=actor, order_id=order_id,
                 )
-                if not any(x.id == order_id and x.status == "pending" for x in items):
+                if order.status != "pending":
                     raise ValueError("Счёт уже изменился или недоступен")
                 await bot.send_message(
                     uid, tr(
