@@ -198,8 +198,10 @@ class FilePurchase(Base):
             name="fk_file_purchase_product_project",
             ondelete="CASCADE",
         ),
-        CheckConstraint("status IN ('pending','paid')",
-                        name="ck_file_purchase_status"),
+        CheckConstraint(
+            "status IN ('pending','paid','refund_pending','refunded')",
+            name="ck_file_purchase_status",
+        ),
         CheckConstraint("stars_amount BETWEEN 1 AND 250000",
                         name="ck_file_purchase_stars"),
         UniqueConstraint("invoice_payload", name="uq_file_purchase_payload"),
