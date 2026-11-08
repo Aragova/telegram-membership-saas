@@ -37,7 +37,7 @@ _NATIVE_REPLY_MARKERS = (
     "✍️ ViMi Pay · Reply to admin",
 )
 _HEADING = re.compile(r"^\s*.{1,120}$")
-_ROW = re.compile(r"^([^():\n]{2,65}?):\s+(.+)$")
+_ROW = re.compile(r"^([^:\n]{2,65}?):\s+(.+)$")
 _STATISTICS = (
     "ViMi Pay · Платформа", "ViMi Pay · Platform",
     "Статистика · ViMi Pay", "Statistics · ViMi Pay",
@@ -53,6 +53,10 @@ def _tableize_metrics(lines: list[str]) -> list[str]:
     while i < len(lines):
         group: list[tuple[str, str]] = []
         while i < len(lines):
+            # Bullet turnover rows contain an internal colon in "(operations: N)".
+            # They are display lines, not label/value metric rows.
+            if lines[i].lstrip().startswith(("• ", "- ", "· ")):
+                break
             match = _ROW.fullmatch(lines[i])
             if match is None:
                 break
