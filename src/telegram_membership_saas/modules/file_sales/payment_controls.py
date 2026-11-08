@@ -14,6 +14,7 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
@@ -110,7 +111,7 @@ async def _lock_bot(
         BotInstance.telegram_bot_id == bot_id,
     ).with_for_update())
     if instance is None:
-        raise PermissionError("Бот не найден")
+        raise PermissionError(tr("Бот не найден", "Bot not found"))
 
 
 async def _set_visibility(
@@ -146,7 +147,10 @@ async def toggle_file_payment_method(
             session, project_id=project_id, bot_id=bot_id,
         )}
         if method_id not in valid:
-            raise ValueError("Этот способ оплаты больше не доступен")
+            raise ValueError(tr(
+            "Этот способ оплаты больше не доступен",
+            "This payment method is no longer available",
+        ))
         enabled = not await file_method_enabled(
             session, project_id=project_id, bot_id=bot_id,
             method_id=method_id,
