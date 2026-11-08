@@ -116,7 +116,7 @@ async def show_file_payment_options(
         factory, project_id=project_id, bot_id=bot.id, product_id=product_id,
     )
     if not count:
-        raise ValueError("У товара пока нет вложений")
+        raise ValueError(tr("У товара пока нет вложений", "This product has no attachments yet"))
     options = await available_methods(
         factory, project_id=project_id, bot_id=bot.id,
         product_id=product_id, buyer_id=buyer_id,
@@ -354,7 +354,7 @@ def create_manual_file_router(
                     buyer_id=uid, order_id=order_id,
                 )
                 if order.status != "pending":
-                    raise ValueError("Заявка уже отправлена или закрыта")
+                    raise ValueError(tr("Заявка уже отправлена или закрыта", "This request was already submitted or closed"))
                 await bot.send_message(
                     uid, RECEIPT_PREFIX + str(order.id) + "\n"
                     + tr("Ответьте на это сообщение фотографией чека или "
@@ -406,7 +406,7 @@ def create_manual_file_router(
             elif action == "reviews" or action.startswith("reviews:"):
                 token = action.split(":", 1)[1] if ":" in action else "0"
                 if not token.isascii() or not token.isdecimal():
-                    raise ValueError("Неверная страница")
+                    raise ValueError(tr("Неверная страница", "Invalid page"))
                 page = int(token)
                 actor = await ensure_telegram_actor(
                     factory, telegram_id=uid,
@@ -491,7 +491,7 @@ def create_manual_file_router(
                     actor_id=actor, order_id=order_id,
                 )
                 if order.status != "pending":
-                    raise ValueError("Счёт уже изменился или недоступен")
+                    raise ValueError(tr("Счёт уже изменился или недоступен", "This invoice has changed or is unavailable"))
                 await bot.send_message(
                     uid, tr(
                         "⚠️ <b>Закрытие неоплаченного счёта</b>\n\n"
@@ -584,7 +584,7 @@ def create_manual_file_router(
                     buyer_id=uid, purchase_id=decode_uuid(action.split(":")[1]),
                 )
             else:
-                raise ValueError("Неизвестное действие")
+                raise ValueError(tr("Неизвестное действие", "Unknown action"))
             await query.answer()
         except (ValueError, PermissionError) as exc:
             await query.answer(str(exc)[:190], show_alert=True)
@@ -622,26 +622,27 @@ def create_manual_file_router(
             return
         for reviewer in reviewers:
             try:
-                # Always show immutable evidence from the order, not an
-                # unrelated second reply to an already-submitted prompt.
-                if order.receipt_kind == "photo":
-                    await bot.send_photo(reviewer, order.receipt_file_id)
-                else:
-                    await bot.send_document(reviewer, order.receipt_file_id)
-                await bot.send_message(
-                    reviewer, "🧾 <b>" + escape(order.product_name) + "</b>\n"
-                    + "💰 " + escape(_short_amount(order.amount)) + " "
-                    + escape(order.currency_code) + "\n"
-                    + tr("Проверьте поступление средств.",
-                         "Verify receipt of funds."),
-                    parse_mode="HTML",
-                    reply_markup=_keyboard([[
-                        _button("✅ Подтвердить", "approve:" + encode_uuid(order.id),
-                                "success"),
-                        _button("❌ Отклонить", "reject:" + encode_uuid(order.id),
-                                "danger"),
-                    ]]),
-                )
+                async with recipient_language(factory, reviewer):
+                    # Always show immutable evidence from the order, not an
+                    # unrelated second reply to an already-submitted prompt.
+                    if order.receipt_kind == "photo":
+                        await bot.send_photo(reviewer, order.receipt_file_id)
+                    else:
+                        await bot.send_document(reviewer, order.receipt_file_id)
+                    await bot.send_message(
+                        reviewer, "🧾 <b>" + escape(order.product_name) + "</b>\n"
+                        + "💰 " + escape(_short_amount(order.amount)) + " "
+                        + escape(order.currency_code) + "\n"
+                        + tr("Проверьте поступление средств.",
+                             "Verify receipt of funds."),
+                        parse_mode="HTML",
+                        reply_markup=_keyboard([[
+                            _button(tr("✅ Подтвердить", "✅ Approve"),
+                                    "approve:" + encode_uuid(order.id), "success"),
+                            _button(tr("❌ Отклонить", "❌ Reject"),
+                                    "reject:" + encode_uuid(order.id), "danger"),
+                        ]]),
+                    )
             except AiogramError:
                 log.warning("Unable to deliver manual file receipt to reviewer %s", reviewer)
         await bot.send_message(
