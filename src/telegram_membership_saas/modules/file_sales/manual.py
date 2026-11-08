@@ -18,27 +18,37 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.file_sales.models import (
-    FileAsset, FileFolder, FileManualPurchase, FilePrice,
+    FileAsset,
+    FileFolder,
+    FileManualPurchase,
+    FilePrice,
 )
 from telegram_membership_saas.modules.file_sales.service import (
-    _owner, _product, _ready, _load_paid, ASSET_LIMIT,
+    ASSET_LIMIT,
+    _load_paid,
+    _owner,
+    _product,
+    _ready,
 )
 from telegram_membership_saas.modules.payments import (
-    PaymentMethod, PaymentMethodCurrency, PaymentMethodStatus,
+    PaymentMethod,
+    PaymentMethodCurrency,
+    PaymentMethodStatus,
     render_manual_instruction,
 )
 from telegram_membership_saas.modules.payments.request_service import (
     require_payment_permission,
 )
 from telegram_membership_saas.modules.pricing import (
-    CurrencyAsset, CurrencyAssetStatus,
+    CurrencyAsset,
+    CurrencyAssetStatus,
 )
 from telegram_membership_saas.modules.projects import Permission
 from telegram_membership_saas.modules.telegram_commerce.service import (
     _reviewer_telegram_ids,
     format_amount,
+    upsert_telegram_user,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import upsert_telegram_user
 from telegram_membership_saas.tenant_context import TenantContext
 
 FIAT_CODES = ("RUB", "USD", "EUR", "UAH", "BYN")
