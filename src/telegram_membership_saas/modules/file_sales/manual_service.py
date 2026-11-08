@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 from uuid import UUID
 
 from sqlalchemy import and_, func, select
@@ -168,8 +168,10 @@ async def set_manual_price(
         if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000000"):
             raise ValueError("Цена должна быть положительной")
         quantum = Decimal(1).scaleb(-asset.precision)
-        if amount != amount.quantize(quantum):
-            raise ValueError("Слишком много знаков после запятой для этой валюты")
+        with localcontext() as ctx:
+            ctx.prec = 50
+            if amount != amount.quantize(quantum):
+                raise ValueError("Слишком много знаков после запятой для этой валюты")
         record = await session.scalar(select(FileManualPrice).where(
             FileManualPrice.project_id == project_id,
             FileManualPrice.product_id == product_id,
@@ -364,3 +366,21 @@ async def review_manual_order(
         if approve:
             order.paid_at = order.reviewed_at
         return order, True
+
+
+async def cancel_manual_order(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, buyer_id: int, order_id: UUID,
+) -> None:
+    async with system_project_session_scope(factory, project_id) as session:
+        row = await session.scalar(select(FileManualOrder).where(
+            FileManualOrder.id == order_id,
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.telegram_bot_id == bot_id,
+            FileManualOrder.telegram_user_id == buyer_id,
+        ).with_for_update())
+        if row is None:
+            raise PermissionError("Это не ваша покупка")
+        if row.status != "pending":
+            raise ValueError("Отменить можно только неоплаченную заявку")
+        row.status = "cancelled"
