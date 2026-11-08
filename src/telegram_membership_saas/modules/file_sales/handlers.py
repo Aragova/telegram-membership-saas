@@ -34,6 +34,7 @@ from telegram_membership_saas.modules.file_sales.service import (
     mark_file_delivery,
     precheckout_allowed,
     purchased_assets,
+    update_draft_product,
     view_product,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
@@ -219,6 +220,14 @@ def create_file_sales_router(
             text += "\n" + tr("Статус: ", "Status: ") + escape(item.status)
             rows = []
             if item.status == "draft":
+                rows.extend([
+                    [_button(tr("🏷 Название", "🏷 Title"),
+                             "editname:" + code),
+                     _button(tr("⭐ Цена", "⭐ Price"),
+                             "editprice:" + code)],
+                    [_button(tr("📝 Описание", "📝 Description"),
+                             "editdescription:" + code)],
+                ])
                 rows.append([_button(
                     tr("📎 Прикрепить файлы", "📎 Add files"),
                     "upload:" + code, "success",
@@ -376,6 +385,27 @@ def create_file_sales_router(
                     bot, uid, decode_uuid(token),
                     who if admin_view == "ap" else None,
                 )
+            elif action.startswith(("editname:", "editdescription:", "editprice:")):
+                if not admin:
+                    raise PermissionError("Нет прав")
+                operation, token = action.split(":", 1)
+                item_id = decode_uuid(token)
+                product, _ = await view_product(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    product_id=item_id, actor_id=who,
+                )
+                if product.status != "draft":
+                    raise ValueError("Можно изменить только черновик")
+                pending[uid] = {
+                    "stage": operation, "product": item_id,
+                    "expires": monotonic() + ENTRY_SECONDS,
+                }
+                await bot.send_message(uid, tr(
+                    "✏️ Отправьте новое значение следующим сообщением. "
+                    "/files — отмена.",
+                    "✏️ Send the new value in the next message. "
+                    "/files cancels.",
+                ))
             elif action.startswith("upload:"):
                 if not admin:
                     raise PermissionError("Нет прав")
@@ -492,6 +522,21 @@ def create_file_sales_router(
                 )
                 pending.pop(uid, None)
                 await detail(bot, uid, product.id, who)
+            elif stage in ("editname", "editdescription", "editprice"):
+                if not message.text:
+                    raise ValueError("Введите значение текстом")
+                field = {
+                    "editname": "name",
+                    "editdescription": "description",
+                    "editprice": "stars_price",
+                }[stage]
+                updated = await update_draft_product(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=who, product_id=state["product"],
+                    field=field, value=message.text,
+                )
+                pending.pop(uid, None)
+                await detail(bot, uid, updated.id, who)
             elif stage == "upload":
                 media = _media_id(message)
                 if media is None:
