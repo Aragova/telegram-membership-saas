@@ -58,7 +58,8 @@ def upgrade() -> None:
         sa.Column("submitted_at", sa.DateTime(timezone=True)),
         sa.Column("receipt_forwarded_at", sa.DateTime(timezone=True)),
         sa.Column("paid_at", sa.DateTime(timezone=True)),
-        sa.Column("reviewed_by", sa.Uuid()),
+        sa.Column("reviewed_by", sa.Uuid(),
+                  sa.ForeignKey("telegram_users.id", ondelete="RESTRICT")),
         sa.Column("last_delivered_at", sa.DateTime(timezone=True)),
         sa.ForeignKeyConstraint(
             ["product_id", "project_id"],
@@ -71,6 +72,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "status IN ('waiting_confirmation','waiting_review','paid','rejected','cancelled')",
             name="ck_file_manual_status",
+        ),
+        sa.CheckConstraint(
+            "((status = 'waiting_confirmation' AND submitted_at IS NULL AND receipt_forwarded_at IS NULL AND paid_at IS NULL AND reviewed_by IS NULL) OR (status = 'waiting_review' AND submitted_at IS NOT NULL AND paid_at IS NULL AND reviewed_by IS NULL) OR (status = 'paid' AND submitted_at IS NOT NULL AND receipt_forwarded_at IS NOT NULL AND paid_at IS NOT NULL AND reviewed_by IS NOT NULL) OR (status = 'rejected' AND submitted_at IS NOT NULL AND receipt_forwarded_at IS NOT NULL AND paid_at IS NULL AND reviewed_by IS NOT NULL) OR (status = 'cancelled' AND submitted_at IS NULL AND receipt_forwarded_at IS NULL AND paid_at IS NULL AND reviewed_by IS NULL))",
+            name="ck_file_manual_state_timestamps",
         ),
     )
     op.create_index(
@@ -95,6 +100,17 @@ def upgrade() -> None:
         CREATE FUNCTION public.guard_file_manual_purchase()
         RETURNS trigger LANGUAGE plpgsql AS $guard$
         BEGIN
+            IF TG_OP = 'INSERT' THEN
+                IF NEW.status != 'waiting_confirmation'
+                   OR NEW.submitted_at IS NOT NULL
+                   OR NEW.receipt_forwarded_at IS NOT NULL
+                   OR NEW.paid_at IS NOT NULL
+                   OR NEW.reviewed_by IS NOT NULL THEN
+                    RAISE EXCEPTION 'Manual orders must start unconfirmed'
+                        USING ERRCODE = '42501';
+                END IF;
+                RETURN NEW;
+            END IF;
             IF TG_OP = 'DELETE' THEN
                 IF OLD.status = 'paid' THEN
                     RAISE EXCEPTION 'Paid manual file history is immutable'
@@ -133,8 +149,17 @@ def upgrade() -> None:
                         USING ERRCODE = '42501';
                 END IF;
             ELSIF OLD.status = 'waiting_review' THEN
-                IF NEW.status NOT IN ('waiting_review','paid','rejected') THEN
-                    RAISE EXCEPTION 'Invalid manual file review'
+                IF NEW.status NOT IN ('waiting_review','paid','rejected')
+                    OR NEW.submitted_at IS DISTINCT FROM OLD.submitted_at
+                    OR (
+                        NEW.status IN ('paid', 'rejected')
+                        AND (
+                            OLD.receipt_forwarded_at IS NULL
+                            OR NEW.receipt_forwarded_at IS DISTINCT FROM OLD.receipt_forwarded_at
+                            OR NEW.reviewed_by IS NULL
+                        )
+                    ) THEN
+                    RAISE EXCEPTION 'Invalid manual file review or missing proof'
                         USING ERRCODE = '42501';
                 END IF;
             ELSE
@@ -148,7 +173,7 @@ def upgrade() -> None:
     """)
     op.execute("""
         CREATE TRIGGER trg_guard_file_manual_purchase
-        BEFORE UPDATE OR DELETE ON public.file_sale_manual_purchases
+        BEFORE INSERT OR UPDATE OR DELETE ON public.file_sale_manual_purchases
         FOR EACH ROW EXECUTE FUNCTION public.guard_file_manual_purchase()
     """)
 
