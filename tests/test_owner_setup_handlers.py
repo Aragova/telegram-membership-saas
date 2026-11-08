@@ -65,7 +65,8 @@ def test_management_dispatcher_routes_owner_first_buyer_separately():
     )
     customer = create_customer_dispatcher(MagicMock(), project_id=uuid4())
     assert central.sub_routers[0].name == "vimi-language"
-    assert central.sub_routers[1].name == "central-registrar"
+    assert central.sub_routers[1].name == "secure-owner-transfer"
+    assert central.sub_routers[2].name == "central-registrar"
     assert "owner-tenant" in [r.name for r in customer.sub_routers]
     assert "telegram-admin" not in [r.name for r in central.sub_routers]
     assert "telegram-commerce" not in [r.name for r in central.sub_routers]
