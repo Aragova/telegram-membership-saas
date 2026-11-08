@@ -146,8 +146,39 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION public.guard_file_manual_order()
     """)
 
+    # The existing transfer function (0036) checks subscription liabilities.
+    # This independent trigger also protects pending manual file obligations,
+    # including the privileged SQL ownership-transfer path.
+    op.execute("""
+        CREATE FUNCTION public.guard_project_file_liabilities()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public AS $file_guard$
+        BEGIN
+            IF NEW.owner_user_id IS DISTINCT FROM OLD.owner_user_id
+               AND EXISTS (
+                   SELECT 1 FROM public.file_sale_manual_orders f
+                   WHERE f.project_id = OLD.id
+                     AND f.status IN ('pending', 'submitted')
+               )
+            THEN
+                RAISE EXCEPTION
+                    'Open manual file orders block ownership transfer'
+                    USING ERRCODE = '42501';
+            END IF;
+            RETURN NEW;
+        END $file_guard$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_guard_project_file_liabilities
+        BEFORE UPDATE OF owner_user_id ON public.projects
+        FOR EACH ROW EXECUTE FUNCTION public.guard_project_file_liabilities()
+    """)
+    op.execute("REVOKE ALL ON FUNCTION public.guard_project_file_liabilities() FROM PUBLIC")
+
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER trg_guard_project_file_liabilities ON public.projects")
+    op.execute("DROP FUNCTION public.guard_project_file_liabilities()")
     op.execute("""
         DO $check$
         BEGIN
