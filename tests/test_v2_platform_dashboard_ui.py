@@ -263,6 +263,22 @@ def test_rich_currency_turnover_and_single_bot_metrics():
     assert "<table bordered compact>" in detail
     assert "<tr><th>📢 Ресурсов</th><td>1</td></tr>" in detail
     assert "<tr><th>Работа</th><td>работает</td></tr>" in detail
+    assert (
+        "<tr><th>💳 Подтверждённых оплат (30 дней)</th><td>3</td></tr>"
+        in detail
+    )
+
+    from telegram_membership_saas.localization import _language
+
+    token = _language.set("en")
+    try:
+        detail_en = to_rich_html(ui._bot_details(_snapshot().bots[0], period="30"))
+        summary_en = to_rich_html(ui._summary_text(_snapshot()))
+    finally:
+        _language.reset(token)
+    assert "<tr><th>💳 Approved payments (30 days)</th><td>3</td></tr>" in detail_en
+    assert "• RUB — 1200 (transactions: 3)" in summary_en
+    assert "<th>• RUB" not in summary_en
 
 
 async def test_platform_bot_list_details_and_back_edit_one_message(monkeypatch):
