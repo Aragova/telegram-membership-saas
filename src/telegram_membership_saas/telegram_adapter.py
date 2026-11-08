@@ -53,12 +53,14 @@ def create_dispatcher(
             dispatcher.include_router(
                 create_platform_dashboard_router(session_factory)
             )
-        if project_id is None:
-            # Independent central BotFather-token handoff survives the
-            # connected bot's old credential being revoked.
-            dispatcher.include_router(create_transfer_router(
-                session_factory, project_id=None,
-            ))
+        # This dispatcher always belongs to the central tms-bot process.
+        # Its legacy deployment may still have TMS_TELEGRAM_PROJECT_ID set,
+        # even though the ownership transfer must use an unscoped, always-on
+        # central inbox. Connected customer bots use create_customer_dispatcher
+        # and have their own project-scoped transfer initiation router.
+        dispatcher.include_router(create_transfer_router(
+            session_factory, project_id=None,
+        ))
         dispatcher.include_router(owner_router)
         if enable_access:
             dispatcher.include_router(create_telegram_access_router(session_factory))
