@@ -34,7 +34,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
 )
 from telegram_membership_saas.modules.owner_setup.tenant_admin import list_owner_methods
 from telegram_membership_saas.modules.subscriptions import Subscription
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"), reason="Requires PostgreSQL RLS",
@@ -82,7 +82,7 @@ async def test_manual_file_order_requires_approval_and_never_creates_subscriptio
                 factory, project_id=project, bot_id=bot_id,
                 actor_id=owner, product_id=item.id, status="published",
             )
-        with pytest.raises((PermissionError, ValueError)):
+        with pytest.raises((PermissionError, ValueError, TenantAccessDenied)):
             await set_file_price(
                 factory, project_id=project, bot_id=bot_id,
                 actor_id=outsider, product_id=item.id,
