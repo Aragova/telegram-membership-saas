@@ -28,6 +28,10 @@ from telegram_membership_saas.modules.file_sales.manual_service import (
     price_editor_options,
 )
 from telegram_membership_saas.modules.file_sales.models import FileAsset
+from telegram_membership_saas.modules.file_sales.rich_ui import (
+    rich_file_card_html,
+    send_file_card,
+)
 from telegram_membership_saas.modules.file_sales.payment_controls import (
     list_file_payment_controls,
     set_all_file_payment_methods,
@@ -351,6 +355,10 @@ def create_file_sales_router(
                     "danger" if item.status == "published" else "success",
                 )])
             rows.append([_button(
+                tr("✨ Rich-предпросмотр", "✨ Rich preview"),
+                "richpreview:" + code, "success",
+            )])
+            rows.append([_button(
                 tr("⬅️ Товары папки", "⬅️ Folder products"),
                 "af:" + encode_uuid(item.folder_id),
             )])
@@ -364,6 +372,51 @@ def create_file_sales_router(
         await bot.send_message(
             uid, text, parse_mode="HTML", reply_markup=_keyboard(rows),
         )
+
+    async def rich_preview(bot: Bot, uid: int, item_id: UUID, actor: UUID) -> None:
+        """Owner-only live API test without creating an invoice or affecting buyers."""
+        item, count = await view_product(
+            factory, project_id=project_id, bot_id=bot.id,
+            product_id=item_id, actor_id=actor,
+        )
+        prices = await price_editor_options(
+            factory, project_id=project_id, bot_id=bot.id,
+            actor_id=actor, product_id=item_id,
+        )
+        price = next(
+            (format(amount, "f") + " " + currency
+             for currency, amount in prices if amount is not None),
+            str(item.stars_price) + " XTR"
+            if item.stars_price is not None else tr("Цена не задана", "Price not set"),
+        )
+        rich = rich_file_card_html(
+            product_name=item.name, description=item.description,
+            price=price, file_count=count,
+        )
+        legacy = (
+            tr("✨ <b>Предпросмотр нового оформления</b>\\n",
+               "✨ <b>New design preview</b>\\n")
+            + "📦 <b>" + escape(item.name) + "</b>\\n"
+            + tr("💰 Цена: ", "💰 Price: ") + escape(price) + "\\n"
+            + tr("📎 Файлов: ", "📎 Files: ") + str(count)
+        )
+        markup = _keyboard([[_button(
+            tr("⬅️ Карточка товара", "⬅️ Product card"),
+            "ap:" + encode_uuid(item_id),
+        )]])
+        rich_sent = await send_file_card(
+            bot, chat_id=uid, rich_html=rich,
+            legacy_html=legacy, reply_markup=markup, preview=True,
+        )
+        if not rich_sent:
+            await bot.send_message(
+                uid, tr(
+                    "ℹ️ Rich-сообщение не поддерживается этим API. "
+                    "Показана обычная карточка; покупки работают как раньше.",
+                    "ℹ️ This API does not support Rich Messages. "
+                    "The classic card was shown; checkout is unchanged.",
+                ),
+            )
 
     async def my_files(bot: Bot, uid: int, page: int = 0) -> None:
         total, items = await list_purchases_page(
@@ -632,6 +685,12 @@ def create_file_sales_router(
                     status="published" if verb == "publish" else "archived",
                 )
                 await detail(bot, uid, product, who)
+            elif action.startswith("richpreview:"):
+                if not admin or who is None:
+                    raise PermissionError(tr("Нет прав", "Access denied"))
+                await rich_preview(
+                    bot, uid, decode_uuid(action.split(":", 1)[1]), who,
+                )
             elif action.startswith("buy:"):
                 product = decode_uuid(action.split(":", 1)[1])
                 order = await create_stars_order(
