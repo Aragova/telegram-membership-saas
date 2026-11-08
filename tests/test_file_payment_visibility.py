@@ -65,7 +65,7 @@ async def test_file_payment_switcher_has_one_dynamic_bulk_button(monkeypatch):
         FilePaymentChoice(method_id, "Telegram Stars ⭐", False),
         FilePaymentChoice(AUTO_STARS_ID, "Telegram Stars (XTR)", True, True),
     )
-    listed = AsyncMock(side_effect=(rows_on, rows_off))
+    listed = AsyncMock(side_effect=(rows_on, rows_off, rows_on))
     monkeypatch.setattr(ui, "list_file_payment_controls", listed)
     toggle = AsyncMock(return_value=False)
     bulk = AsyncMock()
