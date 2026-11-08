@@ -27,6 +27,10 @@ from telegram_membership_saas.localization import (
     recipient_language,
     tr,
 )
+from telegram_membership_saas.manual_checkout_ui import (
+    manual_checkout_rich_html,
+    send_manual_checkout,
+)
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.account import (
     ACCOUNT_MAX_PAGE,
@@ -685,35 +689,45 @@ def create_telegram_commerce_router(
             checkout.request.final_amount,
             checkout.option.currency_precision,
         )
-        period = escape(
-            format_period(checkout.option.duration_value, checkout.option.duration_unit)
+        period_label = format_period(
+            checkout.option.duration_value, checkout.option.duration_unit,
         )
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=(
-                tr("💎 <b>Оформление подписки</b>\n\n",
-                   "💎 <b>Subscription checkout</b>\n\n")
-                + (
-                    ""
-                    if is_period_only_plan_name(
-                        checkout.option.plan_name,
-                        checkout.option.duration_value,
-                        checkout.option.duration_unit,
-                    )
-                    else f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
-                )
-                + f"⏳ {period}\n"
-                + f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
-                + tr("Способ: ", "Method: ")
-                + f"{escape(checkout.option.payment_method_name)}\n\n"
-                + f"{escape(checkout.instruction)}\n\n"
-                + tr("После оплаты нажмите <b>«Я оплатил»</b> и прикрепите чек. "
-                     "Поступление проверит администратор.",
-                     "After paying, tap <b>“I have paid”</b> and attach your receipt. "
-                     "The channel administrator will verify your payment.")
+        named_plan = not is_period_only_plan_name(
+            checkout.option.plan_name,
+            checkout.option.duration_value,
+            checkout.option.duration_unit,
+        )
+        guidance = tr(
+            "После оплаты нажмите <b>«Я оплатил»</b> и прикрепите чек. "
+            "Поступление проверит администратор.",
+            "After paying, tap <b>“I have paid”</b> and attach your receipt. "
+            "The channel administrator will verify your payment.",
+        )
+        # Leave the original manual-payment HTML intact as the fallback.
+        legacy_html = (
+            tr("💎 <b>Оформление подписки</b>\n\n",
+               "💎 <b>Subscription checkout</b>\n\n")
+            + (f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
+               if named_plan else "")
+            + f"⏳ {escape(period_label)}\n"
+            + f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
+            + tr("Способ: ", "Method: ")
+            + f"{escape(checkout.option.payment_method_name)}\n\n"
+            + f"{escape(checkout.instruction)}\n\n"
+            + guidance
+        )
+        await send_manual_checkout(
+            bot, chat_id=callback.from_user.id,
+            rich_html=manual_checkout_rich_html(
+                kind="subscription",
+                name=checkout.option.plan_name if named_plan else None,
+                period=period_label, amount=amount,
+                currency=checkout.request.currency_code,
+                payment_method=checkout.option.payment_method_name,
+                instruction=checkout.instruction, guidance_html=guidance,
             ),
+            legacy_html=legacy_html, instruction=checkout.instruction,
             reply_markup=_checkout_keyboard(checkout.request.id),
-            parse_mode="HTML",
         )
 
     @router.callback_query(F.data.startswith("paid:"))

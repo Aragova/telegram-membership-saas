@@ -19,6 +19,10 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import recipient_language, tr
+from telegram_membership_saas.manual_checkout_ui import (
+    manual_checkout_rich_html,
+    send_manual_checkout,
+)
 from telegram_membership_saas.modules.file_sales.manual_service import (
     available_methods,
     close_pending_manual_order,
@@ -337,26 +341,39 @@ def create_manual_file_router(
                         "📨 Your receipt has been submitted for review.",
                     ))
                 else:
-                    await bot.send_message(
-                        uid,
+                    amount = _short_amount(order.amount)
+                    guidance = tr(
+                        "После перевода нажмите «Я оплатил» и прикрепите чек. "
+                        "Администратор проверит поступление денег.",
+                        "After paying, tap “I have paid” and attach a receipt. "
+                        "An administrator will verify the transfer.",
+                    )
+                    # Retain legacy text and the same payment/cancel callbacks.
+                    legacy_html = (
                         tr("💎 <b>Оформление покупки файла</b>\n",
                            "💎 <b>File purchase checkout</b>\n")
                         + "📦 <b>" + escape(order.product_name) + "</b>\n"
-                        + "💰 <b>" + escape(_short_amount(order.amount))
+                        + "💰 <b>" + escape(amount)
                         + " " + escape(order.currency_code) + "</b>\n"
                         + tr("💳 Способ: ", "💳 Method: ")
                         + escape(order.payment_method_name) + "\n\n"
                         + escape(order.instruction) + "\n\n"
-                        + tr("После перевода нажмите «Я оплатил» и прикрепите чек. "
-                             "Администратор проверит поступление денег.",
-                             "After paying, tap “I have paid” and attach a receipt. "
-                             "An administrator will verify the transfer."),
-                        parse_mode="HTML",
+                        + guidance
+                    )
+                    await send_manual_checkout(
+                        bot, chat_id=uid,
+                        rich_html=manual_checkout_rich_html(
+                            kind="file", name=order.product_name, period=None,
+                            amount=amount, currency=order.currency_code,
+                            payment_method=order.payment_method_name,
+                            instruction=order.instruction, guidance_html=guidance,
+                        ),
+                        legacy_html=legacy_html, instruction=order.instruction,
                         reply_markup=_keyboard([
                             [_button(tr("✅ Я оплатил", "✅ I have paid"),
                                      "paid:" + encode_uuid(order.id), "success")],
                             [_button(tr("❌ Отменить", "❌ Cancel"),
-                                     "cancel:" + encode_uuid(order.id))],
+                                     "cancel:" + encode_uuid(order.id), "danger")],
                         ]),
                     )
             elif action.startswith("paid:"):
