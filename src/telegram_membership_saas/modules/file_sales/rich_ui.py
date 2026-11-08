@@ -14,6 +14,7 @@ from aiogram.types import InlineKeyboardMarkup
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.rich_messages import classic_messages
 
 log = logging.getLogger(__name__)
 
@@ -100,7 +101,8 @@ async def send_file_card(
                         raise
                     log.warning("sendRichMessage unsupported for bot %s", bot.id)
 
-    await bot.send_message(
-        chat_id, legacy_html, parse_mode="HTML", reply_markup=reply_markup,
-    )
+    with classic_messages():
+        await bot.send_message(
+            chat_id, legacy_html, parse_mode="HTML", reply_markup=reply_markup,
+        )
     return False
