@@ -159,6 +159,10 @@ async def test_owner_preview_is_read_only_and_restricted(monkeypatch):
     await handler(query, bot)
     preview.assert_awaited_once()
     assert preview.await_args.kwargs["preview"] is True
+    # The owner fallback must display real line breaks, not a literal backslash-n.
+    legacy = preview.await_args.kwargs["legacy_html"]
+    assert "\n" in legacy
+    assert "\\n" not in legacy
     keys = preview.await_args.kwargs["reply_markup"].inline_keyboard
     assert [button.callback_data for row in keys for button in row] == [
         "fs:ap:" + encode_uuid(product),
