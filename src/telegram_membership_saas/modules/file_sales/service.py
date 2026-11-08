@@ -157,12 +157,12 @@ async def add_folder(
 async def create_product(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID, folder_id: UUID,
-    name: str, stars: int, description: str = "",
+    name: str, stars: int | None, description: str = "",
 ) -> FileProduct:
     name = name.strip()
     if not 1 <= len(name) <= 120:
         raise ValueError("Название товара: от 1 до 120 символов")
-    if not 1 <= stars <= 250000:
+    if stars is not None and not 1 <= stars <= 250000:
         raise ValueError("Цена должна составлять от 1 до 250000 Stars")
     if len(description) > 1024:
         raise ValueError("Описание: не более 1024 символов")
@@ -392,6 +392,8 @@ async def create_stars_order(
         item = await _product(session, project_id, bot_id, product_id, lock=True)
         if item.status != "published":
             raise ValueError("Товар больше не продаётся")
+        if item.stars_price is None:
+            raise ValueError("Этот товар не продаётся за Stars")
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.project_id == project_id, FileFolder.id == item.folder_id,
             FileFolder.status == "active",
