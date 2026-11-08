@@ -27,7 +27,6 @@ from telegram_membership_saas.localization import (
     recipient_language,
     tr,
 )
-from telegram_membership_saas.modules.file_sales.service import list_folders
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.account import (
     ACCOUNT_MAX_PAGE,
@@ -372,6 +371,9 @@ async def _send_buyer_start(
     session_factory: async_sessionmaker[AsyncSession], project_id: UUID,
 ) -> None:
     """Only show file folders if this bot has at least one published good."""
+    # Lazy import avoids commerce -> file_sales -> telegram_admin -> commerce cycle.
+    from telegram_membership_saas.modules.file_sales.service import list_folders
+
     folders = await list_folders(
         session_factory, project_id=project_id, bot_id=bot.id,
     )
