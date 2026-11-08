@@ -33,11 +33,6 @@ from telegram_membership_saas.manual_checkout_ui import (
     send_manual_checkout,
 )
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
-from telegram_membership_saas.payment_review_ui import (
-    rich_subscription_review,
-    rich_subscription_review_result,
-    send_payment_review,
-)
 from telegram_membership_saas.modules.telegram_commerce.account import (
     ACCOUNT_MAX_PAGE,
     account_home_screen,
@@ -72,6 +67,11 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     list_buyer_offers,
     offer_screen,
     rich_catalog_html,
+)
+from telegram_membership_saas.payment_review_ui import (
+    rich_subscription_review,
+    rich_subscription_review_result,
+    send_payment_review,
 )
 from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.telegram_menus import refresh_user_commands
