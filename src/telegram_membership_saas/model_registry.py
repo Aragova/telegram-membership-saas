@@ -12,6 +12,8 @@ from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.file_sales import (
     FileAsset,
     FileFolder,
+    FileManualPurchase,
+    FilePrice,
     FileProduct,
     FilePurchase,
 )
@@ -57,6 +59,8 @@ __all__ = [
     "CustomerBotRuntimeHealth",
     "FileAsset",
     "FileFolder",
+    "FileManualPurchase",
+    "FilePrice",
     "FileProduct",
     "FilePurchase",
     "MerchantChannelPeriod",
