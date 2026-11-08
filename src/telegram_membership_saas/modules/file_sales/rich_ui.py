@@ -30,6 +30,7 @@ def rich_file_card_html(
 ) -> str:
     """Rich HTML for supported Telegram clients, never interpolating raw user HTML."""
     title = tr("💎 Покупка файла", "💎 File purchase")
+    label_name = tr("🏷 Название", "🏷 Name")
     label_price = tr("💰 Цена", "💰 Price")
     label_files = tr("📎 Файлов", "📎 Files")
     prompt = (
@@ -39,8 +40,8 @@ def rich_file_card_html(
     )
     parts = [
         "<h3>" + title + "</h3>",
-        "<p>📦 <b>" + escape(product_name) + "</b></p>",
         "<table bordered compact>",
+        "<tr><th>" + label_name + "</th><td>" + escape(product_name) + "</td></tr>",
         "<tr><th>" + label_price + "</th><td>" + escape(price) + "</td></tr>",
         "<tr><th>" + label_files + "</th><td>" + str(file_count) + "</td></tr>",
         "</table>",
