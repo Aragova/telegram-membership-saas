@@ -97,6 +97,14 @@ def test_copy_only_unambiguous_original_payment_detail(instruction, expected):
     assert ui.copyable_payment_detail(instruction) == expected
 
 
+def test_old_aiogram_without_copy_type_preserves_buttons(monkeypatch):
+    original = _keys()
+    monkeypatch.setattr(ui, "CopyTextButton", None)
+    assert ui.copyable_checkout_keyboard(
+        original, "2204240225046459",
+    ) is original
+
+
 def test_native_copy_button_preserves_original_payment_callbacks():
     original = _keys()
     rich = ui.copyable_checkout_keyboard(
