@@ -160,3 +160,18 @@ async def test_editor_uploads_media_but_only_after_owner_recheck(monkeypatch):
     allowed.return_value = False
     await edit(media, bot)
     add.assert_not_awaited()
+
+
+async def test_active_owner_editor_does_not_capture_a_payment_update():
+    from time import monotonic
+
+    states = {123: {"stage": "upload", "expires": monotonic() + 600}}
+    matcher = ui.FileEditorFilter(states)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=123),
+        chat=SimpleNamespace(type="private", id=123),
+        text=None,
+        successful_payment=SimpleNamespace(invoice_payload="fs:test"),
+    )
+    assert not await matcher(message)
+    assert 123 in states
