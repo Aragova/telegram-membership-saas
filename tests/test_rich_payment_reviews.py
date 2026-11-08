@@ -28,7 +28,6 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
 )
 
 
-
 def test_rich_review_imports_in_fresh_process_before_commerce_handlers():
     proc = subprocess.run(
         [sys.executable, "-c",
