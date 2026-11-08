@@ -236,3 +236,68 @@ async def test_bot_detail_rejects_stale_list_row_after_reordering(monkeypatch):
     await _callback_handler(router)(callback, bot)
     bot.send_message.assert_not_awaited()
     assert callback.answer.await_args.kwargs["show_alert"] is True
+
+
+async def test_platform_menu_shows_three_pairs(monkeypatch):
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(ui, "platform_report", AsyncMock(return_value=_snapshot()))
+    bot = _bot()
+    router = ui.create_platform_dashboard_router(MagicMock(), settings=_settings())
+    await _start_handler(router)(_message(), bot)
+    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert [len(row) for row in rows[-3:]] == [2, 2, 2]
+    assert [[b.callback_data for b in row] for row in rows[-3:]] == [
+        ["plat:bots:30:0", "plat:usage:30:0"],
+        ["plat:merchants:30:0", "plat:risks:30:0"],
+        ["lng:menu", "own:projects"],
+    ]
+
+
+def test_rich_currency_turnover_and_single_bot_metrics():
+    from telegram_membership_saas.rich_messages import to_rich_html
+
+    summary = to_rich_html(ui._summary_text(_snapshot()))
+    assert "• RUB — 1200 (операций: 3)" in summary
+    assert "<th>• RUB" not in summary
+    detail = to_rich_html(ui._bot_details(_snapshot().bots[0], period="30"))
+    assert "<table bordered compact>" in detail
+    assert "<tr><th>📢 Ресурсов</th><td>1</td></tr>" in detail
+    assert "<tr><th>Работа</th><td>работает</td></tr>" in detail
+
+
+async def test_platform_bot_list_details_and_back_edit_one_message(monkeypatch):
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(ui, "platform_report", AsyncMock(return_value=_snapshot()))
+    router = ui.create_platform_dashboard_router(MagicMock(), settings=_settings())
+    handler = _callback_handler(router)
+    bot = _bot()
+    bot.edit_message_text = AsyncMock()
+    for data in (
+        "plat:bots:30:0",
+        "plat:detail:30:0:0:" + encode_uuid(BOT_INSTANCE_ID),
+        "plat:bots:30:0",
+        "plat:home:30:0",
+    ):
+        query = _callback(data)
+        query.message.message_id = 517
+        await handler(query, bot)
+        assert query.answer.await_count == 1
+        assert bot.edit_message_text.await_args.kwargs["message_id"] == 517
+    assert bot.edit_message_text.await_count == 4
+    bot.send_message.assert_not_awaited()
+
+
+async def test_platform_edit_falls_back_only_when_message_cannot_be_edited():
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.methods import EditMessageText
+
+    bot = _bot()
+    bot.edit_message_text = AsyncMock(side_effect=TelegramBadRequest(
+        method=EditMessageText(chat_id=7777, message_id=517, text="test"),
+        message="Bad Request: message can't be edited",
+    ))
+    await ui._render_platform_screen(
+        bot, chat_id=7777, message_id=517, text="test",
+        reply_markup=ui._keyboard([[ui._button("Back", "home:30:0")]]),
+    )
+    bot.send_message.assert_awaited_once()

@@ -11,6 +11,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
@@ -112,6 +113,38 @@ def _button(label: str, data: str) -> InlineKeyboardButton:
 
 def _keyboard(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+
+async def _render_platform_screen(
+    bot: Bot, *, chat_id: int, text: str,
+    reply_markup: InlineKeyboardMarkup, message_id: int | None = None,
+) -> None:
+    """Edit interactive platform screens in place; send if editing is unavailable."""
+    if message_id is not None:
+        try:
+            await bot.edit_message_text(
+                text, chat_id=chat_id, message_id=message_id,
+                parse_mode="HTML", reply_markup=reply_markup,
+            )
+            return
+        except TelegramBadRequest as exc:
+            reason = str(exc).lower()
+            if "message is not modified" in reason:
+                return
+            if not any(marker in reason for marker in (
+                "message can't be edited",
+                "message to edit not found",
+                "there is no text in the message to edit",
+            )):
+                raise
+        except TelegramNotFound as exc:
+            if "message to edit not found" not in str(exc).lower():
+                raise
+    # Never send a second copy after an uncertain network/transport error.
+    await bot.send_message(
+        chat_id, text, parse_mode="HTML", reply_markup=reply_markup,
+    )
 
 
 def _period_rows(current: str, *, section: str) -> list[list[InlineKeyboardButton]]:
@@ -449,23 +482,33 @@ def create_platform_dashboard_router(
             period=period, page=page, settings=config,
         )
 
-    async def send_platform_home(bot: Bot, user, *, period: str) -> None:
+    async def send_platform_home(
+        bot: Bot, user, *, period: str, message_id: int | None = None,
+    ) -> None:
         report = await read_report(user, period=period)
         rows = _period_rows(period, section="home")
         rows.extend([
-            [_button(tr("🤖 Все подключённые боты", "🤖 Connected bots"), f"bots:{period}:0")],
-            [_button(tr("📊 Использование и история", "📊 Usage & history"), f"usage:{period}:0")],
-            [_button(tr("💼 Финансы бизнесов", "💼 Merchant finances"), f"merchants:{period}:0")],
-            [_button(tr("🛡 Проверка каналов", "🛡 Channel review"), f"risks:{period}:0")],
-            [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
-            [InlineKeyboardButton(
-                text=tr("🤖 Мои боты · личный режим", "🤖 My bots · personal mode"),
-                callback_data="own:projects",
-            )],
+            [
+                _button(tr("🤖 Все боты", "🤖 All bots"), f"bots:{period}:0"),
+                _button(tr("📊 История", "📊 History"), f"usage:{period}:0"),
+            ],
+            [
+                _button(tr("💼 Финансы", "💼 Finances"), f"merchants:{period}:0"),
+                _button(tr("🛡 Проверки", "🛡 Reviews"), f"risks:{period}:0"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text=tr("🌐 Язык", "🌐 Language"), callback_data="lng:menu",
+                ),
+                InlineKeyboardButton(
+                    text=tr("👤 Мои боты", "👤 My bots"),
+                    callback_data="own:projects",
+                ),
+            ],
         ])
-        await bot.send_message(
-            user.id, _summary_text(report),
-            parse_mode="HTML", reply_markup=_keyboard(rows),
+        await _render_platform_screen(
+            bot, chat_id=user.id, text=_summary_text(report),
+            reply_markup=_keyboard(rows), message_id=message_id,
         )
 
     @router.message(
@@ -502,15 +545,18 @@ def create_platform_dashboard_router(
             )
             return
         tokens = (query.data or "").split(":")
+        message_id = getattr(query.message, "message_id", None)
         try:
             if tokens[1:] == ["home"]:
-                await send_platform_home(bot, query.from_user, period="30")
+                await send_platform_home(
+                    bot, query.from_user, period="30", message_id=message_id,
+                )
             elif len(tokens) == 4 and tokens[1] == "home":
                 _, _, period, page_token = tokens
                 if period not in PERIODS or page_token != "0":
                     raise ValueError("Некорректный период")
                 await send_platform_home(
-                    bot, query.from_user, period=period,
+                    bot, query.from_user, period=period, message_id=message_id,
                 )
             elif len(tokens) == 4 and tokens[1] == "usage":
                 _, _, period, page_token = tokens
@@ -545,10 +591,10 @@ def create_platform_dashboard_router(
                 if nav:
                     rows.append(nav)
                 rows.append([_button(tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0")])
-                await bot.send_message(
-                    query.from_user.id,
-                    _usage_text(report, timezone=config.platform_timezone),
-                    parse_mode="HTML", reply_markup=_keyboard(rows),
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=_usage_text(report, timezone=config.platform_timezone),
+                    reply_markup=_keyboard(rows), message_id=message_id,
                 )
             elif len(tokens) == 4 and tokens[1] == "merchants":
                 _, _, period, page_token = tokens
@@ -587,11 +633,19 @@ def create_platform_dashboard_router(
                     tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0",
                 )])
                 chunks = _merchant_text_chunks(report)
-                for index, chunk in enumerate(chunks):
-                    await bot.send_message(
-                        query.from_user.id, chunk, parse_mode="HTML",
-                        reply_markup=_keyboard(rows) if index == len(chunks) - 1 else None,
+                if len(chunks) == 1:
+                    await _render_platform_screen(
+                        bot, chat_id=query.from_user.id, text=chunks[0],
+                        reply_markup=_keyboard(rows), message_id=message_id,
                     )
+                else:
+                    for index, chunk in enumerate(chunks):
+                        await bot.send_message(
+                            query.from_user.id, chunk, parse_mode="HTML",
+                            reply_markup=(
+                                _keyboard(rows) if index == len(chunks) - 1 else None
+                            ),
+                        )
             elif len(tokens) == 4 and tokens[1] == "risks":
                 _, _, period, page_token = tokens
                 if period not in PERIODS or (
@@ -628,10 +682,10 @@ def create_platform_dashboard_router(
                 rows.append([_button(
                     tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0",
                 )])
-                await bot.send_message(
-                    query.from_user.id,
-                    _risk_review_text(report, timezone=config.platform_timezone),
-                    parse_mode="HTML", reply_markup=_keyboard(rows),
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=_risk_review_text(report, timezone=config.platform_timezone),
+                    reply_markup=_keyboard(rows), message_id=message_id,
                 )
             elif len(tokens) == 4 and tokens[1] == "bots":
                 _, _, period, page_token = tokens
@@ -656,9 +710,9 @@ def create_platform_dashboard_router(
                 if nav:
                     rows.append(nav)
                 rows.append([_button(tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0")])
-                await bot.send_message(
-                    query.from_user.id, _bot_list(report),
-                    parse_mode="HTML", reply_markup=_keyboard(rows),
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id, text=_bot_list(report),
+                    reply_markup=_keyboard(rows), message_id=message_id,
                 )
             elif len(tokens) == 6 and tokens[1] == "detail":
                 _, _, period, page_token, index_token, bot_token = tokens
@@ -677,12 +731,12 @@ def create_platform_dashboard_router(
                     UUID(report.bots[index]["bot_instance_id"])
                 ):
                     raise ValueError("Карточка устарела. Обновите список.")
-                await bot.send_message(
-                    query.from_user.id,
-                    _bot_details(report.bots[index], period=period),
-                    parse_mode="HTML", reply_markup=_keyboard([
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=_bot_details(report.bots[index], period=period),
+                    reply_markup=_keyboard([
                         [_button(tr("⬅️ Все боты", "⬅️ All bots"), f"bots:{period}:{page}")],
-                    ]),
+                    ]), message_id=message_id,
                 )
             else:
                 raise ValueError("Кнопка устарела")

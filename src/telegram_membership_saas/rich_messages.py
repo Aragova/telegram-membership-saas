@@ -37,11 +37,12 @@ _NATIVE_REPLY_MARKERS = (
     "✍️ ViMi Pay · Reply to admin",
 )
 _HEADING = re.compile(r"^\s*.{1,120}$")
-_ROW = re.compile(r"^(.{2,65}?):\s+(.+)$")
+_ROW = re.compile(r"^([^():\n]{2,65}?):\s+(.+)$")
 _STATISTICS = (
     "ViMi Pay · Платформа", "ViMi Pay · Platform",
     "Статистика · ViMi Pay", "Statistics · ViMi Pay",
     "Мои покупки", "My purchases",
+    "Статистика бота", "Bot statistics",
 )
 
 
