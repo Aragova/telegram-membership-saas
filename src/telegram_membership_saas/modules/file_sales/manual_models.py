@@ -4,8 +4,17 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint,
-    Index, Numeric, String, Text, Uuid, func,
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Numeric,
+    String,
+    Text,
+    Uuid,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
