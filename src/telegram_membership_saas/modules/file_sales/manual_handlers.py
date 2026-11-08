@@ -10,23 +10,36 @@ from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter
 from aiogram.types import (
-    CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.file_sales.manual_service import (
-    available_methods, create_manual_order, money, pending_manual_reviews,
-    price_editor_options, require_buyer_order, review_manual_order,
-    set_manual_price, submit_manual_receipt,
+    available_methods,
+    create_manual_order,
+    money,
+    pending_manual_reviews,
+    price_editor_options,
+    require_buyer_order,
+    review_manual_order,
+    set_manual_price,
+    submit_manual_receipt,
 )
 from telegram_membership_saas.modules.file_sales.service import (
-    mark_file_delivery, purchased_assets, view_product,
+    mark_file_delivery,
+    purchased_assets,
+    view_product,
 )
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
-    CURRENCY_ICONS, CURRENCY_ORDER,
+    CURRENCY_ICONS,
+    CURRENCY_ORDER,
 )
 
 log = logging.getLogger(__name__)
