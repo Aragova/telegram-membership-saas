@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-from datetime import datetime
 from decimal import Decimal
 from html import escape
 from zoneinfo import ZoneInfo
