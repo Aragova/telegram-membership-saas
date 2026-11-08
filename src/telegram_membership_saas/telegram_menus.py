@@ -38,6 +38,11 @@ ROLE_COMMANDS = {
         ("subscription", "🧾 Мои подписки", "🧾 My subscriptions"),
         ("support", "🛟 Поддержка", "🛟 Support"),
     ),
+    "payment_manager": (
+        ("menu", "🏠 Главное меню", "🏠 Main menu"),
+        ("filepayments", "🧾 Проверка оплат файлов", "🧾 File payment reviews"),
+        ("support", "🛟 Поддержка", "🛟 Support"),
+    ),
     # The central bot has no buyer subscriptions; show only three relevant,
     # implemented commands instead of exposing a fake subscriptions shortcut.
     "central": (
@@ -122,6 +127,14 @@ async def refresh_user_commands(
                 factory, actor_id=actor_id, project_id=project_id,
             ):
                 role = "owner"
+            else:
+                from telegram_membership_saas.modules.file_sales.manual_service import (
+                    can_review_file_payments,
+                )
+                if await can_review_file_payments(
+                    factory, project_id=project_id, actor_id=actor_id,
+                ):
+                    role = "payment_manager"
     await set_chat_commands(
         bot, chat_id=chat_id, role=role, language=language,
     )
