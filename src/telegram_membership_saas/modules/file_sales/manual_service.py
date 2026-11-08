@@ -102,6 +102,22 @@ async def available_methods(
         return await _methods(session, project_id=project_id, product_id=product_id)
 
 
+async def can_review_file_payments(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, actor_id: UUID,
+) -> bool:
+    """Check payment-view role independently of file product admin access."""
+    async with system_project_session_scope(factory, project_id) as session:
+        try:
+            await require_payment_permission(
+                session, project_id=project_id, actor_user_id=actor_id,
+                permission=Permission.PAYMENT_VIEW,
+            )
+        except PermissionError:
+            return False
+        return True
+
+
 async def available_price_currencies(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID,
