@@ -317,6 +317,34 @@ async def test_existing_stars_invoice_is_blocked_by_manual_review_and_paid_order
         )
         assert changed and reviewed.status == "paid"
         assert not await files.precheckout_allowed(**args)
+        # A precheckout may have passed BEFORE manual approval. Telegram
+        # can report its charge later, so record a refund instead of delivery.
+        charged_late = await files.confirm_stars_payment(
+            factory, project_id=project, bot_id=bot_id, buyer_id=buyer_tid,
+            invoice_payload=pending_stars.invoice_payload,
+            amount=12, currency="XTR", charge_id="late_" + uuid4().hex,
+        )
+        assert charged_late.status == "refund_pending"
+        with pytest.raises(PermissionError):
+            await files.purchased_assets(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer_tid, purchase_id=charged_late.id,
+            )
+        from telegram_membership_saas.modules.file_sales.service import (
+            mark_refunded_stars,
+        )
+        await mark_refunded_stars(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_tid, purchase_id=charged_late.id,
+            charge_id=charged_late.telegram_charge_id,
+        )
+        charged_again = await files.confirm_stars_payment(
+            factory, project_id=project, bot_id=bot_id, buyer_id=buyer_tid,
+            invoice_payload=pending_stars.invoice_payload,
+            amount=12, currency="XTR",
+            charge_id=charged_late.telegram_charge_id,
+        )
+        assert charged_again.status == "refunded"
         with pytest.raises(ValueError, match="оплата"):
             await files.create_stars_order(
                 factory, project_id=project, bot_id=bot_id,
