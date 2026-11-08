@@ -14,6 +14,8 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
+    ForceReply,
+    ReplyParameters,
     Message,
     PreCheckoutQuery,
 )
@@ -21,6 +23,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.file_sales.models import FileAsset
+from telegram_membership_saas.modules.file_sales.manual import (
+    FIAT_CODES,
+    cancel_manual_order,
+    create_manual_file_order,
+    list_file_methods,
+    list_file_prices,
+    list_manual_paid,
+    mark_manual_delivery,
+    mark_manual_receipt_forwarded,
+    pending_manual_reviews,
+    purchased_manual_assets,
+    require_manual_receipt,
+    review_manual_file_order,
+    set_file_price,
+    submit_manual_receipt,
+)
+from telegram_membership_saas.modules.telegram_commerce.service import format_amount
 from telegram_membership_saas.modules.file_sales.recovery import (
     recover_buyer_stars,
 )
@@ -51,6 +70,11 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
 
 log = logging.getLogger(__name__)
 ENTRY_SECONDS = 900
+CURRENCY_FLAGS = {
+    "RUB": "🇷🇺", "USD": "🇺🇸", "EUR": "🇪🇺",
+    "UAH": "🇺🇦", "BYN": "🇧🇾", "XTR": "⭐",
+}
+RECEIPT_PROMPT_PREFIX = "FILE_PAY:"
 
 
 def _button(text: str, action: str, style: str = "primary") -> InlineKeyboardButton:
@@ -106,6 +130,21 @@ async def _deliver(
                     "get:" + encode_uuid(purchase_id)),
         ]]),
     )
+
+
+class ManualReceiptFilter(BaseFilter):
+    """Only the bot's exact ForceReply receipt prompt can submit this order."""
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if (
+            message.from_user is None or message.chat.type != "private"
+            or message.chat.id != message.from_user.id
+            or message.reply_to_message is None
+            or message.reply_to_message.from_user is None
+            or message.reply_to_message.from_user.id != bot.id
+        ):
+            return False
+        return (message.reply_to_message.text or "").startswith(RECEIPT_PROMPT_PREFIX)
 
 
 class FileEditorFilter(BaseFilter):
