@@ -1,0 +1,526 @@
+"""Connected-bot file sales checkout: existing manual methods + optional Stars."""
+from __future__ import annotations
+
+import logging
+from html import escape
+from time import monotonic
+from uuid import UUID
+
+from aiogram import Bot, F, Router
+from aiogram.exceptions import AiogramError
+from aiogram.filters import BaseFilter
+from aiogram.types import (
+    CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from telegram_membership_saas.localization import recipient_language, tr
+from telegram_membership_saas.modules.file_sales.manual_service import (
+    available_methods, create_manual_order, money, pending_manual_reviews,
+    price_editor_options, require_buyer_order, review_manual_order,
+    set_manual_price, submit_manual_receipt,
+)
+from telegram_membership_saas.modules.file_sales.service import (
+    mark_file_delivery, purchased_assets, view_product,
+)
+from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
+from telegram_membership_saas.modules.telegram_commerce.storefront import (
+    CURRENCY_ICONS, CURRENCY_ORDER,
+)
+
+log = logging.getLogger(__name__)
+RECEIPT_PREFIX = "FILE_PAYMENT_RECEIPT:"
+ENTRY_SECONDS = 900
+
+
+def _button(label: str, callback: str, style: str = "primary") -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=label, callback_data="fm:" + callback, style=style)
+
+
+def _keyboard(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _receipt_order_id(message: Message, bot_id: int) -> UUID | None:
+    if message.chat.type != "private" or not message.reply_to_message:
+        return None
+    original = message.reply_to_message
+    if original.from_user is None or original.from_user.id != bot_id:
+        return None
+    first = (original.text or "").split("\n", 1)[0]
+    if not first.startswith(RECEIPT_PREFIX):
+        return None
+    try:
+        return UUID(first[len(RECEIPT_PREFIX):])
+    except ValueError:
+        return None
+
+
+class ManualReceiptFilter(BaseFilter):
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if message.text and message.text.startswith("/"):
+            return False
+        return _receipt_order_id(message, bot.id) is not None
+
+
+class ManualPriceFilter(BaseFilter):
+    def __init__(self, pending: dict[int, dict]):
+        self.pending = pending
+
+    async def __call__(self, message: Message) -> bool:
+        if message.chat.type != "private" or message.from_user is None:
+            return False
+        if getattr(message, "successful_payment", None) is not None:
+            return False
+        if not message.text or message.text.startswith("/"):
+            return False
+        entry = self.pending.get(message.from_user.id)
+        if entry is None:
+            return False
+        if entry["expires"] <= monotonic():
+            self.pending.pop(message.from_user.id, None)
+            return False
+        return True
+
+
+async def show_file_payment_options(
+    bot: Bot, *, factory: async_sessionmaker[AsyncSession],
+    project_id: UUID, buyer_id: int, product_id: UUID,
+    currency: str | None = None,
+) -> None:
+    product, count = await view_product(
+        factory, project_id=project_id, bot_id=bot.id, product_id=product_id,
+    )
+    if not count:
+        raise ValueError("У товара пока нет вложений")
+    options = await available_methods(
+        factory, project_id=project_id, bot_id=bot.id,
+        product_id=product_id, buyer_id=buyer_id,
+    )
+    codes = tuple(sorted({option.currency for option in options}, key=lambda c: (
+        CURRENCY_ORDER.index(c) if c in CURRENCY_ORDER else 99, c,
+    )))
+    chosen = currency if currency in codes else (codes[0] if codes else None)
+    code = encode_uuid(product_id)
+    rows: list[list[InlineKeyboardButton]] = []
+    if codes:
+        buttons = [
+            _button(
+                ("🟢" if c == chosen else "") + CURRENCY_ICONS.get(c, "🌐") + c,
+                "currency:" + code + ":" + c,
+                "success" if c == chosen else "primary",
+            ) for c in codes
+        ]
+        rows.extend(buttons[i:i + 5] for i in range(0, len(buttons), 5))
+    for option in options:
+        if option.currency != chosen:
+            continue
+        rows.append([_button(
+            "💳 " + option.method_name[:36],
+            "method:" + code + ":" + chosen + ":" + encode_uuid(option.method_id),
+        )])
+    rows.append([InlineKeyboardButton(
+        text=tr("⭐ Telegram Stars · ", "⭐ Telegram Stars · ")
+        + str(product.stars_price) + " XTR",
+        callback_data="fs:buy:" + code,
+        style="success",
+    )])
+    rows.append([InlineKeyboardButton(
+        text=tr("⬅️ Товары", "⬅️ Products"),
+        callback_data="fs:folder:" + encode_uuid(product.folder_id),
+    )])
+    price_label = (
+        next((money(x.amount, x.precision) + " " + chosen
+              for x in options if x.currency == chosen), "")
+        if chosen else str(product.stars_price) + " ⭐"
+    )
+    await bot.send_message(
+        buyer_id,
+        tr("💎 <b>Оформление покупки файла</b>\n\n",
+           "💎 <b>File purchase checkout</b>\n\n")
+        + "📦 <b>" + escape(product.name) + "</b>\n"
+        + tr("💰 Цена: ", "💰 Price: ") + escape(price_label) + "\n\n"
+        + tr("👇 <b>Как вам удобнее оплатить?</b>",
+             "👇 <b>How would you like to pay?</b>"),
+        parse_mode="HTML", reply_markup=_keyboard(rows),
+    )
+
+
+async def show_manual_prices(
+    bot: Bot, *, factory: async_sessionmaker[AsyncSession],
+    project_id: UUID, actor_id: UUID, user_id: int, product_id: UUID,
+) -> None:
+    options = await price_editor_options(
+        factory, project_id=project_id, bot_id=bot.id,
+        actor_id=actor_id, product_id=product_id,
+    )
+    code = encode_uuid(product_id)
+    rows = [[_button(
+        CURRENCY_ICONS.get(currency, "💱") + " " + currency
+        + (" · " + str(amount) if amount is not None else " · ➕"),
+        "setprice:" + code + ":" + currency,
+        "success" if amount is not None else "primary",
+    )] for currency, amount in options]
+    rows.append([InlineKeyboardButton(
+        text=tr("⬅️ Карточка товара", "⬅️ Product"),
+        callback_data="fs:ap:" + code,
+    )])
+    await bot.send_message(
+        user_id, tr(
+            "💱 <b>Цены файла в валютах</b>\n"
+            "Нажмите валюту и укажите цену. Здесь доступны только валюты "
+            "активных способов оплаты. Покупателям показываются только "
+            "валюты с указанной ценой.\n\n"
+            "Старые покупки сохраняют цену на момент оформления.",
+            "💱 <b>File prices by currency</b>\n"
+            "Tap a currency to set its price. Only active payment-method "
+            "currencies appear, and only priced currencies are shown "
+            "to customers.\n\nExisting purchase amounts stay frozen.",
+        ),
+        parse_mode="HTML", reply_markup=_keyboard(rows),
+    )
+
+
+async def _send_paid_files(
+    bot: Bot, *, factory: async_sessionmaker[AsyncSession],
+    project_id: UUID, buyer_id: int, purchase_id: UUID,
+) -> None:
+    order, assets = await purchased_assets(
+        factory, project_id=project_id, bot_id=bot.id,
+        buyer_id=buyer_id, purchase_id=purchase_id,
+    )
+    await bot.send_message(
+        buyer_id, tr("✅ Ваша покупка: ", "✅ Your purchase: ") + escape(order.product_name),
+        parse_mode="HTML",
+    )
+    for asset in assets:
+        method = {
+            "document": bot.send_document, "photo": bot.send_photo,
+            "video": bot.send_video, "audio": bot.send_audio,
+            "animation": bot.send_animation,
+        }[asset.kind]
+        await method(buyer_id, asset.file_id)
+    await mark_file_delivery(
+        factory, project_id=project_id, bot_id=bot.id,
+        buyer_id=buyer_id, purchase_id=purchase_id,
+    )
+    await bot.send_message(
+        buyer_id, tr("📥 Получить файлы снова можно через /myfiles.",
+                     "📥 Download your files again with /myfiles."),
+        reply_markup=_keyboard([[_button(
+            tr("📥 Получить повторно", "📥 Redownload"),
+            "get:" + encode_uuid(purchase_id),
+        )]]),
+    )
+
+
+def create_manual_file_router(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+) -> Router:
+    router = Router(name="manual-file-checkout")
+    editor: dict[int, dict] = {}
+
+    @router.callback_query(F.data.startswith("fm:"))
+    async def file_manual_callback(query: CallbackQuery, bot: Bot) -> None:
+        if (query.message is None or query.from_user is None
+                or query.message.chat.type != "private"
+                or query.message.chat.id != query.from_user.id):
+            await query.answer()
+            return
+        uid = query.from_user.id
+        action = (query.data or "")[3:]
+        try:
+            if action.startswith("currency:"):
+                _, token, currency = action.split(":")
+                await show_file_payment_options(
+                    bot, factory=factory, project_id=project_id, buyer_id=uid,
+                    product_id=decode_uuid(token), currency=currency,
+                )
+            elif action.startswith("method:"):
+                _, token, currency, method = action.split(":")
+                order, paid = await create_manual_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    buyer_id=uid, product_id=decode_uuid(token),
+                    currency=currency, method_id=decode_uuid(method),
+                )
+                if paid:
+                    await _send_paid_files(
+                        bot, factory=factory, project_id=project_id,
+                        buyer_id=uid, purchase_id=order.id,
+                    )
+                elif order.status == "submitted":
+                    await bot.send_message(uid, tr(
+                        "📨 Чек уже отправлен администратору. Дождитесь проверки.",
+                        "📨 Your receipt has been submitted for review.",
+                    ))
+                else:
+                    await bot.send_message(
+                        uid,
+                        tr("💎 <b>Оформление покупки файла</b>\n",
+                           "💎 <b>File purchase checkout</b>\n")
+                        + "📦 <b>" + escape(order.product_name) + "</b>\n"
+                        + "💰 <b>" + escape(str(order.amount))
+                        + " " + escape(order.currency_code) + "</b>\n"
+                        + tr("💳 Способ: ", "💳 Method: ")
+                        + escape(order.payment_method_name) + "\n\n"
+                        + escape(order.instruction) + "\n\n"
+                        + tr("После перевода нажмите «Я оплатил» и прикрепите чек. "
+                             "Администратор проверит поступление денег.",
+                             "After paying, tap “I have paid” and attach a receipt. "
+                             "An administrator will verify the transfer."),
+                        parse_mode="HTML",
+                        reply_markup=_keyboard([
+                            [_button(tr("✅ Я оплатил", "✅ I have paid"),
+                                     "paid:" + encode_uuid(order.id), "success")],
+                            [_button(tr("❌ Отменить", "❌ Cancel"),
+                                     "cancel:" + encode_uuid(order.id))],
+                        ]),
+                    )
+            elif action.startswith("paid:"):
+                order_id = decode_uuid(action.split(":")[1])
+                order = await require_buyer_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    buyer_id=uid, order_id=order_id,
+                )
+                if order.status != "pending":
+                    raise ValueError("Заявка уже отправлена или закрыта")
+                await bot.send_message(
+                    uid, RECEIPT_PREFIX + str(order.id) + "\n"
+                    + tr("Ответьте на это сообщение фотографией чека или "
+                         "документом PDF/JPG/PNG/WEBP. Без чека заявка "
+                         "не попадёт администратору.",
+                         "Reply to this message with a receipt photo or "
+                         "PDF/JPG/PNG/WEBP document. The request cannot "
+                         "be reviewed without proof."),
+                    reply_markup=ForceReply(selective=True),
+                )
+            elif action.startswith("cancel:"):
+                # Buyer may cancel only before submitting proof.
+                from telegram_membership_saas.modules.file_sales.manual_service import (
+                    cancel_manual_order,
+                )
+                await cancel_manual_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    buyer_id=uid, order_id=decode_uuid(action.split(":")[1]),
+                )
+                await bot.send_message(uid, tr("Заявка отменена.", "Order canceled."))
+            elif action.startswith("prices:") or action.startswith("setprice:"):
+                actor = await ensure_telegram_actor(
+                    factory, telegram_id=uid,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                parts = action.split(":")
+                product_id = decode_uuid(parts[1])
+                if parts[0] == "prices":
+                    await show_manual_prices(
+                        bot, factory=factory, project_id=project_id,
+                        actor_id=actor, user_id=uid, product_id=product_id,
+                    )
+                else:
+                    currency = parts[2]
+                    await price_editor_options(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        product_id=product_id, actor_id=actor,
+                    )
+                    editor[uid] = {
+                        "product": product_id, "currency": currency,
+                        "expires": monotonic() + ENTRY_SECONDS,
+                    }
+                    await bot.send_message(
+                        uid, tr("💰 Укажите цену в ", "💰 Enter price in ")
+                        + currency + tr(" следующим сообщением. /menu — отмена.",
+                                        " in your next message. /menu cancels."),
+                    )
+            elif action == "reviews":
+                actor = await ensure_telegram_actor(
+                    factory, telegram_id=uid,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                items = await pending_manual_reviews(
+                    factory, project_id=project_id, bot_id=bot.id, actor_id=actor,
+                )
+                rows = [[_button(
+                    "📋 " + item.product_name[:26] + " · "
+                    + str(item.amount) + " " + item.currency_code,
+                    "review:" + encode_uuid(item.id),
+                )] for item in items]
+                await bot.send_message(
+                    uid,
+                    tr("🧾 <b>Заявки на оплату файлов</b>",
+                       "🧾 <b>File payment reviews</b>")
+                    + ("\n" + tr("Нет новых заявок.", "No pending reviews.")
+                       if not items else ""),
+                    parse_mode="HTML", reply_markup=_keyboard(rows),
+                )
+            elif action.startswith("review:"):
+                actor = await ensure_telegram_actor(
+                    factory, telegram_id=uid,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                items = await pending_manual_reviews(
+                    factory, project_id=project_id, bot_id=bot.id, actor_id=actor,
+                )
+                order_id = decode_uuid(action.split(":")[1])
+                order = next((x for x in items if x.id == order_id), None)
+                if order is None:
+                    raise ValueError("Заявка уже обработана или недоступна")
+                if order.receipt_kind == "photo":
+                    await bot.send_photo(uid, order.receipt_file_id)
+                elif order.receipt_kind == "document":
+                    await bot.send_document(uid, order.receipt_file_id)
+                await bot.send_message(
+                    uid, "📦 <b>" + escape(order.product_name) + "</b>\n"
+                    + "💰 " + escape(str(order.amount)) + " "
+                    + escape(order.currency_code) + "\n"
+                    + "💳 " + escape(order.payment_method_name),
+                    parse_mode="HTML",
+                    reply_markup=_keyboard([[
+                        _button("✅ Подтвердить", "approve:" + encode_uuid(order.id),
+                                "success"),
+                        _button("❌ Отклонить", "reject:" + encode_uuid(order.id),
+                                "danger"),
+                    ]]),
+                )
+            elif action.startswith(("approve:", "reject:")):
+                approve = action.startswith("approve:")
+                actor = await ensure_telegram_actor(
+                    factory, telegram_id=uid,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                order, changed = await review_manual_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=actor, order_id=decode_uuid(action.split(":")[1]),
+                    approve=approve,
+                )
+                await bot.send_message(
+                    uid, tr("✅ Оплата подтверждена." if approve
+                            else "❌ Заявка отклонена.",
+                            "✅ Payment approved." if approve
+                            else "❌ Payment rejected."),
+                )
+                if changed:
+                    try:
+                        async with recipient_language(factory, order.telegram_user_id):
+                            await bot.send_message(
+                                order.telegram_user_id,
+                                tr("✅ Оплата файла подтверждена. Получаем файлы.",
+                                   "✅ File payment approved. Sending your files.")
+                                if approve else
+                                tr("❌ Оплата файла отклонена администратором.",
+                                   "❌ File payment rejected by the administrator."),
+                            )
+                            if approve:
+                                await _send_paid_files(
+                                    bot, factory=factory, project_id=project_id,
+                                    buyer_id=order.telegram_user_id,
+                                    purchase_id=order.id,
+                                )
+                    except AiogramError:
+                        log.exception("Manual file payment notice or delivery failed")
+                        # Confirmed purchase is durable; /myfiles can redeliver.
+            elif action.startswith("get:"):
+                await _send_paid_files(
+                    bot, factory=factory, project_id=project_id,
+                    buyer_id=uid, purchase_id=decode_uuid(action.split(":")[1]),
+                )
+            else:
+                raise ValueError("Неизвестное действие")
+            await query.answer()
+        except (ValueError, PermissionError) as exc:
+            await query.answer(str(exc)[:190], show_alert=True)
+        except AiogramError:
+            log.exception("Manual file Telegram callback failed")
+            await query.answer(tr("Ошибка Telegram", "Telegram error"), show_alert=True)
+
+    @router.message(ManualReceiptFilter())
+    async def manual_receipt(message: Message, bot: Bot) -> None:
+        if message.from_user is None:
+            return
+        order_id = _receipt_order_id(message, bot.id)
+        if order_id is None:
+            return
+        if message.photo:
+            kind, file_id = "photo", message.photo[-1].file_id
+        elif (message.document and message.document.mime_type in (
+            "application/pdf", "image/jpeg", "image/png", "image/webp",
+        )):
+            kind, file_id = "document", message.document.file_id
+        else:
+            await bot.send_message(
+                message.chat.id, tr("Нужен чек: фото или PDF/JPG/PNG/WEBP.",
+                                    "Please attach a photo or PDF/JPG/PNG/WEBP receipt."),
+            )
+            return
+        try:
+            order, reviewers = await submit_manual_receipt(
+                factory, project_id=project_id, bot_id=bot.id,
+                buyer_id=message.from_user.id, order_id=order_id,
+                kind=kind, file_id=file_id,
+            )
+        except (ValueError, PermissionError) as exc:
+            await bot.send_message(message.chat.id, str(exc))
+            return
+        for reviewer in reviewers:
+            try:
+                await bot.copy_message(
+                    chat_id=reviewer, from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                )
+                await bot.send_message(
+                    reviewer, "🧾 <b>" + escape(order.product_name) + "</b>\n"
+                    + "💰 " + escape(str(order.amount)) + " "
+                    + escape(order.currency_code) + "\n"
+                    + tr("Проверьте поступление средств.",
+                         "Verify receipt of funds."),
+                    parse_mode="HTML",
+                    reply_markup=_keyboard([[
+                        _button("✅ Подтвердить", "approve:" + encode_uuid(order.id),
+                                "success"),
+                        _button("❌ Отклонить", "reject:" + encode_uuid(order.id),
+                                "danger"),
+                    ]]),
+                )
+            except AiogramError:
+                log.warning("Unable to deliver manual file receipt to reviewer %s", reviewer)
+        await bot.send_message(
+            message.chat.id,
+            tr("📨 Чек зарегистрирован. Ожидайте проверки администратором.",
+               "📨 Receipt recorded. Waiting for admin review."),
+        )
+
+    @router.message(ManualPriceFilter(editor))
+    async def price_reply(message: Message, bot: Bot) -> None:
+        if message.from_user is None or message.text is None:
+            return
+        state = editor.get(message.from_user.id)
+        if not state:
+            return
+        try:
+            actor = await ensure_telegram_actor(
+                factory, telegram_id=message.from_user.id,
+                username=message.from_user.username,
+                first_name=message.from_user.first_name,
+            )
+            amount = await set_manual_price(
+                factory, project_id=project_id, bot_id=bot.id,
+                product_id=state["product"], actor_id=actor,
+                currency=state["currency"], value=message.text,
+            )
+            editor.pop(message.from_user.id, None)
+            await bot.send_message(
+                message.chat.id, "✅ " + str(amount) + " " + state["currency"],
+            )
+            await show_manual_prices(
+                bot, factory=factory, project_id=project_id,
+                actor_id=actor, user_id=message.from_user.id,
+                product_id=state["product"],
+            )
+        except (ValueError, PermissionError) as exc:
+            await bot.send_message(message.chat.id, "⚠️ " + str(exc))
+
+    return router
