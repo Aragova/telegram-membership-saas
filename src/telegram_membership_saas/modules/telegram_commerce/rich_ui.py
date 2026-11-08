@@ -88,6 +88,8 @@ async def send_rich_subscription_offer(
     When opened by clicking a tariff, edit the original catalog message.
     This avoids stacking an extra block of old tariff/payment buttons.
     """
+    if not getattr(get_settings(), "rich_messages_enabled", True):
+        return False
     if not preview and not rich_subscription_enabled(bot.id):
         return False
     try:
