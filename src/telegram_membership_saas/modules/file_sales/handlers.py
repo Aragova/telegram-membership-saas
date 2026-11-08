@@ -558,7 +558,7 @@ def create_file_sales_router(
         except (ValueError, PermissionError) as exc:
             await bot.send_message(uid, "⚠️ " + str(exc))
 
-    @router.pre_checkout_query()
+    @router.pre_checkout_query(F.invoice_payload.startswith("fs:"))
     async def file_pre_checkout(query: PreCheckoutQuery, bot: Bot) -> None:
         if not query.invoice_payload.startswith("fs:"):
             return
@@ -575,7 +575,7 @@ def create_file_sales_router(
             ),
         )
 
-    @router.message(F.successful_payment)
+    @router.message(F.successful_payment.invoice_payload.startswith("fs:"))
     async def file_payment_success(message: Message, bot: Bot) -> None:
         if message.from_user is None or message.chat.type != "private":
             return
