@@ -32,6 +32,7 @@ from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
 from telegram_membership_saas.project_worker_lock import project_worker_lock
+from telegram_membership_saas.rich_messages import RichUiBot
 from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
 from telegram_membership_saas.telegram_menus import install_public_commands
