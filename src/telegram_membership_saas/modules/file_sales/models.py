@@ -66,7 +66,7 @@ class FileProduct(Base):
     telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    stars_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    stars_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="draft", server_default="draft",
     )

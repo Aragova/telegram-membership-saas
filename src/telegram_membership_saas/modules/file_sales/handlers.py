@@ -20,6 +20,13 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.file_sales.manual_handlers import (
+    show_file_payment_options,
+)
+from telegram_membership_saas.modules.file_sales.manual_service import (
+    available_price_currencies,
+    price_editor_options,
+)
 from telegram_membership_saas.modules.file_sales.models import FileAsset
 from telegram_membership_saas.modules.file_sales.recovery import (
     recover_buyer_stars,
@@ -155,6 +162,11 @@ def create_file_sales_router(
                 tr("⚙️ Управление продажами", "⚙️ Manage file sales"),
                 "admin", "success",
             )])
+            rows.append([InlineKeyboardButton(
+                text=tr("🧾 Проверка оплаты файлов", "🧾 File payment reviews"),
+                callback_data="fm:reviews",
+                style="success",
+            )])
         rows.append([InlineKeyboardButton(
             text=tr("⬅️ Главное меню", "⬅️ Main menu"),
             callback_data="own:dashboard" if admin else "checkoutnav:catalog",
@@ -162,10 +174,11 @@ def create_file_sales_router(
         await bot.send_message(
             user_id,
             tr("📁 <b>Продажа файлов</b>\n"
-               "Покупка — через Telegram Stars. После оплаты файлы "
-               "приходят автоматически.",
+               "Выберите удобный способ оплаты. После ручной проверки "
+               "или подтверждения Stars файлы придут автоматически.",
                "📁 <b>Digital files</b>\n"
-               "Pay with Telegram Stars; files are delivered automatically."),
+               "Choose your payment method. Files arrive after manual "
+               "approval or confirmed Stars payment."),
             parse_mode="HTML", reply_markup=_keyboard(rows),
         )
 
@@ -196,7 +209,7 @@ def create_file_sales_router(
         )
         rows = [[_button(
             ("🗃️ " if product.status != "published" else "📦 ")
-            + product.name[:35] + " · " + str(product.stars_price) + " ⭐",
+            + product.name[:45],
             ("ap:" if who else "item:") + encode_uuid(product.id),
         )] for product in products]
         if who:
@@ -219,11 +232,27 @@ def create_file_sales_router(
         text = (
             "📦 <b>" + escape(item.name) + "</b>\n"
             + (escape(item.description) + "\n" if item.description else "")
-            + tr("💰 Цена: ", "💰 Price: ") + str(item.stars_price) + " ⭐\n"
+            + (tr("⭐ Цена Stars: ", "⭐ Stars price: ")
+               + str(item.stars_price) + " ⭐\n"
+               if item.stars_price is not None else "")
             + tr("📎 Файлов: ", "📎 Files: ") + str(count)
         )
         code = encode_uuid(item.id)
         if who:
+            prices = await price_editor_options(
+                factory, project_id=project_id, bot_id=bot.id,
+                product_id=item_id, actor_id=who,
+            )
+            if any(amount is not None for _, amount in prices):
+                text += "\n" + tr("💱 Ручные цены: ", "💱 Manual prices: ")
+                text += ", ".join(
+                    escape(
+                        (format(amount, "f").rstrip("0").rstrip(".")
+                         if "." in format(amount, "f") else str(amount))
+                        + " " + code
+                    )
+                    for code, amount in prices if amount is not None
+                )
             text += "\n" + tr("Статус: ", "Status: ") + escape(item.status)
             rows = []
             if item.status == "draft":
@@ -239,12 +268,22 @@ def create_file_sales_router(
                     tr("📎 Прикрепить файлы", "📎 Add files"),
                     "upload:" + code, "success",
                 )])
+                rows.append([InlineKeyboardButton(
+                    text=tr("💱 Цены в валютах", "💱 Currency prices"),
+                    callback_data="fm:prices:" + code,
+                    style="success",
+                )])
                 if count:
                     rows.append([_button(
                         tr("✅ Опубликовать", "✅ Publish"), "publish:" + code,
                         "success",
                     )])
             else:
+                rows.append([InlineKeyboardButton(
+                    text=tr("💱 Цены в валютах", "💱 Currency prices"),
+                    callback_data="fm:prices:" + code,
+                    style="success",
+                )])
                 rows.append([_button(
                     tr("🗃️ Убрать с продажи", "🗃️ Archive")
                     if item.status == "published" else
@@ -258,7 +297,8 @@ def create_file_sales_router(
             )])
         else:
             rows = [
-                [_button(tr("⭐ Купить", "⭐ Buy"), "buy:" + code, "success")],
+                [_button(tr("💳 Выбрать способ оплаты", "💳 Payment options"),
+                         "pay:" + code, "success")],
                 [_button(tr("⬅️ Товары", "⬅️ Products"),
                          "folder:" + encode_uuid(item.folder_id))],
             ]
@@ -358,6 +398,11 @@ def create_file_sales_router(
                     reply_markup=_keyboard([
                         [_button(tr("📁 Папки и товары", "📁 Folders and products"),
                                  "adminfolders")],
+                        [InlineKeyboardButton(
+                            text=tr("🧾 Проверка оплаты файлов", "🧾 File payment reviews"),
+                            callback_data="fm:reviews",
+                            style="success",
+                        )],
                         [_button(tr("⬅️ Магазин", "⬅️ Shop"), "home")],
                     ]),
                 )
@@ -398,14 +443,44 @@ def create_file_sales_router(
                             "/files — отмена.",
                             "✏️ Send the product title next. /files cancels."),
                 )
+            elif action.startswith("initcurrency:"):
+                if not admin:
+                    raise PermissionError("Нет прав")
+                state = pending.get(uid)
+                if not state or state.get("stage") != "currency":
+                    raise ValueError("Срок выбора валюты истёк")
+                code = action.split(":", 1)[1]
+                choices = await available_price_currencies(
+                    factory, project_id=project_id, bot_id=bot.id, actor_id=who,
+                )
+                if code != "XTR" and code not in choices:
+                    raise ValueError("Валюта недоступна")
+                state["currency"] = code
+                state["stage"] = "price"
+                state["expires"] = monotonic() + ENTRY_SECONDS
+                await bot.send_message(
+                    uid,
+                    tr("💰 Укажите цену файла в ", "💰 Enter file price in ")
+                    + code + tr(" следующим сообщением.",
+                                " in your next message."),
+                )
             elif action.startswith(("ap:", "item:")):
                 admin_view, token = action.split(":", 1)
                 if admin_view == "ap" and not admin:
                     raise PermissionError("Нет прав")
                 pending.pop(uid, None)
-                await detail(
-                    bot, uid, decode_uuid(token),
-                    who if admin_view == "ap" else None,
+                if admin_view == "item":
+                    await show_file_payment_options(
+                        bot, factory=factory, project_id=project_id,
+                        buyer_id=uid, product_id=decode_uuid(token),
+                    )
+                else:
+                    await detail(bot, uid, decode_uuid(token), who)
+            elif action.startswith("pay:"):
+                pending.pop(uid, None)
+                await show_file_payment_options(
+                    bot, factory=factory, project_id=project_id,
+                    buyer_id=uid, product_id=decode_uuid(action.split(":")[1]),
                 )
             elif action.startswith(("editname:", "editdescription:", "editprice:")):
                 if not admin:
@@ -561,20 +636,48 @@ def create_file_sales_router(
                 if not message.text or not 1 <= len(message.text.strip()) <= 120:
                     raise ValueError("Название товара — от 1 до 120 символов")
                 state["name"] = message.text.strip()
-                state["stage"] = "price"
+                state["stage"] = "currency"
+                choices = await available_price_currencies(
+                    factory, project_id=project_id, bot_id=bot.id, actor_id=who,
+                )
+                from telegram_membership_saas.modules.telegram_commerce.storefront import (
+                    CURRENCY_ICONS,
+                )
+                rows = [[_button(
+                    CURRENCY_ICONS.get(code, "💱") + " " + code,
+                    "initcurrency:" + code, "success",
+                )] for code in choices]
+                rows.append([_button("⭐ Telegram Stars", "initcurrency:XTR")])
                 await bot.send_message(
-                    uid, tr("⭐ Укажите цену в Stars целым числом (1–250000).",
-                            "⭐ Enter the price in Stars (integer 1–250000)."),
+                    uid, tr("💰 Выберите валюту первой цены файла. "
+                            "Дополнительные валюты добавите в карточке.",
+                            "💰 Select the first file price currency. "
+                            "You can add others in the product card."),
+                    reply_markup=_keyboard(rows),
                 )
             elif stage == "price":
                 text = message.text or ""
-                if not text.isascii() or not text.isdecimal():
-                    raise ValueError("Укажите целое число Stars")
-                product = await create_product(
-                    factory, project_id=project_id, bot_id=bot.id,
-                    actor_id=who, folder_id=state["folder"],
-                    name=state["name"], stars=int(text),
-                )
+                currency = state["currency"]
+                if currency == "XTR":
+                    if not text.isascii() or not text.isdecimal():
+                        raise ValueError("Укажите целое число Stars")
+                    stars = int(text)
+                    if not 1 <= stars <= 250000:
+                        raise ValueError("Цена Stars: от 1 до 250000")
+                    product = await create_product(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, folder_id=state["folder"],
+                        name=state["name"], stars=stars,
+                    )
+                else:
+                    # Amount and draft are validated/committed atomically:
+                    # a typo never leaves an orphan product.
+                    product = await create_product(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, folder_id=state["folder"],
+                        name=state["name"], stars=None,
+                        manual_currency=currency, manual_amount=text,
+                    )
                 pending.pop(uid, None)
                 await detail(bot, uid, product.id, who)
             elif stage in ("editname", "editdescription", "editprice"):

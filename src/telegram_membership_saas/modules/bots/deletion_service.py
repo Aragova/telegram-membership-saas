@@ -24,6 +24,7 @@ from telegram_membership_saas.modules.access.models import (
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 from telegram_membership_saas.modules.entitlements.models import EntitlementGrant
+from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments.models import PaymentRequest, PaymentRequestStatus
@@ -41,6 +42,7 @@ from telegram_membership_saas.tenant_context import TenantContext
 @dataclass(frozen=True, slots=True)
 class RetirementBlockers:
     requests: int = 0
+    file_orders: int = 0
     subscriptions: int = 0
     grants: int = 0
     access: int = 0
@@ -50,13 +52,14 @@ class RetirementBlockers:
     @property
     def has_blockers(self) -> bool:
         return any((
-            self.requests, self.subscriptions, self.grants, self.access,
-            self.access_actions, self.join_tickets,
+            self.requests, self.file_orders, self.subscriptions, self.grants,
+            self.access, self.access_actions, self.join_tickets,
         ))
 
     def display(self) -> str:
         labels = (
             ("незавершённых оплат", self.requests),
+            ("незавершённых оплат файлов", self.file_orders),
             ("действующих подписок", self.subscriptions),
             ("действующих прав доступа", self.grants),
             ("неотозванных доступов", self.access),
@@ -121,6 +124,11 @@ async def count_retirement_blockers(
                 PaymentRequestStatus.WAITING_CONFIRMATION.value,
                 PaymentRequestStatus.WAITING_REVIEW.value,
             )),
+        ),
+        file_orders=await _count(
+            session, FileManualOrder,
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.status.in_(("pending", "submitted")),
         ),
         subscriptions=await _count(
             session, Subscription,
@@ -255,7 +263,8 @@ async def retire_unreachable_bot_with_orphan_actions(
 
                 blockers = await count_retirement_blockers(session, project_id=project_id)
                 if (
-                    blockers.requests or blockers.subscriptions or blockers.grants
+                    blockers.requests or blockers.file_orders
+                    or blockers.subscriptions or blockers.grants
                     or blockers.access or blockers.join_tickets
                 ):
                     raise ValueError(

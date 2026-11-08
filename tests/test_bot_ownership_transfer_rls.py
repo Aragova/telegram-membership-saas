@@ -1,5 +1,6 @@
 """Real PostgreSQL tests for dual-consent bot transfer and merchant continuity."""
 import os
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
@@ -15,6 +16,8 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.modules.bots.models import BotInstance
 from telegram_membership_saas.modules.bots.service import VerifiedBot
+from telegram_membership_saas.modules.file_sales import service as file_service
+from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
 from telegram_membership_saas.modules.owner_setup import transfers as svc
 from telegram_membership_saas.modules.owner_setup.transfer_models import (
     ProjectOwnershipTransfer,
@@ -217,5 +220,84 @@ async def test_transfer_cancelled_invitation_cannot_be_accepted():
             factory, actor_id=owner, transfer_id=invited.id,
         )
         assert row.status == "cancelled"
+    finally:
+        await engine.dispose()
+
+
+async def test_manual_file_liability_blocks_transfer_even_through_privileged_sql(monkeypatch):
+    settings = Settings()
+    engine = build_engine(settings)
+    factory = build_session_factory(engine)
+    try:
+        owner, buyer, _, project, _, _, _, buyer_tid = await setup_subscriber(factory)
+        bot_id = tg_id()
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add(BotInstance(
+                project_id=project, telegram_bot_id=bot_id,
+                username="file_liability_bot", display_name="File liability",
+                token_ciphertext="old-credential",
+            ))
+        folder = await file_service.add_folder(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, name="Files",
+        )
+        product = await file_service.create_product(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, folder_id=folder.id, name="Video", stars=1,
+        )
+        transfer = await svc.create_transfer_invite(
+            factory, actor_id=owner, project_id=project,
+            recipient_telegram_id=buyer_tid,
+        )
+
+        async def fake_verify(_token):
+            return VerifiedBot(
+                telegram_bot_id=bot_id, username="file_liability_bot",
+                display_name="File liability",
+            )
+
+        async def fake_channel_access(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(svc, "verify_telegram_bot", fake_verify)
+        monkeypatch.setattr(svc, "_verify_recipient_channel_admin", fake_channel_access)
+        monkeypatch.setattr(svc, "encrypt_token", lambda token, key: "new-credential")
+        await svc.accept_transfer_invite(
+            factory, actor_id=buyer, actor_telegram_id=buyer_tid,
+            transfer_id=transfer.id, fresh_token="fake-token",
+            encryption_key=None,
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add(FileManualOrder(
+                project_id=project, telegram_bot_id=bot_id,
+                telegram_user_id=buyer_tid, product_id=product.id,
+                product_name="Video", amount=1, currency_code="RUB",
+                payment_method_id=uuid4(), payment_method_name="Bank",
+                instruction="Old owner bank", status="pending",
+            ))
+        with pytest.raises(ValueError, match="незавершённые оплаты файлов"):
+            await svc.finalize_transfer(
+                factory, actor_id=owner, project_id=project,
+                transfer_id=transfer.id,
+            )
+        # Even a direct call of the narrowly privileged transfer function
+        # cannot bypass the DB-level file liability trigger.
+        with pytest.raises(DBAPIError):
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                bot = await session.scalar(select(BotInstance).where(
+                    BotInstance.project_id == project,
+                    BotInstance.telegram_bot_id == bot_id,
+                ))
+                bot.token_ciphertext = "new-credential"
+                await session.flush()
+                await session.execute(text(
+                    "SELECT public.complete_bot_ownership_transfer(:pid, :tid)"
+                ), {"pid": project, "tid": transfer.id})
     finally:
         await engine.dispose()

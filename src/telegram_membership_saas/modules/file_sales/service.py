@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation, localcontext
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
@@ -17,6 +18,10 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
+from telegram_membership_saas.modules.file_sales.manual_models import (
+    FileManualOrder,
+    FileManualPrice,
+)
 from telegram_membership_saas.modules.file_sales.models import (
     FileAsset,
     FileFolder,
@@ -24,6 +29,12 @@ from telegram_membership_saas.modules.file_sales.models import (
     FilePurchase,
 )
 from telegram_membership_saas.modules.identity.models import ProjectCustomer, TelegramUser
+from telegram_membership_saas.modules.payments import (
+    PaymentMethod,
+    PaymentMethodCurrency,
+    PaymentMethodStatus,
+)
+from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects.models import Project, ProjectStatus
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
@@ -34,6 +45,12 @@ ASSET_LIMIT = 20
 FOLDER_LIMIT = 100
 PRODUCT_LIMIT = 2000
 PENDING_ORDER_LIMIT = 50
+
+
+@dataclass(frozen=True, slots=True)
+class PaidFileListing:
+    id: UUID
+    product_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,12 +167,13 @@ async def add_folder(
 async def create_product(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID, folder_id: UUID,
-    name: str, stars: int, description: str = "",
+    name: str, stars: int | None, description: str = "",
+    manual_currency: str | None = None, manual_amount: str | None = None,
 ) -> FileProduct:
     name = name.strip()
     if not 1 <= len(name) <= 120:
         raise ValueError("Название товара: от 1 до 120 символов")
-    if not 1 <= stars <= 250000:
+    if stars is not None and not 1 <= stars <= 250000:
         raise ValueError("Цена должна составлять от 1 до 250000 Stars")
     if len(description) > 1024:
         raise ValueError("Описание: не более 1024 символов")
@@ -176,6 +194,42 @@ async def create_product(
         ))
         if total >= PRODUCT_LIMIT:
             raise ValueError("Достигнут лимит товаров")
+        amount = None
+        if manual_currency is not None:
+            if manual_amount is None:
+                raise ValueError("Укажите цену в выбранной валюте")
+            asset = await session.scalar(select(CurrencyAsset).where(
+                CurrencyAsset.code == manual_currency,
+                CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+            ))
+            if asset is None:
+                raise ValueError("Валюта не активна")
+            active_method = await session.scalar(
+                select(PaymentMethod.id)
+                .join(PaymentMethodCurrency, and_(
+                    PaymentMethodCurrency.project_id == PaymentMethod.project_id,
+                    PaymentMethodCurrency.payment_method_id == PaymentMethod.id,
+                ))
+                .where(
+                    PaymentMethod.project_id == project_id,
+                    PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+                    PaymentMethodCurrency.currency_code == manual_currency,
+                ).limit(1)
+            )
+            if active_method is None:
+                raise ValueError("Нет активного способа оплаты для валюты")
+            try:
+                amount = Decimal(manual_amount.strip().replace(",", "."))
+            except InvalidOperation as exc:
+                raise ValueError("Неверная сумма файла") from exc
+            if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000000"):
+                raise ValueError("Укажите положительную цену файла")
+            with localcontext() as context:
+                context.prec = 50
+                if amount != amount.quantize(Decimal(1).scaleb(-asset.precision)):
+                    raise ValueError("Слишком много знаков после запятой")
+        elif stars is None:
+            raise ValueError("Нужна цена Stars или ручная цена")
         product = FileProduct(
             project_id=project_id, folder_id=folder_id,
             telegram_bot_id=bot_id, name=name, stars_price=stars,
@@ -183,6 +237,12 @@ async def create_product(
         )
         session.add(product)
         await session.flush()
+        if amount is not None:
+            session.add(FileManualPrice(
+                project_id=project_id, product_id=product.id,
+                currency_code=manual_currency, amount=amount,
+            ))
+            await session.flush()
         return product
 
 
@@ -295,6 +355,15 @@ async def change_product_status(
             ))
             if folder is None:
                 raise ValueError("Папка архивирована")
+            if item.stars_price is None:
+                manual_prices = await session.scalar(select(func.count(
+                    FileManualPrice.product_id,
+                )).where(
+                    FileManualPrice.project_id == project_id,
+                    FileManualPrice.product_id == product_id,
+                )) or 0
+                if not manual_prices:
+                    raise ValueError("Укажите хотя бы одну цену перед публикацией")
         item.status = status
 
 
@@ -385,6 +454,8 @@ async def create_stars_order(
         item = await _product(session, project_id, bot_id, product_id, lock=True)
         if item.status != "published":
             raise ValueError("Товар больше не продаётся")
+        if item.stars_price is None:
+            raise ValueError("Этот товар не продаётся за Stars")
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.project_id == project_id, FileFolder.id == item.folder_id,
             FileFolder.status == "active",
@@ -407,6 +478,19 @@ async def create_stars_order(
                 product_name=paid.product_name,
                 amount=paid.stars_amount,
                 invoice_payload=paid.invoice_payload, paid=True,
+            )
+        manual_paid = await session.scalar(select(FileManualOrder).where(
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.telegram_bot_id == bot_id,
+            FileManualOrder.telegram_user_id == buyer_id,
+            FileManualOrder.product_id == product_id,
+            FileManualOrder.status == "approved",
+        ).limit(1))
+        if manual_paid:
+            return DigitalOrder(
+                id=manual_paid.id, product_id=product_id,
+                product_name=manual_paid.product_name,
+                amount=item.stars_price, invoice_payload="", paid=True,
             )
         pending = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
@@ -526,23 +610,41 @@ async def list_purchases(
 async def list_purchases_page(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, page: int = 0,
-) -> tuple[int, tuple[FilePurchase, ...]]:
+) -> tuple[int, tuple[PaidFileListing, ...]]:
+    """Unified paid history, including manual and Stars purchases (archived too)."""
     if not 0 <= page <= 10000:
         raise ValueError("Неверная страница")
     async with system_project_session_scope(factory, project_id) as session:
-        where = (
-            FilePurchase.project_id == project_id,
-            FilePurchase.telegram_bot_id == bot_id,
-            FilePurchase.telegram_user_id == buyer_id,
-            FilePurchase.status == "paid",
-        )
-        total = await session.scalar(select(func.count(FilePurchase.id)).where(*where)) or 0
-        rows = (await session.scalars(
-            select(FilePurchase).where(*where)
-            .order_by(FilePurchase.paid_at.desc(), FilePurchase.id.desc())
+        combined = union_all(
+            select(
+                FilePurchase.id.label("id"),
+                FilePurchase.product_name.label("product_name"),
+                FilePurchase.paid_at.label("paid_at"),
+            ).where(
+                FilePurchase.project_id == project_id,
+                FilePurchase.telegram_bot_id == bot_id,
+                FilePurchase.telegram_user_id == buyer_id,
+                FilePurchase.status == "paid",
+            ),
+            select(
+                FileManualOrder.id.label("id"),
+                FileManualOrder.product_name.label("product_name"),
+                FileManualOrder.paid_at.label("paid_at"),
+            ).where(
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.status == "approved",
+            ),
+        ).subquery()
+        total = await session.scalar(select(func.count()).select_from(combined)) or 0
+        rows = (await session.execute(
+            select(combined.c.id, combined.c.product_name)
+            .order_by(combined.c.paid_at.desc(), combined.c.id.desc())
             .offset(page * 8).limit(8)
         )).all()
-        return total, tuple(rows)
+        return total, tuple(PaidFileListing(id=row[0], product_name=row[1])
+                            for row in rows)
 
 
 async def purchased_assets(
@@ -558,6 +660,14 @@ async def purchased_assets(
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.status == "paid",
         ))
+        if order is None:
+            order = await session.scalar(select(FileManualOrder).where(
+                FileManualOrder.id == purchase_id,
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.status == "approved",
+            ))
         if order is None:
             raise PermissionError("Оплаченная покупка не найдена")
         assets = tuple((await session.scalars(select(FileAsset).where(
@@ -581,5 +691,13 @@ async def mark_file_delivery(
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.status == "paid",
         ).with_for_update())
+        if order is None:
+            order = await session.scalar(select(FileManualOrder).where(
+                FileManualOrder.id == purchase_id,
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.status == "approved",
+            ).with_for_update())
         if order:
             order.last_delivered_at = datetime.now(UTC)

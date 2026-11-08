@@ -12,6 +12,9 @@ from telegram_membership_saas.modules.broadcasts.handlers import (
 from telegram_membership_saas.modules.file_sales.handlers import (
     create_file_sales_router,
 )
+from telegram_membership_saas.modules.file_sales.manual_handlers import (
+    create_manual_file_router,
+)
 from telegram_membership_saas.modules.owner_setup.handlers import create_owner_setup_router
 from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
     create_moderator_router,
@@ -138,6 +141,9 @@ def create_customer_dispatcher(
         session_factory, project_id=project_id,
     ))
     dispatcher.include_router(create_file_sales_router(
+        session_factory, project_id=project_id,
+    ))
+    dispatcher.include_router(create_manual_file_router(
         session_factory, project_id=project_id,
     ))
     dispatcher.include_router(owner_router)

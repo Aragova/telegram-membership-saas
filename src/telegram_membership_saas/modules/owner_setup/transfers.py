@@ -32,6 +32,7 @@ from telegram_membership_saas.modules.entitlements.models import (
     EntitlementGrantStatus,
     EntitlementSource,
 )
+from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.transfer_models import (
     ProjectOwnershipTransfer,
@@ -335,6 +336,17 @@ async def finalize_transfer(
             raise ValueError(
                 f"Есть незавершённые счета: {incomplete}. "
                 "Закройте их до передачи, чтобы не потерять обязательства."
+            )
+        pending_files = await session.scalar(
+            select(func.count(FileManualOrder.id)).where(
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.status.in_(("pending", "submitted")),
+            )
+        ) or 0
+        if pending_files:
+            raise ValueError(
+                f"Есть незавершённые оплаты файлов: {pending_files}. "
+                "Закройте их до передачи управления ботом."
             )
         # Owner-service rights are tied to the old owner's network and must
         # not accidentally be inherited by an unrelated new business.
