@@ -523,6 +523,28 @@ async def list_purchases(
         )).all())
 
 
+async def list_purchases_page(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, buyer_id: int, page: int = 0,
+) -> tuple[int, tuple[FilePurchase, ...]]:
+    if not 0 <= page <= 10000:
+        raise ValueError("Неверная страница")
+    async with system_project_session_scope(factory, project_id) as session:
+        where = (
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.status == "paid",
+        )
+        total = await session.scalar(select(func.count(FilePurchase.id)).where(*where)) or 0
+        rows = (await session.scalars(
+            select(FilePurchase).where(*where)
+            .order_by(FilePurchase.paid_at.desc(), FilePurchase.id.desc())
+            .offset(page * 8).limit(8)
+        )).all()
+        return total, tuple(rows)
+
+
 async def purchased_assets(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, purchase_id: UUID,
