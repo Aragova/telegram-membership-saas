@@ -480,10 +480,12 @@ def create_manual_file_router(
             return
         for reviewer in reviewers:
             try:
-                await bot.copy_message(
-                    chat_id=reviewer, from_chat_id=message.chat.id,
-                    message_id=message.message_id,
-                )
+                # Always show immutable evidence from the order, not an
+                # unrelated second reply to an already-submitted prompt.
+                if order.receipt_kind == "photo":
+                    await bot.send_photo(reviewer, order.receipt_file_id)
+                else:
+                    await bot.send_document(reviewer, order.receipt_file_id)
                 await bot.send_message(
                     reviewer, "🧾 <b>" + escape(order.product_name) + "</b>\n"
                     + "💰 " + escape(str(order.amount)) + " "
