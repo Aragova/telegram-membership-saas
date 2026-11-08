@@ -623,10 +623,10 @@ def create_file_sales_router(
                 if admin_view == "ap" and not admin:
                     raise PermissionError("Нет прав")
                 pending.pop(uid, None)
-                await detail(
-                    bot, uid, decode_uuid(token),
-                    who if admin_view == "ap" else None,
-                )
+                if admin_view == "ap":
+                    await detail(bot, uid, decode_uuid(token), who)
+                else:
+                    await payment_selector(bot, uid, decode_uuid(token))
             elif action.startswith(("editname:", "editdescription:", "editprice:")):
                 if not admin:
                     raise PermissionError("Нет прав")
