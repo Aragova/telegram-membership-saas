@@ -1,6 +1,7 @@
 """Manual digital-file checkout: real PostgreSQL RLS, proof and reviewer gating."""
 import os
 from decimal import Decimal
+
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
