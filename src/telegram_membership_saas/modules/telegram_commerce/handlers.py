@@ -29,6 +29,7 @@ from telegram_membership_saas.localization import (
 )
 from telegram_membership_saas.manual_checkout_ui import (
     manual_checkout_rich_html,
+    retire_cancelled_checkout,
     send_manual_checkout,
 )
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
@@ -868,9 +869,22 @@ def create_telegram_commerce_router(
         except (ValueError, PermissionError) as exc:
             await callback.answer(_buyer_error(exc), show_alert=True)
             return
-        await callback.answer(tr("Заявка отменена", "Payment request canceled"))
-        # Return directly to the actual buyer home (catalog), not account
-        # history. Only the canceled request is modified.
+        # The original Rich/HTML payment card keeps its instructions, but
+        # loses all payment/copy/cancel controls after confirmed cancellation.
+        await retire_cancelled_checkout(
+            bot, callback=callback,
+            navigation=InlineKeyboardButton(
+                text=tr("💎 К тарифам", "💎 Browse plans"),
+                callback_data="checkoutnav:catalog",
+            ),
+        )
+        # Callback acknowledgement can expire after a committed DB transaction.
+        # It must not leave stale payment buttons or block the catalog.
+        try:
+            await callback.answer(tr("Заявка отменена", "Payment request canceled"))
+        except AiogramError:
+            pass
+        # Preserve existing catalog navigation and cancellation notice.
         await _send_catalog(
             bot, chat_id=callback.from_user.id,
             session_factory=session_factory, project_id=project_id,

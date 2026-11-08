@@ -12,13 +12,18 @@ from html import escape
 from typing import Literal
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
+from aiogram.exceptions import AiogramError, TelegramBadRequest, TelegramNotFound
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 try:
     from aiogram.types import CopyTextButton
 except ImportError:  # Older supported aiogram installations (3.13)
     CopyTextButton = None
+
+try:
+    from aiogram.types import DisabledButton
+except ImportError:  # Older supported aiogram installations
+    DisabledButton = None
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.rich_messages import (
@@ -156,3 +161,74 @@ async def send_manual_checkout(
         await bot.send_message(
             chat_id, legacy_html, parse_mode="HTML", reply_markup=reply_markup,
         )
+
+
+def cancelled_checkout_keyboard(
+    *, navigation: InlineKeyboardButton | None = None,
+) -> InlineKeyboardMarkup | None:
+    """Replace payment, copy, and cancellation actions with a final UI state.
+
+    DisabledButton is optional for older supported aiogram versions. Never use
+    a fake callback as a status indicator: it could trigger unintended actions.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if DisabledButton is not None:
+        rows.append([InlineKeyboardButton(
+            text=tr("❌ Заявка отменена", "❌ Request canceled"),
+            disabled=DisabledButton(),
+        )])
+    if navigation is not None:
+        rows.append([navigation])
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+async def retire_cancelled_checkout(
+    bot: Bot, *, callback, navigation: InlineKeyboardButton | None = None,
+) -> bool:
+    """Best-effort UI retirement only AFTER the database confirms cancellation.
+
+    Do not rewrite a Rich card, because its media, payment details and customer-
+    authored instructions could be lost. Editing the keyboard is idempotent.
+    A Telegram failure must not roll back or disguise the committed cancellation.
+    """
+    message = getattr(callback, "message", None)
+    chat = getattr(message, "chat", None)
+    buyer = getattr(callback, "from_user", None)
+    message_id = getattr(message, "message_id", None)
+    if (
+        chat is None or getattr(chat, "type", None) != "private"
+        or buyer is None or getattr(chat, "id", None) != buyer.id
+        or not isinstance(message_id, int)
+    ):
+        return False
+    kwargs = {"chat_id":chat.id, "message_id":message_id}
+    markup = cancelled_checkout_keyboard(navigation=navigation)
+    try:
+        await bot.edit_message_reply_markup(**kwargs, reply_markup=markup)
+        return True
+    except TelegramBadRequest as exc:
+        reason = str(exc).lower()
+        if "message is not modified" in reason:
+            return True
+        # Some Telegram deployments reject newer disabled buttons. Remove
+        # the stale payment buttons anyway while retaining safe navigation.
+        if DisabledButton is not None and any(key in reason for key in (
+            "disabled", "can't parse", "unsupported", "inline keyboard",
+        )):
+            fallback = (
+                InlineKeyboardMarkup(inline_keyboard=[[navigation]])
+                if navigation is not None else None
+            )
+            try:
+                await bot.edit_message_reply_markup(
+                    **kwargs, reply_markup=fallback,
+                )
+                return True
+            except AiogramError:
+                log.warning("Could not retire canceled checkout keyboard", exc_info=True)
+                return False
+        log.warning("Could not retire canceled checkout keyboard: %s", exc)
+        return False
+    except AiogramError:
+        log.warning("Could not retire canceled checkout keyboard", exc_info=True)
+        return False
