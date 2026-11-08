@@ -157,16 +157,17 @@ def create_language_router(
     router = Router(name="vimi-language")
 
     @router.message(Command("language"))
-    async def language_command(message: Message) -> None:
+    async def language_command(message: Message, bot: Bot) -> None:
         if message.chat.type != "private" or message.from_user is None:
             return
-        await message.answer(
+        await bot.send_message(
+            message.chat.id,
             tr("🌐 Выберите язык интерфейса:", "🌐 Choose your interface language:"),
             reply_markup=_language_keyboard(),
         )
 
     @router.callback_query(F.data == "lng:menu")
-    async def language_menu(query: CallbackQuery) -> None:
+    async def language_menu(query: CallbackQuery, bot: Bot) -> None:
         if (
             query.message is None
             or query.message.chat.type != "private"
@@ -174,7 +175,8 @@ def create_language_router(
         ):
             await query.answer()
             return
-        await query.message.answer(
+        await bot.send_message(
+            query.from_user.id,
             tr("🌐 Выберите язык интерфейса:", "🌐 Choose your interface language:"),
             reply_markup=_language_keyboard(),
         )
