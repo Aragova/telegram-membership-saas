@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.methods import EditMessageReplyMarkup
+from aiogram.methods import AnswerCallbackQuery, EditMessageReplyMarkup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram_membership_saas import localization
@@ -191,6 +191,31 @@ async def test_subscription_cancel_changes_db_then_retires_and_returns_to_catalo
     assert retire.await_args.kwargs["callback"] is callback
     catalog.assert_awaited_once()
     callback.answer.assert_awaited_once()
+
+
+
+async def test_subscription_stale_callback_ack_does_not_block_card_retirement(
+    monkeypatch,
+):
+    cancelled = AsyncMock()
+    retired = AsyncMock(return_value=True)
+    catalog = AsyncMock()
+    monkeypatch.setattr(plans, "system_project_session_scope", _scope)
+    monkeypatch.setattr(plans, "cancel_checkout_for_telegram_user", cancelled)
+    monkeypatch.setattr(plans, "retire_cancelled_checkout", retired)
+    monkeypatch.setattr(plans, "_send_catalog", catalog)
+    router = plans.create_telegram_commerce_router(
+        MagicMock(), project_id=uuid4(),
+    )
+    callback = _callback("cancel:" + encode_uuid(uuid4()))
+    callback.answer.side_effect = TelegramBadRequest(
+        method=AnswerCallbackQuery(callback_query_id="expired"),
+        message="Bad Request: query is too old",
+    )
+    await _handler(router, "cancel_handler")(callback, _bot())
+    cancelled.assert_awaited_once()
+    retired.assert_awaited_once()
+    catalog.assert_awaited_once()
 
 
 async def test_subscription_denied_cancel_keeps_original_checkout_buttons(
