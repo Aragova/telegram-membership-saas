@@ -9,6 +9,9 @@ from telegram_membership_saas.modules.broadcasts.handlers import (
     StartAudienceMiddleware,
     create_broadcast_router,
 )
+from telegram_membership_saas.modules.file_sales.handlers import (
+    create_file_sales_router,
+)
 from telegram_membership_saas.modules.owner_setup.handlers import create_owner_setup_router
 from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
     create_moderator_router,
@@ -132,6 +135,9 @@ def create_customer_dispatcher(
     # Support staff never enters the owner admin router. Handle their
     # /start, /menu, /u and mod:* actions in a narrowly scoped router first.
     dispatcher.include_router(create_moderator_router(
+        session_factory, project_id=project_id,
+    ))
+    dispatcher.include_router(create_file_sales_router(
         session_factory, project_id=project_id,
     ))
     dispatcher.include_router(owner_router)
