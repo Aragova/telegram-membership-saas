@@ -9,6 +9,12 @@ from telegram_membership_saas.modules.broadcasts import (
     BroadcastTemplate,
 )
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
+from telegram_membership_saas.modules.file_sales import (
+    FileAsset,
+    FileFolder,
+    FileProduct,
+    FilePurchase,
+)
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.merchant_identity import (
     MerchantChannelPeriod,
@@ -49,6 +55,10 @@ __all__ = [
     "BroadcastDraft",
     "BroadcastTemplate",
     "CustomerBotRuntimeHealth",
+    "FileAsset",
+    "FileFolder",
+    "FileProduct",
+    "FilePurchase",
     "MerchantChannelPeriod",
     "MerchantIdentity",
     "MerchantProjectPeriod",
