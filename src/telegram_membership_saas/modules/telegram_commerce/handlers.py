@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
 import inspect
+from contextlib import nullcontext
 from datetime import datetime
 from html import escape
 from uuid import UUID
