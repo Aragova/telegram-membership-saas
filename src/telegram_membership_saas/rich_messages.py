@@ -87,31 +87,66 @@ def rich_enabled() -> bool:
     return bool(getattr(get_settings(), "rich_messages_enabled", False))
 
 
-def to_rich_html(legacy_html: str) -> str:
-    """Promote a trusted, already HTML-escaped legacy screen to Rich HTML.
+_BLOCK_SPLIT = re.compile(
+    r"(<pre\b[^>]*>.*?</pre>|<table\b[^>]*>.*?</table>|"
+    r"<details\b[^>]*>.*?</details>|<blockquote\b[^>]*>.*?</blockquote>|"
+    r"<ul\b[^>]*>.*?</ul>|<ol\b[^>]*>.*?</ol>|"
+    r"<h[1-6]\b[^>]*>.*?</h[1-6]>)",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_BLOCK_START = re.compile(
+    r"^<(pre|table|details|blockquote|ul|ol|h[1-6])\b", re.IGNORECASE,
+)
 
-    Do not rewrite the body. In particular, user-authored payment instructions,
-    banking references, links and emojis remain byte-for-byte unchanged.
-    Convert only the first short line to a native Rich heading.
+
+def _rich_paragraphs(body: str) -> list[str]:
+    """Keep existing visible line breaks; Rich HTML collapses raw newlines.
+
+    Preserve true Rich block tags and preformatted code, wrapping ordinary
+    legacy HTML into paragraphs separated with explicit <br> elements.
     """
-    if not legacy_html or "<h1>" in legacy_html or "<h2>" in legacy_html:
+    blocks = []
+    for chunk in _BLOCK_SPLIT.split(body):
+        chunk = chunk.strip("\n")
+        if not chunk.strip():
+            continue
+        if _BLOCK_START.match(chunk):
+            blocks.append(chunk)
+        else:
+            blocks.append("<p>" + chunk.replace("\n", "<br>") + "</p>")
+    return blocks
+
+
+def to_rich_html(legacy_html: str) -> str:
+    """Render legacy HTML as actual Rich blocks without collapsing bank details.
+
+    Owner-authored payment wording and banking fields are not modified.
+    Only the presentation adds headings, paragraph and explicit line breaks.
+    """
+    if not legacy_html:
         return legacy_html
     lines = legacy_html.split("\n", 1)
     first = lines[0].strip()
-    if (
-        not first
-        or len(first) > 120
-        or "<" in first and not any(tag in first for tag in ("<b>", "<strong>"))
-        or not _HEADING.fullmatch(first)
-    ):
-        return legacy_html
-    title = "<h3>" + first + "</h3>"
-    if len(lines) == 1:
-        return title
-    body = lines[1].split("\n")
-    if any(marker in first for marker in _STATISTICS):
-        body = _tableize_metrics(body)
-    return title + "\n" + "\n".join(body)
+    has_heading = (
+        bool(first)
+        and len(first) <= 120
+        and ("<" not in first or any(
+            tag in first for tag in ("<b>", "<strong>")
+        ))
+        and bool(_HEADING.fullmatch(first))
+    )
+    if has_heading:
+        header = "<h3>" + first + "</h3>"
+        body = lines[1] if len(lines) == 2 else ""
+    else:
+        header = ""
+        body = legacy_html
+
+    if has_heading and any(marker in first for marker in _STATISTICS):
+        body = "\n".join(_tableize_metrics(body.split("\n")))
+
+    blocks = _rich_paragraphs(body)
+    return "\n".join(([header] if header else []) + blocks)
 
 
 def _eligible(text: str, kwargs: dict) -> bool:
