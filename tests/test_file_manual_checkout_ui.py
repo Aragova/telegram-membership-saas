@@ -8,7 +8,8 @@ import pytest
 
 from telegram_membership_saas.modules.file_sales import handlers as ui
 from telegram_membership_saas.modules.file_sales.manual import (
-    FilePaymentOption, parse_price,
+    FilePaymentOption,
+    parse_price,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
@@ -127,7 +128,6 @@ async def test_manual_review_approves_once_and_releases_files(monkeypatch):
         SimpleNamespace(id=order_id, telegram_user_id=4321), True,
     ))
     monkeypatch.setattr(ui, "review_manual_file_order", reviewer)
-    delivery = AsyncMock()
     # The nested delivery function is intentionally not mocked; verify it
     # reaches the paid-assets service only after the review succeeds.
     monkeypatch.setattr(
