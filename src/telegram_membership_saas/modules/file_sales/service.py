@@ -110,7 +110,10 @@ async def _ready(
             )
         )
         if banned is not None:
-            raise PermissionError(tr("Покупки в этом боте заблокированы", "Purchases in this bot are blocked"))
+            raise PermissionError(tr(
+                "Покупки в этом боте заблокированы",
+                "Purchases in this bot are blocked",
+            ))
 
 
 async def list_folders(
@@ -151,7 +154,10 @@ async def add_folder(
 ) -> FileFolder:
     name = name.strip()
     if not 1 <= len(name) <= 100:
-        raise ValueError(tr("Название папки: от 1 до 100 символов", "Folder name must contain 1–100 characters"))
+        raise ValueError(tr(
+            "Название папки: от 1 до 100 символов",
+            "Folder name must contain 1–100 characters",
+        ))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -176,11 +182,20 @@ async def create_product(
 ) -> FileProduct:
     name = name.strip()
     if not 1 <= len(name) <= 120:
-        raise ValueError(tr("Название товара: от 1 до 120 символов", "Product name must contain 1–120 characters"))
+        raise ValueError(tr(
+            "Название товара: от 1 до 120 символов",
+            "Product name must contain 1–120 characters",
+        ))
     if stars is not None and not 1 <= stars <= 250000:
-        raise ValueError(tr("Цена должна составлять от 1 до 250000 Stars", "Stars price must be between 1 and 250000"))
+        raise ValueError(tr(
+            "Цена должна составлять от 1 до 250000 Stars",
+            "Stars price must be between 1 and 250000",
+        ))
     if len(description) > 1024:
-        raise ValueError(tr("Описание: не более 1024 символов", "Description must be at most 1024 characters"))
+        raise ValueError(tr(
+            "Описание: не более 1024 символов",
+            "Description must be at most 1024 characters",
+        ))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -201,7 +216,10 @@ async def create_product(
         amount = None
         if manual_currency is not None:
             if manual_amount is None:
-                raise ValueError(tr("Укажите цену в выбранной валюте", "Enter a price in the selected currency"))
+                raise ValueError(tr(
+                    "Укажите цену в выбранной валюте",
+                    "Enter a price in the selected currency",
+                ))
             asset = await session.scalar(select(CurrencyAsset).where(
                 CurrencyAsset.code == manual_currency,
                 CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
@@ -221,19 +239,31 @@ async def create_product(
                 ).limit(1)
             )
             if active_method is None:
-                raise ValueError(tr("Нет активного способа оплаты для валюты", "No active payment method for this currency"))
+                raise ValueError(tr(
+                    "Нет активного способа оплаты для валюты",
+                    "No active payment method for this currency",
+                ))
             try:
                 amount = Decimal(manual_amount.strip().replace(",", "."))
             except InvalidOperation as exc:
                 raise ValueError(tr("Неверная сумма файла", "Invalid file price")) from exc
             if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000000"):
-                raise ValueError(tr("Укажите положительную цену файла", "Enter a positive file price"))
+                raise ValueError(tr(
+                    "Укажите положительную цену файла",
+                    "Enter a positive file price",
+                ))
             with localcontext() as context:
                 context.prec = 50
                 if amount != amount.quantize(Decimal(1).scaleb(-asset.precision)):
-                    raise ValueError(tr("Слишком много знаков после запятой", "Too many decimal places"))
+                    raise ValueError(tr(
+                        "Слишком много знаков после запятой",
+                        "Too many decimal places",
+                    ))
         elif stars is None:
-            raise ValueError(tr("Нужна цена Stars или ручная цена", "Set a Stars price or a manual price"))
+            raise ValueError(tr(
+                "Нужна цена Stars или ручная цена",
+                "Set a Stars price or a manual price",
+            ))
         product = FileProduct(
             project_id=project_id, folder_id=folder_id,
             telegram_bot_id=bot_id, name=name, stars_price=stars,
@@ -275,16 +305,28 @@ async def update_draft_product(
     if field == "name":
         value = value.strip()
         if not 1 <= len(value) <= 120:
-            raise ValueError(tr("Название товара: от 1 до 120 символов", "Product name must contain 1–120 characters"))
+            raise ValueError(tr(
+                "Название товара: от 1 до 120 символов",
+                "Product name must contain 1–120 characters",
+            ))
     elif field == "description":
         value = value.strip()
         if len(value) > 1024:
-            raise ValueError(tr("Описание: не более 1024 символов", "Description must be at most 1024 characters"))
+            raise ValueError(tr(
+                "Описание: не более 1024 символов",
+                "Description must be at most 1024 characters",
+            ))
     else:
         if not value.isascii() or not value.isdecimal():
-            raise ValueError(tr("Цена должна быть целым числом Stars", "Stars price must be a whole number"))
+            raise ValueError(tr(
+                "Цена должна быть целым числом Stars",
+                "Stars price must be a whole number",
+            ))
         if not 1 <= int(value) <= 250000:
-            raise ValueError(tr("Цена должна составлять от 1 до 250000 Stars", "Stars price must be between 1 and 250000"))
+            raise ValueError(tr(
+                "Цена должна составлять от 1 до 250000 Stars",
+                "Stars price must be between 1 and 250000",
+            ))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -318,13 +360,19 @@ async def add_product_asset(
             session, project_id, bot_id, product_id, lock=True,
         )
         if product.status != "draft":
-            raise ValueError(tr("Добавление файлов возможно только в черновик", "Files can only be added to drafts"))
+            raise ValueError(tr(
+                "Добавление файлов возможно только в черновик",
+                "Files can only be added to drafts",
+            ))
         count = await session.scalar(select(func.count(FileAsset.id)).where(
             FileAsset.project_id == project_id,
             FileAsset.product_id == product_id,
         )) or 0
         if count >= ASSET_LIMIT:
-            raise ValueError(tr("Не более 20 вложений в одном товаре", "Maximum 20 attachments per product"))
+            raise ValueError(tr(
+                "Не более 20 вложений в одном товаре",
+                "Maximum 20 attachments per product",
+            ))
         session.add(FileAsset(
             project_id=project_id, product_id=product_id,
             kind=kind, file_id=file_id, sort_order=count,
@@ -367,7 +415,10 @@ async def change_product_status(
                     FileManualPrice.product_id == product_id,
                 )) or 0
                 if not manual_prices:
-                    raise ValueError(tr("Укажите хотя бы одну цену перед публикацией", "Set at least one price before publishing"))
+                    raise ValueError(tr(
+                        "Укажите хотя бы одну цену перед публикацией",
+                        "Set at least one price before publishing",
+                    ))
         item.status = status
 
 
@@ -459,7 +510,10 @@ async def create_stars_order(
         if item.status != "published":
             raise ValueError(tr("Товар больше не продаётся", "This product is no longer for sale"))
         if item.stars_price is None:
-            raise ValueError(tr("Этот товар не продаётся за Stars", "This product is not sold for Stars"))
+            raise ValueError(tr(
+                "Этот товар не продаётся за Stars",
+                "This product is not sold for Stars",
+            ))
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.project_id == project_id, FileFolder.id == item.folder_id,
             FileFolder.status == "active",
@@ -504,7 +558,10 @@ async def create_stars_order(
             FileSaleMethodVisibility.method_id == UUID(int=0),
         ))
         if disabled is False:
-            raise ValueError(tr("Автоматическая оплата Stars для файлов отключена", "Automatic Stars payment for files is disabled"))
+            raise ValueError(tr(
+                "Автоматическая оплата Stars для файлов отключена",
+                "Automatic Stars payment for files is disabled",
+            ))
         pending = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
             FilePurchase.telegram_bot_id == bot_id,
@@ -525,7 +582,10 @@ async def create_stars_order(
             FilePurchase.status == "pending",
         )) or 0
         if total >= PENDING_ORDER_LIMIT:
-            raise ValueError(tr("Слишком много незавершённых покупок", "Too many unfinished purchases"))
+            raise ValueError(tr(
+                "Слишком много незавершённых покупок",
+                "Too many unfinished purchases",
+            ))
         invoice_payload = "fs:" + uuid4().hex
         record = FilePurchase(
             project_id=project_id, product_id=product_id,
@@ -589,7 +649,10 @@ async def confirm_stars_payment(
     charge_id: str,
 ) -> FilePurchase:
     if currency != "XTR" or not charge_id or not invoice_payload.startswith("fs:"):
-        raise ValueError(tr("Это не платёж за цифровой товар", "This is not a digital file payment"))
+        raise ValueError(tr(
+            "Это не платёж за цифровой товар",
+            "This is not a digital file payment",
+        ))
     async with system_project_session_scope(factory, project_id) as session:
         purchase = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
@@ -598,10 +661,16 @@ async def confirm_stars_payment(
             FilePurchase.invoice_payload == invoice_payload,
         ).with_for_update())
         if purchase is None or amount != purchase.stars_amount:
-            raise PermissionError(tr("Платёж не соответствует заказу этого бота", "Payment does not match this bot's order"))
+            raise PermissionError(tr(
+                "Платёж не соответствует заказу этого бота",
+                "Payment does not match this bot's order",
+            ))
         if purchase.status == "paid":
             if purchase.telegram_charge_id != charge_id:
-                raise PermissionError(tr("Заказ уже оплачен другим платежом", "This order was already paid by another payment"))
+                raise PermissionError(tr(
+                    "Заказ уже оплачен другим платежом",
+                    "This order was already paid by another payment",
+                ))
             return purchase
         if purchase.status != "pending":
             raise ValueError(tr("Неверное состояние заказа", "Invalid order status"))
@@ -695,7 +764,10 @@ async def purchased_assets(
             FileAsset.product_id == order.product_id,
         ).order_by(FileAsset.sort_order).limit(ASSET_LIMIT))).all())
         if not assets:
-            raise RuntimeError(tr("Файлы временно недоступны. Обратитесь к поддержке", "Files are temporarily unavailable. Contact support"))
+            raise RuntimeError(tr(
+                "Файлы временно недоступны. Обратитесь к поддержке",
+                "Files are temporarily unavailable. Contact support",
+            ))
         return order, assets
 
 
