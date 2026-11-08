@@ -26,7 +26,6 @@ from telegram_membership_saas.modules.file_sales.manual_handlers import (
 from telegram_membership_saas.modules.file_sales.manual_service import (
     available_price_currencies,
     price_editor_options,
-    set_manual_price,
 )
 from telegram_membership_saas.modules.file_sales.models import FileAsset
 from telegram_membership_saas.modules.file_sales.recovery import (
