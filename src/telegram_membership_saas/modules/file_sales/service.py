@@ -20,6 +20,7 @@ from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanc
 from telegram_membership_saas.modules.file_sales.models import (
     FileAsset,
     FileFolder,
+    FileManualPurchase,
     FileProduct,
     FilePurchase,
 )
@@ -419,6 +420,19 @@ async def create_stars_order(
                 amount=paid.stars_amount,
                 invoice_payload=paid.invoice_payload, paid=True,
             )
+        # A different payment rail must not charge the same product twice.
+        manual = await session.scalar(select(FileManualPurchase.id).where(
+            FileManualPurchase.project_id == project_id,
+            FileManualPurchase.telegram_bot_id == bot_id,
+            FileManualPurchase.telegram_user_id == buyer_id,
+            FileManualPurchase.product_id == product_id,
+            FileManualPurchase.status.in_(("paid", "waiting_review")),
+        ).limit(1))
+        if manual:
+            raise ValueError(
+                "По этому файлу уже подтверждена или проверяется ручная оплата. "
+                "Откройте /myfiles или дождитесь ответа администратора."
+            )
         pending = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
             FilePurchase.telegram_bot_id == bot_id,
@@ -477,6 +491,15 @@ async def precheckout_allowed(
                 FilePurchase.stars_amount == amount,
             ))
             if purchase is None:
+                return False
+            manual = await session.scalar(select(FileManualPurchase.id).where(
+                FileManualPurchase.project_id == project_id,
+                FileManualPurchase.telegram_bot_id == bot_id,
+                FileManualPurchase.telegram_user_id == buyer_id,
+                FileManualPurchase.product_id == purchase.product_id,
+                FileManualPurchase.status.in_(("paid", "waiting_review")),
+            ).limit(1))
+            if manual:
                 return False
             item = await _product(session, project_id, bot_id, purchase.product_id)
             return item.status == "published" and (
