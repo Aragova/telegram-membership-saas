@@ -176,6 +176,7 @@ def cancelled_checkout_keyboard(
         rows.append([InlineKeyboardButton(
             text=tr("❌ Заявка отменена", "❌ Request canceled"),
             disabled=DisabledButton(),
+            style="danger",
         )])
     if navigation is not None:
         rows.append([navigation])
