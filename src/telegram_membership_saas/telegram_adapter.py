@@ -30,6 +30,7 @@ from telegram_membership_saas.modules.telegram_access import create_telegram_acc
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
 from telegram_membership_saas.modules.telegram_commerce import create_telegram_commerce_router
+from telegram_membership_saas.rich_messages import RichUiBot
 
 
 def create_dispatcher(
@@ -163,4 +164,4 @@ def create_bot(settings: Settings | None = None) -> Bot:
     current = settings or get_settings()
     if current.telegram_bot_token is None:
         raise RuntimeError("TMS_TELEGRAM_BOT_TOKEN is required to start the Telegram bot")
-    return Bot(token=current.telegram_bot_token.get_secret_value())
+    return RichUiBot(token=current.telegram_bot_token.get_secret_value())

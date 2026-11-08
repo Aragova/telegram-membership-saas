@@ -346,3 +346,64 @@ def offer_screen(
         callback_data=f"cat:{option.currency_code}:{page}",
     )])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rich_catalog_html(
+    offers: tuple[BuyerOffer, ...], *, currency: str | None = None,
+    page: int = 0,
+) -> str | None:
+    """A native Rich plan table using the exact eligible catalog subset.
+
+    The legacy catalog_screen remains the source of truth for currency picker,
+    pagination and purchase callback data. This is presentation only.
+    """
+    currencies = available_currencies(offers)
+    if not currencies:
+        return None
+    chosen = currency if currency in currencies else currencies[0]
+    selected = [offer for offer in offers if offer.option.currency_code == chosen]
+    total_pages = max(1, (len(selected) + PAGE_SIZE - 1) // PAGE_SIZE)
+    current_page = max(0, min(page, total_pages - 1))
+    visible = selected[current_page * PAGE_SIZE:(current_page + 1) * PAGE_SIZE]
+    parts = [
+        "<h3>" + tr("💎 Подписки", "💎 Subscriptions") + "</h3>",
+        "<p>" + tr("🌍 Валюта: ", "🌍 Currency: ")
+        + _currency_icon(chosen) + " <b>" + escape(chosen) + "</b></p>",
+    ]
+    active_resource: str | None = None
+    for offer in visible:
+        if offer.resource_label != active_resource:
+            if active_resource is not None:
+                parts.append("</table>")
+            active_resource = offer.resource_label
+            parts.extend([
+                "<h4>📢 " + escape(active_resource) + "</h4>",
+                "<table bordered compact>",
+                "<tr><th>" + tr("🎟 Тариф", "🎟 Plan") + "</th><th>"
+                + tr("💰 Цена", "💰 Price") + "</th></tr>",
+            ])
+        option = offer.option
+        duration = format_period(option.duration_value, option.duration_unit)
+        label = (
+            duration if is_period_only_plan_name(
+                option.plan_name, option.duration_value, option.duration_unit,
+            )
+            else option.plan_name + " · " + duration
+        )
+        amount = format_amount(option.amount, option.currency_precision)
+        parts.append(
+            "<tr><td>" + escape(label) + "</td><td>"
+            + escape(amount + " " + chosen) + "</td></tr>"
+        )
+    if active_resource is not None:
+        parts.append("</table>")
+    if total_pages > 1:
+        parts.append("<p>" + tr(
+            f"Страница {current_page + 1} из {total_pages}",
+            f"Page {current_page + 1} of {total_pages}",
+        ) + "</p>")
+    parts.append("<p>👇 " + tr(
+        "Выберите тариф ниже. Способ оплаты будет следующим шагом.",
+        "Choose a plan below. Payment methods come next.",
+    ) + "</p>")
+    return "\n".join(parts)

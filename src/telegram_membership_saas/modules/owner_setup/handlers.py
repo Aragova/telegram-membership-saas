@@ -2305,7 +2305,7 @@ def create_owner_setup_router(
             if selected is not None and await send_rich_subscription_offer(
                 bot, chat_id=user_id,
                 rich_html=rich_subscription_offer_html(selected, preview=True),
-                reply_markup=keyboard, preview=True,
+                reply_markup=keyboard, preview=True, message_id=message_id,
             ):
                 return
         if message_id is not None:
