@@ -10,6 +10,7 @@ from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
+from aiogram.methods import EditMessageText
 from aiogram.types import InlineKeyboardMarkup
 
 from telegram_membership_saas.config import get_settings
@@ -80,11 +81,12 @@ def rich_subscription_offer_html(
 async def send_rich_subscription_offer(
     bot: Bot, *, chat_id: int, rich_html: str,
     reply_markup: InlineKeyboardMarkup, preview: bool = False,
+    message_id: int | None = None,
 ) -> bool:
-    """Try Rich only for explicitly allowed buyers or owner preview.
+    """Send or edit a Rich subscription screen with the SAME callbacks.
 
-    Return False on unsupported formatting/API; caller renders the unchanged
-    legacy screen. Do not catch transport failures to avoid duplicate sends.
+    When opened by clicking a tariff, edit the original catalog message.
+    This avoids stacking an extra block of old tariff/payment buttons.
     """
     if not preview and not rich_subscription_enabled(bot.id):
         return False
@@ -93,21 +95,32 @@ async def send_rich_subscription_offer(
     except ImportError:
         log.info("Rich subscription messages unsupported by installed aiogram")
         return False
-    send = getattr(bot, "send_rich_message", None)
-    if not callable(send):
-        return False
+    rich = InputRichMessage(html=rich_html)
     try:
-        await send(
-            chat_id=chat_id,
-            rich_message=InputRichMessage(html=rich_html),
-            reply_markup=reply_markup,
-        )
+        if message_id is not None:
+            if "rich_message" not in EditMessageText.model_fields:
+                return False
+            await bot(EditMessageText(
+                text=None, chat_id=chat_id, message_id=message_id,
+                rich_message=rich, reply_markup=reply_markup,
+            ))
+        else:
+            send = getattr(bot, "send_rich_message", None)
+            if not callable(send):
+                return False
+            await send(
+                chat_id=chat_id, rich_message=rich,
+                reply_markup=reply_markup,
+            )
         return True
     except TelegramBadRequest as exc:
+        # The caller already treats an unchanged message as no-op.
+        if "message is not modified" in str(exc).lower():
+            return True
         log.warning("Rich subscription offer rejected for bot %s: %s", bot.id, exc)
         return False
     except TelegramNotFound as exc:
         if "method not found" not in str(exc).lower():
             raise
-        log.warning("Rich subscription offer API missing for bot %s", bot.id)
+        log.warning("Rich subscription API missing for bot %s", bot.id)
         return False
