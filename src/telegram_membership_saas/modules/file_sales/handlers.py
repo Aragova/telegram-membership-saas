@@ -21,6 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.file_sales.models import FileAsset
+from telegram_membership_saas.modules.file_sales.recovery import (
+    recover_buyer_stars,
+)
 from telegram_membership_saas.modules.file_sales.service import (
     add_folder,
     add_product_asset,
@@ -30,7 +33,7 @@ from telegram_membership_saas.modules.file_sales.service import (
     create_stars_order,
     list_folders,
     list_products,
-    list_purchases,
+    list_purchases_page,
     mark_file_delivery,
     precheckout_allowed,
     purchased_assets,
@@ -263,18 +266,33 @@ def create_file_sales_router(
             uid, text, parse_mode="HTML", reply_markup=_keyboard(rows),
         )
 
-    async def my_files(bot: Bot, uid: int) -> None:
-        items = await list_purchases(
-            factory, project_id=project_id, bot_id=bot.id, buyer_id=uid,
+    async def my_files(bot: Bot, uid: int, page: int = 0) -> None:
+        total, items = await list_purchases_page(
+            factory, project_id=project_id, bot_id=bot.id,
+            buyer_id=uid, page=page,
         )
         rows = [[_button(
             "📥 " + purchase.product_name[:45],
             "get:" + encode_uuid(purchase.id),
         )] for purchase in items]
+        navigation = []
+        if page:
+            navigation.append(_button("◀️", "mine:" + str(page - 1)))
+        if (page + 1) * 8 < total:
+            navigation.append(_button("▶️", "mine:" + str(page + 1)))
+        if navigation:
+            rows.append(navigation)
+        if page == 0:
+            rows.append([_button(
+                tr("🔄 Проверить оплату Stars", "🔄 Recover Stars payment"),
+                "recover",
+            )])
         rows.append([_button(tr("⬅️ Магазин", "⬅️ Shop"), "home")])
         await bot.send_message(
             uid, tr("📦 Купленных файлов: ", "📦 Purchased files: ")
-            + str(len(items)),
+            + str(total)
+            + (tr("\\nСтраница: ", "\\nPage: ") + str(page + 1)
+               if total > 8 else ""),
             reply_markup=_keyboard(rows),
         )
 
@@ -464,7 +482,40 @@ def create_file_sales_router(
                                          amount=order.amount),
                         ], provider_token="",
                     )
-            elif action == "mine":
+            elif action == "mine" or action.startswith("mine:"):
+                raw = action.split(":", 1)[1] if ":" in action else "0"
+                if not raw.isascii() or not raw.isdecimal():
+                    raise ValueError("Неверная страница")
+                await my_files(bot, uid, int(raw))
+            elif action == "recover":
+                # Independent evidence comes from Telegram's actual Stars ledger.
+                # The buyer cannot forge the transaction id or receipt.
+                try:
+                    recovered = await recover_buyer_stars(
+                        factory, bot=bot, project_id=project_id, buyer_id=uid,
+                    )
+                except Exception:
+                    log.exception("Stars reconciliation failed for bot %s", bot.id)
+                    await bot.send_message(
+                        uid, tr(
+                            "⚠️ Сверка оплаты временно недоступна. "
+                            "Попробуйте позже или откройте /support.",
+                            "⚠️ Payment verification is temporarily unavailable. "
+                            "Retry later or use /support.",
+                        ),
+                    )
+                    await query.answer()
+                    return
+                await bot.send_message(
+                    uid,
+                    (tr("✅ Восстановлено покупок: ", "✅ Purchases recovered: ")
+                     + str(len(recovered))) if recovered else tr(
+                         "ℹ️ Новых подтверждённых оплат в журнале Telegram "
+                         "не найдено. Если Stars списаны — /support.",
+                         "ℹ️ No new verified payments were found in "
+                         "Telegram's ledger. If Stars were charged, use /support.",
+                     ),
+                )
                 await my_files(bot, uid)
             elif action.startswith("get:"):
                 await deliver_paid(
@@ -594,17 +645,44 @@ def create_file_sales_router(
                 amount=payment.total_amount, currency=payment.currency,
                 charge_id=payment.telegram_payment_charge_id,
             )
+        except Exception:
+            # Telegram charged the user, but DB confirmation is NOT durable.
+            # Never tell them /myfiles is already unlocked. Recovery uses the
+            # bot's authenticated Stars ledger, not buyer-supplied receipts.
+            log.exception("CRITICAL: charged Stars payment not yet committed")
+            try:
+                await bot.send_message(
+                    message.from_user.id,
+                    tr(
+                        "⚠️ Stars списаны, но бот не смог записать оплату. "
+                        "После восстановления откройте /myfiles → "
+                        "«Проверить оплату Stars» для сверки с Telegram. "
+                        "Если не поможет — /support.",
+                        "⚠️ Stars were charged, but payment recording failed. "
+                        "Open /myfiles → Recover Stars payment to verify "
+                        "against Telegram's ledger. Contact /support if needed.",
+                    ),
+                )
+            except AiogramError:
+                log.exception("Could not warn buyer about unrecorded Stars charge")
+            return
+        try:
             await deliver_paid(bot, message.from_user.id, purchase.id)
         except Exception:
-            # Telegram already charged: do not mask a confirmed payment or
-            # claim a refund. The buyer can retry /myfiles; alert operator.
-            log.exception("Critical: digital Stars purchase delivery failed")
-            await bot.send_message(
-                message.from_user.id,
-                tr("⚠️ Оплата получена, но выдача не завершилась. "
-                   "Откройте /myfiles или обратитесь в /support.",
-                   "⚠️ Payment received but delivery did not finish. "
-                   "Use /myfiles or /support."),
-            )
+            # Charge is now durably recorded. A direct /myfiles redownload
+            # is safe even if this Telegram send failed midway.
+            log.exception("Paid file delivery failed after durable commit")
+            try:
+                await bot.send_message(
+                    message.from_user.id,
+                    tr(
+                        "✅ Оплата сохранена. Выдача прервалась — "
+                        "откройте /myfiles для повторного получения.",
+                        "✅ Payment was recorded. Delivery was interrupted; "
+                        "open /myfiles to retry.",
+                    ),
+                )
+            except AiogramError:
+                log.exception("Could not warn buyer about delivery failure")
 
     return router
