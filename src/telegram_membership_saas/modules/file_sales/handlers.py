@@ -20,7 +20,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.modules.file_sales.models import FileAsset, FileProduct
+from telegram_membership_saas.modules.file_sales.models import FileAsset
 from telegram_membership_saas.modules.file_sales.service import (
     add_folder,
     add_product_asset,
