@@ -521,25 +521,73 @@ async def confirm_stars_payment(
     if currency != "XTR" or not charge_id or not invoice_payload.startswith("fs:"):
         raise ValueError("Это не платёж за цифровой товар")
     async with system_project_session_scope(factory, project_id) as session:
-        purchase = await session.scalar(select(FilePurchase).where(
+        original = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
             FilePurchase.telegram_bot_id == bot_id,
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.invoice_payload == invoice_payload,
-        ).with_for_update())
-        if purchase is None or amount != purchase.stars_amount:
+        ))
+        if original is None or amount != original.stars_amount:
             raise PermissionError("Платёж не соответствует заказу этого бота")
-        if purchase.status == "paid":
-            if purchase.telegram_charge_id != charge_id:
-                raise PermissionError("Заказ уже оплачен другим платежом")
+        # Serialize a charged Stars callback with manual approval through
+        # the product row. This prevents both rails simultaneously granting.
+        await _product(session, project_id, bot_id, original.product_id, lock=True)
+        purchase = await session.scalar(select(FilePurchase).where(
+            FilePurchase.id == original.id,
+            FilePurchase.project_id == project_id,
+        ).with_for_update())
+        if purchase.telegram_charge_id and purchase.telegram_charge_id != charge_id:
+            raise PermissionError("Заказ уже связан с другим платежом")
+        if purchase.status in ("paid", "refund_pending", "refunded"):
             return purchase
         if purchase.status != "pending":
             raise ValueError("Неверное состояние заказа")
+        manual_paid = await session.scalar(select(FileManualPurchase.id).where(
+            FileManualPurchase.project_id == project_id,
+            FileManualPurchase.telegram_bot_id == bot_id,
+            FileManualPurchase.telegram_user_id == buyer_id,
+            FileManualPurchase.product_id == purchase.product_id,
+            FileManualPurchase.status == "paid",
+        ).limit(1))
         purchase.telegram_charge_id = charge_id
-        purchase.status = "paid"
+        purchase.status = "refund_pending" if manual_paid else "paid"
         purchase.paid_at = datetime.now(UTC)
         await session.flush()
         return purchase
+
+
+async def mark_refunded_stars(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    bot_id: int, buyer_id: int, purchase_id: UUID, charge_id: str,
+) -> None:
+    """Record successful Telegram refund; never unlock refunded media."""
+    async with system_project_session_scope(factory, project_id) as session:
+        purchase = await session.scalar(select(FilePurchase).where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.id == purchase_id,
+        ).with_for_update())
+        if purchase is None or purchase.telegram_charge_id != charge_id:
+            raise PermissionError("Платёж для возврата не найден")
+        if purchase.status == "refunded":
+            return
+        if purchase.status != "refund_pending":
+            raise ValueError("Заказ не ожидает возврата")
+        purchase.status = "refunded"
+
+
+async def pending_stars_refunds(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    bot_id: int, buyer_id: int,
+) -> tuple[FilePurchase, ...]:
+    async with system_project_session_scope(factory, project_id) as session:
+        return tuple((await session.scalars(select(FilePurchase).where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.status == "refund_pending",
+        ).limit(20))).all())
 
 
 async def list_purchases(
