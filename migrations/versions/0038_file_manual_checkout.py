@@ -93,11 +93,8 @@ def upgrade() -> None:
         RETURNS trigger LANGUAGE plpgsql AS $guard$
         BEGIN
             IF TG_OP = 'DELETE' THEN
-                IF OLD.status <> 'pending' AND OLD.status <> 'cancelled' THEN
-                    RAISE EXCEPTION 'Reviewed file payments are immutable'
-                        USING ERRCODE = '42501';
-                END IF;
-                RETURN OLD;
+                RAISE EXCEPTION 'Manual file checkout history is immutable'
+                    USING ERRCODE = '42501';
             END IF;
             IF (NEW.id, NEW.project_id, NEW.product_id, NEW.telegram_bot_id,
                 NEW.telegram_user_id, NEW.product_name, NEW.amount,
