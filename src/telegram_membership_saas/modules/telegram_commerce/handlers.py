@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from datetime import datetime
 from html import escape
 from uuid import UUID
@@ -331,7 +332,11 @@ async def _send_catalog(
     # All catalog and offer cards use editable Rich Messages. Telegram
     # supports editMessageText(rich_message=...), so old buttons disappear
     # instead of piling up above the current screen.
-    if notice is None and rich_subscription_enabled(bot.id):
+    if (
+        notice is None
+        and rich_subscription_enabled(bot.id)
+        and inspect.iscoroutinefunction(getattr(bot, "send_rich_message", None))
+    ):
         rich_html = None
         if price_id is not None:
             selected = next(
