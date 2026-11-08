@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import inspect
 from datetime import datetime
 from html import escape
@@ -63,6 +64,7 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     offer_screen,
     rich_catalog_html,
 )
+from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.telegram_menus import refresh_user_commands
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
@@ -332,6 +334,7 @@ async def _send_catalog(
     # All catalog and offer cards use editable Rich Messages. Telegram
     # supports editMessageText(rich_message=...), so old buttons disappear
     # instead of piling up above the current screen.
+    rich_failed = False
     if (
         notice is None
         and inspect.iscoroutinefunction(getattr(bot, "send_rich_message", None))
@@ -347,16 +350,20 @@ async def _send_catalog(
                 rich_html = rich_subscription_offer_html(selected)
         else:
             rich_html = rich_catalog_html(offers, currency=currency, page=page)
-        if rich_html is not None and await send_rich_subscription_offer(
-            bot, chat_id=chat_id, rich_html=rich_html,
-            reply_markup=keyboard, message_id=message_id,
-        ):
-            return True
-    await _send_screen(
-        bot, chat_id=chat_id,
-        text=(notice + "\n\n" + text) if notice else text,
-        keyboard=keyboard, message_id=message_id,
-    )
+        if rich_html is not None:
+            if await send_rich_subscription_offer(
+                bot, chat_id=chat_id, rich_html=rich_html,
+                reply_markup=keyboard, message_id=message_id,
+            ):
+                return True
+            rich_failed = True
+    # Do not make a second rejected Rich request on an unsupported endpoint.
+    with classic_messages() if rich_failed else nullcontext():
+        await _send_screen(
+            bot, chat_id=chat_id,
+            text=(notice + "\n\n" + text) if notice else text,
+            keyboard=keyboard, message_id=message_id,
+        )
     return True
 
 
