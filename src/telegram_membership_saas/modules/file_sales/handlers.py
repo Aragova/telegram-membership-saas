@@ -11,18 +11,17 @@ from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
+    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
-    ForceReply,
-    ReplyParameters,
     Message,
     PreCheckoutQuery,
+    ReplyParameters,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.modules.file_sales.models import FileAsset
 from telegram_membership_saas.modules.file_sales.manual import (
     FIAT_CODES,
     cancel_manual_order,
@@ -39,7 +38,7 @@ from telegram_membership_saas.modules.file_sales.manual import (
     set_file_price,
     submit_manual_receipt,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import format_amount
+from telegram_membership_saas.modules.file_sales.models import FileAsset
 from telegram_membership_saas.modules.file_sales.recovery import (
     recover_buyer_stars,
 )
@@ -66,6 +65,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
 from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
     encode_uuid,
+    format_amount,
 )
 
 log = logging.getLogger(__name__)
