@@ -120,12 +120,12 @@ async def show_file_payment_options(
             "💳 " + option.method_name[:36],
             "method:" + code + ":" + chosen + ":" + encode_uuid(option.method_id),
         )])
-    rows.append([InlineKeyboardButton(
-        text=tr("⭐ Telegram Stars · ", "⭐ Telegram Stars · ")
-        + str(product.stars_price) + " XTR",
-        callback_data="fs:buy:" + code,
-        style="success",
-    )])
+    if product.stars_price is not None:
+        rows.append([InlineKeyboardButton(
+            text="⭐ Telegram Stars · " + str(product.stars_price) + " XTR",
+            callback_data="fs:buy:" + code,
+            style="success",
+        )])
     rows.append([InlineKeyboardButton(
         text=tr("⬅️ Товары", "⬅️ Products"),
         callback_data="fs:folder:" + encode_uuid(product.folder_id),
