@@ -35,6 +35,7 @@ from telegram_membership_saas.modules.payments import (
 from telegram_membership_saas.modules.payments.request_service import require_payment_permission
 from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects import Permission, Project, ProjectMember
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.modules.telegram_commerce.service import format_amount
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -225,6 +226,8 @@ async def create_manual_order(
     currency: str, method_id: UUID,
 ) -> tuple[FileManualOrder | FilePurchase, bool]:
     async with system_project_session_scope(factory, project_id) as session:
+        # Serialize manual checkout against transfer finalization and bot retirement.
+        await checkout_retirement_lock(session, project_id)
         await _ready(session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id)
         product = await _product(session, project_id, bot_id, product_id, lock=True)
         if product.status != "published":
