@@ -61,10 +61,18 @@ async def test_manual_file_checkout_freezes_price_and_requires_owner_approval():
             factory, project_id=project, bot_id=bot_id,
             actor_id=owner, name="ВИДЕО",
         )
+        with pytest.raises(ValueError, match="Неверная сумма"):
+            await files.create_product(
+                factory, project_id=project, bot_id=bot_id,
+                actor_id=owner, folder_id=folder.id,
+                name="Bad price", stars=None,
+                manual_currency="RUB", manual_amount="not-number",
+            )
         product = await files.create_product(
             factory, project_id=project, bot_id=bot_id,
             actor_id=owner, folder_id=folder.id,
             name="Видео 720p", stars=None,
+            manual_currency="RUB", manual_amount="525",
         )
         await files.add_product_asset(
             factory, project_id=project, bot_id=bot_id, actor_id=owner,
