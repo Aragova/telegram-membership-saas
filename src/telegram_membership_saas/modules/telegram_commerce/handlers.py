@@ -34,6 +34,11 @@ from telegram_membership_saas.modules.telegram_commerce.account import (
     load_buyer_account,
     support_screen,
 )
+from telegram_membership_saas.modules.telegram_commerce.rich_ui import (
+    rich_subscription_enabled,
+    rich_subscription_offer_html,
+    send_rich_subscription_offer,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
     ReviewItem,
@@ -322,6 +327,20 @@ async def _send_catalog(
         text, keyboard = catalog_screen(
             offers, currency=currency, page=page,
         )
+    # Rich messages cannot replace the old text message in place. On an
+    # explicitly enabled bot, send one new Rich offer with the ORIGINAL
+    # payment keyboard. Unsupported Rich falls back to the legacy edit flow.
+    if price_id is not None and notice is None and rich_subscription_enabled(bot.id):
+        selected = next(
+            (item for item in offers if item.option.plan_price_id == price_id),
+            None,
+        )
+        if selected is not None and await send_rich_subscription_offer(
+            bot, chat_id=chat_id,
+            rich_html=rich_subscription_offer_html(selected),
+            reply_markup=keyboard,
+        ):
+            return True
     await _send_screen(
         bot, chat_id=chat_id,
         text=(notice + "\n\n" + text) if notice else text,

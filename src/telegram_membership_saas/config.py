@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     telegram_worker_poll_seconds: float = 1.0
     # Explicit Telegram bot IDs only; default off for every real buyer.
     rich_file_checkout_bot_ids: str = ""
+    # Subscription Rich offer cards are independent of file-sale Rich cards.
+    rich_subscription_checkout_bot_ids: str = ""
     customer_supervisor_max_bots: int = Field(default=10, ge=1, le=128)
     customer_supervisor_lease_mode: Literal["per_project", "shared"] = "per_project"
     customer_supervisor_shard_count: int = Field(default=1, ge=1, le=256)

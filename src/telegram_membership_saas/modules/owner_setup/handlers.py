@@ -194,6 +194,10 @@ from telegram_membership_saas.modules.telegram_commerce.handlers import (
     _review_keyboard,
     _review_text,
 )
+from telegram_membership_saas.modules.telegram_commerce.rich_ui import (
+    rich_subscription_offer_html,
+    send_rich_subscription_offer,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
     encode_uuid,
@@ -2247,6 +2251,7 @@ def create_owner_setup_router(
         *, currency: str | None = None, page: int = 0,
         price_id: UUID | None = None, method_id: UUID | None = None,
         instruction_page: int = 0, message_id: int | None = None,
+        rich: bool = False,
     ) -> None:
         """Interactive buyer-like display with no checkout/payment writes."""
         if fixed_project_id is None or project_id != fixed_project_id:
@@ -2292,6 +2297,17 @@ def create_owner_setup_router(
         if rendered is None:
             raise ValueError("Тариф не найден в этом проекте")
         content, keyboard = rendered
+        if rich and price_id is not None and method_id is None:
+            selected = next(
+                (offer for offer in offers if offer.option.plan_price_id == price_id),
+                None,
+            )
+            if selected is not None and await send_rich_subscription_offer(
+                bot, chat_id=user_id,
+                rich_html=rich_subscription_offer_html(selected, preview=True),
+                reply_markup=keyboard, preview=True,
+            ):
+                return
         if message_id is not None:
             try:
                 await bot.edit_message_text(
@@ -3740,6 +3756,17 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     currency=currency, page=int(page_token),
                     message_id=query.message.message_id,
+                )
+            elif action.startswith("pvrich:"):
+                _, price_token, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal() or (
+                    int(page_token) > 10000
+                ):
+                    raise ValueError("Недопустимая страница")
+                await show_guest_preview(
+                    bot, user_id, actor_id, project_id,
+                    price_id=decode_uuid(price_token), page=int(page_token),
+                    rich=True,
                 )
             elif action.startswith("pvoffer:"):
                 _, price_token, page_token = action.split(":", 2)
