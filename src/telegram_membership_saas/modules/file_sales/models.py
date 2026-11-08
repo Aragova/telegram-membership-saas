@@ -143,6 +143,10 @@ class FileManualPurchase(Base):
             "'paid','rejected','cancelled')",
             name="ck_file_manual_status",
         ),
+        CheckConstraint(
+            "((status = 'waiting_confirmation' AND submitted_at IS NULL AND receipt_forwarded_at IS NULL AND paid_at IS NULL AND reviewed_by IS NULL) OR (status = 'waiting_review' AND submitted_at IS NOT NULL AND paid_at IS NULL AND reviewed_by IS NULL) OR (status = 'paid' AND submitted_at IS NOT NULL AND receipt_forwarded_at IS NOT NULL AND paid_at IS NOT NULL AND reviewed_by IS NOT NULL) OR (status = 'rejected' AND submitted_at IS NOT NULL AND receipt_forwarded_at IS NOT NULL AND paid_at IS NULL AND reviewed_by IS NOT NULL) OR (status = 'cancelled' AND submitted_at IS NULL AND receipt_forwarded_at IS NULL AND paid_at IS NULL AND reviewed_by IS NULL))",
+            name="ck_file_manual_state_timestamps",
+        ),
         Index("ix_file_manual_buyer", "project_id", "telegram_bot_id",
               "telegram_user_id", "status"),
     )
@@ -167,7 +171,10 @@ class FileManualPurchase(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     receipt_forwarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    reviewed_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    reviewed_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("telegram_users.id", ondelete="RESTRICT"),
+        Uuid(as_uuid=True),
+    )
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
