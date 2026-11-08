@@ -72,7 +72,7 @@ async def test_confirmed_charge_only_unlocks_files_to_actual_buyer(monkeypatch):
         chat=SimpleNamespace(type="private", id=123),
         successful_payment=payment,
     )
-    confirmed = AsyncMock(return_value=SimpleNamespace(id=purchase))
+    confirmed = AsyncMock(return_value=SimpleNamespace(id=purchase, status="paid"))
     monkeypatch.setattr(ui, "confirm_stars_payment", confirmed)
     delivered = AsyncMock()
     monkeypatch.setattr(ui, "purchased_assets", AsyncMock(
