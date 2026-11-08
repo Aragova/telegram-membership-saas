@@ -236,3 +236,91 @@ async def test_manual_file_order_requires_approval_and_never_creates_subscriptio
             assert snapshot.status == "paid"
     finally:
         await engine.dispose()
+
+
+async def test_existing_stars_invoice_is_blocked_by_manual_review_and_paid_order():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, _, _, project, _, _, _, buyer_tid = await setup_subscriber(factory)
+        bot_id = tg_id()
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add(BotInstance(
+                project_id=project, telegram_bot_id=bot_id,
+                username="dual_rail_file_bot", display_name="Dual rail",
+                token_ciphertext="test-token",
+            ))
+        await create_owner_payment_method(
+            factory, actor_id=owner, project_id=project,
+            name="Bank", currency_code="RUB",
+            instruction="Send {amount} {currency} for {plan}",
+        )
+        method_id = (await list_owner_methods(
+            factory, actor_id=owner, project_id=project,
+        ))[0].id
+        folder = await files.add_folder(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, name="Both rails",
+        )
+        item = await files.create_product(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, folder_id=folder.id, name="Video", stars=12,
+        )
+        await set_file_price(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, product_id=item.id,
+            currency="RUB", value="525",
+        )
+        await files.add_product_asset(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, product_id=item.id,
+            kind="document", file_id="video_id",
+        )
+        await files.change_product_status(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, product_id=item.id, status="published",
+        )
+        pending_stars = await files.create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_tid, product_id=item.id,
+        )
+        args = dict(
+            factory=factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_tid, invoice_payload=pending_stars.invoice_payload,
+            amount=12, currency="XTR",
+        )
+        assert await files.precheckout_allowed(**args)
+        manual = await create_manual_file_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_tid, product_id=item.id,
+            currency="RUB", method_id=method_id,
+        )
+        await submit_manual_receipt(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_tid, order_id=manual.id,
+        )
+        assert not await files.precheckout_allowed(**args)
+        await mark_manual_receipt_forwarded(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_tid, order_id=manual.id,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            owner_tid = await session.scalar(
+                select(TelegramUser.telegram_user_id).where(TelegramUser.id == owner)
+            )
+        reviewed, changed = await review_manual_file_order(
+            factory, project_id=project, bot_id=bot_id,
+            reviewer_id=owner_tid, reviewer_name="Owner",
+            reviewer_first_name="Owner", order_id=manual.id, approve=True,
+        )
+        assert changed and reviewed.status == "paid"
+        assert not await files.precheckout_allowed(**args)
+        with pytest.raises(ValueError, match="оплата"):
+            await files.create_stars_order(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer_tid, product_id=item.id,
+            )
+    finally:
+        await engine.dispose()
