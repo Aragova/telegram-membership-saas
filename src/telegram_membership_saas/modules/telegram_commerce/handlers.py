@@ -950,18 +950,26 @@ def create_telegram_commerce_router(
                 # The decision is committed, so a stale keyboard must not undo it.
                 pass
 
-        try:
-            await send_payment_review(
-                bot, chat_id=callback.from_user.id,
-                rich_html=rich_subscription_review_result(
-                    result, approve=approve,
-                ),
-                legacy_text=_admin_review_result_text(result, approve=approve),
+        if inspect.iscoroutinefunction(getattr(bot, "send_rich_message", None)):
+            try:
+                await send_payment_review(
+                    bot, chat_id=callback.from_user.id,
+                    rich_html=rich_subscription_review_result(
+                        result, approve=approve,
+                    ),
+                    legacy_text=_admin_review_result_text(result, approve=approve),
+                    parse_mode="HTML",
+                )
+            except AiogramError:
+                # The financial decision was committed before the UI update.
+                pass
+        else:
+            # Keep the original safe notification path on old aiogram clients.
+            await _safe_send_message(
+                bot, callback.from_user.id,
+                _admin_review_result_text(result, approve=approve),
                 parse_mode="HTML",
             )
-        except AiogramError:
-            # The financial decision was committed before the UI update.
-            pass
         async with recipient_language(
             session_factory, result.item.customer_telegram_user_id,
         ):
