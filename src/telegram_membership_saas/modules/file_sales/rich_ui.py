@@ -77,7 +77,9 @@ async def send_file_card(
     clients. Fall back only on API validation/method errors, not on transport
     failures (where a retry could result in duplicate messages).
     """
-    if preview or rich_file_checkout_enabled(bot.id):
+    if getattr(get_settings(), "rich_messages_enabled", True) and (
+        preview or rich_file_checkout_enabled(bot.id)
+    ):
         try:
             from aiogram.types import InputRichMessage
         except ImportError:
