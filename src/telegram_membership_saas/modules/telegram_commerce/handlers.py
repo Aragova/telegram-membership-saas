@@ -60,6 +60,7 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     catalog_screen,
     list_buyer_offers,
     offer_screen,
+    rich_catalog_html,
 )
 from telegram_membership_saas.telegram_menus import refresh_user_commands
 
@@ -327,17 +328,22 @@ async def _send_catalog(
         text, keyboard = catalog_screen(
             offers, currency=currency, page=page,
         )
-    # Rich messages cannot replace the old text message in place. On an
-    # explicitly enabled bot, send one new Rich offer with the ORIGINAL
-    # payment keyboard. Unsupported Rich falls back to the legacy edit flow.
-    if price_id is not None and notice is None and rich_subscription_enabled(bot.id):
-        selected = next(
-            (item for item in offers if item.option.plan_price_id == price_id),
-            None,
-        )
-        if selected is not None and await send_rich_subscription_offer(
-            bot, chat_id=chat_id,
-            rich_html=rich_subscription_offer_html(selected),
+    # All catalog and offer cards use editable Rich Messages. Telegram
+    # supports editMessageText(rich_message=...), so old buttons disappear
+    # instead of piling up above the current screen.
+    if notice is None and rich_subscription_enabled(bot.id):
+        rich_html = None
+        if price_id is not None:
+            selected = next(
+                (item for item in offers if item.option.plan_price_id == price_id),
+                None,
+            )
+            if selected is not None:
+                rich_html = rich_subscription_offer_html(selected)
+        else:
+            rich_html = rich_catalog_html(offers, currency=currency, page=page)
+        if rich_html is not None and await send_rich_subscription_offer(
+            bot, chat_id=chat_id, rich_html=rich_html,
             reply_markup=keyboard, message_id=message_id,
         ):
             return True
