@@ -1,8 +1,6 @@
 """Manual digital-file checkout: real PostgreSQL RLS, proof and reviewer gating."""
 import os
 from decimal import Decimal
-from uuid import uuid4
-
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
@@ -10,7 +8,9 @@ from test_owner_subscribers_rls import setup_subscriber, tg_id
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
-    build_engine, build_session_factory, tenant_session_scope,
+    build_engine,
+    build_session_factory,
+    tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.file_sales import manual_service as manual
