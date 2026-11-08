@@ -667,17 +667,13 @@ def create_file_sales_router(
                         name=state["name"], stars=stars,
                     )
                 else:
-                    # Draft is created without a Stars price. The currency
-                    # amount is explicitly validated and stored separately.
+                    # Amount and draft are validated/committed atomically:
+                    # a typo never leaves an orphan product.
                     product = await create_product(
                         factory, project_id=project_id, bot_id=bot.id,
                         actor_id=who, folder_id=state["folder"],
                         name=state["name"], stars=None,
-                    )
-                    await set_manual_price(
-                        factory, project_id=project_id, bot_id=bot.id,
-                        actor_id=who, product_id=product.id,
-                        currency=currency, value=text,
+                        manual_currency=currency, manual_amount=text,
                     )
                 pending.pop(uid, None)
                 await detail(bot, uid, product.id, who)
