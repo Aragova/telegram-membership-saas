@@ -670,6 +670,58 @@ def create_file_sales_router(
                                 "ap:" + encode_uuid(product), "success"),
                     ]]),
                 )
+            elif action == "reviews":
+                if not admin:
+                    raise PermissionError("Недостаточно прав")
+                items = await pending_manual_reviews(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    reviewer_id=uid, reviewer_name=query.from_user.username,
+                    reviewer_first_name=query.from_user.first_name,
+                )
+                if not items:
+                    await bot.send_message(
+                        uid, tr("🧾 Новых заявок по файлам нет.",
+                                "🧾 No pending file payments."),
+                    )
+                for order in items:
+                    await bot.send_message(
+                        uid,
+                        tr("🧾 <b>Оплата файла — проверка</b>\n",
+                           "🧾 <b>File payment review</b>\n")
+                        + "📦 " + escape(order.product_name) + "\n"
+                        + "💰 " + format(order.amount, "f")
+                        + " " + escape(order.currency_code) + "\n"
+                        + "💳 " + escape(order.payment_method_name) + "\n"
+                        + "👤 " + str(order.telegram_user_id),
+                        parse_mode="HTML",
+                        reply_markup=manual_review_buttons(order.id),
+                    )
+            elif action.startswith(("mapprove:", "mreject:")):
+                approve = action.startswith("mapprove:")
+                order_id = decode_uuid(action.split(":", 1)[1])
+                order, changed = await review_manual_file_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    reviewer_id=uid, reviewer_name=query.from_user.username,
+                    reviewer_first_name=query.from_user.first_name,
+                    order_id=order_id, approve=approve,
+                )
+                if changed:
+                    await bot.send_message(
+                        uid, tr("✅ Заявка обработана.", "✅ File order reviewed."),
+                    )
+                    await bot.send_message(
+                        order.telegram_user_id,
+                        (tr("✅ Оплата файла подтверждена.",
+                            "✅ File payment approved.") if approve else
+                         tr("❌ Оплата файла отклонена.",
+                            "❌ File payment rejected.")),
+                    )
+                    if approve:
+                        await deliver_manual(bot, order.telegram_user_id, order.id)
+                else:
+                    await bot.send_message(
+                        uid, tr("Заявка уже обработана.", "Already reviewed."),
+                    )
             elif action.startswith("prices:"):
                 if not admin:
                     raise PermissionError("Недостаточно прав")
@@ -864,6 +916,84 @@ def create_file_sales_router(
             log.exception("File sales Telegram response failed")
             await query.answer(tr("Ошибка Telegram. Попробуйте снова.",
                                   "Telegram error. Try again."), show_alert=True)
+
+    @router.message(ManualReceiptFilter())
+    async def manual_receipt_message(message: Message, bot: Bot) -> None:
+        if message.from_user is None or message.reply_to_message is None:
+            return
+        uid = message.from_user.id
+        header = (message.reply_to_message.text or "").splitlines()[0]
+        try:
+            order_id = decode_uuid(header.removeprefix(RECEIPT_PROMPT_PREFIX))
+            if not (
+                message.photo or (
+                    message.document is not None
+                    and message.document.mime_type in (
+                        "application/pdf", "image/jpeg",
+                        "image/png", "image/webp",
+                    )
+                )
+            ):
+                await bot.send_message(
+                    uid, tr(
+                        "⚠️ Прикрепите фото чека либо документ PDF/JPG/PNG/WEBP "
+                        "ответом на сообщение с номером заказа.",
+                        "⚠️ Reply with a receipt photo or PDF/JPG/PNG/WEBP document.",
+                    ),
+                )
+                return
+            order, reviewers = await submit_manual_receipt(
+                factory, project_id=project_id, bot_id=bot.id,
+                buyer_id=uid, order_id=order_id,
+            )
+        except (ValueError, PermissionError) as exc:
+            await bot.send_message(uid, "⚠️ " + str(exc))
+            return
+        delivered = 0
+        for reviewer_id in reviewers:
+            try:
+                copied = await bot.copy_message(
+                    chat_id=reviewer_id,
+                    from_chat_id=uid, message_id=message.message_id,
+                )
+                await bot.send_message(
+                    reviewer_id,
+                    tr("🧾 <b>Подтверждение оплаты файла</b>\n",
+                       "🧾 <b>File payment receipt</b>\n")
+                    + "📦 " + escape(order.product_name) + "\n"
+                    + "💰 " + format(order.amount, "f")
+                    + " " + escape(order.currency_code) + "\n"
+                    + "💳 " + escape(order.payment_method_name) + "\n"
+                    + "👤 " + str(uid),
+                    parse_mode="HTML",
+                    reply_markup=manual_review_buttons(order.id),
+                    reply_parameters=ReplyParameters(message_id=copied.message_id),
+                )
+                delivered += 1
+            except AiogramError:
+                log.exception("Cannot forward file receipt to reviewer %s", reviewer_id)
+        if delivered:
+            await mark_manual_receipt_forwarded(
+                factory, project_id=project_id, bot_id=bot.id,
+                buyer_id=uid, order_id=order.id,
+            )
+            await bot.send_message(
+                uid, tr(
+                    "📨 Чек отправлен администратору. После проверки "
+                    "покупка будет выдана автоматически.",
+                    "📨 Your receipt was sent for review. "
+                    "Files will be delivered after approval.",
+                ),
+            )
+        else:
+            await bot.send_message(
+                uid, tr(
+                    "⚠️ Не удалось доставить чек администратору. "
+                    "Ответьте на запрос выше ещё раз.",
+                    "⚠️ Could not deliver the receipt to your admin. "
+                    "Please reply to the receipt prompt again.",
+                ),
+            )
 
     @router.message(FileEditorFilter(pending))
     async def editor_message(message: Message, bot: Bot) -> None:
