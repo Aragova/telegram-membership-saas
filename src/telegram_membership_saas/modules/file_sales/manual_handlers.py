@@ -160,7 +160,8 @@ async def show_file_payment_options(
         )])
     if product.stars_price is not None and stars_enabled:
         rows.append([InlineKeyboardButton(
-            text="⭐ Telegram Stars · " + str(product.stars_price) + " XTR",
+            text=tr("⭐ Звёзды Telegram · ", "⭐ Telegram Stars · ")
+            + str(product.stars_price) + " XTR",
             callback_data="fs:buy:" + code,
             style="success",
         )])
