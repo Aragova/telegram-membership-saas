@@ -15,6 +15,9 @@ from telegram_membership_saas.modules.file_sales import (
     FileProduct,
     FilePurchase,
 )
+from telegram_membership_saas.modules.file_sales.payment_control_models import (
+    FileSaleMethodVisibility,
+)
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.merchant_identity import (
     MerchantChannelPeriod,
@@ -59,6 +62,7 @@ __all__ = [
     "FileFolder",
     "FileProduct",
     "FilePurchase",
+    "FileSaleMethodVisibility",
     "MerchantChannelPeriod",
     "MerchantIdentity",
     "MerchantProjectPeriod",

@@ -4,9 +4,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
+
 from telegram_membership_saas.modules.file_sales import manual_handlers as ui
 from telegram_membership_saas.modules.file_sales.manual_service import ManualMethod
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+
+
+@pytest.fixture(autouse=True)
+def _default_stars_visibility(monkeypatch):
+    # Buyer checkout tests isolate payment UI from a live database.
+    monkeypatch.setattr(ui, "file_stars_enabled", AsyncMock(return_value=True))
 
 
 def _bot():
@@ -198,3 +206,48 @@ async def test_payment_manager_can_open_review_queue_from_own_command(monkeypatc
         b.callback_data == "fm:reviews"
         for b in _buttons(bot.send_message.await_args.kwargs["reply_markup"])
     )
+
+
+async def test_auto_stars_switch_does_not_hide_manual_method_named_stars(monkeypatch):
+    product = uuid4()
+    method = ManualMethod(
+        "RUB", Decimal("100"), 2, uuid4(), "Telegram Stars ⭐",
+    )
+    monkeypatch.setattr(ui, "available_methods", AsyncMock(return_value=(method,)))
+    monkeypatch.setattr(ui, "file_stars_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(ui, "view_product", AsyncMock(return_value=(
+        SimpleNamespace(
+            id=product, name="Видео", stars_price=500,
+            folder_id=uuid4(), description="",
+        ), 1,
+    )))
+    bot = _bot()
+    await ui.show_file_payment_options(
+        bot, factory=MagicMock(), project_id=uuid4(),
+        buyer_id=123, product_id=product,
+    )
+    buttons = _buttons(bot.send_message.await_args.kwargs["reply_markup"])
+    assert any(b.text == "💳 Telegram Stars ⭐" for b in buttons)
+    assert not any(b.callback_data == "fs:buy:" + encode_uuid(product) for b in buttons)
+
+
+async def test_all_file_payment_methods_disabled_shows_back_navigation(monkeypatch):
+    product, folder = uuid4(), uuid4()
+    monkeypatch.setattr(ui, "available_methods", AsyncMock(return_value=()))
+    monkeypatch.setattr(ui, "file_stars_enabled", AsyncMock(return_value=False))
+    monkeypatch.setattr(ui, "view_product", AsyncMock(return_value=(
+        SimpleNamespace(
+            id=product, name="Видео", stars_price=500,
+            folder_id=folder, description="",
+        ), 1,
+    )))
+    bot = _bot()
+    await ui.show_file_payment_options(
+        bot, factory=MagicMock(), project_id=uuid4(),
+        buyer_id=123, product_id=product,
+    )
+    call = bot.send_message.await_args
+    assert "временно отключены" in call.args[1]
+    assert [b.callback_data for b in _buttons(call.kwargs["reply_markup"])] == [
+        "fs:folder:" + encode_uuid(folder),
+    ]

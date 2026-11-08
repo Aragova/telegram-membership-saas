@@ -17,6 +17,7 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
+from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.file_sales.manual_models import (
     FileManualOrder,
@@ -27,6 +28,9 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileFolder,
     FileProduct,
     FilePurchase,
+)
+from telegram_membership_saas.modules.file_sales.payment_control_models import (
+    FileSaleMethodVisibility,
 )
 from telegram_membership_saas.modules.identity.models import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import (
@@ -78,7 +82,7 @@ async def _owner(
         )
     )
     if bot is None:
-        raise PermissionError("Этот бот отключён")
+        raise PermissionError(tr("Этот бот отключён", "This bot is disabled"))
 
 
 async def _ready(
@@ -94,7 +98,7 @@ async def _ready(
         BotInstance.status == BotInstanceStatus.REGISTERED.value,
     ))
     if project is None or bot is None:
-        raise PermissionError("Магазин недоступен")
+        raise PermissionError(tr("Магазин недоступен", "This shop is unavailable"))
     if buyer_id is not None:
         banned = await session.scalar(
             select(ProjectCustomer.id)
@@ -106,7 +110,10 @@ async def _ready(
             )
         )
         if banned is not None:
-            raise PermissionError("Покупки в этом боте заблокированы")
+            raise PermissionError(tr(
+                "Покупки в этом боте заблокированы",
+                "Purchases in this bot are blocked",
+            ))
 
 
 async def list_folders(
@@ -147,7 +154,10 @@ async def add_folder(
 ) -> FileFolder:
     name = name.strip()
     if not 1 <= len(name) <= 100:
-        raise ValueError("Название папки: от 1 до 100 символов")
+        raise ValueError(tr(
+            "Название папки: от 1 до 100 символов",
+            "Folder name must contain 1–100 characters",
+        ))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -157,7 +167,7 @@ async def add_folder(
             FileFolder.project_id == project_id,
         ))
         if count >= FOLDER_LIMIT:
-            raise ValueError("Достигнут лимит папок")
+            raise ValueError(tr("Достигнут лимит папок", "Folder limit reached"))
         folder = FileFolder(project_id=project_id, name=name, status="active")
         session.add(folder)
         await session.flush()
@@ -172,11 +182,20 @@ async def create_product(
 ) -> FileProduct:
     name = name.strip()
     if not 1 <= len(name) <= 120:
-        raise ValueError("Название товара: от 1 до 120 символов")
+        raise ValueError(tr(
+            "Название товара: от 1 до 120 символов",
+            "Product name must contain 1–120 characters",
+        ))
     if stars is not None and not 1 <= stars <= 250000:
-        raise ValueError("Цена должна составлять от 1 до 250000 Stars")
+        raise ValueError(tr(
+            "Цена должна составлять от 1 до 250000 Stars",
+            "Stars price must be between 1 and 250000",
+        ))
     if len(description) > 1024:
-        raise ValueError("Описание: не более 1024 символов")
+        raise ValueError(tr(
+            "Описание: не более 1024 символов",
+            "Description must be at most 1024 characters",
+        ))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -188,22 +207,25 @@ async def create_product(
             FileFolder.status == "active",
         ))
         if folder is None:
-            raise ValueError("Папка недоступна")
+            raise ValueError(tr("Папка недоступна", "Folder unavailable"))
         total = await session.scalar(select(func.count(FileProduct.id)).where(
             FileProduct.project_id == project_id,
         ))
         if total >= PRODUCT_LIMIT:
-            raise ValueError("Достигнут лимит товаров")
+            raise ValueError(tr("Достигнут лимит товаров", "Product limit reached"))
         amount = None
         if manual_currency is not None:
             if manual_amount is None:
-                raise ValueError("Укажите цену в выбранной валюте")
+                raise ValueError(tr(
+                    "Укажите цену в выбранной валюте",
+                    "Enter a price in the selected currency",
+                ))
             asset = await session.scalar(select(CurrencyAsset).where(
                 CurrencyAsset.code == manual_currency,
                 CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
             ))
             if asset is None:
-                raise ValueError("Валюта не активна")
+                raise ValueError(tr("Валюта не активна", "Currency is inactive"))
             active_method = await session.scalar(
                 select(PaymentMethod.id)
                 .join(PaymentMethodCurrency, and_(
@@ -217,19 +239,31 @@ async def create_product(
                 ).limit(1)
             )
             if active_method is None:
-                raise ValueError("Нет активного способа оплаты для валюты")
+                raise ValueError(tr(
+                    "Нет активного способа оплаты для валюты",
+                    "No active payment method for this currency",
+                ))
             try:
                 amount = Decimal(manual_amount.strip().replace(",", "."))
             except InvalidOperation as exc:
-                raise ValueError("Неверная сумма файла") from exc
+                raise ValueError(tr("Неверная сумма файла", "Invalid file price")) from exc
             if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000000"):
-                raise ValueError("Укажите положительную цену файла")
+                raise ValueError(tr(
+                    "Укажите положительную цену файла",
+                    "Enter a positive file price",
+                ))
             with localcontext() as context:
                 context.prec = 50
                 if amount != amount.quantize(Decimal(1).scaleb(-asset.precision)):
-                    raise ValueError("Слишком много знаков после запятой")
+                    raise ValueError(tr(
+                        "Слишком много знаков после запятой",
+                        "Too many decimal places",
+                    ))
         elif stars is None:
-            raise ValueError("Нужна цена Stars или ручная цена")
+            raise ValueError(tr(
+                "Нужна цена Stars или ручная цена",
+                "Set a Stars price or a manual price",
+            ))
         product = FileProduct(
             project_id=project_id, folder_id=folder_id,
             telegram_bot_id=bot_id, name=name, stars_price=stars,
@@ -257,7 +291,7 @@ async def _product(
     )
     product = await session.scalar(q.with_for_update() if lock else q)
     if product is None:
-        raise ValueError("Товар не найден в этом боте")
+        raise ValueError(tr("Товар не найден в этом боте", "Product not found in this bot"))
     return product
 
 
@@ -267,20 +301,32 @@ async def update_draft_product(
     product_id: UUID, field: str, value: str,
 ) -> FileProduct:
     if field not in ("name", "description", "stars_price"):
-        raise ValueError("Недоступное поле товара")
+        raise ValueError(tr("Недоступное поле товара", "This product field cannot be edited"))
     if field == "name":
         value = value.strip()
         if not 1 <= len(value) <= 120:
-            raise ValueError("Название товара: от 1 до 120 символов")
+            raise ValueError(tr(
+                "Название товара: от 1 до 120 символов",
+                "Product name must contain 1–120 characters",
+            ))
     elif field == "description":
         value = value.strip()
         if len(value) > 1024:
-            raise ValueError("Описание: не более 1024 символов")
+            raise ValueError(tr(
+                "Описание: не более 1024 символов",
+                "Description must be at most 1024 characters",
+            ))
     else:
         if not value.isascii() or not value.isdecimal():
-            raise ValueError("Цена должна быть целым числом Stars")
+            raise ValueError(tr(
+                "Цена должна быть целым числом Stars",
+                "Stars price must be a whole number",
+            ))
         if not 1 <= int(value) <= 250000:
-            raise ValueError("Цена должна составлять от 1 до 250000 Stars")
+            raise ValueError(tr(
+                "Цена должна составлять от 1 до 250000 Stars",
+                "Stars price must be between 1 and 250000",
+            ))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -290,7 +336,7 @@ async def update_draft_product(
             session, project_id, bot_id, product_id, lock=True,
         )
         if product.status != "draft":
-            raise ValueError("Редактировать можно только черновик")
+            raise ValueError(tr("Редактировать можно только черновик", "Only drafts can be edited"))
         setattr(product, field, int(value) if field == "stars_price" else value)
         await session.flush()
         return product
@@ -302,9 +348,9 @@ async def add_product_asset(
     product_id: UUID, kind: str, file_id: str,
 ) -> int:
     if kind not in ("document", "photo", "video", "audio", "animation"):
-        raise ValueError("Неподдерживаемый тип файла")
+        raise ValueError(tr("Неподдерживаемый тип файла", "Unsupported file type"))
     if not 1 <= len(file_id) <= 512:
-        raise ValueError("Недопустимый Telegram файл")
+        raise ValueError(tr("Недопустимый Telegram файл", "Invalid Telegram file"))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -314,13 +360,19 @@ async def add_product_asset(
             session, project_id, bot_id, product_id, lock=True,
         )
         if product.status != "draft":
-            raise ValueError("Добавление файлов возможно только в черновик")
+            raise ValueError(tr(
+                "Добавление файлов возможно только в черновик",
+                "Files can only be added to drafts",
+            ))
         count = await session.scalar(select(func.count(FileAsset.id)).where(
             FileAsset.project_id == project_id,
             FileAsset.product_id == product_id,
         )) or 0
         if count >= ASSET_LIMIT:
-            raise ValueError("Не более 20 вложений в одном товаре")
+            raise ValueError(tr(
+                "Не более 20 вложений в одном товаре",
+                "Maximum 20 attachments per product",
+            ))
         session.add(FileAsset(
             project_id=project_id, product_id=product_id,
             kind=kind, file_id=file_id, sort_order=count,
@@ -334,7 +386,7 @@ async def change_product_status(
     product_id: UUID, status: str,
 ) -> None:
     if status not in ("published", "archived"):
-        raise ValueError("Недопустимый статус товара")
+        raise ValueError(tr("Недопустимый статус товара", "Invalid product status"))
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -347,14 +399,14 @@ async def change_product_status(
                 FileAsset.product_id == product_id,
             )) or 0
             if not assets:
-                raise ValueError("Сначала прикрепите файлы")
+                raise ValueError(tr("Сначала прикрепите файлы", "Attach files first"))
             folder = await session.scalar(select(FileFolder.id).where(
                 FileFolder.project_id == project_id,
                 FileFolder.id == item.folder_id,
                 FileFolder.status == "active",
             ))
             if folder is None:
-                raise ValueError("Папка архивирована")
+                raise ValueError(tr("Папка архивирована", "Folder is archived"))
             if item.stars_price is None:
                 manual_prices = await session.scalar(select(func.count(
                     FileManualPrice.product_id,
@@ -363,7 +415,10 @@ async def change_product_status(
                     FileManualPrice.product_id == product_id,
                 )) or 0
                 if not manual_prices:
-                    raise ValueError("Укажите хотя бы одну цену перед публикацией")
+                    raise ValueError(tr(
+                        "Укажите хотя бы одну цену перед публикацией",
+                        "Set at least one price before publishing",
+                    ))
         item.status = status
 
 
@@ -420,7 +475,7 @@ async def view_product(
             await _ready(session, project_id=project_id, bot_id=bot_id)
         product = await _product(session, project_id, bot_id, product_id)
         if actor_id is None and product.status != "published":
-            raise ValueError("Товар не продаётся")
+            raise ValueError(tr("Товар не продаётся", "Product is not for sale"))
         count = await session.scalar(select(func.count(FileAsset.id)).where(
             FileAsset.project_id == project_id,
             FileAsset.product_id == product_id,
@@ -453,21 +508,24 @@ async def create_stars_order(
         )
         item = await _product(session, project_id, bot_id, product_id, lock=True)
         if item.status != "published":
-            raise ValueError("Товар больше не продаётся")
+            raise ValueError(tr("Товар больше не продаётся", "This product is no longer for sale"))
         if item.stars_price is None:
-            raise ValueError("Этот товар не продаётся за Stars")
+            raise ValueError(tr(
+                "Этот товар не продаётся за Stars",
+                "This product is not sold for Stars",
+            ))
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.project_id == project_id, FileFolder.id == item.folder_id,
             FileFolder.status == "active",
         ))
         if folder is None:
-            raise ValueError("Товар больше не продаётся")
+            raise ValueError(tr("Товар больше не продаётся", "This product is no longer for sale"))
         count = await session.scalar(select(func.count(FileAsset.id)).where(
             FileAsset.project_id == project_id,
             FileAsset.product_id == product_id,
         )) or 0
         if count == 0:
-            raise ValueError("Товар не содержит файлов")
+            raise ValueError(tr("Товар не содержит файлов", "This product contains no files"))
         paid = await _load_paid(
             session, project_id=project_id, bot_id=bot_id,
             buyer_id=buyer_id, product_id=product_id,
@@ -492,6 +550,18 @@ async def create_stars_order(
                 product_name=manual_paid.product_name,
                 amount=item.stars_price, invoice_payload="", paid=True,
             )
+        # A disabled storefront method cannot create a new Stars invoice.
+        # Already-paid orders above remain downloadable.
+        disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
+            FileSaleMethodVisibility.project_id == project_id,
+            FileSaleMethodVisibility.telegram_bot_id == bot_id,
+            FileSaleMethodVisibility.method_id == UUID(int=0),
+        ))
+        if disabled is False:
+            raise ValueError(tr(
+                "Автоматическая оплата Stars для файлов отключена",
+                "Automatic Stars payment for files is disabled",
+            ))
         pending = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
             FilePurchase.telegram_bot_id == bot_id,
@@ -512,7 +582,10 @@ async def create_stars_order(
             FilePurchase.status == "pending",
         )) or 0
         if total >= PENDING_ORDER_LIMIT:
-            raise ValueError("Слишком много незавершённых покупок")
+            raise ValueError(tr(
+                "Слишком много незавершённых покупок",
+                "Too many unfinished purchases",
+            ))
         invoice_payload = "fs:" + uuid4().hex
         record = FilePurchase(
             project_id=project_id, product_id=product_id,
@@ -551,6 +624,13 @@ async def precheckout_allowed(
             ))
             if purchase is None:
                 return False
+            disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
+                FileSaleMethodVisibility.project_id == project_id,
+                FileSaleMethodVisibility.telegram_bot_id == bot_id,
+                FileSaleMethodVisibility.method_id == UUID(int=0),
+            ))
+            if disabled is False:
+                return False
             item = await _product(session, project_id, bot_id, purchase.product_id)
             return item.status == "published" and (
                 await session.scalar(select(func.count(FileAsset.id)).where(
@@ -569,7 +649,10 @@ async def confirm_stars_payment(
     charge_id: str,
 ) -> FilePurchase:
     if currency != "XTR" or not charge_id or not invoice_payload.startswith("fs:"):
-        raise ValueError("Это не платёж за цифровой товар")
+        raise ValueError(tr(
+            "Это не платёж за цифровой товар",
+            "This is not a digital file payment",
+        ))
     async with system_project_session_scope(factory, project_id) as session:
         purchase = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
@@ -578,13 +661,19 @@ async def confirm_stars_payment(
             FilePurchase.invoice_payload == invoice_payload,
         ).with_for_update())
         if purchase is None or amount != purchase.stars_amount:
-            raise PermissionError("Платёж не соответствует заказу этого бота")
+            raise PermissionError(tr(
+                "Платёж не соответствует заказу этого бота",
+                "Payment does not match this bot's order",
+            ))
         if purchase.status == "paid":
             if purchase.telegram_charge_id != charge_id:
-                raise PermissionError("Заказ уже оплачен другим платежом")
+                raise PermissionError(tr(
+                    "Заказ уже оплачен другим платежом",
+                    "This order was already paid by another payment",
+                ))
             return purchase
         if purchase.status != "pending":
-            raise ValueError("Неверное состояние заказа")
+            raise ValueError(tr("Неверное состояние заказа", "Invalid order status"))
         purchase.telegram_charge_id = charge_id
         purchase.status = "paid"
         purchase.paid_at = datetime.now(UTC)
@@ -613,7 +702,7 @@ async def list_purchases_page(
 ) -> tuple[int, tuple[PaidFileListing, ...]]:
     """Unified paid history, including manual and Stars purchases (archived too)."""
     if not 0 <= page <= 10000:
-        raise ValueError("Неверная страница")
+        raise ValueError(tr("Неверная страница", "Invalid page"))
     async with system_project_session_scope(factory, project_id) as session:
         combined = union_all(
             select(
@@ -669,13 +758,16 @@ async def purchased_assets(
                 FileManualOrder.status == "approved",
             ))
         if order is None:
-            raise PermissionError("Оплаченная покупка не найдена")
+            raise PermissionError(tr("Оплаченная покупка не найдена", "Paid purchase not found"))
         assets = tuple((await session.scalars(select(FileAsset).where(
             FileAsset.project_id == project_id,
             FileAsset.product_id == order.product_id,
         ).order_by(FileAsset.sort_order).limit(ASSET_LIMIT))).all())
         if not assets:
-            raise RuntimeError("Файлы временно недоступны. Обратитесь к поддержке")
+            raise RuntimeError(tr(
+                "Файлы временно недоступны. Обратитесь к поддержке",
+                "Files are temporarily unavailable. Contact support",
+            ))
         return order, assets
 
 
