@@ -20,7 +20,10 @@ log = logging.getLogger(__name__)
 
 def rich_file_checkout_enabled(bot_id: int) -> bool:
     """Disabled by default. Allow only explicit connected Telegram bot IDs."""
-    ids = get_settings().rich_file_checkout_bot_ids
+    settings = get_settings()
+    if hasattr(settings, "rich_messages_enabled"):
+        return settings.rich_messages_enabled
+    ids = settings.rich_file_checkout_bot_ids
     return str(bot_id) in {part.strip() for part in ids.split(",") if part.strip()}
 
 
