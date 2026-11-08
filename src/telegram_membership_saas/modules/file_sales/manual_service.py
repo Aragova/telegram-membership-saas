@@ -203,7 +203,10 @@ async def set_manual_price(
         await _owner(session, project_id=project_id, bot_id=bot_id, actor_id=actor_id)
         item = await _product(session, project_id, bot_id, product_id, lock=True)
         if item.status == "archived":
-            raise ValueError(tr("Сначала верните товар в продажу", "Restore the product for sale first"))
+            raise ValueError(tr(
+                "Сначала верните товар в продажу",
+                "Restore the product for sale first",
+            ))
         asset = await session.scalar(select(CurrencyAsset).where(
             CurrencyAsset.code == currency,
             CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
@@ -224,7 +227,10 @@ async def set_manual_price(
             ).limit(1)
         )
         if valid_method is None:
-            raise ValueError(tr("Нет активного способа оплаты для этой валюты", "No active payment method for this currency"))
+            raise ValueError(tr(
+                "Нет активного способа оплаты для этой валюты",
+                "No active payment method for this currency",
+            ))
         try:
             amount = Decimal(value.strip().replace(",", "."))
         except InvalidOperation as exc:
@@ -235,7 +241,10 @@ async def set_manual_price(
         with localcontext() as ctx:
             ctx.prec = 50
             if amount != amount.quantize(quantum):
-                raise ValueError(tr("Слишком много знаков после запятой для этой валюты", "Too many decimal places for this currency"))
+                raise ValueError(tr(
+                    "Слишком много знаков после запятой для этой валюты",
+                    "Too many decimal places for this currency",
+                ))
         record = await session.scalar(select(FileManualPrice).where(
             FileManualPrice.project_id == project_id,
             FileManualPrice.product_id == product_id,
@@ -295,7 +304,10 @@ async def create_manual_order(
         chosen = next((x for x in options if
                        x.currency == currency and x.method_id == method_id), None)
         if chosen is None:
-            raise ValueError(tr("Способ оплаты или цена больше недоступны", "Payment method or price is no longer available"))
+            raise ValueError(tr(
+                "Способ оплаты или цена больше недоступны",
+                "Payment method or price is no longer available",
+            ))
         old = await session.scalar(select(FileManualOrder).where(
             FileManualOrder.project_id == project_id,
             FileManualOrder.telegram_bot_id == bot_id,
@@ -326,7 +338,10 @@ async def create_manual_order(
             FileManualOrder.status.in_(("pending", "submitted")),
         )) or 0
         if pending_count >= 50:
-            raise ValueError(tr("Слишком много незавершённых покупок", "Too many unfinished purchases"))
+            raise ValueError(tr(
+                "Слишком много незавершённых покупок",
+                "Too many unfinished purchases",
+            ))
         order = FileManualOrder(
             project_id=project_id, telegram_bot_id=bot_id, telegram_user_id=buyer_id,
             product_id=product_id, product_name=product.name,
@@ -360,7 +375,10 @@ async def submit_manual_receipt(
     kind: str, file_id: str,
 ) -> tuple[FileManualOrder, tuple[int, ...]]:
     if kind not in ("photo", "document") or not file_id:
-        raise ValueError(tr("Прикрепите фото чека или документ", "Attach a receipt photo or document"))
+        raise ValueError(tr(
+            "Прикрепите фото чека или документ",
+            "Attach a receipt photo or document",
+        ))
     async with system_project_session_scope(factory, project_id) as session:
         await _ready(session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id)
         order = await session.scalar(select(FileManualOrder).where(
@@ -376,7 +394,10 @@ async def submit_manual_receipt(
             order.receipt_file_id = file_id
             order.submitted_at = datetime.now(UTC)
         elif order.status != "submitted":
-            raise ValueError(tr("Покупка уже рассмотрена или отменена", "This purchase was already reviewed or canceled"))
+            raise ValueError(tr(
+                "Покупка уже рассмотрена или отменена",
+                "This purchase was already reviewed or canceled",
+            ))
         owner = await session.scalar(
             select(TelegramUser.telegram_user_id)
             .join(Project, Project.owner_user_id == TelegramUser.id)
@@ -440,7 +461,10 @@ async def load_manual_review(
             FileManualOrder.status.in_(("pending", "submitted")),
         ))
         if order is None:
-            raise ValueError(tr("Заявка уже обработана или недоступна", "Request is already handled or unavailable"))
+            raise ValueError(tr(
+                "Заявка уже обработана или недоступна",
+                "Request is already handled or unavailable",
+            ))
         return order
 
 
@@ -467,7 +491,10 @@ async def close_pending_manual_order(
         if order is None:
             raise PermissionError(tr("Счёт недоступен", "Invoice unavailable"))
         if order.status != "pending" or order.receipt_file_id is not None:
-            raise ValueError(tr("Закрыть можно только счёт без отправленного чека", "Only invoices without a submitted receipt can be closed"))
+            raise ValueError(tr(
+                "Закрыть можно только счёт без отправленного чека",
+                "Only invoices without a submitted receipt can be closed",
+            ))
         order.status = "cancelled"
         order.reviewed_by = actor_id
         order.reviewed_at = datetime.now(UTC)
@@ -495,7 +522,10 @@ async def review_manual_order(
         if order.status == target:
             return order, False
         if order.status != "submitted" or not order.receipt_file_id:
-            raise ValueError(tr("Проверять можно только заявку с чеком", "Only requests with a receipt can be reviewed"))
+            raise ValueError(tr(
+                "Проверять можно только заявку с чеком",
+                "Only requests with a receipt can be reviewed",
+            ))
         order.status = target
         order.reviewed_at = datetime.now(UTC)
         order.reviewed_by = actor_id
@@ -518,5 +548,8 @@ async def cancel_manual_order(
         if row is None:
             raise PermissionError(tr("Это не ваша покупка", "This purchase is not yours"))
         if row.status != "pending":
-            raise ValueError(tr("Отменить можно только неоплаченную заявку", "Only unpaid requests can be canceled"))
+            raise ValueError(tr(
+                "Отменить можно только неоплаченную заявку",
+                "Only unpaid requests can be canceled",
+            ))
         row.status = "cancelled"
