@@ -35,8 +35,8 @@ from telegram_membership_saas.modules.payments import (
 from telegram_membership_saas.modules.payments.request_service import require_payment_permission
 from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects import Permission, Project, ProjectMember
-from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.modules.telegram_commerce.service import format_amount
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
 
 
