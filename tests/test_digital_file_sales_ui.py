@@ -175,3 +175,62 @@ async def test_active_owner_editor_does_not_capture_a_payment_update():
     )
     assert not await matcher(message)
     assert 123 in states
+
+
+async def test_paid_files_history_paginates_instead_of_hiding_old_receipts(
+    monkeypatch,
+):
+    project = uuid4()
+    router = ui.create_file_sales_router(MagicMock(), project_id=project)
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=False))
+    fetch = AsyncMock(return_value=(31, tuple(
+        SimpleNamespace(id=uuid4(), product_name="Old paid file")
+        for _ in range(8)
+    )))
+    monkeypatch.setattr(ui, "list_purchases_page", fetch)
+    bot = _bot()
+    bot.id = 9999
+    await cb(router)(query("mine:1"), bot)
+    assert fetch.await_args.kwargs["page"] == 1
+    keys = [
+        button.callback_data
+        for row in bot.send_message.await_args.kwargs[
+            "reply_markup"
+        ].inline_keyboard for button in row
+    ]
+    assert "fs:mine:0" in keys
+    assert "fs:mine:2" in keys
+
+
+async def test_stars_charge_db_failure_does_not_claim_paid_delivery(
+    monkeypatch,
+):
+    project = uuid4()
+    router = ui.create_file_sales_router(MagicMock(), project_id=project)
+    bot = _bot()
+    bot.id = 9999
+    confirmed = AsyncMock(side_effect=RuntimeError("database unavailable"))
+    monkeypatch.setattr(ui, "confirm_stars_payment", confirmed)
+    deliver = AsyncMock()
+    monkeypatch.setattr(ui, "purchased_assets", deliver)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=123),
+        chat=SimpleNamespace(type="private", id=123),
+        successful_payment=SimpleNamespace(
+            invoice_payload="fs:" + uuid4().hex,
+            currency="XTR", total_amount=40,
+            telegram_payment_charge_id="paid_charge",
+        ),
+    )
+    handler = next(
+        h.callback for h in router.message.handlers
+        if h.callback.__name__ == "file_payment_success"
+    )
+    await handler(message, bot)
+    deliver.assert_not_awaited()
+    sent = bot.send_message.await_args.args[1]
+    assert "не смог записать" in sent
+    assert "Проверить оплату" in sent
