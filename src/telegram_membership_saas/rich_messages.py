@@ -120,10 +120,10 @@ def _eligible(text: str, kwargs: dict) -> bool:
         rich_enabled()
         and InputRichMessage is not None
         and not _skip_rich.get()
+        and isinstance(text, str)
         and not text.startswith(_NATIVE_REPLY_MARKERS)
         and isinstance(kwargs.get("reply_markup"), InlineKeyboardMarkup)
         and kwargs.get("parse_mode") in ("HTML", None)
-        and isinstance(text, str)
         and bool(text.strip())
         and len(text.encode("utf-8")) < 32768
         and not kwargs.get("entities")
