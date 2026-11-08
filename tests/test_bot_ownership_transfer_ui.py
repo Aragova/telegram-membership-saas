@@ -10,6 +10,7 @@ from test_owner_subscribers_ui import _query as q
 from telegram_membership_saas.modules.owner_setup import transfer_handlers as ui
 from telegram_membership_saas.modules.owner_setup.transfers import TransferView
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+from telegram_membership_saas.telegram_adapter import create_dispatcher
 
 
 def _view(project, owner, recipient, *, status="pending"):
@@ -122,3 +123,44 @@ async def test_central_bot_shows_outgoing_accepted_transfer_to_old_owner(monkeyp
         b.callback_data == "xfr:finalask:" + encode_uuid(item.id)
         for row in buttons for b in row
     )
+
+
+async def test_transfer_command_is_reachable_in_all_central_deployment_modes(
+    monkeypatch,
+):
+    """Legacy staging TMS_TELEGRAM_PROJECT_ID must not hide /transfer."""
+    project, current_owner, recipient = uuid4(), uuid4(), uuid4()
+    pending = _view(project, current_owner, recipient)
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=recipient),
+    )
+    invites = AsyncMock(return_value=(pending,))
+    monkeypatch.setattr(ui, "list_transfer_invites", invites)
+    for scope, access in ((None, False), (uuid4(), False), (uuid4(), True)):
+        dispatcher = create_dispatcher(
+            MagicMock(), project_id=scope, enable_access=access,
+        )
+        transfer_router = next(
+            r for r in dispatcher.sub_routers
+            if r.name == "secure-owner-transfer"
+        )
+        handler = next(
+            h.callback for h in transfer_router.message.handlers
+            if h.callback.__name__ == "transfer_command"
+        )
+        bot = _bot()
+        message = SimpleNamespace(
+            text="/transfer",
+            chat=SimpleNamespace(type="private", id=123),
+            from_user=SimpleNamespace(
+                id=123, username="recipient", first_name="Recipient",
+            ),
+        )
+        await handler(message, bot)
+        assert bot.send_message.await_count == 1
+        markup = bot.send_message.await_args.kwargs["reply_markup"]
+        assert any(
+            button.callback_data == "xfr:view:" + encode_uuid(pending.id)
+            for row in markup.inline_keyboard for button in row
+        )
+        assert invites.await_args.kwargs["actor_id"] == recipient
