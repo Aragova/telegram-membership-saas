@@ -1,10 +1,10 @@
 """Payment review Rich cards are presentation-only, scoped and receipt-linked."""
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-import subprocess
-import sys
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
