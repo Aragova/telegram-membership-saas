@@ -56,6 +56,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True),
                   nullable=False, server_default=sa.func.now()),
         sa.Column("submitted_at", sa.DateTime(timezone=True)),
+        sa.Column("receipt_forwarded_at", sa.DateTime(timezone=True)),
         sa.Column("paid_at", sa.DateTime(timezone=True)),
         sa.Column("reviewed_by", sa.Uuid()),
         sa.Column("last_delivered_at", sa.DateTime(timezone=True)),
@@ -117,9 +118,11 @@ def upgrade() -> None:
             END IF;
             IF OLD.status = 'paid' THEN
                 IF (
-                    NEW.status, NEW.submitted_at, NEW.paid_at, NEW.reviewed_by
+                    NEW.status, NEW.submitted_at, NEW.receipt_forwarded_at,
+                    NEW.paid_at, NEW.reviewed_by
                 ) IS DISTINCT FROM (
-                    OLD.status, OLD.submitted_at, OLD.paid_at, OLD.reviewed_by
+                    OLD.status, OLD.submitted_at, OLD.receipt_forwarded_at,
+                    OLD.paid_at, OLD.reviewed_by
                 ) THEN
                     RAISE EXCEPTION 'Confirmed file payment cannot change'
                         USING ERRCODE = '42501';
