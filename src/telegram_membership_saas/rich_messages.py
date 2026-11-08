@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import re
-from html import escape
 from contextlib import contextmanager
 from contextvars import ContextVar
+from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
@@ -47,7 +47,9 @@ def _tableize_metrics(lines: list[str]) -> list[str]:
         if len(group) >= 2:
             result.append("<table bordered compact>")
             for label, value in group:
-                result.append("<tr><th>" + label + "</th><td>" + value + "</td></tr>")
+                result.append(
+                    "<tr><th>" + label + "</th><td>" + value + "</td></tr>"
+                )
             result.append("</table>")
         else:
             result.extend(label + ": " + value for label, value in group)
@@ -160,7 +162,7 @@ class RichUiBot(Bot):
                     log.info("Telegram sendRichMessage unavailable, using HTML")
         return await super().send_message(chat_id, text, **kwargs)
 
-    async def edit_message_text(self, text, **kwargs):
+    async def edit_message_text(self, text=None, **kwargs):
         if _eligible(text, kwargs):
             # editMessageText supports the 'rich_message' field since 10.1.
             # Validate installed aiogram schema before attempting to use it.
