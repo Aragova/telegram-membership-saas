@@ -123,7 +123,7 @@ class FilePrice(Base):
         String(16), ForeignKey("currency_assets.code", ondelete="RESTRICT"),
         primary_key=True,
     )
-    amount: Mapped["Decimal"] = mapped_column(Numeric(20, 4), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
 
 
 class FileManualPurchase(Base):
@@ -152,7 +152,7 @@ class FileManualPurchase(Base):
     telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     product_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    amount: Mapped["Decimal"] = mapped_column(Numeric(20, 4), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
     currency_code: Mapped[str] = mapped_column(String(16), nullable=False)
     payment_method_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     payment_method_name: Mapped[str] = mapped_column(String(120), nullable=False)
