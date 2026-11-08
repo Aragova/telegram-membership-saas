@@ -334,8 +334,8 @@ async def _send_catalog(
     # instead of piling up above the current screen.
     if (
         notice is None
-        and rich_subscription_enabled(bot.id)
         and inspect.iscoroutinefunction(getattr(bot, "send_rich_message", None))
+        and rich_subscription_enabled(bot.id)
     ):
         rich_html = None
         if price_id is not None:
