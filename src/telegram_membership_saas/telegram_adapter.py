@@ -30,6 +30,7 @@ from telegram_membership_saas.modules.telegram_access import create_telegram_acc
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
 from telegram_membership_saas.modules.telegram_commerce import create_telegram_commerce_router
+from telegram_membership_saas.rich_messages import RichUiBot
 
 
 def create_dispatcher(
