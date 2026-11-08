@@ -13,11 +13,12 @@ from typing import Literal
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
-from aiogram.types import (
-    CopyTextButton,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+try:
+    from aiogram.types import CopyTextButton
+except ImportError:  # Older supported aiogram installations (3.13)
+    CopyTextButton = None
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.rich_messages import (
@@ -62,6 +63,8 @@ def copyable_checkout_keyboard(
     original: InlineKeyboardMarkup, instruction: str,
 ) -> InlineKeyboardMarkup:
     """Add a native Telegram clipboard button without changing any callbacks."""
+    if CopyTextButton is None:
+        return original
     detail = copyable_payment_detail(instruction)
     if detail is None:
         return original
