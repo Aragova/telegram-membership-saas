@@ -144,3 +144,57 @@ async def test_untrusted_file_receipt_prompt_is_ignored():
     authentic.from_user.id = 7777
     assert ui._receipt_order_id(message, 9999) is None
     assert not await ui.ManualReceiptFilter()(message, _bot())
+
+
+async def test_file_picker_preserves_escaped_description(monkeypatch):
+    product = uuid4()
+    monkeypatch.setattr(ui, "available_methods", AsyncMock(return_value=(
+        ManualMethod("RUB", Decimal("525"), 2, uuid4(), "Bank"),
+    )))
+    monkeypatch.setattr(ui, "view_product", AsyncMock(return_value=(
+        SimpleNamespace(
+            name="Video", description="Full HD <1080p> & extras",
+            stars_price=None, folder_id=uuid4(),
+        ), 1,
+    )))
+    bot = _bot()
+    await ui.show_file_payment_options(
+        bot, factory=MagicMock(), project_id=uuid4(),
+        buyer_id=123, product_id=product,
+    )
+    body = bot.send_message.await_args.args[1]
+    assert "Full HD &lt;1080p&gt; &amp; extras" in body
+    assert "525 RUB" in body
+
+
+async def test_payment_manager_can_open_review_queue_from_own_command(monkeypatch):
+    from telegram_membership_saas.telegram_menus import commands_for
+
+    assert [c.command for c in commands_for("payment_manager", "ru")] == [
+        "menu", "filepayments", "support",
+    ]
+    project = uuid4()
+    router = ui.create_manual_file_router(MagicMock(), project_id=project)
+    handler = next(
+        h.callback for h in router.message.handlers
+        if h.callback.__name__ == "file_payment_reviews_command"
+    )
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(
+        return_value=uuid4(),
+    ))
+    pending = AsyncMock(return_value=(37, ()))
+    monkeypatch.setattr(ui, "pending_manual_reviews", pending)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(
+            id=123, username="manager", first_name="Manager",
+        ),
+        chat=SimpleNamespace(type="private", id=123),
+    )
+    bot = _bot()
+    await handler(message, bot)
+    assert "37" in bot.send_message.await_args.args[1]
+    assert pending.await_args.kwargs["project_id"] == project
+    assert any(
+        b.callback_data == "fm:reviews"
+        for b in _buttons(bot.send_message.await_args.kwargs["reply_markup"])
+    )
