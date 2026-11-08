@@ -443,7 +443,10 @@ def create_file_sales_router(
                 await folders(bot, uid, who if action == "adminfolders" else None)
             elif action == "admin":
                 if not admin:
-                    raise PermissionError(tr("Нет доступа к управлению товарами", "You cannot manage these products"))
+                    raise PermissionError(tr(
+                        "Нет доступа к управлению товарами",
+                        "You cannot manage these products",
+                    ))
                 pending.pop(uid, None)
                 await bot.send_message(
                     uid,
@@ -535,7 +538,10 @@ def create_file_sales_router(
                     raise PermissionError(tr("Нет прав", "Access denied"))
                 state = pending.get(uid)
                 if not state or state.get("stage") != "currency":
-                    raise ValueError(tr("Срок выбора валюты истёк", "Currency selection has expired"))
+                    raise ValueError(tr(
+                        "Срок выбора валюты истёк",
+                        "Currency selection has expired",
+                    ))
                 code = action.split(":", 1)[1]
                 choices = await available_price_currencies(
                     factory, project_id=project_id, bot_id=bot.id, actor_id=who,
@@ -579,7 +585,10 @@ def create_file_sales_router(
                     product_id=item_id, actor_id=who,
                 )
                 if product.status != "draft":
-                    raise ValueError(tr("Можно изменить только черновик", "Only drafts can be edited"))
+                    raise ValueError(tr(
+                        "Можно изменить только черновик",
+                        "Only drafts can be edited",
+                    ))
                 pending[uid] = {
                     "stage": operation, "product": item_id,
                     "expires": monotonic() + ENTRY_SECONDS,
@@ -709,7 +718,10 @@ def create_file_sales_router(
             stage = state["stage"]
             if stage == "folder":
                 if not message.text:
-                    raise ValueError(tr("Введите название папки текстом", "Enter the folder name as text"))
+                    raise ValueError(tr(
+                        "Введите название папки текстом",
+                        "Enter the folder name as text",
+                    ))
                 folder = await add_folder(
                     factory, project_id=project_id, bot_id=bot.id,
                     actor_id=who, name=message.text,
@@ -721,7 +733,10 @@ def create_file_sales_router(
                 await show_products(bot, uid, folder.id, who)
             elif stage == "name":
                 if not message.text or not 1 <= len(message.text.strip()) <= 120:
-                    raise ValueError(tr("Название товара — от 1 до 120 символов", "Product name must contain 1–120 characters"))
+                    raise ValueError(tr(
+                        "Название товара — от 1 до 120 символов",
+                        "Product name must contain 1–120 characters",
+                    ))
                 state["name"] = message.text.strip()
                 state["stage"] = "currency"
                 choices = await available_price_currencies(
@@ -747,10 +762,16 @@ def create_file_sales_router(
                 currency = state["currency"]
                 if currency == "XTR":
                     if not text.isascii() or not text.isdecimal():
-                        raise ValueError(tr("Укажите целое число Stars", "Enter a whole number of Stars"))
+                        raise ValueError(tr(
+                            "Укажите целое число Stars",
+                            "Enter a whole number of Stars",
+                        ))
                     stars = int(text)
                     if not 1 <= stars <= 250000:
-                        raise ValueError(tr("Цена Stars: от 1 до 250000", "Stars price must be between 1 and 250000"))
+                        raise ValueError(tr(
+                            "Цена Stars: от 1 до 250000",
+                            "Stars price must be between 1 and 250000",
+                        ))
                     product = await create_product(
                         factory, project_id=project_id, bot_id=bot.id,
                         actor_id=who, folder_id=state["folder"],
@@ -785,7 +806,10 @@ def create_file_sales_router(
             elif stage == "upload":
                 media = _media_id(message)
                 if media is None:
-                    raise ValueError(tr("Нужен файл, фото, видео, GIF или аудио", "Attach a file, photo, video, GIF or audio"))
+                    raise ValueError(tr(
+                        "Нужен файл, фото, видео, GIF или аудио",
+                        "Attach a file, photo, video, GIF or audio",
+                    ))
                 kind, file_id = media
                 amount = await add_product_asset(
                     factory, project_id=project_id, bot_id=bot.id,
