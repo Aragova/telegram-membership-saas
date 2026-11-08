@@ -50,6 +50,13 @@ from telegram_membership_saas.modules.file_sales.service import (
     view_product,
 )
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.payment_review_ui import (
+    rich_file_close_warning,
+    rich_file_review,
+    rich_file_review_result,
+    rich_file_reviews_queue,
+    send_payment_review,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     CURRENCY_ICONS,
@@ -470,13 +477,18 @@ def create_manual_file_router(
                     ))
                 if navigation:
                     rows.append(navigation)
-                await bot.send_message(
-                    uid,
-                    tr("🧾 <b>Заявки на оплату файлов</b>",
-                       "🧾 <b>File payment reviews</b>")
-                    + ("\n" + tr("Нет новых заявок.", "No pending reviews.")
-                       if not total else "\n" + tr("Страница ", "Page ")
-                       + str(page + 1) + " / " + str((total + 7) // 8)),
+                await send_payment_review(
+                    bot, chat_id=uid,
+                    rich_html=rich_file_reviews_queue(
+                        items, page=page, total=total,
+                    ),
+                    legacy_text=(
+                        tr("🧾 <b>Заявки на оплату файлов</b>",
+                           "🧾 <b>File payment reviews</b>")
+                        + ("\n" + tr("Нет новых заявок.", "No pending reviews.")
+                           if not total else "\n" + tr("Страница ", "Page ")
+                           + str(page + 1) + " / " + str((total + 7) // 8))
+                    ),
                     parse_mode="HTML", reply_markup=_keyboard(rows),
                 )
             elif action.startswith("review:"):
@@ -494,11 +506,17 @@ def create_manual_file_router(
                     await bot.send_photo(uid, order.receipt_file_id)
                 elif order.receipt_kind == "document":
                     await bot.send_document(uid, order.receipt_file_id)
-                await bot.send_message(
-                    uid, "📦 <b>" + escape(order.product_name) + "</b>\n"
-                    + "💰 " + escape(_short_amount(order.amount)) + " "
-                    + escape(order.currency_code) + "\n"
-                    + "💳 " + escape(order.payment_method_name),
+                await send_payment_review(
+                    bot, chat_id=uid,
+                    rich_html=rich_file_review(
+                        order, receipt_attached=bool(order.receipt_file_id),
+                    ),
+                    legacy_text=(
+                        "📦 <b>" + escape(order.product_name) + "</b>\n"
+                        + "💰 " + escape(_short_amount(order.amount)) + " "
+                        + escape(order.currency_code) + "\n"
+                        + "💳 " + escape(order.payment_method_name)
+                    ),
                     parse_mode="HTML",
                     reply_markup=_keyboard(
                         [[_button(
@@ -531,8 +549,10 @@ def create_manual_file_router(
                         "Счёт уже изменился или недоступен",
                         "This invoice has changed or is unavailable",
                     ))
-                await bot.send_message(
-                    uid, tr(
+                await send_payment_review(
+                    bot, chat_id=uid,
+                    rich_html=rich_file_close_warning(order),
+                    legacy_text=tr(
                         "⚠️ <b>Закрытие неоплаченного счёта</b>\n\n"
                         "Перед закрытием проверьте поступления на банковском счёте: "
                         "покупатель мог перевести деньги, но не прислать чек. "
@@ -591,11 +611,15 @@ def create_manual_file_router(
                     actor_id=actor, order_id=decode_uuid(action.split(":")[1]),
                     approve=approve,
                 )
-                await bot.send_message(
-                    uid, tr("✅ Оплата подтверждена." if approve
-                            else "❌ Заявка отклонена.",
-                            "✅ Payment approved." if approve
-                            else "❌ Payment rejected."),
+                await send_payment_review(
+                    bot, chat_id=uid,
+                    rich_html=rich_file_review_result(order, approve=approve),
+                    legacy_text=tr(
+                        "✅ Оплата подтверждена." if approve
+                        else "❌ Заявка отклонена.",
+                        "✅ Payment approved." if approve
+                        else "❌ Payment rejected.",
+                    ),
                 )
                 if changed:
                     try:
@@ -668,12 +692,18 @@ def create_manual_file_router(
                         await bot.send_photo(reviewer, order.receipt_file_id)
                     else:
                         await bot.send_document(reviewer, order.receipt_file_id)
-                    await bot.send_message(
-                        reviewer, "🧾 <b>" + escape(order.product_name) + "</b>\n"
-                        + "💰 " + escape(_short_amount(order.amount)) + " "
-                        + escape(order.currency_code) + "\n"
-                        + tr("Проверьте поступление средств.",
-                             "Verify receipt of funds."),
+                    await send_payment_review(
+                        bot, chat_id=reviewer,
+                        rich_html=rich_file_review(
+                            order, receipt_attached=True,
+                        ),
+                        legacy_text=(
+                            "🧾 <b>" + escape(order.product_name) + "</b>\n"
+                            + "💰 " + escape(_short_amount(order.amount)) + " "
+                            + escape(order.currency_code) + "\n"
+                            + tr("Проверьте поступление средств.",
+                                 "Verify receipt of funds.")
+                        ),
                         parse_mode="HTML",
                         reply_markup=_keyboard([[
                             _button(tr("✅ Подтвердить", "✅ Approve"),
