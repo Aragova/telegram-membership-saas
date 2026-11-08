@@ -32,6 +32,9 @@ from telegram_membership_saas.modules.file_sales.manual_service import (
     set_manual_price,
     submit_manual_receipt,
 )
+from telegram_membership_saas.modules.file_sales.payment_controls import (
+    file_stars_enabled,
+)
 from telegram_membership_saas.modules.file_sales.service import (
     mark_file_delivery,
     purchased_assets,
@@ -118,8 +121,21 @@ async def show_file_payment_options(
         factory, project_id=project_id, bot_id=bot.id,
         product_id=product_id, buyer_id=buyer_id,
     )
-    if not options and product.stars_price is None:
-        raise ValueError("Для файла пока нет доступных способов оплаты")
+    stars_enabled = await file_stars_enabled(
+        factory, project_id=project_id, bot_id=bot.id,
+    )
+    if not options and (product.stars_price is None or not stars_enabled):
+        await bot.send_message(
+            buyer_id, tr(
+                "⏸️ Способы оплаты этого файла временно отключены.",
+                "⏸️ Payment methods for this file are temporarily disabled.",
+            ),
+            reply_markup=_keyboard([[InlineKeyboardButton(
+                text=tr("⬅️ Товары", "⬅️ Products"),
+                callback_data="fs:folder:" + encode_uuid(product.folder_id),
+            )]]),
+        )
+        return
     codes = tuple(sorted({option.currency for option in options}, key=lambda c: (
         CURRENCY_ORDER.index(c) if c in CURRENCY_ORDER else 99, c,
     )))
@@ -142,7 +158,7 @@ async def show_file_payment_options(
             "💳 " + option.method_name[:36],
             "method:" + code + ":" + chosen + ":" + encode_uuid(option.method_id),
         )])
-    if product.stars_price is not None:
+    if product.stars_price is not None and stars_enabled:
         rows.append([InlineKeyboardButton(
             text="⭐ Telegram Stars · " + str(product.stars_price) + " XTR",
             callback_data="fs:buy:" + code,
