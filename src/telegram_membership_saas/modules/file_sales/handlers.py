@@ -180,7 +180,7 @@ def create_file_sales_router(
             user_id,
             tr("📁 <b>Продажа файлов</b>\n"
                "Выберите удобный способ оплаты. После ручной проверки "
-               "или подтверждения Stars файлы придут автоматически.",
+               "или оплаты звёздами Telegram файлы придут автоматически.",
                "📁 <b>Digital files</b>\n"
                "Choose your payment method. Files arrive after manual "
                "approval or confirmed Stars payment."),
@@ -223,8 +223,8 @@ def create_file_sales_router(
                 "🟢 Включён · 🔴 Выключен\n\n"
                 "Эти настройки действуют только на продажи файлов "
                 "в данном боте. Подписки и другие боты не затрагиваются.\n"
-                "Ручной метод «Telegram Stars» и автоматические "
-                "Stars (XTR) — разные способы оплаты.\n"
+                "Ручной метод «Telegram Stars» и автоматическая оплата "
+                "звёздами Telegram (XTR) — разные способы оплаты.\n"
                 "Созданные заявки и оплаченные файлы сохраняются.",
                 "💳 <b>File payment methods</b>\n"
                 "🟢 Enabled · 🔴 Disabled\n\n"
@@ -287,7 +287,7 @@ def create_file_sales_router(
         text = (
             "📦 <b>" + escape(item.name) + "</b>\n"
             + (escape(item.description) + "\n" if item.description else "")
-            + (tr("⭐ Цена Stars: ", "⭐ Stars price: ")
+            + (tr("⭐ Цена в звёздах Telegram: ", "⭐ Telegram Stars price: ")
                + str(item.stars_price) + " ⭐\n"
                if item.stars_price is not None else "")
             + tr("📎 Файлов: ", "📎 Files: ") + str(count)
