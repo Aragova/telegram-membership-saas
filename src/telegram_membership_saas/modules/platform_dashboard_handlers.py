@@ -216,31 +216,63 @@ def _summary_text(snapshot) -> str:
     ])
     return "\n".join(text)
 
+_RUNTIME_ICONS = {
+    "running": "🟢",
+    "starting": "🟡",
+    "stale": "🟠",
+    "stopped": "🔴",
+    "failed": "🔴",
+    "disabled": "⚪",
+    "deleting": "⚪",
+    "registered": "⚪",
+    "unknown": "⚪",
+}
+
+
+def _bot_list_button_label(bot: dict) -> str:
+    """One tappable row: unique bot name, state and three unchanged metrics."""
+    marker = _RUNTIME_ICONS.get(bot["runtime_state"], "⚪")
+    metrics = (
+        f" · 💎{bot['plans']} 🔐{bot['subscriptions']}"
+        f" 💳{bot['payments_period']}"
+    )
+    handle = "@" + bot["username"]
+    # Keep useful metrics visible even for the longest Telegram usernames.
+    room = max(1, 64 - len(marker) - 1 - len(metrics))
+    if len(handle) > room:
+        handle = handle[:max(1, room - 1)] + "…"
+    return f"{marker} {handle}{metrics}"
+
+
 def _bot_list(snapshot) -> str:
+    """The bot handles and per-bot figures are in the buttons, not duplicated."""
     lines = [
         tr("✦ <b>Подключённые боты</b>", "✦ <b>Connected bots</b>"),
         tr("Период: ", "Period: ") + _period_label(snapshot.period),
+        tr("На странице: ", "On this page: ") + str(len(snapshot.bots)),
         "",
     ]
-    if not snapshot.bots:
+    if snapshot.bots:
+        lines.extend([
+            tr("🟢 работают · 🟡 запускаются · 🟠 нет сигнала",
+               "🟢 running · 🟡 starting · 🟠 stale"),
+            tr("🔴 остановлены/ошибка · ⚪ другие статусы",
+               "🔴 stopped/failed · ⚪ other states"),
+            tr("💎 тарифы · 🔐 подписки · 💳 оплаты за период",
+               "💎 plans · 🔐 subscriptions · 💳 period payments"),
+            "",
+            tr("👇 Выберите бота ниже", "👇 Select a bot below"),
+        ])
+    else:
         lines.append(tr("На этой странице нет подключений.",
                         "No connections on this page."))
-    for idx, bot in enumerate(snapshot.bots, 1):
-        lines.extend([
-            f"<b>{idx + snapshot.page * PAGE_SIZE}. "
-            + escape("@" + bot["username"]) + "</b>",
-            tr("Работа: ", "Runtime: ")
-            + escape(_status_label(bot["runtime_state"])),
-            tr("Тарифов: ", "Plans: ") + str(bot["plans"])
-            + tr(" · Подписок: ", " · Subscriptions: ") + str(bot["subscriptions"])
-            + tr(" · Оплат: ", " · Payments: ") + str(bot["payments_period"]),
-            "",
-        ])
-    lines.append(
+    lines.extend([
+        "",
         tr("Страница ", "Page ") + str(snapshot.page + 1)
-        + tr(" из ", " of ") + str(max(1, snapshot.pages))
-    )
+        + tr(" из ", " of ") + str(max(1, snapshot.pages)),
+    ])
     return "\n".join(lines)
+
 
 def _bot_details(bot: dict, *, period: str) -> str:
     currency_rows = bot.get("gmv_by_currency") or []
@@ -698,7 +730,7 @@ def create_platform_dashboard_router(
                 rows = []
                 for idx, item in enumerate(report.bots):
                     rows.append([_button(
-                        "🤖 @" + item["username"][:43],
+                        _bot_list_button_label(item),
                         f"detail:{period}:{page}:{idx}:"
                         + encode_uuid(UUID(item["bot_instance_id"])),
                     )])

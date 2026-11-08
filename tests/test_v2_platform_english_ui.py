@@ -60,8 +60,11 @@ def test_platform_english_reporting_and_periods() -> None:
         assert "Approved payments" in detail
         listing = platform_ui._bot_list(snapshot)
         assert "Connected bots" in listing
-        assert "Plans: 2" in listing
-        assert "Runtime: running" in listing
+        assert "Page 1 of 1" in listing
+        assert "@test_member_bot" not in listing
+        assert "💎 plans" in listing and "🔐 subscriptions" in listing
+        button = platform_ui._bot_list_button_label(snapshot.bots[0])
+        assert button == "🟢 @test_member_bot · 💎2 🔐3 💳3"
     finally:
         _language.reset(token)
 

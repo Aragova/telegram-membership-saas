@@ -180,7 +180,12 @@ async def test_operator_navigation_periods_and_per_bot_details(monkeypatch):
 
     callback=_callback("plat:bots:7:0")
     await _callback_handler(router)(callback,bot)
-    assert "my_premium_bot" in bot.send_message.await_args.args[1]
+    assert "my_premium_bot" not in bot.send_message.await_args.args[1]
+    assert any(
+        "@my_premium_bot" in button.text
+        and "💎2 🔐3 💳3" in button.text
+        for button in _buttons(bot)
+    )
     stable = "plat:detail:7:0:0:" + encode_uuid(BOT_INSTANCE_ID)
     assert stable in [
         b.callback_data for b in _buttons(bot)
@@ -317,3 +322,125 @@ async def test_platform_edit_falls_back_only_when_message_cannot_be_edited():
         reply_markup=ui._keyboard([[ui._button("Back", "home:30:0")]]),
     )
     bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.parametrize(("state", "emoji"), [
+    ("running", "🟢"),
+    ("starting", "🟡"),
+    ("stale", "🟠"),
+    ("stopped", "🔴"),
+    ("failed", "🔴"),
+    ("disabled", "⚪"),
+    ("deleting", "⚪"),
+    ("registered", "⚪"),
+    ("unknown", "⚪"),
+    ("unexpected", "⚪"),
+])
+def test_compact_bot_button_keeps_status_handle_and_exact_metrics(state, emoji):
+    bot = dict(_snapshot().bots[0])
+    bot["runtime_state"] = state
+    bot["username"] = "telegram_long_bot_username_123456"
+    bot["plans"] = 139
+    bot["subscriptions"] = 6000
+    bot["payments_period"] = 487
+    result = ui._bot_list_button_label(bot)
+    assert result.startswith(emoji + " @telegram_")
+    assert result.endswith(" · 💎139 🔐6000 💳487")
+    assert len(result) <= 64
+    assert "<" not in result
+
+
+@pytest.mark.parametrize(("language", "heading", "period"), [
+    ("ru", "Подключённые боты", "30 дней"),
+    ("en", "Connected bots", "30 days"),
+])
+def test_compact_list_contains_legend_page_but_no_duplicated_usernames(
+    language, heading, period,
+):
+    from dataclasses import replace
+
+    from telegram_membership_saas.localization import _language
+
+    originals = _snapshot()
+    sample = []
+    for idx, status in enumerate(("running", "stale", "disabled", "failed")):
+        item = dict(originals.bots[0])
+        item.update(
+            bot_instance_id=str(uuid4()), username=f"premium_customer_{idx}_bot",
+            runtime_state=status, plans=idx + 2,
+            subscriptions=idx * 3, payments_period=idx * 2,
+        )
+        sample.append(item)
+    snapshot = replace(originals, bots=tuple(sample), page=1, pages=8)
+    token = _language.set(language)
+    try:
+        summary = ui._bot_list(snapshot)
+        labels = [ui._bot_list_button_label(item) for item in sample]
+    finally:
+        _language.reset(token)
+    assert heading in summary and period in summary
+    assert ("Страница 2 из 8" if language == "ru" else "Page 2 of 8") in summary
+    assert "💎" in summary and "🔐" in summary and "💳" in summary
+    assert all(item["username"] not in summary for item in sample)
+    assert all(
+        ("@" + item["username"]) in label
+        for item, label in zip(sample, labels, strict=True)
+    )
+    assert all(len(label) <= 64 for label in labels)
+    assert all(item["plans"] >= 2 for item in sample)
+
+
+async def test_compact_bot_list_pagination_and_rich_detail_edit_stay_stable(
+    monkeypatch,
+):
+    from dataclasses import replace
+
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    original = _snapshot(period="7", page=1)
+    bot_item = dict(original.bots[0])
+    bot_item.update(
+        username="another_customer_bot", runtime_state="stale",
+        plans=5, subscriptions=8, payments_period=11,
+    )
+    report = replace(original, bots=(bot_item,), pages=8)
+    monkeypatch.setattr(ui, "platform_report", AsyncMock(return_value=report))
+    router = ui.create_platform_dashboard_router(MagicMock(), settings=_settings())
+    handler = _callback_handler(router)
+    bot = _bot()
+    bot.edit_message_text = AsyncMock()
+    list_cb = _callback("plat:bots:7:1")
+    list_cb.message.message_id = 517
+    await handler(list_cb, bot)
+    bot.send_message.assert_not_awaited()
+    kwargs = bot.edit_message_text.await_args.kwargs
+    assert kwargs["message_id"] == 517
+    assert "another_customer_bot" not in bot.edit_message_text.await_args.args[0]
+    rows = kwargs["reply_markup"].inline_keyboard
+    buttons = [button for row in rows for button in row]
+    current_id = "plat:detail:7:1:0:" + encode_uuid(BOT_INSTANCE_ID)
+    assert [button.callback_data for button in buttons] == [
+        current_id, "plat:bots:7:0", "plat:bots:7:2", "plat:home:7:0",
+    ]
+    assert buttons[0].text.startswith("🟠 @another_customer_bot")
+    assert "💎5 🔐8 💳11" in buttons[0].text
+
+    detail_cb = _callback(current_id)
+    detail_cb.message.message_id = 517
+    await handler(detail_cb, bot)
+    assert bot.edit_message_text.await_args.kwargs["message_id"] == 517
+    assert "Статистика бота" in bot.edit_message_text.await_args.args[0]
+    assert bot.edit_message_text.await_args.kwargs[
+        "reply_markup"
+    ].inline_keyboard[0][0].callback_data == "plat:bots:7:1"
+    bot.send_message.assert_not_awaited()
+
+
+def test_compact_bot_list_handles_empty_page_without_actions():
+    from dataclasses import replace
+
+    empty = replace(_snapshot(), bots=(), page=0, pages=1)
+    summary = ui._bot_list(empty)
+    assert "На этой странице нет подключений." in summary
+    assert "Страница 1 из 1" in summary
+    assert "👇 Выберите бота" not in summary
+
