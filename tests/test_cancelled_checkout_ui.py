@@ -59,6 +59,7 @@ def test_canceled_keyboard_contains_only_disabled_status_and_safe_navigation(
     assert markup is not None
     assert markup.inline_keyboard[0][0].text == status
     assert markup.inline_keyboard[0][0].disabled is not None
+    assert markup.inline_keyboard[0][0].style == "danger"
     assert markup.inline_keyboard[0][0].callback_data is None
     assert markup.inline_keyboard[1] == [nav]
     assert [
@@ -188,6 +189,7 @@ async def test_subscription_cancel_changes_db_then_retires_and_returns_to_catalo
     retire.assert_awaited_once()
     nav = retire.await_args.kwargs["navigation"]
     assert nav.callback_data == "checkoutnav:catalog"
+    assert nav.style == "primary"
     assert retire.await_args.kwargs["callback"] is callback
     catalog.assert_awaited_once()
     callback.answer.assert_awaited_once()

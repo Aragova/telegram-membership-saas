@@ -352,7 +352,7 @@ async def _send_catalog(
     # instead of piling up above the current screen.
     rich_failed = False
     if (
-        notice is None
+        (notice is None or price_id is None)
         and inspect.iscoroutinefunction(getattr(bot, "send_rich_message", None))
         and rich_subscription_enabled(bot.id)
     ):
@@ -365,7 +365,9 @@ async def _send_catalog(
             if selected is not None:
                 rich_html = rich_subscription_offer_html(selected)
         else:
-            rich_html = rich_catalog_html(offers, currency=currency, page=page)
+            rich_html = rich_catalog_html(
+                offers, currency=currency, page=page, notice=notice,
+            )
         if rich_html is not None:
             if await send_rich_subscription_offer(
                 bot, chat_id=chat_id, rich_html=rich_html,
@@ -876,6 +878,7 @@ def create_telegram_commerce_router(
             navigation=InlineKeyboardButton(
                 text=tr("💎 К тарифам", "💎 Browse plans"),
                 callback_data="checkoutnav:catalog",
+                style="primary",
             ),
         )
         # Callback acknowledgement can expire after a committed DB transaction.
@@ -888,8 +891,8 @@ def create_telegram_commerce_router(
         await _send_catalog(
             bot, chat_id=callback.from_user.id,
             session_factory=session_factory, project_id=project_id,
-            notice=tr("✅ Заявка на оплату отменена.",
-                      "✅ Your payment request was canceled."),
+            notice=tr("❌ Заявка на оплату отменена.",
+                      "❌ Your payment request was canceled."),
         )
 
     async def _review_callback(
