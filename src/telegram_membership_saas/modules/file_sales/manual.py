@@ -356,6 +356,18 @@ async def review_manual_file_order(
             return order, False
         if order.status != "waiting_review" or order.receipt_forwarded_at is None:
             raise ValueError("Счёт не ожидает проверки или чек не доставлен")
+        if approve:
+            # Keep a single entitlement even if a previously issued Stars
+            # invoice finishes while this manual request is being reviewed.
+            await _product(
+                session, project_id, bot_id, order.product_id, lock=True,
+            )
+            stars_paid = await _load_paid(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=order.telegram_user_id, product_id=order.product_id,
+            )
+            if stars_paid:
+                raise ValueError("Этот файл уже оплачен через Stars")
         order.status = target
         order.reviewed_by = reviewer.id
         if approve:
