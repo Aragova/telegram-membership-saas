@@ -116,6 +116,8 @@ async def show_file_payment_options(
         factory, project_id=project_id, bot_id=bot.id,
         product_id=product_id, buyer_id=buyer_id,
     )
+    if not options and product.stars_price is None:
+        raise ValueError("Для файла пока нет доступных способов оплаты")
     codes = tuple(sorted({option.currency for option in options}, key=lambda c: (
         CURRENCY_ORDER.index(c) if c in CURRENCY_ORDER else 99, c,
     )))
