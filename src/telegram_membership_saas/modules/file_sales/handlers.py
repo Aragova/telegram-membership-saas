@@ -112,6 +112,10 @@ class FileEditorFilter(BaseFilter):
     async def __call__(self, message: Message) -> bool:
         if message.from_user is None or message.chat.type != "private":
             return False
+        # A pending admin editor must never swallow a Stars successful_payment
+        # update (nor other service messages) before the payment router sees it.
+        if getattr(message, "successful_payment", None) is not None:
+            return False
         state = self.pending.get(message.from_user.id)
         if not state or state["expires"] <= monotonic():
             self.pending.pop(message.from_user.id, None)
