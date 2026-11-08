@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation, localcontext
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, union_all
+from sqlalchemy import and_, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
@@ -28,6 +29,12 @@ from telegram_membership_saas.modules.file_sales.models import (
     FilePurchase,
 )
 from telegram_membership_saas.modules.identity.models import ProjectCustomer, TelegramUser
+from telegram_membership_saas.modules.payments import (
+    PaymentMethod,
+    PaymentMethodCurrency,
+    PaymentMethodStatus,
+)
+from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects.models import Project, ProjectStatus
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
@@ -161,6 +168,7 @@ async def create_product(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID, folder_id: UUID,
     name: str, stars: int | None, description: str = "",
+    manual_currency: str | None = None, manual_amount: str | None = None,
 ) -> FileProduct:
     name = name.strip()
     if not 1 <= len(name) <= 120:
@@ -186,6 +194,42 @@ async def create_product(
         ))
         if total >= PRODUCT_LIMIT:
             raise ValueError("Достигнут лимит товаров")
+        amount = None
+        if manual_currency is not None:
+            if manual_amount is None:
+                raise ValueError("Укажите цену в выбранной валюте")
+            asset = await session.scalar(select(CurrencyAsset).where(
+                CurrencyAsset.code == manual_currency,
+                CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+            ))
+            if asset is None:
+                raise ValueError("Валюта не активна")
+            active_method = await session.scalar(
+                select(PaymentMethod.id)
+                .join(PaymentMethodCurrency, and_(
+                    PaymentMethodCurrency.project_id == PaymentMethod.project_id,
+                    PaymentMethodCurrency.payment_method_id == PaymentMethod.id,
+                ))
+                .where(
+                    PaymentMethod.project_id == project_id,
+                    PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+                    PaymentMethodCurrency.currency_code == manual_currency,
+                ).limit(1)
+            )
+            if active_method is None:
+                raise ValueError("Нет активного способа оплаты для валюты")
+            try:
+                amount = Decimal(manual_amount.strip().replace(",", "."))
+            except InvalidOperation as exc:
+                raise ValueError("Неверная сумма файла") from exc
+            if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000000"):
+                raise ValueError("Укажите положительную цену файла")
+            with localcontext() as context:
+                context.prec = 50
+                if amount != amount.quantize(Decimal(1).scaleb(-asset.precision)):
+                    raise ValueError("Слишком много знаков после запятой")
+        elif stars is None:
+            raise ValueError("Нужна цена Stars или ручная цена")
         product = FileProduct(
             project_id=project_id, folder_id=folder_id,
             telegram_bot_id=bot_id, name=name, stars_price=stars,
@@ -193,6 +237,12 @@ async def create_product(
         )
         session.add(product)
         await session.flush()
+        if amount is not None:
+            session.add(FileManualPrice(
+                project_id=project_id, product_id=product.id,
+                currency_code=manual_currency, amount=amount,
+            ))
+            await session.flush()
         return product
 
 
