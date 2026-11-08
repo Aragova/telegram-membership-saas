@@ -390,11 +390,24 @@ async def review_manual_file_order(
             session, project_id=project_id, actor_user_id=reviewer.id,
             permission=Permission.PAYMENT_APPROVE if approve else Permission.PAYMENT_REJECT,
         )
+        # All buyer/reviewer mutations lock the product before the order.
+        # Reading the immutable product id is safe without FOR UPDATE; we
+        # re-fetch and lock the order below before checking/changing its state.
+        initial = await session.scalar(select(FileManualPurchase).where(
+            FileManualPurchase.project_id == project_id,
+            FileManualPurchase.telegram_bot_id == bot_id,
+            FileManualPurchase.id == order_id,
+        ))
+        if initial is None:
+            raise ValueError("Счёт не найден")
+        await _product(
+            session, project_id, bot_id, initial.product_id, lock=True,
+        )
         order = await session.scalar(select(FileManualPurchase).where(
             FileManualPurchase.project_id == project_id,
             FileManualPurchase.telegram_bot_id == bot_id,
             FileManualPurchase.id == order_id,
-        ).with_for_update())
+        ).execution_options(populate_existing=True).with_for_update())
         if order is None:
             raise ValueError("Счёт не найден")
         target = "paid" if approve else "rejected"
@@ -403,11 +416,8 @@ async def review_manual_file_order(
         if order.status != "waiting_review" or order.receipt_forwarded_at is None:
             raise ValueError("Счёт не ожидает проверки или чек не доставлен")
         if approve:
-            # Keep a single entitlement even if a previously issued Stars
-            # invoice finishes while this manual request is being reviewed.
-            await _product(
-                session, project_id, bot_id, order.product_id, lock=True,
-            )
+            # Product and order locks already held in the canonical order.
+            # Also check a Stars charge on the other payment rail.
             stars_paid = await _load_paid(
                 session, project_id=project_id, bot_id=bot_id,
                 buyer_id=order.telegram_user_id, product_id=order.product_id,
