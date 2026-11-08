@@ -235,7 +235,9 @@ def create_file_sales_router(
         )
         rows = [[_button(
             ("🗃️ " if product.status != "published" else "📦 ")
-            + product.name[:35] + " · " + str(product.stars_price) + " ⭐",
+            + product.name[:35]
+            + (" · " + str(product.stars_price) + " ⭐"
+               if who and product.stars_price else ""),
             ("ap:" if who else "item:") + encode_uuid(product.id),
         )] for product in products]
         if who:
@@ -258,7 +260,8 @@ def create_file_sales_router(
         text = (
             "📦 <b>" + escape(item.name) + "</b>\n"
             + (escape(item.description) + "\n" if item.description else "")
-            + tr("💰 Цена: ", "💰 Price: ") + str(item.stars_price) + " ⭐\n"
+            + (tr("⭐ Stars: ", "⭐ Stars: ") + str(item.stars_price) + "\n"
+               if item.stars_price else "")
             + tr("📎 Файлов: ", "📎 Files: ") + str(count)
         )
         code = encode_uuid(item.id)
@@ -278,12 +281,21 @@ def create_file_sales_router(
                     tr("📎 Прикрепить файлы", "📎 Add files"),
                     "upload:" + code, "success",
                 )])
+                rows.append([_button(
+                    tr("💳 Цены в валютах", "💳 Currency prices"),
+                    "prices:" + code,
+                )])
                 if count:
                     rows.append([_button(
                         tr("✅ Опубликовать", "✅ Publish"), "publish:" + code,
                         "success",
                     )])
             else:
+                if item.status == "published":
+                    rows.append([_button(
+                        tr("💳 Цены в валютах", "💳 Currency prices"),
+                        "prices:" + code,
+                    )])
                 rows.append([_button(
                     tr("🗃️ Убрать с продажи", "🗃️ Archive")
                     if item.status == "published" else
@@ -297,7 +309,8 @@ def create_file_sales_router(
             )])
         else:
             rows = [
-                [_button(tr("⭐ Купить", "⭐ Buy"), "buy:" + code, "success")],
+                [_button(tr("💳 Выбрать оплату", "💳 Choose payment"),
+                         "checkout:" + code, "success")],
                 [_button(tr("⬅️ Товары", "⬅️ Products"),
                          "folder:" + encode_uuid(item.folder_id))],
             ]
