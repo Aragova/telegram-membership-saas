@@ -141,6 +141,18 @@ async def test_manual_file_order_requires_approval_and_never_creates_subscriptio
                 reviewer_id=owner_tid, reviewer_name="owner",
                 reviewer_first_name="Owner", order_id=order.id, approve=True,
             )
+        # The runtime DB role cannot forge a paid state without proof.
+        with pytest.raises(DBAPIError):
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                await session.execute(
+                    text(
+                        "UPDATE file_sale_manual_purchases "
+                        "SET status='paid', reviewed_by=:owner, paid_at=now() "
+                        "WHERE id=:id"
+                    ), {"owner": owner, "id": order.id},
+                )
         await mark_manual_receipt_forwarded(
             factory, project_id=project, bot_id=bot_id,
             buyer_id=buyer_tid, order_id=order.id,
@@ -185,6 +197,25 @@ async def test_manual_file_order_requires_approval_and_never_creates_subscriptio
             factory, project_id=project, bot_id=bot_id, buyer_id=buyer_tid,
         )
         assert count == 1 and history[0].id == order.id
+        # Even a forged INSERT with all fields set cannot create paid access.
+        with pytest.raises(DBAPIError):
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                await session.execute(
+                    text(
+                        "INSERT INTO file_sale_manual_purchases "
+                        "(id, project_id, product_id, telegram_bot_id, "
+                        "telegram_user_id, product_name, amount, currency_code, "
+                        "payment_method_id, payment_method_name, instruction, status, "
+                        "submitted_at, receipt_forwarded_at, paid_at, reviewed_by) "
+                        "SELECT :newid, project_id, product_id, telegram_bot_id, "
+                        "telegram_user_id, product_name, amount, currency_code, "
+                        "payment_method_id, payment_method_name, instruction, "
+                        "'paid', now(), now(), now(), :owner "
+                        "FROM file_sale_manual_purchases WHERE id=:id"
+                    ), {"newid": uuid4(), "owner": owner, "id": order.id},
+                )
         for statement in (
             "UPDATE file_sale_manual_purchases SET amount=1 WHERE id=:id",
             "DELETE FROM file_sale_manual_purchases WHERE id=:id",
