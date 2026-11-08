@@ -28,6 +28,9 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileProduct,
     FilePurchase,
 )
+from telegram_membership_saas.modules.file_sales.payment_control_models import (
+    FileSaleMethodVisibility,
+)
 from telegram_membership_saas.modules.identity.models import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
@@ -492,6 +495,15 @@ async def create_stars_order(
                 product_name=manual_paid.product_name,
                 amount=item.stars_price, invoice_payload="", paid=True,
             )
+        # A disabled storefront method cannot create a new Stars invoice.
+        # Already-paid orders above remain downloadable.
+        disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
+            FileSaleMethodVisibility.project_id == project_id,
+            FileSaleMethodVisibility.telegram_bot_id == bot_id,
+            FileSaleMethodVisibility.method_id == UUID(int=0),
+        ))
+        if disabled is False:
+            raise ValueError("Автоматическая оплата Stars для файлов отключена")
         pending = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
             FilePurchase.telegram_bot_id == bot_id,
@@ -550,6 +562,13 @@ async def precheckout_allowed(
                 FilePurchase.stars_amount == amount,
             ))
             if purchase is None:
+                return False
+            disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
+                FileSaleMethodVisibility.project_id == project_id,
+                FileSaleMethodVisibility.telegram_bot_id == bot_id,
+                FileSaleMethodVisibility.method_id == UUID(int=0),
+            ))
+            if disabled is False:
                 return False
             item = await _product(session, project_id, bot_id, purchase.product_id)
             return item.status == "published" and (
