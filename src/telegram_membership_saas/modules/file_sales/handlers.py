@@ -394,10 +394,10 @@ def create_file_sales_router(
             price=price, file_count=count,
         )
         legacy = (
-            tr("✨ <b>Предпросмотр нового оформления</b>\\n",
-               "✨ <b>New design preview</b>\\n")
-            + "📦 <b>" + escape(item.name) + "</b>\\n"
-            + tr("💰 Цена: ", "💰 Price: ") + escape(price) + "\\n"
+            tr("✨ <b>Предпросмотр нового оформления</b>\n",
+               "✨ <b>New design preview</b>\n")
+            + "📦 <b>" + escape(item.name) + "</b>\n"
+            + tr("💰 Цена: ", "💰 Price: ") + escape(price) + "\n"
             + tr("📎 Файлов: ", "📎 Files: ") + str(count)
         )
         markup = _keyboard([[_button(
