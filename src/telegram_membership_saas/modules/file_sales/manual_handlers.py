@@ -8,7 +8,7 @@ from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
-from aiogram.filters import BaseFilter
+from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
     ForceReply,
@@ -162,6 +162,9 @@ async def show_file_payment_options(
         tr("💎 <b>Оформление покупки файла</b>\n\n",
            "💎 <b>File purchase checkout</b>\n\n")
         + "📦 <b>" + escape(product.name) + "</b>\n"
+        + (escape(product.description) + "\n" if getattr(
+            product, "description", None,
+        ) else "")
         + tr("💰 Цена: ", "💰 Price: ") + escape(price_label) + "\n\n"
         + tr("👇 <b>Как вам удобнее оплатить?</b>",
              "👇 <b>How would you like to pay?</b>"),
@@ -242,6 +245,35 @@ def create_manual_file_router(
 ) -> Router:
     router = Router(name="manual-file-checkout")
     editor: dict[int, dict] = {}
+
+    @router.message(Command("filepayments"))
+    async def file_payment_reviews_command(message: Message, bot: Bot) -> None:
+        if message.from_user is None or message.chat.type != "private":
+            return
+        actor = await ensure_telegram_actor(
+            factory, telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+        try:
+            total, _ = await pending_manual_reviews(
+                factory, project_id=project_id, bot_id=bot.id,
+                actor_id=actor, page=0,
+            )
+        except PermissionError:
+            await bot.send_message(
+                message.chat.id, tr("Недостаточно прав.", "Not authorized."),
+            )
+            return
+        await bot.send_message(
+            message.chat.id,
+            tr("🧾 Заявки на оплату файлов: ", "🧾 File payment reviews: ")
+            + str(total),
+            reply_markup=_keyboard([[
+                _button(tr("📋 Открыть заявки", "📋 Open reviews"),
+                        "reviews", "success"),
+            ]]),
+        )
 
     @router.callback_query(F.data.startswith("fm:"))
     async def file_manual_callback(query: CallbackQuery, bot: Bot) -> None:
