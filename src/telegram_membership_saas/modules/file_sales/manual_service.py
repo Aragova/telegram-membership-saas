@@ -96,6 +96,33 @@ async def available_methods(
         return await _methods(session, project_id=project_id, product_id=product_id)
 
 
+async def available_price_currencies(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID,
+) -> tuple[str, ...]:
+    """Only currently enabled manual payment currencies are offered at creation."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _owner(session, project_id=project_id, bot_id=bot_id, actor_id=actor_id)
+        return tuple((await session.scalars(
+            select(PaymentMethodCurrency.currency_code)
+            .join(
+                PaymentMethod,
+                and_(PaymentMethod.id == PaymentMethodCurrency.payment_method_id,
+                     PaymentMethod.project_id == PaymentMethodCurrency.project_id),
+            )
+            .join(CurrencyAsset, CurrencyAsset.code == PaymentMethodCurrency.currency_code)
+            .where(
+                PaymentMethodCurrency.project_id == project_id,
+                PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+                CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+            )
+            .distinct()
+            .order_by(PaymentMethodCurrency.currency_code)
+        )).all())
+
+
 async def price_editor_options(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, product_id: UUID, actor_id: UUID,
