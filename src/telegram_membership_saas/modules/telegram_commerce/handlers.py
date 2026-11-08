@@ -869,7 +869,6 @@ def create_telegram_commerce_router(
         except (ValueError, PermissionError) as exc:
             await callback.answer(_buyer_error(exc), show_alert=True)
             return
-        await callback.answer(tr("Заявка отменена", "Payment request canceled"))
         # The original Rich/HTML payment card keeps its instructions, but
         # loses all payment/copy/cancel controls after confirmed cancellation.
         await retire_cancelled_checkout(
@@ -879,6 +878,12 @@ def create_telegram_commerce_router(
                 callback_data="checkoutnav:catalog",
             ),
         )
+        # Callback acknowledgement can expire after a committed DB transaction.
+        # It must not leave stale payment buttons or block the catalog.
+        try:
+            await callback.answer(tr("Заявка отменена", "Payment request canceled"))
+        except AiogramError:
+            pass
         # Preserve existing catalog navigation and cancellation notice.
         await _send_catalog(
             bot, chat_id=callback.from_user.id,
