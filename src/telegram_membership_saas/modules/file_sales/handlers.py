@@ -247,7 +247,11 @@ def create_file_sales_router(
             if any(amount is not None for _, amount in prices):
                 text += "\n" + tr("💱 Ручные цены: ", "💱 Manual prices: ")
                 text += ", ".join(
-                    escape(str(amount) + " " + code)
+                    escape(
+                        (format(amount, "f").rstrip("0").rstrip(".")
+                         if "." in format(amount, "f") else str(amount))
+                        + " " + code
+                    )
                     for code, amount in prices if amount is not None
                 )
             text += "\n" + tr("Статус: ", "Status: ") + escape(item.status)
