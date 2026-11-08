@@ -360,18 +360,54 @@ async def submit_manual_receipt(
 
 async def pending_manual_reviews(
     factory: async_sessionmaker[AsyncSession], *,
-    project_id: UUID, bot_id: int, actor_id: UUID,
-) -> tuple[FileManualOrder, ...]:
+    project_id: UUID, bot_id: int, actor_id: UUID, page: int = 0,
+) -> tuple[int, tuple[FileManualOrder, ...]]:
+    """Never hide submitted receipts behind arbitrarily many pending invoices."""
+    if not 0 <= page <= 1_000_000:
+        raise ValueError("Недопустимая страница")
     async with system_project_session_scope(factory, project_id) as session:
         await require_payment_permission(
             session, project_id=project_id, actor_user_id=actor_id,
             permission=Permission.PAYMENT_VIEW,
         )
-        return tuple((await session.scalars(select(FileManualOrder).where(
+        predicates = (
             FileManualOrder.project_id == project_id,
             FileManualOrder.telegram_bot_id == bot_id,
             FileManualOrder.status.in_(("pending", "submitted")),
-        ).order_by(FileManualOrder.created_at, FileManualOrder.id).limit(30))).all())
+        )
+        total = await session.scalar(
+            select(func.count(FileManualOrder.id)).where(*predicates)
+        ) or 0
+        rows = (await session.scalars(
+            select(FileManualOrder).where(*predicates).order_by(
+                # Receipts needing action first; otherwise newest to oldest.
+                (FileManualOrder.status == "submitted").desc(),
+                FileManualOrder.created_at.desc(),
+                FileManualOrder.id.desc(),
+            ).offset(page * 8).limit(8)
+        )).all()
+        return total, tuple(rows)
+
+
+async def load_manual_review(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID, order_id: UUID,
+) -> FileManualOrder:
+    """Authorized direct lookup independent of review-list pagination."""
+    async with system_project_session_scope(factory, project_id) as session:
+        await require_payment_permission(
+            session, project_id=project_id, actor_user_id=actor_id,
+            permission=Permission.PAYMENT_VIEW,
+        )
+        order = await session.scalar(select(FileManualOrder).where(
+            FileManualOrder.id == order_id,
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.telegram_bot_id == bot_id,
+            FileManualOrder.status.in_(("pending", "submitted")),
+        ))
+        if order is None:
+            raise ValueError("Заявка уже обработана или недоступна")
+        return order
 
 
 async def close_pending_manual_order(
