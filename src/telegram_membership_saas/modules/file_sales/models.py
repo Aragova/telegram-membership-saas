@@ -1,5 +1,6 @@
 """Tenant-scoped digital file catalog, immutable Stars charges and redelivery."""
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -101,6 +102,71 @@ class FileAsset(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
+
+
+class FilePrice(Base):
+    """Explicit fiat price per product; never infer from XTR."""
+    __tablename__ = "file_sale_prices"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["product_id", "project_id"],
+            ["file_sale_products.id", "file_sale_products.project_id"],
+            name="fk_file_price_product_project",
+        ),
+        CheckConstraint("amount > 0 AND amount <= 1000000000",
+                        name="ck_file_price_amount"),
+    )
+
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    product_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    currency_code: Mapped[str] = mapped_column(
+        String(16), ForeignKey("currency_assets.code", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    amount: Mapped["Decimal"] = mapped_column(Numeric(20, 4), nullable=False)
+
+
+class FileManualPurchase(Base):
+    """Isolated file-payment ledger: no Subscription/Entitlement grant."""
+    __tablename__ = "file_sale_manual_purchases"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["product_id", "project_id"],
+            ["file_sale_products.id", "file_sale_products.project_id"],
+            name="fk_file_manual_product_project", ondelete="CASCADE",
+        ),
+        CheckConstraint("amount > 0 AND amount <= 1000000000",
+                        name="ck_file_manual_amount"),
+        CheckConstraint(
+            "status IN ('waiting_confirmation','waiting_review',"
+            "'paid','rejected','cancelled')",
+            name="ck_file_manual_status",
+        ),
+        Index("ix_file_manual_buyer", "project_id", "telegram_bot_id",
+              "telegram_user_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    product_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    product_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    amount: Mapped["Decimal"] = mapped_column(Numeric(20, 4), nullable=False)
+    currency_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    payment_method_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    payment_method_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="waiting_confirmation",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class FilePurchase(Base):
