@@ -118,21 +118,26 @@ def rich_subscription_review_result(result: ReviewResult, *, approve: bool) -> s
 
 def rich_file_review(order, *, receipt_attached: bool = False) -> str:
     """Rich summary of the exact authorized manual file-order snapshot."""
+    order_status = getattr(
+        order, "status", "submitted" if receipt_attached else "pending",
+    )
     status = {
         "pending": tr("🕓 Ожидает оплату", "🕓 Awaiting payment"),
         "submitted": tr("🕒 На проверке", "🕒 Under review"),
         "approved": tr("✅ Подтверждена", "✅ Approved"),
         "rejected": tr("❌ Отклонена", "❌ Rejected"),
         "cancelled": tr("⚪ Отменена", "⚪ Cancelled"),
-    }.get(order.status, order.status)
+    }.get(order_status, order_status)
     body = [
         "<h3>" + tr("📦 Проверка покупки файла", "📦 File purchase review") + "</h3>",
         "<table bordered compact>",
         _row(tr("🏷 Название", "🏷 Name"), order.product_name),
-        _row(tr("👤 Покупатель", "👤 Customer"), order.telegram_user_id),
+        _row(tr("👤 Покупатель", "👤 Customer"),
+             getattr(order, "telegram_user_id", "—")),
         _row(tr("💰 Сумма", "💰 Amount"),
              _money(order.amount) + " " + order.currency_code),
-        _row(tr("💳 Способ", "💳 Method"), order.payment_method_name),
+        _row(tr("💳 Способ", "💳 Method"),
+             getattr(order, "payment_method_name", "—")),
         _row(tr("🧾 Статус", "🧾 Status"), status),
         _row(tr("🔖 Заявка", "🔖 Request"), order.id),
         "</table>",
@@ -142,12 +147,12 @@ def rich_file_review(order, *, receipt_attached: bool = False) -> str:
             "📎 Чек отправлен сообщением выше.",
             "📎 Receipt sent in the message above.",
         ) + "</b></p>")
-    elif order.status == "submitted":
+    elif order_status == "submitted":
         body.append("<p><b>" + tr(
             "📎 Чек отправлен отдельно. Проверьте его.",
             "📎 Receipt was sent separately. Please review it.",
         ) + "</b></p>")
-    elif order.status == "pending":
+    elif order_status == "pending":
         body.append("<p>" + tr(
             "Чек ещё не предоставлен. Не подтверждайте неоплаченный счёт.",
             "Receipt not submitted. Do not approve an unpaid invoice.",
