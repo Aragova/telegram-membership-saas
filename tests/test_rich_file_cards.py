@@ -54,7 +54,42 @@ def test_rich_card_escapes_user_content(locale, heading, price_label, info_label
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
     assert "&lt;two&gt; &amp; three" in html
-    assert html.count("<p>") >= 4
+    assert html.count("<p>") >= 3
+    assert "<p>📦 <b>" not in html
+
+
+@pytest.mark.parametrize(
+    ("locale", "name_label"),
+    [
+        ("ru", "🏷 Название"),
+        ("en", "🏷 Name"),
+    ],
+)
+@pytest.mark.parametrize("preview", [False, True])
+def test_product_name_is_first_rich_table_row_in_both_languages(
+    locale, name_label, preview,
+):
+    token = localization._language.set(locale)
+    try:
+        html = rich_ui.rich_file_card_html(
+            product_name="Моя <жопа> & видео",
+            description="Test", price="100 RUB",
+            file_count=1, preview=preview,
+        )
+    finally:
+        localization._language.reset(token)
+    start = html.index("<table bordered compact>")
+    first = (
+        "<tr><th>" + name_label
+        + "</th><td>Моя &lt;жопа&gt; &amp; видео</td></tr>"
+    )
+    second = "<tr><th>" + ("💰 Цена" if locale == "ru" else "💰 Price")
+    third = "<tr><th>" + ("📎 Файлов" if locale == "ru" else "📎 Files")
+    assert html.index(first) > start
+    assert html.index(first) < html.index(second) < html.index(third)
+    assert html.count("Моя &lt;жопа&gt; &amp; видео") == 1
+    assert "<p>📦 <b>" not in html
+    assert "<td>100 RUB</td>" in html
 
 
 async def test_default_disabled_keeps_exact_legacy_checkout(monkeypatch):
