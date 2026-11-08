@@ -22,6 +22,67 @@ def upgrade() -> None:
         "ck_file_product_price", "file_sale_products",
         "stars_price BETWEEN 0 AND 250000",
     )
+    # A delayed Telegram charge may arrive after a manual file approval.
+    # Keep a durable refund_pending state instead of granting the file twice.
+    op.drop_constraint("ck_file_purchase_status", "file_sale_purchases", type_="check")
+    op.create_check_constraint(
+        "ck_file_purchase_status", "file_sale_purchases",
+        "status IN ('pending','paid','refund_pending','refunded')",
+    )
+    op.execute("DROP TRIGGER trg_guard_file_sale_purchase ON file_sale_purchases")
+    op.execute("DROP FUNCTION public.guard_file_sale_purchase()")
+    op.execute("""
+        CREATE FUNCTION public.guard_file_sale_purchase()
+        RETURNS trigger LANGUAGE plpgsql AS $guard$
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                IF OLD.status IN ('paid','refund_pending','refunded') THEN
+                    RAISE EXCEPTION 'Charged digital history is immutable'
+                        USING ERRCODE='42501';
+                END IF;
+                RETURN OLD;
+            END IF;
+            IF (
+                NEW.id, NEW.project_id, NEW.product_id, NEW.telegram_bot_id,
+                NEW.telegram_user_id, NEW.stars_amount, NEW.product_name,
+                NEW.invoice_payload, NEW.created_at
+            ) IS DISTINCT FROM (
+                OLD.id, OLD.project_id, OLD.product_id, OLD.telegram_bot_id,
+                OLD.telegram_user_id, OLD.stars_amount, OLD.product_name,
+                OLD.invoice_payload, OLD.created_at
+            ) THEN
+                RAISE EXCEPTION 'Digital purchase identity is immutable'
+                    USING ERRCODE='42501';
+            END IF;
+            IF OLD.status = 'pending' THEN
+                IF NEW.status NOT IN ('paid', 'refund_pending')
+                   OR NEW.telegram_charge_id IS NULL OR NEW.paid_at IS NULL THEN
+                    RAISE EXCEPTION 'Invalid Stars confirmation'
+                        USING ERRCODE='42501';
+                END IF;
+            ELSIF OLD.status = 'refund_pending' THEN
+                IF NEW.status NOT IN ('refund_pending', 'refunded')
+                   OR NEW.telegram_charge_id IS DISTINCT FROM OLD.telegram_charge_id
+                   OR NEW.paid_at IS DISTINCT FROM OLD.paid_at THEN
+                    RAISE EXCEPTION 'Invalid Stars refund state'
+                        USING ERRCODE='42501';
+                END IF;
+            ELSE
+                IF NEW.status IS DISTINCT FROM OLD.status
+                   OR NEW.telegram_charge_id IS DISTINCT FROM OLD.telegram_charge_id
+                   OR NEW.paid_at IS DISTINCT FROM OLD.paid_at THEN
+                    RAISE EXCEPTION 'Confirmed Stars payment cannot change'
+                        USING ERRCODE='42501';
+                END IF;
+            END IF;
+            RETURN NEW;
+        END $guard$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_guard_file_sale_purchase
+        BEFORE UPDATE OR DELETE ON file_sale_purchases
+        FOR EACH ROW EXECUTE FUNCTION public.guard_file_sale_purchase()
+    """)
     op.create_table(
         "file_sale_prices",
         sa.Column("project_id", sa.Uuid(), primary_key=True),
@@ -197,6 +258,67 @@ def downgrade() -> None:
     op.drop_index("ix_file_manual_buyer", table_name="file_sale_manual_purchases")
     op.drop_table("file_sale_manual_purchases")
     op.drop_table("file_sale_prices")
+    op.execute("""
+        DO $check$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM file_sale_purchases
+                       WHERE status IN ('refund_pending','refunded')) THEN
+                RAISE EXCEPTION 'Cannot erase outstanding Stars refund history';
+            END IF;
+        END $check$
+    """)
+    op.drop_constraint("ck_file_purchase_status", "file_sale_purchases", type_="check")
+    op.create_check_constraint(
+        "ck_file_purchase_status", "file_sale_purchases",
+        "status IN ('pending','paid')",
+    )
+    # Old trigger remains replaced on downgrade only after refund history check.
+    op.execute("DROP TRIGGER trg_guard_file_sale_purchase ON file_sale_purchases")
+    op.execute("DROP FUNCTION public.guard_file_sale_purchase()")
+    op.execute("""
+        CREATE FUNCTION public.guard_file_sale_purchase()
+        RETURNS trigger LANGUAGE plpgsql AS $guard$
+        BEGIN
+            IF TG_OP = 'DELETE' THEN
+                IF OLD.status = 'paid' THEN
+                    RAISE EXCEPTION 'Paid digital purchase history is immutable';
+                END IF;
+                RETURN OLD;
+            END IF;
+            IF (
+                NEW.id, NEW.project_id, NEW.product_id, NEW.telegram_bot_id,
+                NEW.telegram_user_id, NEW.stars_amount, NEW.product_name,
+                NEW.invoice_payload, NEW.created_at
+            ) IS DISTINCT FROM (
+                OLD.id, OLD.project_id, OLD.product_id, OLD.telegram_bot_id,
+                OLD.telegram_user_id, OLD.stars_amount, OLD.product_name,
+                OLD.invoice_payload, OLD.created_at
+            ) THEN
+                RAISE EXCEPTION 'Digital purchase snapshot is immutable';
+            END IF;
+            IF OLD.status = 'paid' AND (
+                NEW.status IS DISTINCT FROM OLD.status
+                OR NEW.telegram_charge_id IS DISTINCT FROM OLD.telegram_charge_id
+                OR NEW.paid_at IS DISTINCT FROM OLD.paid_at
+            ) THEN
+                RAISE EXCEPTION 'Confirmed Stars payment cannot change';
+            END IF;
+            IF OLD.status = 'pending' AND (
+                NEW.status != 'paid'
+                OR NEW.telegram_charge_id IS NULL
+                OR NEW.paid_at IS NULL
+                OR OLD.telegram_charge_id IS NOT NULL
+            ) THEN
+                RAISE EXCEPTION 'Invalid digital payment confirmation';
+            END IF;
+            RETURN NEW;
+        END $guard$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_guard_file_sale_purchase
+        BEFORE UPDATE OR DELETE ON file_sale_purchases
+        FOR EACH ROW EXECUTE FUNCTION public.guard_file_sale_purchase()
+    """)
     op.drop_constraint("ck_file_product_price", "file_sale_products", type_="check")
     op.create_check_constraint(
         "ck_file_product_price", "file_sale_products",
