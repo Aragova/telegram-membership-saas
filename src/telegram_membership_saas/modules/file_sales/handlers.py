@@ -28,6 +28,11 @@ from telegram_membership_saas.modules.file_sales.manual_service import (
     price_editor_options,
 )
 from telegram_membership_saas.modules.file_sales.models import FileAsset
+from telegram_membership_saas.modules.file_sales.payment_controls import (
+    list_file_payment_controls,
+    set_all_file_payment_methods,
+    toggle_file_payment_method,
+)
 from telegram_membership_saas.modules.file_sales.recovery import (
     recover_buyer_stars,
 )
@@ -179,6 +184,56 @@ def create_file_sales_router(
                "📁 <b>Digital files</b>\n"
                "Choose your payment method. Files arrive after manual "
                "approval or confirmed Stars payment."),
+            parse_mode="HTML", reply_markup=_keyboard(rows),
+        )
+
+    async def payment_method_settings(
+        bot: Bot, user_id: int, actor_id: UUID,
+    ) -> None:
+        controls = await list_file_payment_controls(
+            factory, project_id=project_id, bot_id=bot.id,
+            actor_id=actor_id,
+        )
+        rows = []
+        for method in controls:
+            name = (tr("⭐ Автоматические Stars (XTR)",
+                       "⭐ Automatic Stars (XTR)")
+                    if method.auto_stars else "💳 " + method.name[:36])
+            rows.append([_button(
+                ("🟢 " if method.enabled else "🔴 ") + name,
+                "paytoggle:" + method.method_id.hex,
+                "success" if method.enabled else "danger",
+            )])
+        # Exactly one bulk button; its label changes when any method is off.
+        any_disabled = any(not method.enabled for method in controls)
+        rows.append([_button(
+            tr("✅ Включить все способы оплаты", "✅ Enable all payment methods")
+            if any_disabled else
+            tr("⏸️ Выключить все способы оплаты", "⏸️ Disable all payment methods"),
+            "paybulk:" + ("on" if any_disabled else "off"),
+            "success" if any_disabled else "danger",
+        )])
+        rows.append([_button(
+            tr("⬅️ Управление продажами", "⬅️ File sales settings"), "admin",
+        )])
+        await bot.send_message(
+            user_id,
+            tr(
+                "💳 <b>Способы оплаты файлов</b>\n"
+                "🟢 Включён · 🔴 Выключен\n\n"
+                "Эти настройки действуют только на продажи файлов "
+                "в данном боте. Подписки и другие боты не затрагиваются.\n"
+                "Ручной метод «Telegram Stars» и автоматические "
+                "Stars (XTR) — разные способы оплаты.\n"
+                "Созданные заявки и оплаченные файлы сохраняются.",
+                "💳 <b>File payment methods</b>\n"
+                "🟢 Enabled · 🔴 Disabled\n\n"
+                "Settings affect file sales in this bot only. "
+                "Subscriptions and other bots are unchanged.\n"
+                "A manual method named Telegram Stars and automatic "
+                "Stars (XTR) are separate payment choices.\n"
+                "Existing orders and paid files remain intact.",
+            ),
             parse_mode="HTML", reply_markup=_keyboard(rows),
         )
 
@@ -398,6 +453,9 @@ def create_file_sales_router(
                     reply_markup=_keyboard([
                         [_button(tr("📁 Папки и товары", "📁 Folders and products"),
                                  "adminfolders")],
+                        [_button(tr("💳 Способы оплаты файлов",
+                                    "💳 File payment methods"),
+                                 "paymethods", "success")],
                         [InlineKeyboardButton(
                             text=tr("🧾 Проверка оплаты файлов", "🧾 File payment reviews"),
                             callback_data="fm:reviews",
@@ -406,6 +464,31 @@ def create_file_sales_router(
                         [_button(tr("⬅️ Магазин", "⬅️ Shop"), "home")],
                     ]),
                 )
+            elif action == "paymethods":
+                if not admin:
+                    raise PermissionError("Нет прав")
+                await payment_method_settings(bot, uid, who)
+            elif action.startswith("paytoggle:"):
+                if not admin:
+                    raise PermissionError("Нет прав")
+                token = action.split(":", 1)[1]
+                method_id = UUID(hex=token)
+                await toggle_file_payment_method(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=who, method_id=method_id,
+                )
+                await payment_method_settings(bot, uid, who)
+            elif action.startswith("paybulk:"):
+                if not admin:
+                    raise PermissionError("Нет прав")
+                mode = action.split(":", 1)[1]
+                if mode not in ("on", "off"):
+                    raise ValueError("Неизвестное действие")
+                await set_all_file_payment_methods(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=who, enabled=mode == "on",
+                )
+                await payment_method_settings(bot, uid, who)
             elif action == "newfolder":
                 if not admin:
                     raise PermissionError("Нет прав")
