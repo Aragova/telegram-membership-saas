@@ -558,6 +558,10 @@ def create_owner_setup_router(
                     text=tr("📨 Рассылки", "📨 Broadcasts"),
                     callback_data="bc:home",
                 )],
+                [InlineKeyboardButton(
+                    text=tr("📂 Продажа файлов", "📂 File sales"),
+                    callback_data="fs:home",
+                )],
                 [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview")],
                 [_button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
                 [InlineKeyboardButton(
