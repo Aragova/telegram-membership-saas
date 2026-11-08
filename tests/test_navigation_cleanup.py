@@ -85,6 +85,22 @@ async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sec
         assert "own:network" not in actions
         assert "own:help" not in actions
         assert "own:preview" in actions
+        dashboard_rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        assert any(
+            [button.callback_data for button in row] == ["bc:home", "fs:home"]
+            for row in dashboard_rows
+        )
+        assert any(
+            [button.callback_data for button in row] == [
+                "own:preview", "own:settings",
+            ]
+            for row in dashboard_rows
+        )
+        assert all(
+            button.style == "success"
+            for row in dashboard_rows for button in row
+            if button.callback_data in ("bc:home", "fs:home", "own:settings")
+        )
         assert next(b.text for b in main_buttons if b.callback_data == "own:settings") == (
             settings_label
         )
@@ -126,12 +142,13 @@ def test_buyer_screens_do_not_duplicate_native_menu_purchases(language):
         assert any(a.startswith("offer:") for a in catalog_actions)
         assert "lng:menu" in catalog_actions
         assert "account:home" not in catalog_actions
+        assert "fs:shop" not in catalog_actions
         assert next(b.style for b in catalog_buttons if b.callback_data == "lng:menu") == (
             "success"
         )
         _text, empty_markup = catalog_screen(())
         assert [b.callback_data for b in _buttons(empty_markup)] == [
-                "fs:shop", "lng:menu",
+                "lng:menu",
             ]
 
         detail = offer_screen(offers, price_id=option.plan_price_id)

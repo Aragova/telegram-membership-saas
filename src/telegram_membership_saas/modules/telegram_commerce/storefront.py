@@ -170,6 +170,32 @@ def _currency_rows(
     ]
 
 
+def buyer_root_screen(
+    channel_name: str, folders: tuple[tuple[UUID, str], ...],
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Connected bot home: one channel, then only active folders with live goods.
+
+    The caller obtains the folders through project/bot-scoped list_folders;
+    owner-authored folder names are never renamed or translated.
+    """
+    rows = [[InlineKeyboardButton(
+        text=channel_name, callback_data="buyer:channel", style="success",
+    )]]
+    rows.extend([
+        InlineKeyboardButton(
+            text=name, callback_data="fs:folder:" + encode_uuid(folder_id),
+            style="success",
+        ),
+    ] for folder_id, name in folders)
+    rows.append([InlineKeyboardButton(
+        text="🌐 Language / Язык", callback_data="lng:menu", style="success",
+    )])
+    return tr(
+        "🔻 Выберите канал или 📁 папку с файлами",
+        "🔻 Choose the channel or 📁 a file folder",
+    ), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def catalog_screen(
     offers: tuple[BuyerOffer, ...], *, currency: str | None = None,
     page: int = 0,
@@ -184,10 +210,6 @@ def catalog_screen(
                 "✨ No plans are available for purchase yet. Please check back later! 👋",
             ),
             InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text=tr("📂 Купить файлы", "📂 Buy digital files"),
-                    callback_data="fs:shop",
-                )],
                 [InlineKeyboardButton(
                     text="🌐 Language / Язык",
                     callback_data="lng:menu", style="success",
@@ -263,11 +285,6 @@ def catalog_screen(
     lines.extend(["", tr(
         "👇 Нажмите на тариф ниже. Способ оплаты выберете на следующем шаге. 💳",
         "👇 Tap a plan below. You’ll choose a payment method next. 💳",
-    )])
-    rows.append([InlineKeyboardButton(
-        text=tr("📂 Купить файлы", "📂 Buy digital files"),
-        callback_data="fs:shop",
-        style="success",
     )])
     rows.append([InlineKeyboardButton(
         text="🌐 Language / Язык",
