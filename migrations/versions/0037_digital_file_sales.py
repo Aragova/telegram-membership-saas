@@ -65,7 +65,7 @@ def upgrade() -> None:
     op.create_table(
         "file_sale_purchases",
         sa.Column("id", sa.Uuid(), primary_key=True),
-        sa.Column("project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("project_id", sa.Uuid(), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
         sa.Column("product_id", sa.Uuid(), nullable=False),
         sa.Column("telegram_bot_id", sa.BigInteger(), nullable=False),
         sa.Column("telegram_user_id", sa.BigInteger(), nullable=False),
@@ -77,7 +77,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("paid_at", sa.DateTime(timezone=True)),
         sa.Column("last_delivered_at", sa.DateTime(timezone=True)),
-        sa.ForeignKeyConstraint(["product_id", "project_id"], ["file_sale_products.id", "file_sale_products.project_id"], ondelete="RESTRICT", name="fk_file_purchase_product_project"),
+        sa.ForeignKeyConstraint(["product_id", "project_id"], ["file_sale_products.id", "file_sale_products.project_id"], ondelete="CASCADE", name="fk_file_purchase_product_project"),
         sa.UniqueConstraint("invoice_payload", name="uq_file_purchase_payload"),
         sa.UniqueConstraint("telegram_charge_id", name="uq_file_purchase_charge"),
         sa.CheckConstraint("status IN ('pending','paid')", name="ck_file_purchase_status"),
@@ -102,7 +102,10 @@ def upgrade() -> None:
         RETURNS trigger LANGUAGE plpgsql AS $guard$
         BEGIN
             IF TG_OP = 'DELETE' THEN
-                RAISE EXCEPTION 'Digital purchase history is immutable' USING ERRCODE = '42501';
+                IF OLD.status = 'paid' THEN
+                    RAISE EXCEPTION 'Paid digital purchase history is immutable' USING ERRCODE = '42501';
+                END IF;
+                RETURN OLD;
             END IF;
             IF (
                 NEW.id, NEW.project_id, NEW.product_id, NEW.telegram_bot_id,
