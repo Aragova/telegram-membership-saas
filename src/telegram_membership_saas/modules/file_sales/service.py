@@ -155,8 +155,8 @@ async def create_product(
     name = name.strip()
     if not 1 <= len(name) <= 120:
         raise ValueError("Название товара: от 1 до 120 символов")
-    if not 1 <= stars <= 250000:
-        raise ValueError("Цена должна составлять от 1 до 250000 Stars")
+    if not 0 <= stars <= 250000:
+        raise ValueError("Цена Stars: 0 (отключено) или от 1 до 250000")
     if len(description) > 1024:
         raise ValueError("Описание: не более 1024 символов")
     async with tenant_session_scope(
@@ -219,8 +219,8 @@ async def update_draft_product(
     else:
         if not value.isascii() or not value.isdecimal():
             raise ValueError("Цена должна быть целым числом Stars")
-        if not 1 <= int(value) <= 250000:
-            raise ValueError("Цена должна составлять от 1 до 250000 Stars")
+        if not 0 <= int(value) <= 250000:
+            raise ValueError("Цена Stars: 0 (отключено) или от 1 до 250000")
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -288,6 +288,15 @@ async def change_product_status(
             )) or 0
             if not assets:
                 raise ValueError("Сначала прикрепите файлы")
+            # A file must have at least one valid payment price.
+            if item.stars_price == 0:
+                from telegram_membership_saas.modules.file_sales.models import FilePrice
+                priced = await session.scalar(select(FilePrice.product_id).where(
+                    FilePrice.project_id == project_id,
+                    FilePrice.product_id == product_id,
+                ).limit(1))
+                if priced is None:
+                    raise ValueError("Укажите цену Stars или цену в валюте")
             folder = await session.scalar(select(FileFolder.id).where(
                 FileFolder.project_id == project_id,
                 FileFolder.id == item.folder_id,
@@ -385,6 +394,8 @@ async def create_stars_order(
         item = await _product(session, project_id, bot_id, product_id, lock=True)
         if item.status != "published":
             raise ValueError("Товар больше не продаётся")
+        if item.stars_price <= 0:
+            raise ValueError("Оплата Stars для товара отключена")
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.project_id == project_id, FileFolder.id == item.folder_id,
             FileFolder.status == "active",
