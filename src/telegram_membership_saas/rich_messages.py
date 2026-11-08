@@ -16,13 +16,26 @@ from html import escape
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.methods import EditMessageText
-from aiogram.types import InlineKeyboardMarkup, InputRichMessage
+from aiogram.types import InlineKeyboardMarkup
+
+try:
+    from aiogram.types import InputRichMessage
+except ImportError:  # Older aiogram versions still allowed by pyproject.toml.
+    InputRichMessage = None
 
 from telegram_membership_saas.config import get_settings
 
 log = logging.getLogger(__name__)
 
 _skip_rich: ContextVar[bool] = ContextVar("skip_rich", default=False)
+_NATIVE_REPLY_MARKERS = (
+    # These are authenticated using parent.text in the support reply filters.
+    "💬 ViMi Pay · Покупатель ", "💬 ViMi Pay · Customer ",
+    "✉️ ViMi Pay · Сообщение администратора",
+    "✉️ ViMi Pay · Message from admin",
+    "✍️ ViMi Pay · Ответ администратору",
+    "✍️ ViMi Pay · Reply to admin",
+)
 _HEADING = re.compile(r"^\s*.{1,120}$")
 _ROW = re.compile(r"^(.{2,65}?):\s+(.+)$")
 _STATISTICS = (
@@ -105,7 +118,9 @@ def _eligible(text: str, kwargs: dict) -> bool:
     """Only convert inline *UI* messages, never receipts or text-entry prompts."""
     return (
         rich_enabled()
+        and InputRichMessage is not None
         and not _skip_rich.get()
+        and not text.startswith(_NATIVE_REPLY_MARKERS)
         and isinstance(kwargs.get("reply_markup"), InlineKeyboardMarkup)
         and kwargs.get("parse_mode") in ("HTML", None)
         and isinstance(text, str)
