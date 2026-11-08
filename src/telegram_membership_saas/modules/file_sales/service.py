@@ -201,6 +201,41 @@ async def _product(
     return product
 
 
+async def update_draft_product(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID,
+    product_id: UUID, field: str, value: str,
+) -> FileProduct:
+    if field not in ("name", "description", "stars_price"):
+        raise ValueError("Недоступное поле товара")
+    if field == "name":
+        value = value.strip()
+        if not 1 <= len(value) <= 120:
+            raise ValueError("Название товара: от 1 до 120 символов")
+    elif field == "description":
+        value = value.strip()
+        if len(value) > 1024:
+            raise ValueError("Описание: не более 1024 символов")
+    else:
+        if not value.isascii() or not value.isdecimal():
+            raise ValueError("Цена должна быть целым числом Stars")
+        if not 1 <= int(value) <= 250000:
+            raise ValueError("Цена должна составлять от 1 до 250000 Stars")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _owner(session, project_id=project_id,
+                     actor_id=actor_id, bot_id=bot_id)
+        product = await _product(
+            session, project_id, bot_id, product_id, lock=True,
+        )
+        if product.status != "draft":
+            raise ValueError("Редактировать можно только черновик")
+        setattr(product, field, int(value) if field == "stars_price" else value)
+        await session.flush()
+        return product
+
+
 async def add_product_asset(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID,
