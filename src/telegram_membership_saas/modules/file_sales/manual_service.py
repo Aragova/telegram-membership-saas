@@ -16,15 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.modules.file_sales.manual_models import (
-    FileManualOrder, FileManualPrice,
+    FileManualOrder,
+    FileManualPrice,
 )
 from telegram_membership_saas.modules.file_sales.models import (
-    FileAsset, FileFolder, FilePurchase,
+    FileAsset,
+    FileFolder,
+    FilePurchase,
 )
 from telegram_membership_saas.modules.file_sales.service import _owner, _product, _ready
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.payments import (
-    PaymentMethod, PaymentMethodCurrency, PaymentMethodStatus,
+    PaymentMethod,
+    PaymentMethodCurrency,
+    PaymentMethodStatus,
     render_manual_instruction,
 )
 from telegram_membership_saas.modules.payments.request_service import require_payment_permission
