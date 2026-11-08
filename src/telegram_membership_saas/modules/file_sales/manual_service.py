@@ -370,8 +370,39 @@ async def pending_manual_reviews(
         return tuple((await session.scalars(select(FileManualOrder).where(
             FileManualOrder.project_id == project_id,
             FileManualOrder.telegram_bot_id == bot_id,
-            FileManualOrder.status == "submitted",
-        ).order_by(FileManualOrder.submitted_at, FileManualOrder.id).limit(30))).all())
+            FileManualOrder.status.in_(("pending", "submitted")),
+        ).order_by(FileManualOrder.created_at, FileManualOrder.id).limit(30))).all())
+
+
+async def close_pending_manual_order(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID, order_id: UUID,
+) -> FileManualOrder:
+    """Close an abandoned unpaid invoice with an auditable reviewer identity.
+
+    Only for pending orders with no submitted receipt. Admin should first
+    check their bank to avoid cancelling a transfer not yet reported by buyer.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        await checkout_retirement_lock(session, project_id)
+        await require_payment_permission(
+            session, project_id=project_id, actor_user_id=actor_id,
+            permission=Permission.PAYMENT_REJECT,
+        )
+        order = await session.scalar(select(FileManualOrder).where(
+            FileManualOrder.id == order_id,
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.telegram_bot_id == bot_id,
+        ).with_for_update())
+        if order is None:
+            raise PermissionError("Счёт недоступен")
+        if order.status != "pending" or order.receipt_file_id is not None:
+            raise ValueError("Закрыть можно только счёт без отправленного чека")
+        order.status = "cancelled"
+        order.reviewed_by = actor_id
+        order.reviewed_at = datetime.now(UTC)
+        await session.flush()
+        return order
 
 
 async def review_manual_order(
