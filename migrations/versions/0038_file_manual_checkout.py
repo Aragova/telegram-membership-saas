@@ -15,6 +15,9 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Existing products retain Stars prices; future manual-only files may use NULL.
+    op.alter_column("file_sale_products", "stars_price",
+                    existing_type=sa.Integer(), nullable=True)
     op.create_table(
         "file_sale_manual_prices",
         sa.Column("product_id", sa.Uuid(), primary_key=True),
@@ -160,3 +163,13 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION public.guard_file_manual_order()")
     op.drop_table("file_sale_manual_orders")
     op.drop_table("file_sale_manual_prices")
+    op.execute("""
+        DO $check$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM file_sale_products WHERE stars_price IS NULL) THEN
+                RAISE EXCEPTION 'Cannot require Stars prices for manual-only files';
+            END IF;
+        END $check$
+    """)
+    op.alter_column("file_sale_products", "stars_price",
+                    existing_type=sa.Integer(), nullable=False)
