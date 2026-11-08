@@ -14,6 +14,7 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance
+from telegram_membership_saas.modules.bots.deletion_service import count_retirement_blockers
 from telegram_membership_saas.modules.file_sales import manual_service as manual
 from telegram_membership_saas.modules.file_sales import service as files
 from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
@@ -114,6 +115,37 @@ async def test_manual_file_checkout_freezes_price_and_requires_owner_approval():
         )
         assert again.id == order.id
         assert "525 RUB" in order.instruction
+        # Abandoned pending orders are owner-closable after bank verification;
+        # they cannot hold transfer/bot deletion hostage indefinitely.
+        abandoned_buyer = tg_id()
+        abandoned, paid = await manual.create_manual_order(
+            factory, project_id=project, bot_id=bot_id,
+            product_id=product.id, buyer_id=abandoned_buyer,
+            currency="RUB", method_id=method_id,
+        )
+        assert not paid and abandoned.status == "pending"
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            blockers = await count_retirement_blockers(session, project_id=project)
+            assert blockers.file_orders == 2
+            assert blockers.has_blockers
+        with pytest.raises(PermissionError):
+            await manual.close_pending_manual_order(
+                factory, project_id=project, bot_id=bot_id,
+                actor_id=buyer, order_id=abandoned.id,
+            )
+        closed = await manual.close_pending_manual_order(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, order_id=abandoned.id,
+        )
+        assert closed.status == "cancelled"
+        assert closed.reviewed_by == owner
+        with pytest.raises(ValueError):
+            await manual.close_pending_manual_order(
+                factory, project_id=project, bot_id=bot_id,
+                actor_id=owner, order_id=abandoned.id,
+            )
 
         await manual.set_manual_price(
             factory, project_id=project, bot_id=bot_id,
@@ -153,6 +185,11 @@ async def test_manual_file_checkout_freezes_price_and_requires_owner_approval():
         )
         assert changed and approved.status == "approved"
         assert approved.amount == Decimal("525")
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            blockers = await count_retirement_blockers(session, project_id=project)
+            assert blockers.file_orders == 0
         repeated, changed = await manual.review_manual_order(
             factory, project_id=project, bot_id=bot_id,
             actor_id=owner, order_id=order.id, approve=True,
