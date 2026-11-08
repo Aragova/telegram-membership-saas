@@ -1,6 +1,8 @@
 """Manual digital-file checkout: real PostgreSQL RLS, proof and reviewer gating."""
 import os
+from datetime import UTC, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
@@ -230,5 +232,73 @@ async def test_manual_file_checkout_freezes_price_and_requires_owner_approval():
                 await session.execute(text(
                     "DELETE FROM file_sale_manual_orders WHERE id=:id"
                 ), {"id": order.id})
+    finally:
+        await engine.dispose()
+
+
+async def test_file_payment_reviews_paginate_and_can_reopen_late_receipts():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner, _, outsider, project, _, _, _, _ = await setup_subscriber(factory)
+        bot_id = tg_id()
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add(BotInstance(
+                project_id=project, telegram_bot_id=bot_id,
+                username="review_pagination_test", display_name="File reviews",
+                token_ciphertext="test-token",
+            ))
+        folder = await files.add_folder(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, name="Folder",
+        )
+        product = await files.create_product(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, folder_id=folder.id,
+            name="Video", stars=15,
+        )
+        def invoice(label: str, status: str = "pending"):
+            return FileManualOrder(
+                project_id=project, product_id=product.id,
+                telegram_bot_id=bot_id, telegram_user_id=tg_id(),
+                product_name=label, amount=Decimal("525"),
+                currency_code="RUB", payment_method_id=uuid4(),
+                payment_method_name="Bank", instruction="Bank details",
+                status=status,
+                submitted_at=datetime.now(UTC) if status == "submitted" else None,
+                receipt_kind="photo" if status == "submitted" else None,
+                receipt_file_id="receipt-verified" if status == "submitted" else None,
+            )
+        submitted = invoice("Important receipt", "submitted")
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add_all([invoice(f"Old pending {i}") for i in range(34)])
+            session.add(submitted)
+            await session.flush()
+            receipt_id = submitted.id
+        total, first = await manual.pending_manual_reviews(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, page=0,
+        )
+        assert total == 35 and len(first) == 8
+        assert first[0].id == receipt_id
+        total, later = await manual.pending_manual_reviews(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, page=4,
+        )
+        assert total == 35 and len(later) == 3
+        opened = await manual.load_manual_review(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, order_id=receipt_id,
+        )
+        assert opened.receipt_file_id == "receipt-verified"
+        with pytest.raises(PermissionError):
+            await manual.load_manual_review(
+                factory, project_id=project, bot_id=bot_id,
+                actor_id=outsider, order_id=receipt_id,
+            )
     finally:
         await engine.dispose()
