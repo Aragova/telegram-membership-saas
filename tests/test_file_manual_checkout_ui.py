@@ -77,8 +77,8 @@ async def test_select_file_opens_manual_methods_and_stars_not_invoice(monkeypatc
     await _callback(router)(_query("item:" + encode_uuid(product)), bot)
     bot.send_invoice.assert_not_awaited()
     kwargs = bot.send_message.await_args.kwargs
-    assert "Мои видео" in kwargs["text"]
-    assert "525 RUB" in kwargs["text"]
+    assert "Мои видео" in bot.send_message.await_args.args[1]
+    assert "525 RUB" in bot.send_message.await_args.args[1]
     actions = [
         button.callback_data
         for row in kwargs["reply_markup"].inline_keyboard for button in row
@@ -110,8 +110,8 @@ async def test_manual_checkout_waits_for_receipt_and_never_delivers_files(monkey
     bot.send_invoice.assert_not_awaited()
     delivery.assert_not_awaited()
     kwargs = bot.send_message.await_args.kwargs
-    assert "Карта 1234" in kwargs["text"]
-    assert "525 RUB" in kwargs["text"]
+    assert "Карта 1234" in bot.send_message.await_args.args[1]
+    assert "525 RUB" in bot.send_message.await_args.args[1]
     actions = [
         b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row
     ]
