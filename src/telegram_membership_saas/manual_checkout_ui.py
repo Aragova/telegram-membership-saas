@@ -30,11 +30,11 @@ log = logging.getLogger(__name__)
 
 # No speculative parsing of arbitrary bank details: a bare card/account
 # number or a clearly labelled phone/card/account field only.
-_ACCOUNT_NUMBER = re.compile(r"(?:\\d[ -]?){15,19}\\d")
+_ACCOUNT_NUMBER = re.compile(r"(?:\d[ -]?){15,19}\d")
 _LABELED_VALUE = re.compile(
     r"^(?:карта|номер карты|сч[её]т|номер сч[её]та|сбп|телефон|"
-    r"card|card number|account|account number|phone|iban)\\s*[:：]\\s*"
-    r"(?P<value>\\+?\\d[\\d() -]{6,31})$",
+    r"card|card number|account|account number|phone|iban)\s*[:：]\s*"
+    r"(?P<value>\+?\d[\d() -]{6,31})$",
     flags=re.IGNORECASE,
 )
 
@@ -50,7 +50,7 @@ def copyable_payment_detail(instruction: str) -> str | None:
         labeled = _LABELED_VALUE.fullmatch(line)
         if labeled:
             value = labeled.group("value").strip()
-            if 8 <= len(re.sub(r"\\D", "", value)) <= 20:
+            if 8 <= len(re.sub(r"\D", "", value)) <= 20:
                 candidates.add(value)
     if len(candidates) != 1:
         return None
