@@ -17,7 +17,9 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
-from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
+from telegram_membership_saas.modules.file_sales.manual_models import (
+    FileManualOrder, FileManualPrice,
+)
 from telegram_membership_saas.modules.file_sales.models import (
     FileAsset,
     FileFolder,
