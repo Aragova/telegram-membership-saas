@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
@@ -17,6 +17,7 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
+from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
 from telegram_membership_saas.modules.file_sales.models import (
     FileAsset,
     FileFolder,
@@ -34,6 +35,12 @@ ASSET_LIMIT = 20
 FOLDER_LIMIT = 100
 PRODUCT_LIMIT = 2000
 PENDING_ORDER_LIMIT = 50
+
+
+@dataclass(frozen=True, slots=True)
+class PaidFileListing:
+    id: UUID
+    product_name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,6 +415,19 @@ async def create_stars_order(
                 amount=paid.stars_amount,
                 invoice_payload=paid.invoice_payload, paid=True,
             )
+        manual_paid = await session.scalar(select(FileManualOrder).where(
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.telegram_bot_id == bot_id,
+            FileManualOrder.telegram_user_id == buyer_id,
+            FileManualOrder.product_id == product_id,
+            FileManualOrder.status == "approved",
+        ).limit(1))
+        if manual_paid:
+            return DigitalOrder(
+                id=manual_paid.id, product_id=product_id,
+                product_name=manual_paid.product_name,
+                amount=item.stars_price, invoice_payload="", paid=True,
+            )
         pending = await session.scalar(select(FilePurchase).where(
             FilePurchase.project_id == project_id,
             FilePurchase.telegram_bot_id == bot_id,
@@ -526,23 +546,41 @@ async def list_purchases(
 async def list_purchases_page(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, page: int = 0,
-) -> tuple[int, tuple[FilePurchase, ...]]:
+) -> tuple[int, tuple[PaidFileListing, ...]]:
+    """Unified paid history, including manual and Stars purchases (archived too)."""
     if not 0 <= page <= 10000:
         raise ValueError("Неверная страница")
     async with system_project_session_scope(factory, project_id) as session:
-        where = (
-            FilePurchase.project_id == project_id,
-            FilePurchase.telegram_bot_id == bot_id,
-            FilePurchase.telegram_user_id == buyer_id,
-            FilePurchase.status == "paid",
-        )
-        total = await session.scalar(select(func.count(FilePurchase.id)).where(*where)) or 0
-        rows = (await session.scalars(
-            select(FilePurchase).where(*where)
-            .order_by(FilePurchase.paid_at.desc(), FilePurchase.id.desc())
+        combined = union_all(
+            select(
+                FilePurchase.id.label("id"),
+                FilePurchase.product_name.label("product_name"),
+                FilePurchase.paid_at.label("paid_at"),
+            ).where(
+                FilePurchase.project_id == project_id,
+                FilePurchase.telegram_bot_id == bot_id,
+                FilePurchase.telegram_user_id == buyer_id,
+                FilePurchase.status == "paid",
+            ),
+            select(
+                FileManualOrder.id.label("id"),
+                FileManualOrder.product_name.label("product_name"),
+                FileManualOrder.paid_at.label("paid_at"),
+            ).where(
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.status == "approved",
+            ),
+        ).subquery()
+        total = await session.scalar(select(func.count()).select_from(combined)) or 0
+        rows = (await session.execute(
+            select(combined.c.id, combined.c.product_name)
+            .order_by(combined.c.paid_at.desc(), combined.c.id.desc())
             .offset(page * 8).limit(8)
         )).all()
-        return total, tuple(rows)
+        return total, tuple(PaidFileListing(id=row[0], product_name=row[1])
+                            for row in rows)
 
 
 async def purchased_assets(
@@ -558,6 +596,14 @@ async def purchased_assets(
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.status == "paid",
         ))
+        if order is None:
+            order = await session.scalar(select(FileManualOrder).where(
+                FileManualOrder.id == purchase_id,
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.status == "approved",
+            ))
         if order is None:
             raise PermissionError("Оплаченная покупка не найдена")
         assets = tuple((await session.scalars(select(FileAsset).where(
@@ -581,5 +627,13 @@ async def mark_file_delivery(
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.status == "paid",
         ).with_for_update())
+        if order is None:
+            order = await session.scalar(select(FileManualOrder).where(
+                FileManualOrder.id == purchase_id,
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.status == "approved",
+            ).with_for_update())
         if order:
             order.last_delivered_at = datetime.now(UTC)
