@@ -308,7 +308,11 @@ def create_file_sales_router(
                     )
                     for code, amount in prices if amount is not None
                 )
-            text += "\n" + tr("Статус: ", "Status: ") + escape(item.status)
+            text += "\n" + tr("Статус: ", "Status: ") + escape({
+                "draft": tr("Черновик", "Draft"),
+                "published": tr("В продаже", "Published"),
+                "archived": tr("Снят с продажи", "Archived"),
+            }.get(item.status, item.status))
             rows = []
             if item.status == "draft":
                 rows.extend([
@@ -439,7 +443,7 @@ def create_file_sales_router(
                 await folders(bot, uid, who if action == "adminfolders" else None)
             elif action == "admin":
                 if not admin:
-                    raise PermissionError("Нет доступа к управлению товарами")
+                    raise PermissionError(tr("Нет доступа к управлению товарами", "You cannot manage these products"))
                 pending.pop(uid, None)
                 await bot.send_message(
                     uid,
@@ -466,11 +470,11 @@ def create_file_sales_router(
                 )
             elif action == "paymethods":
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 await payment_method_settings(bot, uid, who)
             elif action.startswith("paytoggle:"):
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 token = action.split(":", 1)[1]
                 method_id = UUID(hex=token)
                 await toggle_file_payment_method(
@@ -480,10 +484,10 @@ def create_file_sales_router(
                 await payment_method_settings(bot, uid, who)
             elif action.startswith("paybulk:"):
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 mode = action.split(":", 1)[1]
                 if mode not in ("on", "off"):
-                    raise ValueError("Неизвестное действие")
+                    raise ValueError(tr("Неизвестное действие", "Unknown action"))
                 await set_all_file_payment_methods(
                     factory, project_id=project_id, bot_id=bot.id,
                     actor_id=who, enabled=mode == "on",
@@ -491,7 +495,7 @@ def create_file_sales_router(
                 await payment_method_settings(bot, uid, who)
             elif action == "newfolder":
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 pending[uid] = {"stage": "folder", "expires": monotonic() + ENTRY_SECONDS}
                 await bot.send_message(
                     uid, tr("📁 Напишите название папки следующим сообщением. "
@@ -502,21 +506,21 @@ def create_file_sales_router(
             elif action.startswith(("af:", "folder:")):
                 owner_view, token = action.split(":", 1)
                 if owner_view == "af" and not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 await show_products(
                     bot, uid, decode_uuid(token),
                     who if owner_view == "af" else None,
                 )
             elif action.startswith("newproduct:"):
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 folder = decode_uuid(action.split(":", 1)[1])
                 # Verify folder belongs to this project before starting a draft.
                 data = await list_folders(
                     factory, project_id=project_id, bot_id=bot.id, actor_id=who,
                 )
                 if not any(x.id == folder and x.status == "active" for x in data):
-                    raise ValueError("Папка не найдена")
+                    raise ValueError(tr("Папка не найдена", "Folder not found"))
                 pending[uid] = {
                     "stage": "name", "folder": folder,
                     "expires": monotonic() + ENTRY_SECONDS,
@@ -528,16 +532,16 @@ def create_file_sales_router(
                 )
             elif action.startswith("initcurrency:"):
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 state = pending.get(uid)
                 if not state or state.get("stage") != "currency":
-                    raise ValueError("Срок выбора валюты истёк")
+                    raise ValueError(tr("Срок выбора валюты истёк", "Currency selection has expired"))
                 code = action.split(":", 1)[1]
                 choices = await available_price_currencies(
                     factory, project_id=project_id, bot_id=bot.id, actor_id=who,
                 )
                 if code != "XTR" and code not in choices:
-                    raise ValueError("Валюта недоступна")
+                    raise ValueError(tr("Валюта недоступна", "Currency unavailable"))
                 state["currency"] = code
                 state["stage"] = "price"
                 state["expires"] = monotonic() + ENTRY_SECONDS
@@ -550,7 +554,7 @@ def create_file_sales_router(
             elif action.startswith(("ap:", "item:")):
                 admin_view, token = action.split(":", 1)
                 if admin_view == "ap" and not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 pending.pop(uid, None)
                 if admin_view == "item":
                     await show_file_payment_options(
@@ -567,7 +571,7 @@ def create_file_sales_router(
                 )
             elif action.startswith(("editname:", "editdescription:", "editprice:")):
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 operation, token = action.split(":", 1)
                 item_id = decode_uuid(token)
                 product, _ = await view_product(
@@ -575,7 +579,7 @@ def create_file_sales_router(
                     product_id=item_id, actor_id=who,
                 )
                 if product.status != "draft":
-                    raise ValueError("Можно изменить только черновик")
+                    raise ValueError(tr("Можно изменить только черновик", "Only drafts can be edited"))
                 pending[uid] = {
                     "stage": operation, "product": item_id,
                     "expires": monotonic() + ENTRY_SECONDS,
@@ -588,7 +592,7 @@ def create_file_sales_router(
                 ))
             elif action.startswith("upload:"):
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 product = decode_uuid(action.split(":", 1)[1])
                 await view_product(
                     factory, project_id=project_id, bot_id=bot.id,
@@ -610,7 +614,7 @@ def create_file_sales_router(
                 )
             elif action.startswith(("publish:", "archive:")):
                 if not admin:
-                    raise PermissionError("Нет прав")
+                    raise PermissionError(tr("Нет прав", "Access denied"))
                 verb, token = action.split(":", 1)
                 product = decode_uuid(token)
                 await change_product_status(
@@ -643,7 +647,7 @@ def create_file_sales_router(
             elif action == "mine" or action.startswith("mine:"):
                 raw = action.split(":", 1)[1] if ":" in action else "0"
                 if not raw.isascii() or not raw.isdecimal():
-                    raise ValueError("Неверная страница")
+                    raise ValueError(tr("Неверная страница", "Invalid page"))
                 await my_files(bot, uid, int(raw))
             elif action == "recover":
                 # Independent evidence comes from Telegram's actual Stars ledger.
@@ -680,7 +684,7 @@ def create_file_sales_router(
                     bot, uid, decode_uuid(action.split(":", 1)[1]),
                 )
             else:
-                raise ValueError("Неизвестное действие")
+                raise ValueError(tr("Неизвестное действие", "Unknown action"))
             await query.answer()
         except (ValueError, PermissionError) as exc:
             await query.answer(str(exc)[:190], show_alert=True)
@@ -705,7 +709,7 @@ def create_file_sales_router(
             stage = state["stage"]
             if stage == "folder":
                 if not message.text:
-                    raise ValueError("Введите название папки текстом")
+                    raise ValueError(tr("Введите название папки текстом", "Enter the folder name as text"))
                 folder = await add_folder(
                     factory, project_id=project_id, bot_id=bot.id,
                     actor_id=who, name=message.text,
@@ -717,7 +721,7 @@ def create_file_sales_router(
                 await show_products(bot, uid, folder.id, who)
             elif stage == "name":
                 if not message.text or not 1 <= len(message.text.strip()) <= 120:
-                    raise ValueError("Название товара — от 1 до 120 символов")
+                    raise ValueError(tr("Название товара — от 1 до 120 символов", "Product name must contain 1–120 characters"))
                 state["name"] = message.text.strip()
                 state["stage"] = "currency"
                 choices = await available_price_currencies(
@@ -743,10 +747,10 @@ def create_file_sales_router(
                 currency = state["currency"]
                 if currency == "XTR":
                     if not text.isascii() or not text.isdecimal():
-                        raise ValueError("Укажите целое число Stars")
+                        raise ValueError(tr("Укажите целое число Stars", "Enter a whole number of Stars"))
                     stars = int(text)
                     if not 1 <= stars <= 250000:
-                        raise ValueError("Цена Stars: от 1 до 250000")
+                        raise ValueError(tr("Цена Stars: от 1 до 250000", "Stars price must be between 1 and 250000"))
                     product = await create_product(
                         factory, project_id=project_id, bot_id=bot.id,
                         actor_id=who, folder_id=state["folder"],
@@ -765,7 +769,7 @@ def create_file_sales_router(
                 await detail(bot, uid, product.id, who)
             elif stage in ("editname", "editdescription", "editprice"):
                 if not message.text:
-                    raise ValueError("Введите значение текстом")
+                    raise ValueError(tr("Введите значение текстом", "Enter the value as text"))
                 field = {
                     "editname": "name",
                     "editdescription": "description",
@@ -781,7 +785,7 @@ def create_file_sales_router(
             elif stage == "upload":
                 media = _media_id(message)
                 if media is None:
-                    raise ValueError("Нужен файл, фото, видео, GIF или аудио")
+                    raise ValueError(tr("Нужен файл, фото, видео, GIF или аудио", "Attach a file, photo, video, GIF or audio"))
                 kind, file_id = media
                 amount = await add_product_asset(
                     factory, project_id=project_id, bot_id=bot.id,
