@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.file_sales.manual_service import (
     available_methods,
+    close_pending_manual_order,
     create_manual_order,
     money,
     pending_manual_reviews,
@@ -363,7 +364,8 @@ def create_manual_file_router(
                     factory, project_id=project_id, bot_id=bot.id, actor_id=actor,
                 )
                 rows = [[_button(
-                    "📋 " + item.product_name[:26] + " · "
+                    ("🕓 " if item.status == "pending" else "📨 ")
+                    + item.product_name[:26] + " · "
                     + _short_amount(item.amount) + " " + item.currency_code,
                     "review:" + encode_uuid(item.id),
                 )] for item in items]
@@ -398,13 +400,81 @@ def create_manual_file_router(
                     + escape(order.currency_code) + "\n"
                     + "💳 " + escape(order.payment_method_name),
                     parse_mode="HTML",
-                    reply_markup=_keyboard([[
-                        _button("✅ Подтвердить", "approve:" + encode_uuid(order.id),
-                                "success"),
-                        _button("❌ Отклонить", "reject:" + encode_uuid(order.id),
-                                "danger"),
-                    ]]),
+                    reply_markup=_keyboard(
+                        [[_button(
+                            tr("⚠️ Закрыть неоплаченный счёт",
+                               "⚠️ Close unpaid invoice"),
+                            "closeconfirm:" + encode_uuid(order.id), "danger",
+                        )]] if order.status == "pending" else
+                        [[_button(
+                            tr("✅ Подтвердить", "✅ Approve"),
+                            "approve:" + encode_uuid(order.id), "success",
+                        ), _button(
+                            tr("❌ Отклонить", "❌ Reject"),
+                            "reject:" + encode_uuid(order.id), "danger",
+                        )]],
+                    ),
                 )
+            elif action.startswith("closeconfirm:"):
+                actor = await ensure_telegram_actor(
+                    factory, telegram_id=uid,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                order_id = decode_uuid(action.split(":")[1])
+                items = await pending_manual_reviews(
+                    factory, project_id=project_id, bot_id=bot.id, actor_id=actor,
+                )
+                if not any(x.id == order_id and x.status == "pending" for x in items):
+                    raise ValueError("Счёт уже изменился или недоступен")
+                await bot.send_message(
+                    uid, tr(
+                        "⚠️ <b>Закрытие неоплаченного счёта</b>\n\n"
+                        "Перед закрытием проверьте поступления на банковском счёте: "
+                        "покупатель мог перевести деньги, но не прислать чек. "
+                        "После закрытия прежние реквизиты станут недействительны, "
+                        "а покупателю придёт уведомление.",
+                        "⚠️ <b>Close unpaid invoice</b>\n\n"
+                        "First verify your bank: the buyer may have transferred "
+                        "money without sending a receipt. The old instructions "
+                        "will be invalidated and the buyer will be notified.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_keyboard([
+                        [_button(tr("⛔ Подтвердить закрытие", "⛔ Confirm closure"),
+                                 "close:" + encode_uuid(order_id), "danger")],
+                        [_button(tr("⬅️ Назад", "⬅️ Back"), "reviews")],
+                    ]),
+                )
+            elif action.startswith("close:"):
+                actor = await ensure_telegram_actor(
+                    factory, telegram_id=uid,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                order = await close_pending_manual_order(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=actor, order_id=decode_uuid(action.split(":")[1]),
+                )
+                await bot.send_message(
+                    uid, tr("✅ Неоплаченный счёт закрыт.",
+                           "✅ Unpaid invoice closed."),
+                )
+                try:
+                    async with recipient_language(factory, order.telegram_user_id):
+                        await bot.send_message(
+                            order.telegram_user_id,
+                            tr(
+                                "⚠️ Счёт на покупку файла отменён владельцем. "
+                                "Не переводите деньги по старым реквизитам. "
+                                "Если уже оплатили, свяжитесь с поддержкой.",
+                                "⚠️ Your file invoice was cancelled by the owner. "
+                                "Do not pay the old details. If you've already "
+                                "sent money, contact support.",
+                            ),
+                        )
+                except AiogramError:
+                    log.warning("Unable to notify buyer of closed file invoice")
             elif action.startswith(("approve:", "reject:")):
                 approve = action.startswith("approve:")
                 actor = await ensure_telegram_actor(
