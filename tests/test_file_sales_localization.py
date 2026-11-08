@@ -147,3 +147,104 @@ async def test_file_receipt_admin_notification_uses_reviewer_language(monkeypatc
     buyer = next(call for call in bot.send_message.await_args_list
                  if call.args[0] == 123)
     assert "Чек зарегистрирован" in buyer.args[1]
+
+
+@pytest.mark.parametrize(
+    ("lang", "header", "prompt", "stars_label"),
+    [
+        ("ru", "Оформление покупки файла", "Как вам удобнее оплатить?",
+         "Звёзды Telegram"),
+        ("en", "File purchase checkout", "How would you like to pay?",
+         "Telegram Stars"),
+    ],
+)
+async def test_buyer_file_payment_screen_is_ru_or_en(
+    monkeypatch, lang, header, prompt, stars_label,
+):
+    from telegram_membership_saas.modules.file_sales.manual_service import (
+        ManualMethod,
+    )
+
+    product = uuid4()
+    monkeypatch.setattr(manual_ui, "available_methods", AsyncMock(return_value=(
+        ManualMethod("RUB", Decimal("100"), 2, uuid4(), "Bank"),
+    )))
+    monkeypatch.setattr(
+        manual_ui, "file_stars_enabled", AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(manual_ui, "view_product", AsyncMock(return_value=(
+        SimpleNamespace(
+            id=product, folder_id=uuid4(),
+            name="Original product", description="", stars_price=500,
+        ), 1,
+    )))
+    bot = MagicMock()
+    bot.id = 8000
+    bot.send_message = AsyncMock()
+    token = localization._language.set(lang)
+    try:
+        await manual_ui.show_file_payment_options(
+            bot, factory=MagicMock(), project_id=uuid4(),
+            buyer_id=123, product_id=product,
+        )
+    finally:
+        localization._language.reset(token)
+    call = bot.send_message.await_args
+    assert header in call.args[1]
+    assert prompt in call.args[1]
+    labels = [b.text for row in call.kwargs["reply_markup"].inline_keyboard
+              for b in row]
+    assert any(stars_label in text for text in labels)
+
+
+@pytest.mark.parametrize(
+    ("lang", "heading", "bulk_label", "stars_label"),
+    [
+        ("ru", "Способы оплаты файлов", "Выключить все способы оплаты",
+         "Автоматическая оплата звёздами"),
+        ("en", "File payment methods", "Disable all payment methods",
+         "Automatic Stars"),
+    ],
+)
+async def test_owner_file_payment_methods_localize_both_languages(
+    monkeypatch, lang, heading, bulk_label, stars_label,
+):
+    from telegram_membership_saas.modules.file_sales.payment_controls import (
+        AUTO_STARS_ID,
+        FilePaymentChoice,
+    )
+
+    monkeypatch.setattr(files_ui, "ensure_telegram_actor",
+                        AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(files_ui, "can_manage_project",
+                        AsyncMock(return_value=True))
+    monkeypatch.setattr(files_ui, "list_file_payment_controls", AsyncMock(
+        return_value=(FilePaymentChoice(
+            method_id=AUTO_STARS_ID, name="Stars XTR",
+            enabled=True, auto_stars=True,
+        ),),
+    ))
+    bot = MagicMock()
+    bot.id = 8000
+    bot.send_message = AsyncMock()
+    router = files_ui.create_file_sales_router(
+        MagicMock(), project_id=uuid4(),
+    )
+    callback = _router_callback(router, "file_callback")
+    query = SimpleNamespace(
+        data="fs:paymethods",
+        message=SimpleNamespace(chat=SimpleNamespace(type="private", id=123)),
+        from_user=SimpleNamespace(id=123, username="owner", first_name="Owner"),
+        answer=AsyncMock(),
+    )
+    token = localization._language.set(lang)
+    try:
+        await callback(query, bot)
+    finally:
+        localization._language.reset(token)
+    call = bot.send_message.await_args
+    assert heading in call.args[1]
+    labels = [b.text for row in call.kwargs["reply_markup"].inline_keyboard
+              for b in row]
+    assert any(bulk_label in x for x in labels)
+    assert any(stars_label in x for x in labels)
