@@ -382,7 +382,7 @@ def test_compact_list_contains_legend_page_but_no_duplicated_usernames(
     assert ("Страница 2 из 8" if language == "ru" else "Page 2 of 8") in summary
     assert "💎" in summary and "🔐" in summary and "💳" in summary
     assert all(item["username"] not in summary for item in sample)
-    assert all(("@" + item["username"]) in label for item, label in zip(sample, labels))
+    assert all(("@" + item["username"]) in label for item, label in zip(sample, labels, strict=True))
     assert all(len(label) <= 64 for label in labels)
     assert all(item["plans"] >= 2 for item in sample)
 
