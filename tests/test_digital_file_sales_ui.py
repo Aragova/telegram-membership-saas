@@ -58,7 +58,7 @@ async def test_buyer_gets_xtr_invoice_but_not_file_before_stars_confirmation(
 
 
 async def test_confirmed_charge_only_unlocks_files_to_actual_buyer(monkeypatch):
-    project, product, purchase = uuid4(), uuid4(), uuid4()
+    project, purchase = uuid4(), uuid4()
     router = ui.create_file_sales_router(MagicMock(), project_id=project)
     bot = _bot()
     bot.id = 9999
