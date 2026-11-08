@@ -58,7 +58,8 @@ def test_owner_payment_instructions_remain_byte_identical_after_heading():
     instruction = "Оплатите 500 RUB\nСБП: +7 999 000-00-00\nhttp://example.org/?x=1&amp;y=2"
     legacy = "💎 <b>Оформление подписки</b>\n\n" + instruction
     rendered = rich.to_rich_html(legacy)
-    assert rendered.endswith(instruction)
+    assert "Оплатите 500 RUB<br>СБП: +7 999 000-00-00" in rendered
+    assert "http://example.org/?x=1&amp;y=2</p>" in rendered
     assert "<table" not in rendered
 
 
@@ -338,3 +339,65 @@ async def test_shared_language_selector_uses_rich_capable_bot(monkeypatch):
     bot.send_message.assert_awaited_once()
     query.answer.assert_awaited_once()
     msg.answer.assert_not_awaited()
+
+
+def test_rich_html_multiline_preserves_visual_breaks_and_preformatted_code():
+    body = (
+        "💎 <b>Checkout</b>\\n\\n"
+        "Pay 100 RUB\\nBank number: 123 456\\n\\n"
+        "<pre>code\\nwith deliberate indentation</pre>\\n"
+        "Then tap Paid"
+    )
+    html = rich.to_rich_html(body)
+    assert "<h3>💎 <b>Checkout</b></h3>" in html
+    assert "Pay 100 RUB<br>Bank number: 123 456" in html
+    assert "<pre>code\\nwith deliberate indentation</pre>" in html
+    assert "Then tap Paid" in html
+    assert "<br>with deliberate indentation</pre>" not in html
+
+
+async def test_failed_rich_catalog_does_not_trigger_second_rich_send(monkeypatch):
+    from contextlib import asynccontextmanager
+    from unittest.mock import MagicMock
+
+    from telegram_membership_saas.modules.telegram_commerce import handlers as ui
+
+    monkeypatch.setattr(rich, "get_settings", lambda: _settings())
+    project, plan, price, method = uuid4(), uuid4(), uuid4(), uuid4()
+    options = (
+        CheckoutOption(
+            plan_id=plan, plan_name="1 месяц", duration_value=1,
+            duration_unit="month", plan_price_id=price,
+            currency_code="RUB", amount=Decimal("500"),
+            currency_precision=2, payment_method_id=method,
+            payment_method_name="Bank",
+        ),
+    )
+    offers = build_buyer_offers(options, {plan: ("Test channel",)})
+
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield MagicMock()
+
+    monkeypatch.setattr(ui, "system_project_session_scope", scope)
+    monkeypatch.setattr(ui, "list_buyer_offers", AsyncMock(return_value=offers))
+    monkeypatch.setattr(ui, "rich_subscription_enabled", lambda _id: True)
+    rich_attempt = AsyncMock(return_value=False)
+    monkeypatch.setattr(ui, "send_rich_subscription_offer", rich_attempt)
+
+    async def confirm_classic_fallback(*args, **kwargs):
+        assert rich._skip_rich.get() is True
+
+    classic_fallback = AsyncMock(side_effect=confirm_classic_fallback)
+    monkeypatch.setattr(ui, "_send_screen", classic_fallback)
+    bot = _bot()
+    try:
+        result = await ui._send_catalog(
+            bot, chat_id=123, session_factory=MagicMock(),
+            project_id=project, price_id=price, message_id=77,
+        )
+        assert result
+        rich_attempt.assert_awaited_once()
+        classic_fallback.assert_awaited_once()
+    finally:
+        await bot.session.close()
