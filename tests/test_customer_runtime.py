@@ -59,7 +59,7 @@ def test_connected_dispatcher_separates_tenant_admin_and_buyer_routes():
     dispatcher = create_customer_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
         "vimi-language", "secure-owner-transfer", "project-support",
-        "owner-tenant", "customer-broadcasts",
+        "digital-file-sales", "owner-tenant", "customer-broadcasts",
         "telegram-access", "telegram-commerce"
     ]
 

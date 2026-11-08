@@ -130,7 +130,9 @@ def test_buyer_screens_do_not_duplicate_native_menu_purchases(language):
             "success"
         )
         _text, empty_markup = catalog_screen(())
-        assert [b.callback_data for b in _buttons(empty_markup)] == ["lng:menu"]
+        assert [b.callback_data for b in _buttons(empty_markup)] == [
+                "fs:shop", "lng:menu",
+            ]
 
         detail = offer_screen(offers, price_id=option.plan_price_id)
         assert detail is not None

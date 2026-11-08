@@ -185,6 +185,10 @@ def catalog_screen(
             ),
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
+                    text=tr("📂 Купить файлы", "📂 Buy digital files"),
+                    callback_data="fs:shop",
+                )],
+                [InlineKeyboardButton(
                     text="🌐 Language / Язык",
                     callback_data="lng:menu", style="success",
                 )],
@@ -259,6 +263,11 @@ def catalog_screen(
     lines.extend(["", tr(
         "👇 Нажмите на тариф ниже. Способ оплаты выберете на следующем шаге. 💳",
         "👇 Tap a plan below. You’ll choose a payment method next. 💳",
+    )])
+    rows.append([InlineKeyboardButton(
+        text=tr("📂 Купить файлы", "📂 Buy digital files"),
+        callback_data="fs:shop",
+        style="success",
     )])
     rows.append([InlineKeyboardButton(
         text="🌐 Language / Язык",
