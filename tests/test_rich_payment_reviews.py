@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
+import subprocess
+import sys
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -24,6 +26,18 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     ReviewResult,
     encode_uuid,
 )
+
+
+
+def test_rich_review_imports_in_fresh_process_before_commerce_handlers():
+    proc = subprocess.run(
+        [sys.executable, "-c",
+         "from telegram_membership_saas.payment_review_ui import "
+         "rich_subscription_review; print('ok')"],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ok"
 
 
 def _review():
