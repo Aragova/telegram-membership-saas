@@ -354,7 +354,10 @@ def create_manual_file_router(
                     buyer_id=uid, order_id=order_id,
                 )
                 if order.status != "pending":
-                    raise ValueError(tr("Заявка уже отправлена или закрыта", "This request was already submitted or closed"))
+                    raise ValueError(tr(
+                        "Заявка уже отправлена или закрыта",
+                        "This request was already submitted or closed",
+                    ))
                 await bot.send_message(
                     uid, RECEIPT_PREFIX + str(order.id) + "\n"
                     + tr("Ответьте на это сообщение фотографией чека или "
@@ -491,7 +494,10 @@ def create_manual_file_router(
                     actor_id=actor, order_id=order_id,
                 )
                 if order.status != "pending":
-                    raise ValueError(tr("Счёт уже изменился или недоступен", "This invoice has changed or is unavailable"))
+                    raise ValueError(tr(
+                        "Счёт уже изменился или недоступен",
+                        "This invoice has changed or is unavailable",
+                    ))
                 await bot.send_message(
                     uid, tr(
                         "⚠️ <b>Закрытие неоплаченного счёта</b>\n\n"
