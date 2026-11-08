@@ -33,12 +33,12 @@ from telegram_membership_saas.modules.file_sales.payment_controls import (
     set_all_file_payment_methods,
     toggle_file_payment_method,
 )
+from telegram_membership_saas.modules.file_sales.recovery import (
+    recover_buyer_stars,
+)
 from telegram_membership_saas.modules.file_sales.rich_ui import (
     rich_file_card_html,
     send_file_card,
-)
-from telegram_membership_saas.modules.file_sales.recovery import (
-    recover_buyer_stars,
 )
 from telegram_membership_saas.modules.file_sales.service import (
     add_folder,
