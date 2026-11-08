@@ -84,7 +84,7 @@ async def send_file_card(
             log.info("Rich Messages not supported by installed aiogram")
         else:
             send_rich = getattr(bot, "send_rich_message", None)
-            if callable(send_rich):
+            if inspect.iscoroutinefunction(send_rich):
                 try:
                     await send_rich(
                         chat_id=chat_id,
