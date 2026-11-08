@@ -25,6 +25,7 @@ from telegram_membership_saas.modules.file_sales.models import (
 )
 from telegram_membership_saas.modules.file_sales.service import (
     ASSET_LIMIT,
+    PENDING_ORDER_LIMIT,
     _load_paid,
     _owner,
     _product,
@@ -222,6 +223,17 @@ async def create_manual_file_order(
         )
         if stars_paid:
             raise ValueError("Товар уже куплен за Stars. Откройте /myfiles")
+        # Only one transfer may await review for a product and buyer.
+        # A second method would otherwise create overlapping approvals.
+        reviewing = await session.scalar(select(FileManualPurchase.id).where(
+            FileManualPurchase.project_id == project_id,
+            FileManualPurchase.telegram_bot_id == bot_id,
+            FileManualPurchase.telegram_user_id == buyer_id,
+            FileManualPurchase.product_id == product_id,
+            FileManualPurchase.status == "waiting_review",
+        ).limit(1))
+        if reviewing:
+            raise ValueError("Эта покупка уже ожидает проверки чека")
         previous = await session.scalar(select(FileManualPurchase).where(
             FileManualPurchase.project_id == project_id,
             FileManualPurchase.telegram_bot_id == bot_id,
@@ -234,6 +246,14 @@ async def create_manual_file_order(
         ).order_by(FileManualPurchase.created_at.desc()).limit(1))
         if previous:
             return previous
+        open_orders = await session.scalar(select(func.count(FileManualPurchase.id)).where(
+            FileManualPurchase.project_id == project_id,
+            FileManualPurchase.telegram_bot_id == bot_id,
+            FileManualPurchase.telegram_user_id == buyer_id,
+            FileManualPurchase.status.in_(("waiting_confirmation", "waiting_review")),
+        )) or 0
+        if open_orders >= PENDING_ORDER_LIMIT:
+            raise ValueError("Слишком много незавершённых оплат")
         instruction = render_manual_instruction(
             method.instruction_template,
             amount=format_amount(matching_price.amount, min(asset.precision, 4)),
@@ -368,6 +388,16 @@ async def review_manual_file_order(
             )
             if stars_paid:
                 raise ValueError("Этот файл уже оплачен через Stars")
+            manual_paid = await session.scalar(select(FileManualPurchase.id).where(
+                FileManualPurchase.project_id == project_id,
+                FileManualPurchase.telegram_bot_id == bot_id,
+                FileManualPurchase.telegram_user_id == order.telegram_user_id,
+                FileManualPurchase.product_id == order.product_id,
+                FileManualPurchase.id != order.id,
+                FileManualPurchase.status == "paid",
+            ).limit(1))
+            if manual_paid:
+                raise ValueError("Этот файл уже оплачен другим способом")
         order.status = target
         order.reviewed_by = reviewer.id
         if approve:
