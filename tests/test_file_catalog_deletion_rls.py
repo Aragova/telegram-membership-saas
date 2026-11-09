@@ -228,7 +228,7 @@ async def test_unpaid_file_invoices_do_not_block_removal_but_paid_files_do():
         )
         assert order.id == paid.id
         assert [a.file_id for a in retained_assets] == ["paid-file"]
-        with pytest.raises(ValueError, match="покупка|purchased"):
+        with pytest.raises(ValueError, match="оплачен|paid"):
             await svc.delete_empty_folder(
                 factory, project_id=project, bot_id=bot,
                 actor_id=owner, folder_id=folder.id,
