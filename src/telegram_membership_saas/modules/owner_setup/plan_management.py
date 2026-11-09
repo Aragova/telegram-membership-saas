@@ -141,6 +141,7 @@ async def edit_owner_draft_resource(
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
+        await checkout_retirement_lock(session, project_id)
         plan = await _plan_for_owner(
             session, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
         )
