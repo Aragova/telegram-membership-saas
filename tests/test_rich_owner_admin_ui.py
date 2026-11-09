@@ -151,6 +151,8 @@ def test_rich_subscriber_card_exact_values_local_dates_and_html(
     assert "550 RUB" in html
     assert "550.000000000000000000" not in html
     assert "11.12.2026" in html  # Moscow local time
+    assert 'format="dt"' in html and 'format="d"' in html
+    assert "<tg-time" in html and "&lt;tg-time" not in html
     assert "10.11.2026" in html
     assert "бессрочно" in html if lang == "ru" else "lifetime" in html
     assert html.count("<table bordered compact>") == 5
