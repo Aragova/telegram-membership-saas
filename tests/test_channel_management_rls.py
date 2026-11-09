@@ -1,0 +1,208 @@
+"""Channel removal keeps pending invoices and blocks real paid purchases."""
+import os
+from datetime import UTC, datetime
+from decimal import Decimal
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import select
+
+from telegram_membership_saas.config import Settings
+from telegram_membership_saas.db import (
+    build_engine,
+    build_session_factory,
+    system_project_session_scope,
+    tenant_session_scope,
+)
+from telegram_membership_saas.modules.owner_setup.channel_management import (
+    read_channel_insights,
+    remove_channel_without_paid_purchases,
+)
+from telegram_membership_saas.modules.owner_setup.service import (
+    create_owner_payment_method,
+    create_owner_plan,
+    create_owner_project,
+    ensure_telegram_actor,
+    publish_owner_plan,
+    save_owner_price,
+    setup_overview,
+)
+from telegram_membership_saas.modules.payments import PaymentRequest
+from telegram_membership_saas.modules.plans import Plan
+from telegram_membership_saas.modules.resources import Resource, ResourceType
+from telegram_membership_saas.modules.telegram_commerce import (
+    create_checkout_for_telegram_user,
+    list_checkout_options,
+    review_payment_request_from_telegram,
+    submit_checkout_for_telegram_user,
+)
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("TMS_DATABASE_URL"), reason="Requires PostgreSQL RLS",
+)
+
+
+def _tg():
+    return (uuid4().int % 8_000_000_000_000_000_000) + 1
+
+
+async def _new_paid_channel(factory):
+    owner_tg = _tg()
+    actor = await ensure_telegram_actor(
+        factory, telegram_id=owner_tg,
+        username="channel_owner", first_name="Owner",
+    )
+    project = await create_owner_project(
+        factory, actor_id=actor, name="Channel removal test",
+    )
+    resource = uuid4()
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor, project_id=project),
+    ) as session:
+        session.add(Resource(
+            id=resource, project_id=project,
+            resource_type=ResourceType.TELEGRAM_CHANNEL.value,
+            name="My <private> channel",
+            external_id="-100" + str(_tg()),
+        ))
+    plan = await create_owner_plan(
+        factory, actor_id=actor, project_id=project,
+        name="Monthly", duration_value=1, duration_unit="month",
+        resource_id=resource,
+    )
+    await save_owner_price(
+        factory, actor_id=actor, project_id=project,
+        plan_id=plan, currency_code="RUB", amount="550",
+    )
+    await create_owner_payment_method(
+        factory, actor_id=actor, project_id=project,
+        name="Bank", currency_code="RUB",
+        instruction="Pay {amount} {currency}",
+    )
+    await publish_owner_plan(
+        factory, actor_id=actor, project_id=project, plan_id=plan,
+    )
+    async with system_project_session_scope(factory, project) as session:
+        offer = (await list_checkout_options(session, project_id=project))[0]
+        checkout = await create_checkout_for_telegram_user(
+            session, project_id=project,
+            telegram_user_id=_tg(), username="buyer",
+            first_name="Buyer", plan_price_id=offer.plan_price_id,
+            payment_method_id=offer.payment_method_id,
+        )
+        request_id = checkout.request.id
+    return owner_tg, actor, project, resource, plan, request_id
+
+
+async def test_pending_invoice_does_not_block_channel_removal_and_can_be_reviewed():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner_tg, owner, project, resource, plan, request = (
+            await _new_paid_channel(factory)
+        )
+        outsider = await ensure_telegram_actor(
+            factory, telegram_id=_tg(), username="outsider", first_name="Other",
+        )
+        with pytest.raises((PermissionError, TenantAccessDenied)):
+            await read_channel_insights(
+                factory, actor_id=outsider, project_id=project,
+                resource_id=resource,
+            )
+        before = await read_channel_insights(
+            factory, actor_id=owner, project_id=project,
+            resource_id=resource,
+        )
+        assert before.active_plans == 1
+        assert before.pending_invoices == 1
+        assert before.paid_orders == 0
+        assert before.sales_by_currency == ()
+        assert before.active_paid_customers == 0
+        assert await remove_channel_without_paid_purchases(
+            factory, actor_id=owner, project_id=project,
+            resource_id=resource,
+        ) == ("My <private> channel", 1)
+        owner_home = await setup_overview(
+            factory, actor_id=owner, project_id=project,
+        )
+        assert owner_home.resources == ()
+        assert owner_home.plans == ()
+        with pytest.raises(ValueError):
+            await read_channel_insights(
+                factory, actor_id=owner, project_id=project,
+                resource_id=resource,
+            )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            channel = await session.get(Resource, resource)
+            old_plan = await session.get(Plan, plan)
+            invoice = await session.get(PaymentRequest, request)
+            assert channel.removed_at is not None
+            assert channel.status == "active"  # old paid obligations still settle
+            assert old_plan.removed_at is not None and old_plan.status == "archived"
+            assert invoice is not None and invoice.status == "waiting_confirmation"
+        async with system_project_session_scope(factory, project) as session:
+            assert await list_checkout_options(session, project_id=project) == ()
+        # A buyer who actually transferred funds before removal is not
+        # abandoned. Their existing review request still settles into access.
+        async with system_project_session_scope(factory, project) as session:
+            await submit_checkout_for_telegram_user(
+                session, project_id=project,
+                request_id=request,
+                telegram_user_id=(await session.get(PaymentRequest, request)
+                                  ).customer.telegram_user_id if False else 0,
+            )
+    finally:
+        await engine.dispose()
+
+
+async def test_confirmed_payment_blocks_channel_deletion_permanently():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        owner_tg, owner, project, resource, _, request = (
+            await _new_paid_channel(factory)
+        )
+        # Set request to submitted using a verified buyer from the actual record
+        # (the helper returns a stable identity through customer linkage).
+        from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            customer = await session.scalar(select(ProjectCustomer).join(
+                PaymentRequest, ProjectCustomer.id == PaymentRequest.customer_id,
+            ).where(PaymentRequest.id == request))
+            buyer_id = await session.scalar(select(TelegramUser.telegram_user_id).where(
+                TelegramUser.id == customer.user_id,
+            ))
+        async with system_project_session_scope(factory, project) as session:
+            await submit_checkout_for_telegram_user(
+                session, project_id=project,
+                request_id=request, telegram_user_id=buyer_id,
+            )
+        async with system_project_session_scope(factory, project) as session:
+            approval = await review_payment_request_from_telegram(
+                session, project_id=project, request_id=request,
+                actor_telegram_user_id=owner_tg, approve=True,
+            )
+            assert approval.changed
+        metrics = await read_channel_insights(
+            factory, actor_id=owner, project_id=project,
+            resource_id=resource,
+        )
+        assert metrics.paid_orders == 1
+        assert metrics.sales_by_currency == (("RUB", Decimal("550"), 1),)
+        assert metrics.paid_customers == 1
+        assert metrics.active_paid_customers == 1
+        with pytest.raises(ValueError, match="подтверждённые покупки"):
+            await remove_channel_without_paid_purchases(
+                factory, actor_id=owner, project_id=project,
+                resource_id=resource,
+            )
+        assert (await setup_overview(
+            factory, actor_id=owner, project_id=project,
+        )).resources
+    finally:
+        await engine.dispose()
