@@ -62,6 +62,7 @@ async def _plan_for_owner(
     plan = await session.scalar(
         select(Plan).where(
             Plan.id == plan_id, Plan.project_id == project_id,
+            Plan.removed_at.is_(None),
         ).with_for_update()
     )
     if plan is None:
