@@ -75,7 +75,7 @@ async def test_managed_creation_is_atomic_one_owner_one_bot_then_explicit_sync(
         # must neither access managed tokens nor create a project.
         ignored = await managed.connect_managed_bot_event(
             factory, central_bot=manager, creator_telegram_id=owner_tg,
-            managed_bot_id=bot_tg, encryption_key=key,
+            managed_bot_id=bot_tg, encryption_key=key, generation="old",
         )
         assert ignored.kind == "ignored"
         manager.get_managed_bot_token.assert_not_awaited()
@@ -86,14 +86,30 @@ async def test_managed_creation_is_atomic_one_owner_one_bot_then_explicit_sync(
         )
         bad = await managed.connect_managed_bot_event(
             factory, central_bot=manager, creator_telegram_id=stranger_tg,
-            managed_bot_id=bot_tg, encryption_key=key,
+            managed_bot_id=bot_tg, encryption_key=key, generation="old",
         )
         assert bad.kind == "ignored"
         manager.get_managed_bot_token.assert_not_awaited()
 
+        pending_generation = await managed.stage_managed_bot_candidate(
+            factory, actor_id=owner_id, managed_bot_id=bot_tg,
+        )
+        assert pending_generation is not None
+        # A second event for a different bot cannot overwrite this candidate.
+        assert await managed.stage_managed_bot_candidate(
+            factory, actor_id=owner_id, managed_bot_id=bot_tg + 1,
+        ) is None
+        # Wrong generation cannot access a token or consume the current request.
+        stale = await managed.connect_managed_bot_event(
+            factory, central_bot=manager, creator_telegram_id=owner_tg,
+            managed_bot_id=bot_tg, encryption_key=key, generation="old",
+        )
+        assert stale.kind == "ignored"
+        manager.get_managed_bot_token.assert_not_awaited()
         result = await managed.connect_managed_bot_event(
             factory, central_bot=manager, creator_telegram_id=owner_tg,
             managed_bot_id=bot_tg, encryption_key=key,
+            generation=pending_generation,
         )
         assert result.kind == "created"
         assert result.actor_id == owner_id
@@ -107,6 +123,7 @@ async def test_managed_creation_is_atomic_one_owner_one_bot_then_explicit_sync(
         duplicate = await managed.connect_managed_bot_event(
             factory, central_bot=manager, creator_telegram_id=owner_tg,
             managed_bot_id=bot_tg, encryption_key=key,
+            generation=pending_generation,
         )
         assert duplicate.kind == "ignored"
         async with tenant_session_scope(
@@ -125,6 +142,7 @@ async def test_managed_creation_is_atomic_one_owner_one_bot_then_explicit_sync(
         unsolicited = await managed.connect_managed_bot_event(
             factory, central_bot=manager, creator_telegram_id=owner_tg,
             managed_bot_id=bot_tg, encryption_key=key,
+            generation=pending_generation,
         )
         assert unsolicited.kind == "ignored"
 
@@ -188,6 +206,10 @@ async def test_managed_identity_mismatch_cannot_consume_pending_request(monkeypa
             username="owner_mismatch", first_name="Owner",
         )
         await set_flow(factory, actor_id=actor, step="managed_bot_create")
+        generation = await managed.stage_managed_bot_candidate(
+            factory, actor_id=actor, managed_bot_id=bot_tg,
+        )
+        assert generation is not None
         monkeypatch.setattr(managed, "verify_telegram_bot", AsyncMock(
             return_value=VerifiedBot(
                 telegram_bot_id=bot_tg + 1,
@@ -198,6 +220,7 @@ async def test_managed_identity_mismatch_cannot_consume_pending_request(monkeypa
             await managed.connect_managed_bot_event(
                 factory, central_bot=manager, creator_telegram_id=owner_tg,
                 managed_bot_id=bot_tg, encryption_key=key,
+                generation=generation,
             )
         assert await managed.managed_creation_pending(factory, actor)
         assert (await owner_home(factory, actor_id=actor)).projects == ()
