@@ -257,6 +257,7 @@ def _invoice_rich_html(payload: dict) -> str:
     )
     rows = [
         (tr("👤 Покупатель", "👤 Customer"), buyer),
+        (tr("Telegram ID", "Telegram ID"), payload.get("telegram_id") or "—"),
         (tr("🔖 Карточка", "🔖 Customer card"), command),
         (tr("🎟 Тариф", "🎟 Plan"), label),
         (tr("⏳ Срок", "⏳ Duration"), period),
