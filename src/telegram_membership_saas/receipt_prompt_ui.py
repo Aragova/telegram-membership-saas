@@ -1,10 +1,9 @@
 """Clean bilingual receipt upload prompt without Telegram ForceReply composer."""
 from __future__ import annotations
 
+import logging
 from html import escape
 from uuid import UUID
-
-import logging
 
 from aiogram import Bot
 from aiogram.exceptions import AiogramError, TelegramBadRequest
