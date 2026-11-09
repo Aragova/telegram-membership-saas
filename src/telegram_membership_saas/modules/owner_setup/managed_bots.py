@@ -13,7 +13,7 @@ from uuid import UUID
 from aiogram import Bot
 from pydantic import SecretStr
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.bots import BotInstance
@@ -41,18 +41,36 @@ class ManagedBotResult:
 
 
 async def _registered_bot(
-    session: AsyncSession, *, actor_id: UUID, managed_bot_id: int,
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, managed_bot_id: int,
 ) -> tuple[UUID, str] | None:
-    return (await session.execute(select(
-        Project.id, BotInstance.token_ciphertext,
-    ).join(
-        BotInstance, BotInstance.project_id == Project.id,
-    ).where(
-        Project.owner_user_id == actor_id,
-        Project.status == "active",
-        BotInstance.telegram_bot_id == managed_bot_id,
-        BotInstance.status == "registered",
-    ))).one_or_none()
+    """Find one owner's bot across tenant scopes without bypassing RLS.
+
+    BotInstance is intentionally hidden unless app.project_id is set.
+    Query only owner-visible projects, then inspect their registered bot
+    inside each exact tenant scope. Never query bots in a global DB session.
+    """
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id),
+    ) as session:
+        projects = (await session.scalars(select(Project.id).where(
+            Project.owner_user_id == actor_id,
+            Project.status == "active",
+        ))).all()
+    for project_id in projects:
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id, project_id=project_id),
+        ) as session:
+            encrypted = await session.scalar(
+                select(BotInstance.token_ciphertext).where(
+                    BotInstance.project_id == project_id,
+                    BotInstance.telegram_bot_id == managed_bot_id,
+                    BotInstance.status == "registered",
+                )
+            )
+            if encrypted is not None:
+                return project_id, encrypted
+    return None
 
 
 async def _actor_for_telegram_id(
@@ -84,13 +102,10 @@ async def managed_connected_bot(
     actor_id: UUID, managed_bot_id: int,
 ) -> UUID | None:
     """Ensure the managed bot belongs to this particular ViMi Pay owner."""
-    async with tenant_session_scope(
-        factory, TenantContext(user_id=actor_id),
-    ) as session:
-        row = await _registered_bot(
-            session, actor_id=actor_id, managed_bot_id=managed_bot_id,
-        )
-        return row[0] if row is not None else None
+    row = await _registered_bot(
+        factory, actor_id=actor_id, managed_bot_id=managed_bot_id,
+    )
+    return row[0] if row is not None else None
 
 
 async def connect_managed_bot_event(
@@ -182,11 +197,11 @@ async def sync_managed_bot_token(
         ))
         if tg_id != actor_telegram_id:
             raise PermissionError("Managed bot owner identity mismatch")
-        current = await _registered_bot(
-            session, actor_id=actor_id, managed_bot_id=managed_bot_id,
-        )
-        if current is None:
-            raise PermissionError("This bot isn't registered to this owner")
+    current = await _registered_bot(
+        factory, actor_id=actor_id, managed_bot_id=managed_bot_id,
+    )
+    if current is None:
+        raise PermissionError("This bot isn't registered to this owner")
 
     project_id, encrypted_token = current
     token = await central_bot.get_managed_bot_token(user_id=managed_bot_id)
