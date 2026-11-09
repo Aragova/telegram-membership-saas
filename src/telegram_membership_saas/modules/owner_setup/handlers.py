@@ -16,6 +16,7 @@ from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
+    CopyTextButton,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -170,6 +171,12 @@ from telegram_membership_saas.modules.owner_setup.service import (
     verify_channel_and_add,
 )
 from telegram_membership_saas.modules.owner_setup.statistics import read_owner_statistics
+from telegram_membership_saas.modules.owner_setup.welcome_messages import (
+    WELCOME_PAGE_SIZE,
+    public_chat_url,
+    read_welcome_target,
+    telegram_chat_reference,
+)
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     FILTERS as SUBSCRIBER_FILTERS,
 )
@@ -1880,6 +1887,158 @@ def create_owner_setup_router(
             )
 
 
+    async def show_welcome_channels(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, *, page: int = 0,
+    ) -> None:
+        """Choose a project-owned channel for Telegram's native welcome editor."""
+        if fixed_project_id is None:
+            raise PermissionError("Welcome setup belongs to the connected owner bot")
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        active = [(rid, name) for rid, name, state in overview.resources
+                  if state == "active"]
+        pages = max(1, (len(active) + WELCOME_PAGE_SIZE - 1) // WELCOME_PAGE_SIZE)
+        if not 0 <= page < pages:
+            raise ValueError(tr("Устаревшая страница", "Page expired"))
+        rows = [
+            [_button("📢 " + name[:42], "welcome:chat:" + encode_uuid(rid))]
+            for rid, name in active[
+                page * WELCOME_PAGE_SIZE:(page + 1) * WELCOME_PAGE_SIZE
+            ]
+        ]
+        if not rows:
+            message = tr(
+                "Нет активных каналов. Сначала подключите канал или группу.",
+                "No active channels. Connect a channel or group first.",
+            )
+        else:
+            message = tr(
+                "Выберите канал, чтобы проверить права бота и открыть "
+                "настройку приветствия в Telegram.",
+                "Choose a channel to check bot permissions and set up "
+                "Telegram's native welcome message.",
+            )
+        navigation = []
+        if page:
+            navigation.append(_button("◀️", f"welcome:page:{page - 1}"))
+        if page + 1 < pages:
+            navigation.append(_button("▶️", f"welcome:page:{page + 1}"))
+        if navigation:
+            rows.append(navigation)
+        rows.append([_button(
+            tr("⬅️ Каналы", "⬅️ Channels"), "resources",
+        )])
+        await bot.send_message(
+            user_id,
+            tr("📨 <b>Приветственные сообщения Telegram</b>\n\n",
+               "📨 <b>Telegram Welcome Messages</b>\n\n")
+            + message + "\n\n"
+            + tr(
+                "Приветствие показывается только новым участникам. "
+                "Telegram позволяет добавить текст, медиа и несколько сообщений. "
+                "Само приветствие настраивается владельцем в канале.",
+                "Only new members see the welcome pack. Telegram supports "
+                "text, media and multiple messages. The owner configures "
+                "the native pack inside the channel.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
+    async def show_welcome_target(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        resource_id: UUID,
+    ) -> None:
+        """Read-only rights check; never claims to have set the native pack."""
+        if fixed_project_id is None:
+            raise PermissionError("Welcome setup belongs to the connected owner bot")
+        target = await read_welcome_target(
+            factory, actor_id=actor_id, project_id=project_id,
+            resource_id=resource_id,
+        )
+        rights = tr(
+            "⚪ Не удалось проверить права бота",
+            "⚪ Bot permissions could not be verified",
+        )
+        try:
+            chat_ref = telegram_chat_reference(target.external_id)
+            member = await bot.get_chat_member(chat_id=chat_ref, user_id=bot.id)
+            status = str(getattr(member, "status", ""))
+            can_welcome = getattr(member, "can_send_welcome_messages", None)
+            if status in ("administrator", "creator") and can_welcome is True:
+                rights = tr(
+                    "✅ У бота есть право на приветственные сообщения",
+                    "✅ Bot has welcome-message permission",
+                )
+            elif status in ("administrator", "creator") and can_welcome is False:
+                rights = tr(
+                    "🟡 У бота нет права на приветственные сообщения",
+                    "🟡 Bot does not have welcome-message permission",
+                )
+            elif status not in ("administrator", "creator"):
+                rights = tr(
+                    "🟡 Бот не является администратором этого чата",
+                    "🟡 Bot is not an administrator of this chat",
+                )
+        except (AiogramError, ValueError):
+            # Telegram may reject getChatMember or private ID lookup. Never
+            # invent permission status, modify access or retry on its behalf.
+            pass
+
+        template = tr(
+            "👋 Добро пожаловать!\n\n"
+            "Здесь публикуются материалы для участников. Правила и важная "
+            "информация находятся в закреплённых сообщениях.\n\n"
+            "Вопросы по подписке и доступу: @vimi_support_bot",
+            "👋 Welcome!\n\n"
+            "This channel shares member-only content. Find important "
+            "information and rules in pinned messages.\n\n"
+            "Subscription or access questions: @vimi_support_bot",
+        )
+        rows: list[list[InlineKeyboardButton]] = [[
+            InlineKeyboardButton(
+                text=tr("📋 Скопировать текст", "📋 Copy starter text"),
+                copy_text=CopyTextButton(text=template),
+            ),
+        ]]
+        link = public_chat_url(target.external_id)
+        if link:
+            rows.append([InlineKeyboardButton(
+                text=tr("📢 Открыть канал", "📢 Open channel"),
+                url=link, style="success",
+            )])
+        rows.extend([
+            [_button(tr("🔄 Проверить права", "🔄 Recheck permissions"),
+                     "welcome:chat:" + encode_uuid(resource_id))],
+            [_button(tr("⬅️ Выбор канала", "⬅️ Choose a chat"), "welcome")],
+        ])
+        await bot.send_message(
+            user_id,
+            tr("📨 <b>Нативное приветствие</b>\n",
+               "📨 <b>Native welcome message</b>\n")
+            + "<b>" + escape(target.name) + "</b>\n"
+            + rights + "\n\n"
+            + tr(
+                "1. Откройте этот канал или группу в Telegram.\n"
+                "2. Профиль → Редактировать → Приветственное сообщение.\n"
+                "3. Скопируйте пример ниже или создайте собственный текст, "
+                "добавьте медиа и сохраните.\n\n"
+                "Нативное приветствие настраивается в Telegram, не в ViMi Pay. "
+                "Проверить, сохранено ли оно, через Bot API нельзя. "
+                "Право бота показано для информации; владелец канала "
+                "может настроить приветствие самостоятельно.",
+                "1. Open this channel or group in Telegram.\n"
+                "2. Profile → Edit → Welcome Message.\n"
+                "3. Copy the starter text below or write your own, "
+                "add media, and save.\n\n"
+                "The native welcome pack is configured in Telegram, not in ViMi Pay. "
+                "Bot API cannot verify whether it was saved. "
+                "Bot permission is informational; the chat owner can "
+                "configure a welcome message directly.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
+
     async def show_resources(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
         lines = [tr("📢 <b>Каналы и группы</b>", "📢 <b>Channels and groups</b>"), ""]
@@ -1900,6 +2059,8 @@ def create_owner_setup_router(
                 [_button("➕ Выбрать канал", "pick:channel", "success")],
                 [_button("➕ Выбрать группу", "pick:group", "success")],
                 [_button("✍️ Ввести ID / @username", "resource:manual")],
+                [_button(tr("📨 Приветствия Telegram", "📨 Telegram welcomes"),
+                         "welcome")],
                 [_button("➡️ Далее: способы оплаты", "methods")],
                 [_button("⬅️ Панель администратора", "dashboard")],
             ]),
@@ -4284,6 +4445,20 @@ def create_owner_setup_router(
                 )
             elif action == "resources":
                 await show_resources(bot, user_id, actor_id, project_id)
+            elif action == "welcome":
+                await show_welcome_channels(bot, user_id, actor_id, project_id)
+            elif action.startswith("welcome:page:"):
+                page_text = action.removeprefix("welcome:page:")
+                if not page_text.isascii() or not page_text.isdecimal() or len(page_text) > 5:
+                    raise ValueError(tr("Некорректная страница", "Invalid page"))
+                await show_welcome_channels(
+                    bot, user_id, actor_id, project_id, page=int(page_text),
+                )
+            elif action.startswith("welcome:chat:"):
+                resource_id = decode_uuid(action.removeprefix("welcome:chat:"))
+                await show_welcome_target(
+                    bot, user_id, actor_id, project_id, resource_id,
+                )
             elif action.startswith("pick:"):
                 kind = action.split(":", 1)[1]
                 if kind not in ("channel", "group"):
