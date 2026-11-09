@@ -351,8 +351,8 @@ def test_compact_bot_button_keeps_status_handle_and_exact_metrics(state, emoji):
 
 
 @pytest.mark.parametrize(("language", "heading", "period"), [
-    ("ru", "Подключённые боты", "30 дней"),
-    ("en", "Connected bots", "30 days"),
+    ("ru", "Мониторинг · ViMi Pay", "30 дней"),
+    ("en", "Monitoring · ViMi Pay", "30 days"),
 ])
 def test_compact_list_contains_legend_page_but_no_duplicated_usernames(
     language, heading, period,

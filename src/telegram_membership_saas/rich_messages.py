@@ -43,6 +43,7 @@ _STATISTICS = (
     "Статистика · ViMi Pay", "Statistics · ViMi Pay",
     "Мои покупки", "My purchases",
     "Статистика бота", "Bot statistics",
+    "Мониторинг · ViMi Pay", "Monitoring · ViMi Pay",
 )
 
 
