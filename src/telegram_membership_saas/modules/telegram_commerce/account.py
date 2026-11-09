@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 from html import escape
 from uuid import UUID
-from zoneinfo import ZoneInfo
+
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, func, select
@@ -27,6 +27,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     format_amount,
 )
 from telegram_membership_saas.support_links import support_button
+from telegram_membership_saas.telegram_dates import native_telegram_time
 
 ACCOUNT_PAGE_SIZE = 5
 ACCOUNT_MAX_PAGE = 1000
@@ -199,10 +200,9 @@ def account_list_screen(
             if item.ends_at is None:
                 end = tr("бессрочно", "lifetime")
             else:
-                end = item.ends_at.astimezone(
-                    ZoneInfo(account.timezone)
-                ).strftime("%d.%m.%Y %H:%M")
-                end += " (" + escape(account.timezone) + ")"
+                end = native_telegram_time(
+                    item.ends_at, account.timezone, fmt="dt",
+                )
             lines.append(
                 "💎 <b>" + escape(item.name) + "</b>\n"
                 + label + " · " + tr("До: ", "Until: ") + end + "\n"
