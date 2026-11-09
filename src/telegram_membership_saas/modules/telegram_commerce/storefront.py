@@ -15,7 +15,6 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.support_links import support_button
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.service import (
@@ -26,6 +25,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     is_period_only_plan_name,
     list_checkout_options,
 )
+from telegram_membership_saas.support_links import support_button
 
 PAGE_SIZE = 7
 # Keep the five most requested local currencies together in a single row.
