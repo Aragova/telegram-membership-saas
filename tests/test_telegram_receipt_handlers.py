@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from aiogram.types import ForceReply
+from aiogram.types import InlineKeyboardMarkup
 
 from telegram_membership_saas.modules.telegram_commerce import handlers as receipt_handlers
 from telegram_membership_saas.modules.telegram_commerce import service as commerce_service
@@ -82,8 +82,14 @@ async def test_paid_button_does_not_submit_without_receipt(monkeypatch):
     submit.assert_not_awaited()
     bot.send_message.assert_awaited_once()
     markup = bot.send_message.await_args.kwargs["reply_markup"]
-    assert isinstance(markup, ForceReply)
-    assert str(request_id) in bot.send_message.await_args.kwargs["text"]
+    assert isinstance(markup, InlineKeyboardMarkup)
+    assert str(request_id) not in bot.send_message.await_args.kwargs["text"]
+    assert "FILE_PAYMENT_RECEIPT:" not in bot.send_message.await_args.kwargs["text"]
+    assert "Нажимать «Ответить» не нужно" in bot.send_message.await_args.kwargs["text"]
+    assert "receiptstop:" in markup.inline_keyboard[0][0].callback_data
+    assert receipt_handlers.receipt_intents.peek(
+        bot.id, callback.from_user.id, kind="subscription",
+    ) == request_id
     callback.answer.assert_awaited_once()
     assert "Реальные деньги в тесте" not in bot.send_message.await_args.kwargs["text"]
 
