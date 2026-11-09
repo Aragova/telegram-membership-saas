@@ -19,11 +19,11 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     ReviewItem,
     SubmissionResult,
 )
-from telegram_membership_saas.payment_review_ui import send_payment_review
 from telegram_membership_saas.receipt_prompt_ui import (
     send_receipt_prompt,
     update_receipt_prompt,
 )
+
 
 @pytest.fixture(autouse=True)
 def reset_receipts():
