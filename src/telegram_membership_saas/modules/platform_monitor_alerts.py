@@ -210,9 +210,8 @@ async def scan_platform_monitor(
                         problem.status = "cancelled"
                     incident.recovered_at = moment
                     continue
-                if problem.status == "pending":
-                    # Locked row: a concurrent sender cannot claim a stale
-                    # problem between our check and cancellation.
+                if problem.status == "pending" and problem.attempts == 0:
+                    # Never attempted: cancel cleanly, with no extra message.
                     problem.status = "cancelled"
                     incident.recovered_at = moment
                     continue
@@ -220,7 +219,12 @@ async def scan_platform_monitor(
                 incident.healthy_since = incident.healthy_since or moment
                 if moment - incident.healthy_since < HEALTHY_FOR_RECOVERY:
                     continue
-                if problem.status == "sending":
+                if problem.status == "pending":
+                    # An earlier attempt may actually have reached Telegram
+                    # before the transport failed. Once recovered, stop retries
+                    # and provide the one possible closing notification.
+                    problem.status = "cancelled"
+                elif problem.status == "sending":
                     # The sending process may have died after claiming. Once
                     # its lease expires and recovery is stable, do NOT replay
                     # an already-obsolete problem. Whether it sent is unknown;
