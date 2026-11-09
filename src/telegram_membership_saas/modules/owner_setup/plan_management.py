@@ -40,14 +40,28 @@ def plan_revision(plan: Plan) -> str:
 async def plan_has_history(
     session: AsyncSession, *, project_id: UUID, plan_id: UUID,
 ) -> bool:
-    """Only actual payments/subscriptions protect removal, not draft invoices."""
-    for model in (Payment, Subscription):
+    """Unpaid invoices remain visible in history even after catalog removal."""
+    for model in (PaymentRequest, Payment, Subscription):
         ref = await session.scalar(
             select(model.id).where(
                 model.project_id == project_id,
                 model.plan_id == plan_id,
             ).limit(1)
         )
+        if ref is not None:
+            return True
+    return False
+
+
+async def plan_has_confirmed_purchases(
+    session: AsyncSession, *, project_id: UUID, plan_id: UUID,
+) -> bool:
+    """Real paid orders or subscriptions prevent removal; invoices alone don't."""
+    for model in (Payment, Subscription):
+        ref = await session.scalar(select(model.id).where(
+            model.project_id == project_id,
+            model.plan_id == plan_id,
+        ).limit(1))
         if ref is not None:
             return True
     return False
@@ -200,7 +214,7 @@ async def delete_unused_owner_plan(
         if (plan.status != expected_status
                 or plan_revision(plan) != expected_revision):
             raise ValueError("Тариф изменился. Откройте карточку заново.")
-        if await plan_has_history(
+        if await plan_has_confirmed_purchases(
             session, project_id=project_id, plan_id=plan_id,
         ):
             raise ValueError(
