@@ -12,7 +12,6 @@ from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
-    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -21,6 +20,7 @@ from aiogram.types import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas import receipt_intents
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import (
     current_language,
@@ -73,6 +73,7 @@ from telegram_membership_saas.payment_review_ui import (
     rich_subscription_review_result,
     send_payment_review,
 )
+from telegram_membership_saas.receipt_prompt_ui import send_receipt_prompt
 from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.telegram_menus import refresh_user_commands
 
@@ -119,6 +120,21 @@ class ReceiptReplyFilter(BaseFilter):
         if message.text and message.text.startswith("/"):
             return False
         return _receipt_request_id(message, bot_id=bot.id) is not None
+
+
+class ActiveSubscriptionReceiptFilter(BaseFilter):
+    """Only normal private uploads selected with this bot's I-have-paid button."""
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        return bool(
+            message.chat.type == "private"
+            and message.from_user is not None
+            and not message.reply_to_message
+            and (message.photo or message.document)
+            and receipt_intents.peek(
+                bot.id, message.from_user.id, kind="subscription",
+            ) is not None
+        )
 
 
 def _acceptable_receipt(message: Message) -> bool:
@@ -756,46 +772,96 @@ def create_telegram_commerce_router(
             return
 
         await callback.answer()
-        await bot.send_message(
-            chat_id=callback.from_user.id,
-            text=(
-                tr(RECEIPT_REPLY_PREFIX, RECEIPT_REPLY_PREFIX_EN)
-                + f"{request_id}\n"
-                + tr("Ответьте на это сообщение фотографией чека или документом "
-                     "(PDF/JPG/PNG/WEBP). До получения вложения заявка не будет "
-                     "отправлена администратору.",
-                     "Reply to this message with a receipt photo or a document "
-                     "(PDF/JPG/PNG/WEBP). Your payment will not be sent for review "
-                     "until the attachment is received.")
-                + tr(
-                    "\n\nМожно выйти через /menu. Заявка останется "
-                    "в разделе /subscriptions.",
-                    "\n\nYou can leave via /menu. Your pending request "
-                    "stays in /subscriptions.",
-                )
-            ),
-            reply_markup=ForceReply(
-                selective=True,
-                input_field_placeholder=tr("Прикрепите чек или скриншот",
-                                           "Attach receipt or screenshot"),
-            ),
+        # Selecting a receipt is explicit and unique across subscription/file
+        # flows. Normal uploads do not require a Telegram reply composer.
+        await send_receipt_prompt(
+            bot, buyer_id=callback.from_user.id, kind="subscription",
+            request_id=request_id,
+            cancel_data="receiptstop:" + encode_uuid(request_id),
         )
+        receipt_intents.arm(
+            bot.id, callback.from_user.id, kind="subscription",
+            request_id=request_id,
+        )
+
+    @router.callback_query(F.data.startswith("receiptstop:"))
+    async def stop_receipt_handler(callback: CallbackQuery, bot: Bot) -> None:
+        try:
+            request_id = decode_uuid((callback.data or "").split(":", 1)[1])
+        except (ValueError, IndexError):
+            await callback.answer(tr("Кнопка устарела", "Button expired"))
+            return
+        if receipt_intents.clear(
+            bot.id, callback.from_user.id,
+            kind="subscription", request_id=request_id,
+        ):
+            await callback.answer(tr("Отправка чека отменена", "Receipt upload stopped"))
+        else:
+            await callback.answer(tr("Уже неактивно", "Already inactive"))
+
+
+    @router.callback_query(F.data.startswith("receiptretry:"))
+    async def retry_receipt_handler(callback: CallbackQuery, bot: Bot) -> None:
+        if callback.data is None:
+            return
+        try:
+            request_id = decode_uuid(callback.data.split(":", 1)[1])
+            async with system_project_session_scope(session_factory, project_id) as session:
+                await require_awaiting_receipt_for_telegram_user(
+                    session, project_id=project_id,
+                    request_id=request_id,
+                    telegram_user_id=callback.from_user.id,
+                    retry_submitted=True,
+                )
+        except (ValueError, PermissionError) as exc:
+            await callback.answer(_buyer_error(exc), show_alert=True)
+            return
+        await send_receipt_prompt(
+            bot, buyer_id=callback.from_user.id, kind="subscription",
+            request_id=request_id,
+            cancel_data="receiptstop:" + encode_uuid(request_id),
+        )
+        receipt_intents.arm(
+            bot.id, callback.from_user.id, kind="subscription",
+            request_id=request_id,
+        )
+        await callback.answer()
 
     @router.message(ReceiptReplyFilter())
     async def receipt_handler(message: Message, bot: Bot) -> None:
+        # Accept legacy replies to old ForceReply prompts after an update.
+        request_id = _receipt_request_id(message, bot_id=bot.id)
+        if request_id is not None:
+            await _process_receipt(message, bot, request_id, direct=False)
+
+    @router.message(ActiveSubscriptionReceiptFilter())
+    async def direct_receipt_handler(message: Message, bot: Bot) -> None:
         if message.from_user is None:
             return
-        request_id = _receipt_request_id(message, bot_id=bot.id)
-        if request_id is None:
+        request_id = receipt_intents.consume(
+            bot.id, message.from_user.id, kind="subscription",
+        )
+        if request_id is not None:
+            await _process_receipt(message, bot, request_id, direct=True)
+
+    async def _process_receipt(
+        message: Message, bot: Bot, request_id: UUID, *, direct: bool,
+    ) -> None:
+        if message.from_user is None:
             return
         if not _acceptable_receipt(message):
+            if direct:
+                receipt_intents.arm(
+                    bot.id, message.from_user.id, kind="subscription",
+                    request_id=request_id,
+                )
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=(
                     tr("Нужен файл: фото или документ PDF/JPG/PNG/WEBP. "
-                       "Ответьте вложением на сообщение с номером заявки.",
+                       "Нажмите «Я оплатил» ещё раз и отправьте чек.",
                        "A receipt photo or PDF/JPG/PNG/WEBP document is required. "
-                       "Reply to the payment request with an attachment.")
+                       "Tap “I have paid” again and send the file.")
                 ),
                 reply_markup=_account_navigation_keyboard(),
             )
@@ -813,6 +879,10 @@ def create_telegram_commerce_router(
             await bot.send_message(chat_id=message.chat.id, text=_buyer_error(exc))
             return
 
+        receipt_intents.clear(
+            bot.id, message.from_user.id,
+            kind="subscription", request_id=request_id,
+        )
         delivered = 0
         for reviewer_id in submission.reviewer_telegram_ids:
             try:
@@ -852,15 +922,25 @@ def create_telegram_commerce_router(
                 reply_markup=_account_navigation_keyboard(),
             )
         else:
+            # The request is already waiting_review. Ordinary "I have paid"
+            # rejects submitted requests; use a dedicated revalidated retry.
             await bot.send_message(
                 chat_id=message.chat.id,
-                text=(
-                    tr("Заявка зарегистрирована, но доставить документ администратору "
-                       "не удалось. Повторите отправку вложения ответом на запрос выше.",
-                       "Your payment request was recorded, but the receipt could not be "
-                       "delivered to the administrator. Reply with the attachment again.")
+                text=tr(
+                    "Чек не удалось передать администратору. Заявка сохранена. "
+                    "Нажмите «Повторить чек» и отправьте файл снова. "
+                    "Администратор также может открыть /payments.",
+                    "Receipt delivery to the administrator failed. "
+                    "Your request is saved. Tap “Retry receipt” and "
+                    "send the file again. Admin can also use /payments.",
                 ),
-                reply_markup=_account_navigation_keyboard(),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text=tr("🔁 Повторить чек", "🔁 Retry receipt"),
+                        callback_data="receiptretry:" + encode_uuid(request_id),
+                        style="primary",
+                    ),
+                ]]),
             )
 
     @router.callback_query(F.data.startswith("cancel:"))
@@ -881,6 +961,10 @@ def create_telegram_commerce_router(
             return
         # The original Rich/HTML payment card keeps its instructions, but
         # loses all payment/copy/cancel controls after confirmed cancellation.
+        receipt_intents.clear(
+            bot.id, callback.from_user.id, kind="subscription",
+            request_id=request_id,
+        )
         await retire_cancelled_checkout(
             bot, callback=callback,
             navigation=InlineKeyboardButton(

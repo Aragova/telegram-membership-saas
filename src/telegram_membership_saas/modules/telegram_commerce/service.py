@@ -497,8 +497,13 @@ async def require_awaiting_receipt_for_telegram_user(
     project_id: UUID,
     request_id: UUID,
     telegram_user_id: int,
+    retry_submitted: bool = False,
 ) -> None:
-    """Verify a receipt prompt belongs to the buyer without submitting the request."""
+    """Verify a buyer owns a request in the exact receipt-eligible state.
+
+    Normal uploads require awaiting payment. Only the explicit retry action
+    can re-select a submitted invoice for re-forwarding its missing proof.
+    """
     await checkout_retirement_lock(session, project_id)
     await _require_active_project(session, project_id)
     customer = await _customer_for_telegram_user(
@@ -518,7 +523,11 @@ async def require_awaiting_receipt_for_telegram_user(
     )
     if request is None or request.customer_id != customer.id:
         raise PermissionError("Payment request does not belong to this Telegram user")
-    if request.status != PaymentRequestStatus.WAITING_CONFIRMATION.value:
+    required_status = (
+        PaymentRequestStatus.WAITING_REVIEW.value if retry_submitted
+        else PaymentRequestStatus.WAITING_CONFIRMATION.value
+    )
+    if request.status != required_status:
         raise ValueError("Заявка уже отправлена или закрыта")
 
 
