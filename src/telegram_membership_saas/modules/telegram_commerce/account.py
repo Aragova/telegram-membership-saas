@@ -11,7 +11,6 @@ from decimal import Decimal
 from html import escape
 from uuid import UUID
 
-
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
