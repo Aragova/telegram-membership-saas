@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation, localcontext
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, select, union_all
+from sqlalchemy import and_, delete, func, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
@@ -172,6 +172,35 @@ async def add_folder(
         session.add(folder)
         await session.flush()
         return folder
+
+
+async def delete_empty_folder(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID, folder_id: UUID,
+) -> None:
+    """Delete an empty project folder only; never cascade products of other bots."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _owner(session, project_id=project_id, actor_id=actor_id,
+                     bot_id=bot_id)
+        folder = await session.scalar(select(FileFolder).where(
+            FileFolder.id == folder_id, FileFolder.project_id == project_id,
+        ).with_for_update())
+        if folder is None:
+            raise ValueError(tr("Папка не найдена", "Folder not found"))
+        occupied = await session.scalar(select(FileProduct.id).where(
+            FileProduct.folder_id == folder_id,
+            FileProduct.project_id == project_id,
+        ).limit(1))
+        if occupied is not None:
+            raise ValueError(tr(
+                "Сначала удалите товары из папки. Товары с историей "
+                "покупок удалять нельзя: их можно убрать с продажи.",
+                "Remove the folder's products first. Products with "
+                "purchase history cannot be deleted; archive them instead.",
+            ))
+        await session.delete(folder)
 
 
 async def create_product(
@@ -378,6 +407,124 @@ async def add_product_asset(
             kind=kind, file_id=file_id, sort_order=count,
         ))
         return count + 1
+
+
+async def _has_orders(
+    session: AsyncSession, *, project_id: UUID, product_id: UUID,
+) -> bool:
+    """All orders, including canceled/rejected/pending, protect their product."""
+    for model in (FilePurchase, FileManualOrder):
+        exists = await session.scalar(select(model.id).where(
+            model.project_id == project_id,
+            model.product_id == product_id,
+        ).limit(1))
+        if exists is not None:
+            return True
+    return False
+
+
+async def delete_unsold_product(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID, product_id: UUID,
+) -> UUID:
+    """Delete only never-ordered products and their non-financial draft data.
+
+    Any invoice, even unpaid/cancelled, blocks deletion. This prevents both
+    losing purchase history and implicit CASCADE of Stars receipts.
+    The product row lock serializes with Stars/manual checkout creation.
+    """
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _owner(session, project_id=project_id, actor_id=actor_id,
+                     bot_id=bot_id)
+        item = await _product(session, project_id, bot_id, product_id, lock=True)
+        if await _has_orders(session, project_id=project_id, product_id=product_id):
+            raise ValueError(tr(
+                "У товара уже есть счета или покупки. Удалять его нельзя; "
+                "уберите товар с продажи, чтобы сохранить историю и доступ.",
+                "This product has invoices or purchases. It cannot be "
+                "deleted; archive it to preserve history and file access.",
+            ))
+        folder_id = item.folder_id
+        await session.execute(delete(FileAsset).where(
+            FileAsset.project_id == project_id,
+            FileAsset.product_id == product_id,
+        ))
+        await session.execute(delete(FileManualPrice).where(
+            FileManualPrice.project_id == project_id,
+            FileManualPrice.product_id == product_id,
+        ))
+        await session.delete(item)
+        return folder_id
+
+
+async def list_product_assets(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID, product_id: UUID,
+) -> tuple[FileProduct, tuple[FileAsset, ...]]:
+    """Owner-only inventory with file IDs kept server-side, never in a card."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _owner(session, project_id=project_id, actor_id=actor_id,
+                     bot_id=bot_id)
+        item = await _product(session, project_id, bot_id, product_id)
+        assets = tuple((await session.scalars(select(FileAsset).where(
+            FileAsset.project_id == project_id,
+            FileAsset.product_id == product_id,
+        ).order_by(FileAsset.sort_order, FileAsset.id).limit(ASSET_LIMIT))).all())
+        return item, assets
+
+
+async def delete_draft_asset(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, actor_id: UUID,
+    product_id: UUID, asset_id: UUID,
+) -> int:
+    """Delete a single draft attachment, maintaining contiguous sort_order.
+
+    Published/archived products might already have buyers, so their media is
+    immutable. Serializes against adding new draft assets via product lock.
+    """
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _owner(session, project_id=project_id, actor_id=actor_id,
+                     bot_id=bot_id)
+        item = await _product(session, project_id, bot_id, product_id, lock=True)
+        if item.status != "draft" or await _has_orders(
+            session, project_id=project_id, product_id=product_id,
+        ):
+            raise ValueError(tr(
+                "Изменять вложения можно только у черновика без покупок",
+                "Only draft products with no orders can change attachments",
+            ))
+        asset = await session.scalar(select(FileAsset).where(
+            FileAsset.id == asset_id,
+            FileAsset.project_id == project_id,
+            FileAsset.product_id == product_id,
+        ))
+        if asset is None:
+            raise ValueError(tr("Файл уже удалён", "File already deleted"))
+        old_index = asset.sort_order
+        await session.delete(asset)
+        await session.flush()
+        # Position uniqueness is enforced per product. Advance in ascending
+        # order so each individual update always moves into a vacated slot.
+        remaining = (await session.scalars(select(FileAsset).where(
+            FileAsset.project_id == project_id,
+            FileAsset.product_id == product_id,
+            FileAsset.sort_order > old_index,
+        ).order_by(FileAsset.sort_order).with_for_update())).all()
+        for other in remaining:
+            other.sort_order -= 1
+            await session.flush()
+        count = await session.scalar(select(func.count(FileAsset.id)).where(
+            FileAsset.project_id == project_id,
+            FileAsset.product_id == product_id,
+        )) or 0
+        return count
 
 
 async def change_product_status(
