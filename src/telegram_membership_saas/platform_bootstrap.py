@@ -53,6 +53,19 @@ async def bootstrap_platform_owner() -> None:
                 "public.platform_report_snapshot(timestamptz, integer, integer) "
                 f"TO {quoted_role}"
             ))
+            for function in (
+                "public.platform_monitor_health_snapshot()",
+                "public.platform_monitor_is_operator()",
+            ):
+                await connection.execute(text(
+                    f"GRANT EXECUTE ON FUNCTION {function} TO {quoted_role}"
+                ))
+            await connection.execute(text(
+                "GRANT SELECT, INSERT, UPDATE ON "
+                "public.platform_monitor_incidents, "
+                "public.platform_monitor_alert_outbox "
+                f"TO {quoted_role}"
+            ))
             await connection.execute(text(
                 "GRANT EXECUTE ON FUNCTION "
                 "public.platform_usage_snapshot(timestamptz, integer, integer) "
