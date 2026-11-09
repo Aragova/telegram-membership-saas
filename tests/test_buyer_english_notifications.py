@@ -52,6 +52,7 @@ def test_english_payment_and_review_texts() -> None:
         assert "Customer: @buyer" in text
         assert "EUR" in text
         assert "Valid until:" in text
+        assert 'format="dt"' in text and "<tg-time" in text
         assert commerce._buyer_error(ValueError("Заявка уже отправлена или закрыта")) == (
             "This payment request has already been submitted or closed."
         )
