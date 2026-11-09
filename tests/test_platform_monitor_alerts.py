@@ -28,9 +28,9 @@ from telegram_membership_saas.modules.owner_setup.service import (
 from telegram_membership_saas.modules.platform_monitor_alerts import (
     PlatformMonitorIncident,
     PlatformMonitorOutbox,
+    _alert_text,
     _claim_event,
     _finish_event,
-    _alert_text,
     _healthy,
     _problem_threshold,
     deliver_platform_monitor_event,
