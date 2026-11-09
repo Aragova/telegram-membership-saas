@@ -298,6 +298,11 @@ async def test_folder_with_only_unpaid_product_is_removable_with_invoice_preserv
         assert all(f.id != folder.id for f in await svc.list_folders(
             factory, project_id=project, bot_id=bot, actor_id=owner,
         ))
+        with pytest.raises(ValueError, match="Папка недоступна"):
+            await svc.create_product(
+                factory, project_id=project, bot_id=bot, actor_id=owner,
+                folder_id=folder.id, name="Late draft", stars=10,
+            )
         async with system_project_session_scope(factory, project) as session:
             old_folder = await session.get(FileFolder, folder.id)
             old_product = await session.get(FileProduct, product.id)
