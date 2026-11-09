@@ -2,6 +2,7 @@
 
 No new bot scanners, notifications, menu entry, polling, billing or grants.
 """
+
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
