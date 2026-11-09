@@ -73,7 +73,10 @@ from telegram_membership_saas.payment_review_ui import (
     rich_subscription_review_result,
     send_payment_review,
 )
-from telegram_membership_saas.receipt_prompt_ui import send_receipt_prompt
+from telegram_membership_saas.receipt_prompt_ui import (
+    send_receipt_prompt,
+    update_receipt_prompt,
+)
 from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.telegram_menus import refresh_user_commands
 
@@ -774,14 +777,14 @@ def create_telegram_commerce_router(
         await callback.answer()
         # Selecting a receipt is explicit and unique across subscription/file
         # flows. Normal uploads do not require a Telegram reply composer.
-        await send_receipt_prompt(
+        prompt_id = await send_receipt_prompt(
             bot, buyer_id=callback.from_user.id, kind="subscription",
             request_id=request_id,
             cancel_data="receiptstop:" + encode_uuid(request_id),
         )
         receipt_intents.arm(
             bot.id, callback.from_user.id, kind="subscription",
-            request_id=request_id,
+            request_id=request_id, prompt_message_id=prompt_id,
         )
 
     @router.callback_query(F.data.startswith("receiptstop:"))
@@ -795,6 +798,11 @@ def create_telegram_commerce_router(
             bot.id, callback.from_user.id,
             kind="subscription", request_id=request_id,
         ):
+            await update_receipt_prompt(
+                bot, buyer_id=callback.from_user.id,
+                message_id=getattr(callback.message, "message_id", None),
+                status="stopped",
+            )
             await callback.answer(tr("Отправка чека отменена", "Receipt upload stopped"))
         else:
             await callback.answer(tr("Уже неактивно", "Already inactive"))
@@ -816,14 +824,14 @@ def create_telegram_commerce_router(
         except (ValueError, PermissionError) as exc:
             await callback.answer(_buyer_error(exc), show_alert=True)
             return
-        await send_receipt_prompt(
+        prompt_id = await send_receipt_prompt(
             bot, buyer_id=callback.from_user.id, kind="subscription",
             request_id=request_id,
             cancel_data="receiptstop:" + encode_uuid(request_id),
         )
         receipt_intents.arm(
             bot.id, callback.from_user.id, kind="subscription",
-            request_id=request_id,
+            request_id=request_id, prompt_message_id=prompt_id,
         )
         await callback.answer()
 
@@ -832,20 +840,35 @@ def create_telegram_commerce_router(
         # Accept legacy replies to old ForceReply prompts after an update.
         request_id = _receipt_request_id(message, bot_id=bot.id)
         if request_id is not None:
-            await _process_receipt(message, bot, request_id, direct=False)
+            await _process_receipt(
+                message, bot, request_id, direct=False,
+                prompt_message_id=None,
+            )
 
     @router.message(ActiveSubscriptionReceiptFilter())
     async def direct_receipt_handler(message: Message, bot: Bot) -> None:
         if message.from_user is None:
             return
-        request_id = receipt_intents.consume(
+        request_id = receipt_intents.peek(
             bot.id, message.from_user.id, kind="subscription",
         )
-        if request_id is not None:
-            await _process_receipt(message, bot, request_id, direct=True)
+        if request_id is None:
+            return
+        prompt_message_id = receipt_intents.prompt_message(
+            bot.id, message.from_user.id, kind="subscription",
+            request_id=request_id,
+        )
+        receipt_intents.consume(
+            bot.id, message.from_user.id, kind="subscription",
+        )
+        await _process_receipt(
+            message, bot, request_id, direct=True,
+            prompt_message_id=prompt_message_id,
+        )
 
     async def _process_receipt(
-        message: Message, bot: Bot, request_id: UUID, *, direct: bool,
+        message: Message, bot: Bot, request_id: UUID, *,
+        direct: bool, prompt_message_id: int | None,
     ) -> None:
         if message.from_user is None:
             return
@@ -853,7 +876,7 @@ def create_telegram_commerce_router(
             if direct:
                 receipt_intents.arm(
                     bot.id, message.from_user.id, kind="subscription",
-                    request_id=request_id,
+                    request_id=request_id, prompt_message_id=prompt_message_id,
                 )
             await bot.send_message(
                 chat_id=message.chat.id,
@@ -910,6 +933,10 @@ def create_telegram_commerce_router(
                 continue
 
         if delivered:
+            await update_receipt_prompt(
+                bot, buyer_id=message.from_user.id,
+                message_id=prompt_message_id, status="sent",
+            )
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=(
@@ -924,6 +951,11 @@ def create_telegram_commerce_router(
         else:
             # The request is already waiting_review. Ordinary "I have paid"
             # rejects submitted requests; use a dedicated revalidated retry.
+            updated = await update_receipt_prompt(
+                bot, buyer_id=message.from_user.id,
+                message_id=prompt_message_id, status="retry",
+                retry_data="receiptretry:" + encode_uuid(request_id),
+            )
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=tr(
@@ -934,13 +966,15 @@ def create_telegram_commerce_router(
                     "Your request is saved. Tap “Retry receipt” and "
                     "send the file again. Admin can also use /payments.",
                 ),
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text=tr("🔁 Повторить чек", "🔁 Retry receipt"),
-                        callback_data="receiptretry:" + encode_uuid(request_id),
-                        style="primary",
-                    ),
-                ]]),
+                reply_markup=(None if updated else InlineKeyboardMarkup(
+                    inline_keyboard=[[
+                        InlineKeyboardButton(
+                            text=tr("🔁 Повторить чек", "🔁 Retry receipt"),
+                            callback_data="receiptretry:" + encode_uuid(request_id),
+                            style="primary",
+                        ),
+                    ]]
+                )),
             )
 
     @router.callback_query(F.data.startswith("cancel:"))
