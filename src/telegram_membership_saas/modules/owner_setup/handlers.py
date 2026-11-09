@@ -20,6 +20,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     KeyboardButtonRequestChat,
+    KeyboardButtonRequestManagedBot,
+    ManagedBotUpdated,
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -90,6 +92,11 @@ from telegram_membership_saas.modules.owner_setup.error_locale import owner_erro
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
+)
+from telegram_membership_saas.modules.owner_setup.managed_bots import (
+    connect_managed_bot_event,
+    managed_bot_id_for_project,
+    sync_managed_bot_token,
 )
 from telegram_membership_saas.modules.owner_setup.method_management import (
     change_owner_method_status_guarded,
@@ -502,7 +509,10 @@ def create_owner_setup_router(
             lines.append(tr("Выберите проект для управления:", "Select a connection to manage:"))
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
-        rows.append([_button("➕ Подключить бота подписок", "new", "success")])
+        rows.append([
+            _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
+            _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
+        ])
         rows.append([InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
@@ -1013,9 +1023,10 @@ def create_owner_setup_router(
                 tr("⬅️ Мои подключения", "⬅️ My connections"), "projects",
             )])
         else:
-            rows.append([_button(
-                tr("➕ Подключить бота", "➕ Connect a bot"), "new", "success",
-            )])
+            rows.append([
+                _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
+                _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
+            ])
             if await list_archived_owner_connections(factory, actor_id=actor_id):
                 rows.append([_button(
                     tr("📦 Архив подключений", "📦 Archived connections"),
@@ -1115,6 +1126,12 @@ def create_owner_setup_router(
                 tr("🔑 Подключить / обновить токен", "🔑 Connect / update token"),
                 "connect",
             )])
+            if connected:
+                rows.append([_button(
+                    tr("🔄 Managed Bot: синхронизировать токен",
+                       "🔄 Managed Bot: sync token"),
+                    "managedsync:" + encode_uuid(project_id),
+                )])
         if data.can_delete_bot:
             rows.append([_button(
                 tr("✏️ Переименовать подключение", "✏️ Rename connection"),
@@ -2828,13 +2845,13 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "projects", "archives", "dashboard", "bots", "connect",
-                "help", "oblist", "cancel",
+                "new", "newmanaged", "projects", "archives", "dashboard",
+                "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             ))
             if not is_registry_action:
@@ -2846,12 +2863,13 @@ def create_owner_setup_router(
                 return
         else:
             if action in {
-                "new", "projects", "archives", "bots", "connect", "oblist",
+                "new", "newmanaged", "projects", "archives", "bots",
+                "connect", "oblist",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             )):
 
