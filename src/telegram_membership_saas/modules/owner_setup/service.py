@@ -609,10 +609,12 @@ async def setup_overview(
             BotInstance.project_id == project_id
         ))).all())
         resources = list((await session.scalars(select(Resource).where(
-            Resource.project_id == project_id
+            Resource.project_id == project_id,
+            Resource.removed_at.is_(None),
         ))).all())
         plans = list((await session.scalars(select(Plan).where(
-            Plan.project_id == project_id
+            Plan.project_id == project_id,
+            Plan.removed_at.is_(None),
         ))).all())
         methods = list((await session.scalars(select(PaymentMethod).where(
             PaymentMethod.project_id == project_id
@@ -737,6 +739,7 @@ async def verify_channel_and_add(
             session.add(resource)
         else:
             resource.status = ResourceStatus.ACTIVE.value
+            resource.removed_at = None
         try:
             await session.flush()
         except DBAPIError as exc:
@@ -790,7 +793,8 @@ async def create_owner_plan(
         )
         resource = await session.scalar(select(Resource.id).where(
             Resource.id == resource_id, Resource.project_id == project_id,
-            Resource.status == ResourceStatus.ACTIVE.value
+            Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
         ))
         if resource is None:
             raise ValueError("Выберите действующий канал или группу")
