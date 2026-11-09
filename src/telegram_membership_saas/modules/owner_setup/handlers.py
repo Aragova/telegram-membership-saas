@@ -4833,17 +4833,19 @@ def create_owner_setup_router(
                 await bot.send_message(
                     user_id,
                     tr(
-                        "🗑 <b>Удалить тариф навсегда?</b>\n\n",
-                        "🗑 <b>Delete this plan permanently?</b>\n\n",
+                        "🗑 <b>Удалить тариф?</b>\n\n",
+                        "🗑 <b>Delete this plan?</b>\n\n",
                     )
                     + "<b>" + escape(info.name) + "</b>\n\n"
                     + tr(
-                        "Будут удалены настройки цен и привязка к каналу. "
-                        "Это возможно только если по тарифу никогда не было "
-                        "заявок и подписок.",
-                        "Its prices and channel assignment will be removed. "
-                        "Deletion is allowed only if there have never been "
-                        "payment requests or subscriptions for this plan.",
+                        "При отсутствии счетов тариф удаляется полностью. "
+                        "Неоплаченные счета не блокируют удаление: тариф "
+                        "скрывается из каталога, но история сохраняется. "
+                        "Подтверждённые покупки блокируют удаление.",
+                        "Plans with no invoices are deleted permanently. "
+                        "Unpaid invoices don't block removal: the plan is "
+                        "hidden while invoices stay in history. "
+                        "Confirmed purchases block deletion.",
                     ),
                     parse_mode="HTML",
                     reply_markup=_markup([
