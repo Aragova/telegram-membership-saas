@@ -179,9 +179,10 @@ def test_buyer_screens_do_not_duplicate_native_menu_purchases(language):
         assert any(a.startswith("cancel:") for a in checkout_actions)
         assert "checkoutnav:catalog" in checkout_actions
         assert "checkoutnav:home" not in checkout_actions
-        assert [b.callback_data for b in _buttons(
-            buyer_ui._account_navigation_keyboard(),
-        )] == ["account:catalog"]
+        after_receipt_buttons = _buttons(buyer_ui._account_navigation_keyboard())
+        assert [b.callback_data for b in after_receipt_buttons
+                if b.callback_data is not None] == ["account:catalog"]
+        assert len([b for b in after_receipt_buttons if b.url]) == 1
 
         assert [c.command for c in commands_for("buyer", language)] == [
             "menu", "subscription", "support",
