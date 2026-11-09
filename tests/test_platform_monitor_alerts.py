@@ -246,6 +246,69 @@ async def test_operator_incident_one_problem_one_recovery_and_tenant_isolation()
             now=now + timedelta(minutes=4),
         ) is False
         assert telegram.send_message.await_count == 2
+
+        # Simulate a crashed central delivery after claiming a SECOND
+        # incident, then a healthy bot before the expired lease is reclaimed.
+        # Never send an obsolete red problem after the recovery is known.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            health = await session.get(CustomerBotRuntimeHealth, project)
+            health.state = "error"
+            health.error_code = "startup_failed"
+            health.last_heartbeat = now + timedelta(minutes=5)
+        await scan_platform_monitor(
+            factory, owner_actor_id=owner, now=now + timedelta(minutes=5),
+        )
+        await scan_platform_monitor(
+            factory, owner_actor_id=owner, now=now + timedelta(minutes=16),
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner),
+        ) as session:
+            second = await session.scalar(select(PlatformMonitorIncident).where(
+                PlatformMonitorIncident.bot_instance_id == bot_id,
+                PlatformMonitorIncident.recovered_at.is_(None),
+            ))
+            assert second is not None
+            abandoned = await session.scalar(select(PlatformMonitorOutbox).where(
+                PlatformMonitorOutbox.incident_id == second.id,
+                PlatformMonitorOutbox.kind == "problem",
+            ))
+            assert abandoned is not None
+            abandoned.status = "sending"
+            abandoned.attempts = 1
+            abandoned.claimed_at = now + timedelta(minutes=16)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            health = await session.get(CustomerBotRuntimeHealth, project)
+            health.state = "running"
+            health.error_code = None
+            health.last_heartbeat = now + timedelta(minutes=17)
+        await scan_platform_monitor(
+            factory, owner_actor_id=owner, now=now + timedelta(minutes=17),
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            health = await session.get(CustomerBotRuntimeHealth, project)
+            health.last_heartbeat = now + timedelta(minutes=23)
+        assert await scan_platform_monitor(
+            factory, owner_actor_id=owner, now=now + timedelta(minutes=23),
+        ) >= 1
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner),
+        ) as session:
+            old_claim = await session.get(PlatformMonitorOutbox, abandoned.id)
+            assert old_claim.status == "cancelled"
+        assert await deliver_platform_monitor_event(
+            factory, bot=telegram, owner_actor_id=owner,
+            owner_telegram_id=owner_tg, timezone="Europe/Moscow",
+            now=now + timedelta(minutes=23),
+        )
+        assert "восстановлена" in telegram.send_message.await_args.args[1]
+        assert telegram.send_message.await_count == 3
     finally:
         async with admin_engine.begin() as admin:
             await admin.execute(
