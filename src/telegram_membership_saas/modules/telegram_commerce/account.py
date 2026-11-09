@@ -17,6 +17,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.support_links import support_button
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
@@ -254,15 +255,18 @@ def support_screen() -> tuple[str, InlineKeyboardMarkup]:
         "• После оплаты прикрепите чек к своей заявке в разделе «Мои покупки».\n"
         "• Проверку перевода и вопросы о возврате решает администрация канала.\n"
         "• Никому не отправляйте пароли, коды Telegram и токены ботов.\n\n"
-        "Контакт поддержки канала пока не настроен в ViMi Pay.",
+        "Если доступ задерживается, напишите в поддержку ViMi Pay. "
+        "Укажите номер заявки, но не присылайте пароли или коды.",
         "🛟 <b>Membership support</b>\n\n"
         "• Browse plans and payment methods in the catalog.\n"
         "• After paying, attach your receipt from My purchases.\n"
         "• The channel administration reviews bank transfers and refund requests.\n"
         "• Never share passwords, Telegram codes or bot tokens.\n\n"
-        "This channel has not configured a dedicated support contact yet.",
+        "If access is delayed, contact ViMi Pay support with your "
+        "request reference. Never send passwords or login codes.",
     )
     return text, _buttons(
         [_button("🧾 Мои покупки", "🧾 My purchases", "account:home")],
         [_button("💎 К тарифам", "💎 Browse plans", "account:catalog")],
+        [support_button()],
     )
