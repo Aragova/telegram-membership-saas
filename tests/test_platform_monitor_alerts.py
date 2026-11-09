@@ -28,6 +28,8 @@ from telegram_membership_saas.modules.owner_setup.service import (
 from telegram_membership_saas.modules.platform_monitor_alerts import (
     PlatformMonitorIncident,
     PlatformMonitorOutbox,
+    _claim_event,
+    _finish_event,
     _alert_text,
     _healthy,
     _problem_threshold,
@@ -320,6 +322,60 @@ async def test_operator_incident_one_problem_one_recovery_and_tenant_isolation()
         )
         assert "восстановлена" in telegram.send_message.await_args.args[1]
         assert telegram.send_message.await_count == 3
+
+        # Two central replicas can overlap: replica A stalls beyond the
+        # five-minute lease, replica B reclaims the same outbox event.
+        # A's late failure must not reset B's claim or trigger a duplicate.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner),
+        ) as session:
+            recovery_event = await session.scalar(
+                select(PlatformMonitorOutbox).where(
+                    PlatformMonitorOutbox.incident_id == second.id,
+                    PlatformMonitorOutbox.kind == "recovered",
+                )
+            )
+            assert recovery_event is not None
+            recovery_event.status = "sending"
+            recovery_event.attempts = 1
+            recovery_event.claimed_at = now + timedelta(minutes=24)
+            recovery_event.available_at = now + timedelta(minutes=24)
+            recovery_id = recovery_event.id
+
+        new_claim = await _claim_event(
+            factory, actor_id=owner, now=now + timedelta(minutes=30),
+        )
+        assert new_claim is not None
+        assert new_claim[0] == recovery_id
+        assert new_claim[1] == 2
+        await _finish_event(
+            factory, actor_id=owner, event_id=recovery_id,
+            claim_attempt=1, now=now + timedelta(minutes=30),
+            delivered=False,
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner),
+        ) as session:
+            locked = await session.get(PlatformMonitorOutbox, recovery_id)
+            assert locked.status == "sending" and locked.attempts == 2
+        await _finish_event(
+            factory, actor_id=owner, event_id=recovery_id,
+            claim_attempt=2, now=now + timedelta(minutes=30),
+            delivered=True,
+        )
+        # Even a stale "success" acknowledgement cannot override B's result.
+        await _finish_event(
+            factory, actor_id=owner, event_id=recovery_id,
+            claim_attempt=1, now=now + timedelta(minutes=31),
+            delivered=True,
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner),
+        ) as session:
+            finished = await session.get(PlatformMonitorOutbox, recovery_id)
+            assert finished.status == "sent"
+            assert finished.attempts == 2
+            assert finished.delivered_at == now + timedelta(minutes=30)
     finally:
         async with admin_engine.begin() as admin:
             await admin.execute(
