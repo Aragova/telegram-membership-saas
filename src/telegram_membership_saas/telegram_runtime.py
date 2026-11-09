@@ -16,9 +16,6 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
 )
 from telegram_membership_saas.modules.access import enqueue_due_access_recalculations
-from telegram_membership_saas.modules.platform_monitor_alerts import (
-    run_central_platform_monitor,
-)
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
     claim_next_outbox_event,
@@ -34,6 +31,9 @@ from telegram_membership_saas.modules.owner_daily import (
 from telegram_membership_saas.modules.owner_expiry import schedule_owner_expiry_digest
 from telegram_membership_saas.modules.owner_notifications import (
     deliver_one_owner_notification,
+)
+from telegram_membership_saas.modules.platform_monitor_alerts import (
+    run_central_platform_monitor,
 )
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.telegram_access import (
