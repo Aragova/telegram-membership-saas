@@ -382,17 +382,15 @@ async def deliver_platform_monitor_event(
     if event is None:
         return False
     event_id, kind, username, state, code, heartbeat, since = event
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(
-            text="🖥 Мониторинг", callback_data="plat:bots:30:0",
-        ),
-    ]])
     delivered = False
     try:
         async with recipient_language(factory, owner_telegram_id):
-            keyboard.inline_keyboard[0][0].text = tr(
-                "🖥 Мониторинг", "🖥 Monitoring",
-            )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text=tr("🖥 Мониторинг", "🖥 Monitoring"),
+                    callback_data="plat:bots:30:0",
+                ),
+            ]])
             message = _alert_text(
                 kind, username=username, status=state,
                 error_code=code, heartbeat=heartbeat, since=since,
