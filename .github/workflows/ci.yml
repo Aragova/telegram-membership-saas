@@ -105,6 +105,14 @@ jobs:
                       "TO membership_runtime"
                   )
                   await connection.execute(
+                      "GRANT EXECUTE ON FUNCTION public.platform_monitor_health_snapshot() "
+                      "TO membership_runtime"
+                  )
+                  await connection.execute(
+                      "GRANT EXECUTE ON FUNCTION public.platform_monitor_is_operator() "
+                      "TO membership_runtime"
+                  )
+                  await connection.execute(
                       "GRANT EXECUTE ON FUNCTION "
                       "public.platform_usage_snapshot(timestamptz, integer, integer) "
                       "TO membership_runtime"

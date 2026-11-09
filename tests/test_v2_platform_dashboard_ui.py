@@ -267,7 +267,9 @@ def test_rich_currency_turnover_and_single_bot_metrics():
     detail = to_rich_html(ui._bot_details(_snapshot().bots[0], period="30"))
     assert "<table bordered compact>" in detail
     assert "<tr><th>📢 Ресурсов</th><td>1</td></tr>" in detail
-    assert "<tr><th>Работа</th><td>работает</td></tr>" in detail
+    assert "<tr><th>Состояние</th><td>⚪ Нет подтверждения работы</td></tr>" in detail
+    assert "Последний записанный статус" not in detail
+    assert "Работа:" not in detail
     assert (
         "<tr><th>💳 Подтверждённых оплат (30 дней)</th><td>3</td></tr>"
         in detail

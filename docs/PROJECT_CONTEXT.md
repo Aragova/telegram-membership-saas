@@ -1,5 +1,26 @@
 # Project Context — Telegram Membership SaaS
 
+## Platform monitoring alert delivery — PR #111
+
+Only **central** `@vimipay_bot → 👑 Platform → 🖥 Monitoring` owns
+global health and incident reporting. A small task runs inside the
+existing central bot process (no second Supervisor or service), reads
+persisted supervisor heartbeat through a new narrow operator-only audited
+SQL function and stores durable incident/outbox records under platform
+owner RLS. Alert after 10 minutes of persistent non-running (20 minutes
+queued/starting), recover only after two minutes of good heartbeats.
+No alerts for owner-disabled, deleting or setup-needed connections.
+At most one problem and recovery event per incident; Telegram send/DB
+ack cannot guarantee exactly-once under uncertain transport failures.
+All notifications link to existing `plat:bots:30:0` (no new buttons).
+
+`0042_platform_monitor_alerts` migration must apply before central bot
+restart. Rich bot card now shows one useful status, last signal, and
+explanation only for problems; hides repeated project name.
+No tenant payment, subscriber, access or resource operations touched.
+Do not merge/deploy without explicit owner approval and exact-head
+CI/Codex checks.
+
 ## Platform monitoring diagnostics — PR #110
 
 Continue ONLY central `@vimipay_bot → 👑 Платформа → 🖥 Мониторинг`.
