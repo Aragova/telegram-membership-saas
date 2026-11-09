@@ -132,7 +132,10 @@ async def list_folders(
                          bot_id=bot_id)
         else:
             await _ready(session, project_id=project_id, bot_id=bot_id)
-        q = select(FileFolder).where(FileFolder.project_id == project_id)
+        q = select(FileFolder).where(
+            FileFolder.project_id == project_id,
+            FileFolder.removed_at.is_(None),
+        )
         if actor_id is None:
             q = q.where(
                 FileFolder.status == "active",
@@ -165,6 +168,7 @@ async def add_folder(
                      bot_id=bot_id)
         count = await session.scalar(select(func.count(FileFolder.id)).where(
             FileFolder.project_id == project_id,
+            FileFolder.removed_at.is_(None),
         ))
         if count >= FOLDER_LIMIT:
             raise ValueError(tr("Достигнут лимит папок", "Folder limit reached"))
@@ -234,11 +238,13 @@ async def create_product(
             FileFolder.id == folder_id,
             FileFolder.project_id == project_id,
             FileFolder.status == "active",
+            FileFolder.removed_at.is_(None),
         ))
         if folder is None:
             raise ValueError(tr("Папка недоступна", "Folder unavailable"))
         total = await session.scalar(select(func.count(FileProduct.id)).where(
             FileProduct.project_id == project_id,
+            FileProduct.removed_at.is_(None),
         ))
         if total >= PRODUCT_LIMIT:
             raise ValueError(tr("Достигнут лимит товаров", "Product limit reached"))
@@ -551,6 +557,7 @@ async def change_product_status(
                 FileFolder.project_id == project_id,
                 FileFolder.id == item.folder_id,
                 FileFolder.status == "active",
+                FileFolder.removed_at.is_(None),
             ))
             if folder is None:
                 raise ValueError(tr("Папка архивирована", "Folder is archived"))
@@ -589,12 +596,14 @@ async def list_products(
             FileProduct.project_id == project_id,
             FileProduct.telegram_bot_id == bot_id,
             FileProduct.folder_id == folder_id,
+            FileProduct.removed_at.is_(None),
         )
         if not actor_id:
             folder = await session.scalar(select(FileFolder.id).where(
                 FileFolder.id == folder_id,
                 FileFolder.project_id == project_id,
                 FileFolder.status == "active",
+                FileFolder.removed_at.is_(None),
             ))
             if folder is None:
                 return ()
@@ -621,6 +630,8 @@ async def view_product(
         else:
             await _ready(session, project_id=project_id, bot_id=bot_id)
         product = await _product(session, project_id, bot_id, product_id)
+        if product.removed_at is not None:
+            raise ValueError(tr("Товар удалён из каталога", "Product was removed"))
         if actor_id is None and product.status != "published":
             raise ValueError(tr("Товар не продаётся", "Product is not for sale"))
         count = await session.scalar(select(func.count(FileAsset.id)).where(
@@ -664,6 +675,7 @@ async def create_stars_order(
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.project_id == project_id, FileFolder.id == item.folder_id,
             FileFolder.status == "active",
+            FileFolder.removed_at.is_(None),
         ))
         if folder is None:
             raise ValueError(tr("Товар больше не продаётся", "This product is no longer for sale"))
