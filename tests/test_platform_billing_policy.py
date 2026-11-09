@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal, localcontext
 from uuid import uuid4
 
 import pytest
@@ -151,3 +151,23 @@ def test_reject_unsupported_source_and_rate_without_modifying_inputs():
     with pytest.raises(ValueError, match="commission_rate"):
         _lines(sale, commission_rate=Decimal("1.01"))
     assert sale.amount == Decimal("500.00")
+
+
+def test_high_precision_snapshot_and_sum_are_independent_of_decimal_context():
+    sale = _sale(
+        kind="file",
+        amount=Decimal("12345678901.000999999999999999"),
+        currency="EUR",
+    )
+    rates = {"EUR": Decimal("100")}
+    with localcontext() as context:
+        context.prec = 10
+        context.rounding = ROUND_DOWN
+        (line,) = _lines(sale, rates=rates)
+        assert line.gross_rub == Decimal("1234567890100.10")
+        assert line.commission_rub == Decimal("61728394505.00")
+        assert total_commission_rub((line, line)) == Decimal("123456789010.00")
+    with localcontext() as context:
+        context.prec = 45
+        (second,) = _lines(sale, rates=rates)
+        assert second == line
