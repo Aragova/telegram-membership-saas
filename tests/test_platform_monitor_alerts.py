@@ -189,6 +189,17 @@ async def test_operator_incident_one_problem_one_recovery_and_tenant_isolation()
             assert len(events) == 1 and events[0].kind == "problem"
             assert incident.last_error_code == "missing_admin_rights"
             assert incident.last_heartbeat == old
+            # The shared CI database may contain registered bots from earlier
+            # tests. Keep their unrelated alert attempts out of this case.
+            other_events = (
+                await session.scalars(
+                    select(PlatformMonitorOutbox).where(
+                        PlatformMonitorOutbox.incident_id != incident.id,
+                    )
+                )
+            ).all()
+            for unrelated in other_events:
+                unrelated.available_at = now + timedelta(days=1)
 
         telegram = SimpleNamespace(send_message=AsyncMock())
         assert await deliver_platform_monitor_event(
