@@ -243,6 +243,7 @@ async def get_owner_plan_info(
         plan = await session.scalar(
             select(Plan).where(
                 Plan.id == plan_id, Plan.project_id == project_id,
+                Plan.removed_at.is_(None),
             )
         )
         if plan is None:
