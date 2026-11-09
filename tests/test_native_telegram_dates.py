@@ -24,7 +24,7 @@ def test_local_fallback_preserves_utc_timestamp_and_moscow_offset():
     )
     assert f'unix="{int(event.timestamp())}"' in html
     assert 'format="dt"' in html
-    assert ">10.11.2026 00:30</tg-time>" in html
+    assert ">10.11.2026 00:30 UTC+03:00</tg-time>" in html
     assert "&lt;" not in html
 
 
@@ -34,9 +34,9 @@ def test_date_only_and_relative_formats_have_readable_fallback():
     short = native_telegram_time(event, "Europe/Moscow", fmt="d", now=now)
     relative = native_telegram_time(event, "Europe/Moscow", fmt="r", now=now)
     assert 'format="d">20.12.2026</tg-time>' in short
-    assert 'format="r">20.12.2026 13:00</tg-time>' in relative
+    assert 'format="r">20.12.2026 13:00 UTC+03:00</tg-time>' in relative
     # Clients that cannot display relative dates still show an exact deadline.
-    assert len("20.12.2026 13:00") < 31
+    assert len("20.12.2026 13:00 UTC+03:00") < 31
 
 
 def test_dst_uses_timezone_not_host_clock():
@@ -45,14 +45,14 @@ def test_dst_uses_timezone_not_host_clock():
         event, "America/New_York",
         now=datetime(2026, 10, 30, tzinfo=UTC),
     )
-    assert ">01.11.2026 01:30</tg-time>" in html
+    assert ">01.11.2026 01:30 UTC-05:00</tg-time>" in html
 
 
 def test_unsupported_dates_and_invalid_formats_fail_safe():
     now = datetime(2026, 11, 9, tzinfo=UTC)
     far = now + timedelta(days=1099)
     before_epoch = datetime(1960, 1, 1, tzinfo=UTC)
-    assert native_telegram_time(far, "Europe/Moscow", now=now) == "12.11.2029 03:00"
+    assert native_telegram_time(far, "Europe/Moscow", now=now) == "12.11.2029 03:00 UTC+03:00 (Europe/Moscow)"
     assert "<tg-time" not in native_telegram_time(
         before_epoch, "Europe/Moscow", now=now,
     )
@@ -79,7 +79,7 @@ def test_buyer_account_has_native_subscription_deadline_and_lifetime(language):
     finally:
         _language.reset(token)
     assert "Gold &amp; &lt;VIP&gt;" in html
-    assert 'format="dt">10.12.2026 00:00</tg-time>' in html
+    assert 'format="dt">10.12.2026 00:00 UTC+03:00</tg-time>' in html
     assert ("бессрочно" if language == "ru" else "lifetime") in html
     assert html.count("<tg-time") == 1
     assert markup.inline_keyboard[-1][0].callback_data == "account:catalog"
@@ -98,6 +98,6 @@ def test_expiry_digest_shows_native_time_but_does_not_change_group_logic():
         timezone="Europe/Moscow",
     )
     assert text is not None
-    assert 'format="dt">11.11.2026 00:15</tg-time>' in text
+    assert 'format="dt">11.11.2026 00:15 UTC+03:00</tg-time>' in text
     assert "Plus &amp; Gold" in text
     assert "@buyer" in text
