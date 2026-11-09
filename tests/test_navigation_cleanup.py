@@ -148,7 +148,9 @@ def test_buyer_screens_do_not_duplicate_native_menu_purchases(language):
     try:
         _text, catalog_markup = catalog_screen(offers)
         catalog_buttons = _buttons(catalog_markup)
-        catalog_actions = {b.callback_data for b in catalog_buttons}
+        catalog_actions = {
+            b.callback_data for b in catalog_buttons if b.callback_data is not None
+        }
         assert any(a.startswith("offer:") for a in catalog_actions)
         assert "lng:menu" in catalog_actions
         assert "account:home" not in catalog_actions
@@ -157,9 +159,9 @@ def test_buyer_screens_do_not_duplicate_native_menu_purchases(language):
             "success"
         )
         _text, empty_markup = catalog_screen(())
-        assert [b.callback_data for b in _buttons(empty_markup)] == [
-                "lng:menu",
-            ]
+        assert [b.callback_data for b in _buttons(empty_markup)
+                if b.callback_data is not None] == ["lng:menu"]
+        assert len([b for b in _buttons(empty_markup) if b.url]) == 1
 
         detail = offer_screen(offers, price_id=option.plan_price_id)
         assert detail is not None
