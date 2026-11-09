@@ -1931,8 +1931,15 @@ def create_owner_setup_router(
             members_text = str(await bot.get_chat_member_count(chat_id=chat_id))
         except (ValueError, AiogramError):
             pass
+        # Never round stored financial totals to two decimals. Crypto and
+        # other assets may use 8+ fractional digits; use plain fixed-point
+        # formatting to retain all meaningful decimal places (no 1E-8).
+        def precise_amount(amount: Decimal) -> str:
+            rendered = format(amount, "f")
+            return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
         revenues = "\n".join(
-            f"• {escape(currency)}: {amount:,.2f} ({count})"
+            f"• {escape(currency)}: {precise_amount(amount)} ({count})"
             for currency, amount, count in metrics.sales_by_currency
         ) or tr("Нет подтверждённых продаж", "No confirmed sales")
         type_label = tr("Канал", "Channel") if metrics.resource_type == (
