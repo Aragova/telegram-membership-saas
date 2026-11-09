@@ -28,11 +28,12 @@ def _buttons(bot):
     ]
 
 
-def _info(plan_id, *, status="draft", history=False):
+def _info(plan_id, *, status="draft", history=False, purchased=None):
     return PlanInfo(
         id=plan_id, name="Existing <Premium>",
         status=status, duration_value=1, duration_unit="month",
         resource_name="My channel", prices=(), has_history=history,
+        has_purchase=history if purchased is None else purchased,
         revision="abcd1234abcd",
     )
 
@@ -241,3 +242,17 @@ async def test_paid_plan_does_not_offer_permanent_delete(monkeypatch):
     assert "Удаление недоступно" in bot.send_message.await_args.args[1]
     assert not any(data.startswith("own:pldelete:")
                    for _, data in _buttons(bot))
+
+
+async def test_unpaid_invoice_keeps_delete_button_and_preserves_history_notice(
+    monkeypatch,
+):
+    project, plan = uuid4(), uuid4()
+    cb = _callback(monkeypatch, project, info=_info(
+        plan, status="active", history=True, purchased=False,
+    ))
+    bot = _bot()
+    await cb(_query("plan:" + plan.hex), bot)
+    assert "Неоплаченные счета" in bot.send_message.await_args.args[1]
+    assert any(data.startswith("own:pldelete:")
+               for _, data in _buttons(bot))
