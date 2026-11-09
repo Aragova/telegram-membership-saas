@@ -168,4 +168,4 @@ async def test_channel_revenue_keeps_fractional_crypto_precision(monkeypatch):
     text = bot.send_message.await_args.args[1]
     assert "BTC: 0.0001 (1)" in text
     assert "RUB: 550 (1)" in text
-    assert "BTC: 0.00" not in text
+    assert "• BTC: 0.00 (1)" not in text
