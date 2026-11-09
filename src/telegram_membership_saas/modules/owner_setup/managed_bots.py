@@ -146,6 +146,27 @@ async def connect_managed_bot_event(
     )
 
 
+async def managed_bot_id_for_project(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID,
+) -> int:
+    """Look up the exact live customer bot by owned project, not user input."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        bot_id = await session.scalar(select(BotInstance.telegram_bot_id).join(
+            Project, Project.id == BotInstance.project_id,
+        ).where(
+            Project.id == project_id,
+            Project.owner_user_id == actor_id,
+            Project.status == "active",
+            BotInstance.status == "registered",
+        ))
+        if bot_id is None:
+            raise PermissionError("No active bot owned by this user")
+        return bot_id
+
+
 async def sync_managed_bot_token(
     factory: async_sessionmaker[AsyncSession], *,
     central_bot: Bot, actor_id: UUID, actor_telegram_id: int,
