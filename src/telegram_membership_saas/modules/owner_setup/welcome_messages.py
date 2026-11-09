@@ -64,7 +64,7 @@ async def read_welcome_target(
 
 def telegram_chat_reference(external_id: str) -> int | str:
     """Never forward arbitrary database strings to Telegram chat methods."""
-    if external_id.startswith("-100") and external_id[1:].isascii() and external_id[1:].isdecimal():
+    if external_id.startswith("-") and external_id[1:].isascii() and external_id[1:].isdecimal():
         return int(external_id)
     if _PUBLIC_USERNAME.fullmatch(external_id):
         return external_id
