@@ -94,10 +94,20 @@ def upgrade() -> None:
         # Runtime may access ONLY with the true, DB-bootstrapped platform
         # owner's user context. This matches other platform RLS boundaries.
         op.execute(f"""
-            CREATE POLICY platform_owner_monitor_rw ON public.{table}
-            FOR ALL USING (public.platform_monitor_is_operator())
+            CREATE POLICY platform_owner_monitor_read ON public.{table}
+            FOR SELECT USING (public.platform_monitor_is_operator())
+        """)
+        op.execute(f"""
+            CREATE POLICY platform_owner_monitor_insert ON public.{table}
+            FOR INSERT WITH CHECK (public.platform_monitor_is_operator())
+        """)
+        op.execute(f"""
+            CREATE POLICY platform_owner_monitor_update ON public.{table}
+            FOR UPDATE USING (public.platform_monitor_is_operator())
             WITH CHECK (public.platform_monitor_is_operator())
         """)
+        # No DELETE policy: incident history and send dedup cannot be erased
+        # through a runtime DB credential, even if it has broad table grants.
 
     # Single bounded health source: existing bot_instances and Supervisor
     # heartbeat records; no Telegram API calls and no raw errors or tokens.
