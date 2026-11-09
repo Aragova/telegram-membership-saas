@@ -15,7 +15,6 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.types import InlineKeyboardMarkup
 
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.modules.owner_setup.statistics import OwnerStatistics
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     SubscriberDetail,
@@ -27,6 +26,7 @@ from telegram_membership_saas.rich_messages import (
     classic_messages,
     rich_enabled,
 )
+from telegram_membership_saas.telegram_dates import native_telegram_time
 
 log = logging.getLogger(__name__)
 
