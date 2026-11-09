@@ -2091,17 +2091,24 @@ def create_owner_setup_router(
                 tr("▶️ Вернуть в продажу", "▶️ Resume sales"),
                 "plrestore:" + token, "success",
             )])
-        if not getattr(data, "has_history", False):
+        if not data.has_purchase:
             rows.append([_button(
                 tr("🗑 Удалить тариф", "🗑 Delete plan"),
                 "pldelete:" + token, "danger",
             )])
+            if data.has_history:
+                lines.append(tr(
+                    "<i>Неоплаченные счета не мешают удалить тариф. "
+                    "История заявок и чеки сохранятся.</i>",
+                    "<i>Unpaid invoices do not prevent removing this plan. "
+                    "Invoice and receipt history remains intact.</i>",
+                ))
         else:
             lines.append(tr(
-                "<i>Удаление недоступно: по тарифу есть история покупок. "
-                "Снятие с продажи сохраняет подписки и платежи.</i>",
-                "<i>Deletion is unavailable: this plan has purchase history. "
-                "Archiving keeps subscriptions and payments intact.</i>",
+                "<i>Удаление недоступно: по тарифу есть подтверждённые "
+                "покупки. Подписки и платежи должны сохраниться.</i>",
+                "<i>Deletion is unavailable: this plan has confirmed "
+                "purchases. Existing subscriptions and payments remain.</i>",
             ))
         rows.append([_button("⬅️ Все тарифы", "plans")])
         await bot.send_message(
