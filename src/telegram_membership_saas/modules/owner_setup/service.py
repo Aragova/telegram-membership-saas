@@ -863,6 +863,7 @@ async def publish_owner_plan(
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:
+        await checkout_retirement_lock(session, project_id)
         await _require_project_manager(
             session, project_id=project_id, actor_user_id=actor_id
         )
