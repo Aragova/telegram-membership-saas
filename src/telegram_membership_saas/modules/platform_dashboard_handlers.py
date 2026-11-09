@@ -293,7 +293,7 @@ def _monitoring_diagnosis(
     if status == "deleting":
         return (tr("⚪ Удаляется", "⚪ Being removed"),
                 tr("Это не авария", "This is not an incident"))
-    if runtime == "running" and (elapsed is None or elapsed <= timedelta(seconds=120)):
+    if runtime == "running" and elapsed is not None and elapsed <= timedelta(seconds=120):
         return (tr("🟢 Работает", "🟢 Running"),
                 tr("Последний записанный статус: работает", "Latest recorded state: running"))
     if runtime in {"starting", "queued", "setup_needed"}:
@@ -336,8 +336,16 @@ def _monitoring_diagnosis(
 
 
 def _bot_list_button_label(bot: dict) -> str:
-    """One tappable row: unique bot name, state and three unchanged metrics."""
-    marker = _RUNTIME_ICONS.get(bot["runtime_state"], "⚪")
+    """One tappable row: defer false-red states during Supervisor warm-up."""
+    state = bot["runtime_state"]
+    marker = _RUNTIME_ICONS.get(state, "⚪")
+    heartbeat = _heartbeat_time(bot)
+    if heartbeat is not None and datetime.now(UTC) - heartbeat <= _STARTUP_GRACE:
+        if state == "stopped" or (
+            state == "error"
+            and bot.get("error_code") in {"worker_stopped", "lock_lost"}
+        ):
+            marker = "🟡"
     metrics = (
         f" · 💎{bot['plans']} 🔐{bot['subscriptions']}"
         f" 💳{bot['payments_period']}"
@@ -397,7 +405,9 @@ def _bot_list(snapshot) -> str:
     return "\n".join(lines)
 
 
-def _bot_details(bot: dict, *, period: str) -> str:
+def _bot_details(
+    bot: dict, *, period: str, timezone: str = "Europe/Moscow",
+) -> str:
     currency_rows = bot.get("gmv_by_currency") or []
     finance = (
         "\n".join(
@@ -412,7 +422,7 @@ def _bot_details(bot: dict, *, period: str) -> str:
     condition, explanation = _monitoring_diagnosis(bot)
     heartbeat = _heartbeat_time(bot)
     last_signal = (
-        native_telegram_time(heartbeat, "Europe/Moscow", fmt="dt")
+        native_telegram_time(heartbeat, timezone, fmt="dt")
         if heartbeat is not None else
         tr("Нет данных", "No data")
     )
@@ -899,7 +909,10 @@ def create_platform_dashboard_router(
                     raise ValueError("Карточка устарела. Обновите список.")
                 await _render_platform_screen(
                     bot, chat_id=query.from_user.id,
-                    text=_bot_details(report.bots[index], period=period),
+                    text=_bot_details(
+                        report.bots[index], period=period,
+                        timezone=config.platform_timezone,
+                    ),
                     reply_markup=_keyboard([
                         [_button(tr("⬅️ Мониторинг", "⬅️ Monitoring"), f"bots:{period}:{page}")],
                     ]), message_id=message_id,
