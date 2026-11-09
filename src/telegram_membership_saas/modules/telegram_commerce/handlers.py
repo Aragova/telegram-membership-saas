@@ -800,12 +800,39 @@ def create_telegram_commerce_router(
             await callback.answer(tr("Уже неактивно", "Already inactive"))
 
 
+    @router.callback_query(F.data.startswith("receiptretry:"))
+    async def retry_receipt_handler(callback: CallbackQuery, bot: Bot) -> None:
+        if callback.data is None:
+            return
+        try:
+            request_id = decode_uuid(callback.data.split(":", 1)[1])
+            async with system_project_session_scope(session_factory, project_id) as session:
+                await require_awaiting_receipt_for_telegram_user(
+                    session, project_id=project_id,
+                    request_id=request_id,
+                    telegram_user_id=callback.from_user.id,
+                    retry_submitted=True,
+                )
+        except (ValueError, PermissionError) as exc:
+            await callback.answer(_buyer_error(exc), show_alert=True)
+            return
+        await send_receipt_prompt(
+            bot, buyer_id=callback.from_user.id, kind="subscription",
+            request_id=request_id,
+            cancel_data="receiptstop:" + encode_uuid(request_id),
+        )
+        receipt_intents.arm(
+            bot.id, callback.from_user.id, kind="subscription",
+            request_id=request_id,
+        )
+        await callback.answer()
+
     @router.message(ReceiptReplyFilter())
     async def receipt_handler(message: Message, bot: Bot) -> None:
         # Accept legacy replies to old ForceReply prompts after an update.
         request_id = _receipt_request_id(message, bot_id=bot.id)
         if request_id is not None:
-            await _process_receipt(message, bot, request_id)
+            await _process_receipt(message, bot, request_id, direct=False)
 
     @router.message(ActiveSubscriptionReceiptFilter())
     async def direct_receipt_handler(message: Message, bot: Bot) -> None:
@@ -815,18 +842,19 @@ def create_telegram_commerce_router(
             bot.id, message.from_user.id, kind="subscription",
         )
         if request_id is not None:
-            await _process_receipt(message, bot, request_id)
+            await _process_receipt(message, bot, request_id, direct=True)
 
     async def _process_receipt(
-        message: Message, bot: Bot, request_id: UUID,
+        message: Message, bot: Bot, request_id: UUID, *, direct: bool,
     ) -> None:
         if message.from_user is None:
             return
         if not _acceptable_receipt(message):
-            receipt_intents.arm(
-                bot.id, message.from_user.id, kind="subscription",
-                request_id=request_id,
-            )
+            if direct:
+                receipt_intents.arm(
+                    bot.id, message.from_user.id, kind="subscription",
+                    request_id=request_id,
+                )
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=(
@@ -894,16 +922,25 @@ def create_telegram_commerce_router(
                 reply_markup=_account_navigation_keyboard(),
             )
         else:
+            # The request is already waiting_review. Ordinary "I have paid"
+            # rejects submitted requests; use a dedicated revalidated retry.
             await bot.send_message(
                 chat_id=message.chat.id,
-                text=(
-                    tr("Заявка зарегистрирована, но доставить документ администратору "
-                       "не удалось. Администратор может открыть /payments. "
-                       "Для новой попытки снова нажмите «Я оплатил».",
-                       "not delivered to the administrator. The owner can use /payments. "
-                       "To retry, tap “I have paid” again.")
+                text=tr(
+                    "Чек не удалось передать администратору. Заявка сохранена. "
+                    "Нажмите «Повторить чек» и отправьте файл снова. "
+                    "Администратор также может открыть /payments.",
+                    "Receipt delivery to the administrator failed. "
+                    "Your request is saved. Tap “Retry receipt” and "
+                    "send the file again. Admin can also use /payments.",
                 ),
-                reply_markup=_account_navigation_keyboard(),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text=tr("🔁 Повторить чек", "🔁 Retry receipt"),
+                        callback_data="receiptretry:" + encode_uuid(request_id),
+                        style="primary",
+                    ),
+                ]]),
             )
 
     @router.callback_query(F.data.startswith("cancel:"))
