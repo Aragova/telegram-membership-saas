@@ -316,17 +316,31 @@ def _monitoring_diagnosis(
         )
     if runtime in {"error", "failed"}:
         code = str(bot.get("error_code") or "")
+        is_restarting = (
+            code in {"worker_stopped", "lock_lost"}
+            and elapsed is not None and elapsed <= _STARTUP_GRACE
+        )
         return (
+            tr("🟡 Перезапускается", "🟡 Restarting")
+            if is_restarting else
             tr("🔴 Ошибка запуска", "🔴 Startup error"),
             tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
             tr("Supervisor зафиксировал ошибку. Проверьте повторный запуск.",
                "Supervisor recorded an error. Check the next startup attempt."),
         )
     if runtime == "stopped":
+        if elapsed is not None and elapsed <= _STARTUP_GRACE:
+            return (
+                tr("🟡 Недавно остановлен", "🟡 Recently stopped"),
+                tr("Возможно, бот перезапускается после обновления. Проверьте повторно.",
+                   "Bot may be restarting after deployment. Recheck before treating as outage."),
+            )
         return (
-            tr("🟡 Остановлен", "🟡 Stopped"),
-            tr("Возможно, бот перезапускается после обновления. Проверьте повторно.",
-               "Bot may be restarting after deployment. Recheck before treating as outage."),
+            tr("🔴 Остановлен", "🔴 Stopped"),
+            tr("Свежего сигнала нет. Проверьте Supervisor; "
+               "одного снимка состояния недостаточно для вывода о постоянной аварии.",
+               "No fresh heartbeat. Check Supervisor; "
+               "one snapshot does not prove a persistent outage."),
         )
     return (
         tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
