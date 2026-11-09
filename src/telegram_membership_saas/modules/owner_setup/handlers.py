@@ -4822,11 +4822,13 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id, project_id=project_id,
                     plan_id=plan_id,
                 )
-                if info.has_history:
-                    raise ValueError(
-                        "Тариф имеет историю заявок или подписок. "
-                        "Удаление запрещено — снимите его с продажи."
-                    )
+                if info.has_purchase:
+                    raise ValueError(tr(
+                        "У тарифа есть подтверждённые покупки. "
+                        "Удаление запрещено: доступ покупателей должен сохраниться.",
+                        "This plan has confirmed purchases. "
+                        "Removal is blocked to preserve buyer access.",
+                    ))
                 status_code = {"draft": "d", "active": "a", "archived": "r"}[
                     info.status
                 ]
