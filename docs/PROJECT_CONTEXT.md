@@ -1,5 +1,22 @@
 # Project Context — Telegram Membership SaaS
 
+## Staging GitHub Actions deployment (manual, pending PR)
+
+A restricted, manually triggered `staging-deploy.yml` deploy workflow is
+proposed. It uses GitHub Environment `staging` (branch `main` only),
+environment-scoped SSH private key / pinned host key and public host IP.
+The SSH principal `vimi-deploy` has a forced command and may invoke a single
+root-owned staging deploy script; it cannot open a terminal or access Docker
+directly. An explicit `connection-test` operation is the default and does not
+touch VM data. `deploy` checks exact `main` SHA on the VM, then builds,
+migrates and restarts the central bot/customer supervisor using
+`compose.light100.yaml`, retaining PostgreSQL. No auto deploy on merge.
+Read [STAGING_GITHUB_ACTIONS.md](STAGING_GITHUB_ACTIONS.md).
+
+**Do not merge this PR without explicit owner approval.** The GitHub connector
+can create/review workflows and fetch logs but may not offer a button-run
+action; tell the user how to click Run workflow manually.
+
 ## Channel cards / paid-only catalog deletion (current PR)
 
 A practical admin upgrade takes priority over experimental Telegram Welcome
