@@ -1,0 +1,110 @@
+name: ViMi Pay | Staging SSH deployment
+
+# Manual only. No deployment on pushes, pull requests, or untrusted branches.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "First test the restricted SSH key; deploy only when explicitly selected"
+        type: choice
+        required: true
+        default: connection-test
+        options:
+          - connection-test
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vimi-staging-manual-deploy
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    name: ${{ inputs.operation }} (main only)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+    env:
+      DEPLOY_OPERATION: ${{ inputs.operation }}
+      DEPLOY_HOST: ${{ vars.STAGING_SSH_HOST }}
+      DEPLOY_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.STAGING_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Validate inputs and run restricted staging SSH command
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # No values read from PRs, tags, or workflow inputs are interpolated
+          # into the remote shell command except validated GITHUB_SHA.
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "Deployment restricted to main" >&2
+            exit 1
+          }
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$DEPLOY_OPERATION" == "connection-test" || "$DEPLOY_OPERATION" == "deploy" ]] || exit 2
+          [[ -n "$DEPLOY_HOST" && -n "$DEPLOY_PRIVATE_KEY" && -n "$DEPLOY_KNOWN_HOSTS" ]] || {
+            echo "Missing staging environment variable or SSH secret" >&2
+            exit 1
+          }
+          # The staging environment supplies a single literal IPv4 address.
+          [[ "$DEPLOY_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || {
+            echo "Invalid staging host address" >&2
+            exit 2
+          }
+
+          ssh_dir="$(mktemp -d)"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          chmod 700 "$ssh_dir"
+          printf '%s\n' "$DEPLOY_PRIVATE_KEY" > "$ssh_dir/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/id_ed25519" "$ssh_dir/known_hosts"
+
+          ssh-keygen -y -f "$ssh_dir/id_ed25519" >/dev/null
+          ssh-keygen -F "$DEPLOY_HOST" -f "$ssh_dir/known_hosts" >/dev/null || {
+            echo "Pinned SSH host key not found for staging host" >&2
+            exit 1
+          }
+
+          ssh_args=(
+            -F /dev/null
+            -i "$ssh_dir/id_ed25519"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts"
+            -o ConnectTimeout=15
+            -o ConnectionAttempts=1
+            -o ServerAliveInterval=20
+            -o ServerAliveCountMax=6
+            -o ClearAllForwardings=yes
+            -o RequestTTY=no
+            -p 22
+          )
+
+          if [[ "$DEPLOY_OPERATION" == "connection-test" ]]; then
+            # The forced SSH command rejects non-deploy requests by design.
+            # Exit 2 plus the exact denial confirms authentication worked
+            # without changing the VM, database, Git HEAD or containers.
+            set +e
+            output="$(ssh "${ssh_args[@]}" "vimi-deploy@$DEPLOY_HOST" preflight 2>&1)"
+            result=$?
+            set -e
+            if [[ "$result" -eq 2 && "$output" == "DENIED: only deploy <commit SHA> is allowed" ]]; then
+              echo "STAGING SSH CONNECTION TEST: SUCCESS"
+            else
+              echo "STAGING SSH CONNECTION TEST: FAILED (exit $result)" >&2
+              printf '%s\n' "$output" >&2
+              exit 1
+            fi
+          else
+            # Server-side root-owned script double-checks origin/main HEAD,
+            # serializes deploys, builds the customer-supervisor and central
+            # bot, applies migrations first, then restarts those two services.
+            ssh "${ssh_args[@]}" "vimi-deploy@$DEPLOY_HOST" "deploy $GITHUB_SHA"
+            echo "STAGING DEPLOY COMMAND COMPLETED: $GITHUB_SHA"
+          fi
