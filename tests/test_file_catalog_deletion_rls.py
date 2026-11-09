@@ -24,6 +24,7 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileFolder,
     FileProduct,
 )
+from telegram_membership_saas.modules.payments import PaymentMethod, PaymentMethodCurrency
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -53,6 +54,21 @@ async def test_folder_product_and_draft_asset_deletion_keeps_sort_order_and_rls(
         bot, other_bot = tg_id(), tg_id()
         await _register_bot(factory, project_id=project, owner_id=owner, bot_id=bot)
         await _register_bot(factory, project_id=project, owner_id=owner, bot_id=other_bot)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            method = PaymentMethod(
+                project_id=project, name="Manual RUB",
+                provider="manual_settlement",
+                instruction_template="Transfer {amount} {currency} for {plan}",
+                status="active",
+            )
+            session.add(method)
+            await session.flush()
+            session.add(PaymentMethodCurrency(
+                payment_method_id=method.id,
+                project_id=project, currency_code="RUB",
+            ))
         folder = await svc.add_folder(
             factory, project_id=project, bot_id=bot, actor_id=owner,
             name="My folder",
