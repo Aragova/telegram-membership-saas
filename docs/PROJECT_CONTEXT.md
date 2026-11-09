@@ -1,3 +1,7 @@
+# ViMi Pay commercial SaaS billing direction — 2026-11-09
+
+Approved business direction: one 72-hour trial per verified owner for one bot; RUB 150 prepaid for each bot's next monthly service period, plus 5% on persisted approved subscription/file purchase price snapshots, billed by Moscow calendar month; payment to platform owner by manually confirmed instructions. Overdue debts restrict only NEW commerce after grace, while all existing customer entitlements, payment reviews, access revocations and history continue operating. Complimentary access through manual grants or free plan activation needs a durable combined monthly quota, no moderator override, and separately controlled OWNER_SERVICE accounts. Billing, quotas and holds are NOT live; the first PR only adds the approved contract and a pure tested commission calculator. See docs/PLATFORM_COMMERCIAL_BILLING.md for the policy, safety boundaries and staged implementation order.
+
 # Project Context — Telegram Membership SaaS
 
 ## Platform monitoring alert delivery — PR #111
