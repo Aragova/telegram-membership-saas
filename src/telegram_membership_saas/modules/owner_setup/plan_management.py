@@ -151,6 +151,7 @@ async def edit_owner_draft_resource(
                 Resource.id == resource_id,
                 Resource.project_id == project_id,
                 Resource.status == ResourceStatus.ACTIVE.value,
+                Resource.removed_at.is_(None),
             )
         )
         if resource is None:
