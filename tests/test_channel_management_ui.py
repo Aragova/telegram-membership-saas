@@ -1,5 +1,4 @@
 """Connected-bot channel list and per-channel read-only statistics UI."""
-from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -141,9 +140,9 @@ async def test_unpaid_channel_deletion_confirms_and_hides_plans(monkeypatch):
     assert "Неоплаченные счета сохранятся" in bot.send_message.await_args.args[1]
     remove.assert_not_awaited()
     await handler(_query("resremoveok:" + encode_uuid(channel)), bot)
-    remove.assert_awaited_once_with(
-        MagicMock.ANY if False else remove.await_args.args[0],
-        actor_id=actor, project_id=project, resource_id=channel,
-    )
+    remove.assert_awaited_once()
+    assert remove.await_args.kwargs == {
+        "actor_id": actor, "project_id": project, "resource_id": channel,
+    }
     rendered = [call.args[1] for call in bot.send_message.await_args_list]
     assert any("Скрыто тарифов: 2" in text for text in rendered)
