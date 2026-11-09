@@ -108,7 +108,7 @@ def test_subscription_result_rich_keeps_committed_status_and_local_dates(
     assert title in html
     assert "550 RUB" in html and "VIP &lt;plan&gt; &amp; more" in html
     if approved:
-        assert "10.11.2026 02:30 (Europe/Moscow)" in html
+        assert 'format="dt">10.11.2026 02:30 UTC+03:00</tg-time>' in html
     else:
         assert "10.11.2026" not in html
 
