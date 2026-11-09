@@ -70,7 +70,7 @@ async def test_english_resources_and_plans(monkeypatch):
     try:
         bot, query = await _owner_action(monkeypatch, "resources")
         text = bot.send_message.await_args.args[1]
-        assert "Channels and groups" in text
+        assert "My channels and groups" in text
         assert "My premium channel" in text
         assert "First, add your bot" in text
         buttons = [
