@@ -63,6 +63,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     default_period_plan_name,
     list_checkout_options,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
