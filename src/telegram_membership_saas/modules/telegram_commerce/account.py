@@ -17,7 +17,6 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.support_links import support_button
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
@@ -27,6 +26,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     encode_uuid,
     format_amount,
 )
+from telegram_membership_saas.support_links import support_button
 
 ACCOUNT_PAGE_SIZE = 5
 ACCOUNT_MAX_PAGE = 1000
