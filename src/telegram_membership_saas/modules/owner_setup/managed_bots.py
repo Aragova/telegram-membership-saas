@@ -24,10 +24,7 @@ from telegram_membership_saas.modules.bots.service import (
 )
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
-from telegram_membership_saas.modules.owner_setup.service import (
-    consume_button_flow,
-    register_new_owner_bot,
-)
+from telegram_membership_saas.modules.owner_setup.service import register_new_owner_bot
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
@@ -194,21 +191,13 @@ async def connect_managed_bot_event(
     verified = await verify_telegram_bot(token)
     if verified.telegram_bot_id != managed_bot_id:
         raise ValueError("Managed bot identity does not match Telegram token")
-    try:
-        await consume_button_flow(
-            factory, actor_id=actor_id, expected_step="managed_bot_create",
-            generation=generation, bot_scope_id=0,
-        )
-    except ValueError:
-        # Another update or a user cancel won the wizard row lock.
-        return ManagedBotResult(kind="ignored")
-
     project_id, registration = await register_new_owner_bot(
         factory, actor_id=actor_id,
         actor_telegram_user_id=creator_telegram_id,
         token=token, encryption_key=encryption_key,
         central_bot_id=central_bot.id,
         expected_bot_id=managed_bot_id,
+        managed_creation_generation=generation,
     )
     return ManagedBotResult(
         kind="created", username=registration.username,
