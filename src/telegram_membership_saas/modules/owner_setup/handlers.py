@@ -2880,6 +2880,102 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action == "newmanaged":
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
+                identity = await bot.get_me()
+                if not identity.can_manage_bots:
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⚠️ Включите <b>Bot Management Mode</b> в "
+                            "настройках @vimipay_bot через приложение @BotFather. "
+                            "После включения повторите действие. "
+                            "Ручное подключение через BotFather остаётся доступным.",
+                            "⚠️ Enable <b>Bot Management Mode</b> for "
+                            "@vimipay_bot in the @BotFather Mini App. "
+                            "Then try again. Manual token connection still works.",
+                        ),
+                        parse_mode="HTML",
+                    )
+                    await query.answer()
+                    return
+                request_id = randbelow(2_000_000_000) + 1
+                await set_flow(
+                    factory, actor_id=actor_id, step="managed_bot_create",
+                    payload={"request_id": request_id}, bot_scope_id=0,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "✨ <b>Создать бота через Telegram</b>\n\n"
+                        "Нажмите кнопку ниже, выберите имя и @username "
+                        "нового бота и подтвердите создание в Telegram.\n\n"
+                        "ViMi Pay получит токен автоматически, без отправки его "
+                        "в чат. Имя пользователя должно заканчиваться на bot.\n"
+                        "После создания подключение появится в списке.\n\n"
+                        "⏳ Подтвердите создание в течение 15 минут. "
+                        "Отмена: /cancel.",
+                        "✨ <b>Create a bot with Telegram</b>\n\n"
+                        "Tap the button below, choose a name and @username "
+                        "and approve creation in Telegram.\n\n"
+                        "ViMi Pay receives the token directly, without "
+                        "posting it to the chat. Username must end in bot.\n"
+                        "The connected bot then appears in your list.\n\n"
+                        "⏳ Confirm within 15 minutes. Cancel: /cancel.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=ReplyKeyboardMarkup(
+                        keyboard=[[
+                            KeyboardButton(
+                                text=tr("✨ Создать нового бота", "✨ Create new bot"),
+                                request_managed_bot=KeyboardButtonRequestManagedBot(
+                                    request_id=request_id,
+                                    suggested_name="ViMi Pay Channel",
+                                ),
+                            ),
+                        ]],
+                        resize_keyboard=True, one_time_keyboard=True,
+                    ),
+                )
+                await query.answer()
+                return
+            if action.startswith("managedsync:"):
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
+                project_id = decode_uuid(action.split(":", 1)[1])
+                managed_id = await managed_bot_id_for_project(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                try:
+                    result = await sync_managed_bot_token(
+                        factory, central_bot=bot, actor_id=actor_id,
+                        actor_telegram_id=user_id, managed_bot_id=managed_id,
+                        encryption_key=get_settings().bot_token_encryption_key,
+                    )
+                except AiogramError:
+                    await query.answer(tr(
+                        "Этот бот не управляется ViMi Pay. Используйте "
+                        "подключение через BotFather или включите режим управления.",
+                        "This bot isn't managed by ViMi Pay. Use BotFather "
+                        "token connection or enable Bot Management Mode.",
+                    ), show_alert=True)
+                    return
+                await bot.send_message(
+                    user_id,
+                    tr("✅ Токен синхронизирован.", "✅ Token synchronized.")
+                    if result.kind == "refreshed" else
+                    tr("✅ Токен актуален.", "✅ Token is already current."),
+                )
+                await show_bots(bot, user_id, actor_id, project_id)
+                await query.answer()
+                return
             if action == "new":
                 if get_settings().bot_token_encryption_key is None:
                     raise ValueError(tr("Подключение ботов пока недоступно",
@@ -5029,6 +5125,78 @@ def create_owner_setup_router(
             await query.answer(detail[:180], show_alert=True)
             return
         await query.answer()
+
+    async def process_created_managed_bot(
+        bot: Bot, *, creator_id: int, created_bot_id: int,
+    ) -> None:
+        if fixed_project_id is not None:
+            return
+        try:
+            result = await connect_managed_bot_event(
+                factory, central_bot=bot,
+                creator_telegram_id=creator_id,
+                managed_bot_id=created_bot_id,
+                encryption_key=get_settings().bot_token_encryption_key,
+            )
+        except (AiogramError, ValueError, PermissionError, RuntimeError):
+            # Bot API errors may contain URLs/credentials. Never send or log
+            # the raw exception or returned token.
+            logging.getLogger(__name__).warning(
+                "Managed bot linking failed without exposing credentials"
+            )
+            async with recipient_language(factory, creator_id):
+                await bot.send_message(
+                    creator_id, tr(
+                        "⚠️ Telegram создал бота, но подключить его не удалось. "
+                        "Проверьте режим управления и повторите подключение "
+                        "через BotFather. Токен в этот чат не отправляйте.",
+                        "⚠️ Telegram created the bot but ViMi Pay could not "
+                        "connect it. Check Bot Management Mode and reconnect "
+                        "through BotFather. Never post your token here.",
+                    ),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+            return
+        if result.kind != "created" or result.project_id is None:
+            return
+        owner_id = await actor_id_for_managed_creator(creator_id)
+        async with recipient_language(factory, creator_id):
+            await bot.send_message(
+                creator_id,
+                tr("✅ Новый Managed Bot создан и подключён.",
+                   "✅ New managed bot created and connected."),
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            await send_connected_bot(
+                bot, creator_id, owner_id, result.project_id, result.username,
+            )
+
+    async def actor_id_for_managed_creator(telegram_id: int) -> UUID:
+        # The registration function already verified this Telegram account
+        # against its actor row and committed the owned project.
+        return await ensure_telegram_actor(
+            factory, telegram_id=telegram_id,
+            username=None, first_name=None,
+        )
+
+    @router.managed_bot()
+    async def managed_bot_updated(event: ManagedBotUpdated, bot: Bot) -> None:
+        if fixed_project_id is not None:
+            return
+        await process_created_managed_bot(
+            bot, creator_id=event.user.id, created_bot_id=event.bot_user.id,
+        )
+
+    @router.message(F.managed_bot_created)
+    async def managed_bot_created_message(message: Message, bot: Bot) -> None:
+        if fixed_project_id is not None or not _private(message):
+            return
+        if message.from_user is None or message.managed_bot_created is None:
+            return
+        await process_created_managed_bot(
+            bot, creator_id=message.from_user.id,
+            created_bot_id=message.managed_bot_created.bot_user.id,
+        )
 
     @router.message(F.chat_shared)
     async def shared_chat_handler(message: Message, bot: Bot) -> None:
