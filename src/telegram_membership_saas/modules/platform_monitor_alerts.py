@@ -23,6 +23,7 @@ from sqlalchemy import (
     or_,
     select,
     text,
+    update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -293,7 +294,7 @@ async def scan_platform_monitor(
 async def _claim_event(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, now: datetime,
-) -> tuple[UUID, str, str, str, str | None, datetime | None, datetime] | None:
+) -> tuple[UUID, int, str, str, str, str | None, datetime | None, datetime] | None:
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         event = await session.scalar(
             select(PlatformMonitorOutbox)
@@ -346,7 +347,7 @@ async def _claim_event(
         event.attempts += 1
         event.claimed_at = now
         return (
-            event.id, event.kind, incident.username, incident.last_runtime_state,
+            event.id, event.attempts, event.kind, incident.username, incident.last_runtime_state,
             incident.last_error_code, incident.last_heartbeat,
             incident.suspected_since,
         )
@@ -354,20 +355,34 @@ async def _claim_event(
 
 async def _finish_event(
     factory: async_sessionmaker[AsyncSession], *, actor_id: UUID,
-    event_id: UUID, now: datetime, delivered: bool,
+    event_id: UUID, claim_attempt: int, now: datetime, delivered: bool,
 ) -> None:
+    """Only the current lease owner can acknowledge a delivery attempt.
+
+    The monotonically increasing attempts value is the fencing generation.
+    A sender that outlives its lease cannot alter a replacement sender's
+    in-flight event or cause a duplicate retry after successful delivery.
+    """
+    values = (
+        {"status": "sent", "delivered_at": now}
+        if delivered else
+        {
+            "status": "pending",
+            "available_at": now + timedelta(
+                seconds=min(3600, 60 * 2 ** min(claim_attempt, 6))
+            ),
+        }
+    )
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
-        event = await session.get(PlatformMonitorOutbox, event_id)
-        if event is None or event.status != "sending":
-            return
-        if delivered:
-            event.status = "sent"
-            event.delivered_at = now
-        else:
-            event.status = "pending"
-            event.available_at = now + timedelta(
-                seconds=min(3600, 60 * 2 ** min(event.attempts, 6))
+        await session.execute(
+            update(PlatformMonitorOutbox)
+            .where(
+                PlatformMonitorOutbox.id == event_id,
+                PlatformMonitorOutbox.status == "sending",
+                PlatformMonitorOutbox.attempts == claim_attempt,
             )
+            .values(**values)
+        )
 
 
 def _alert_text(
@@ -420,7 +435,7 @@ async def deliver_platform_monitor_event(
     event = await _claim_event(factory, actor_id=owner_actor_id, now=moment)
     if event is None:
         return False
-    event_id, kind, username, state, code, heartbeat, since = event
+    event_id, claim_attempt, kind, username, state, code, heartbeat, since = event
     delivered = False
     try:
         async with recipient_language(factory, owner_telegram_id):
@@ -446,7 +461,8 @@ async def deliver_platform_monitor_event(
     finally:
         await _finish_event(
             factory, actor_id=owner_actor_id,
-            event_id=event_id, now=moment, delivered=delivered,
+            event_id=event_id, claim_attempt=claim_attempt,
+            now=moment, delivered=delivered,
         )
     return delivered
 
