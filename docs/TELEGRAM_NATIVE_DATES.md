@@ -14,6 +14,9 @@ original instant, independently of the recipient's project or client timezone.
 - The **inner text** remains a readable, escaped, project-timezone date/time
   for old Telegram clients. A client supporting native date entities renders
   the same instant using **the viewing user's locale and timezone**.
+- Project-local UTC offsets (e.g. `UTC+03:00`) are included **inside** the
+  legacy clock-time fallback, so the instant is unambiguous and fits the 31-unit
+  formatted-date entity limit. New clients replace it with their local time.
 - No native tag for dates before Unix epoch or after now + 1098 days: use the
   readable fallback without causing Telegram parser errors.
 - Lifetime/no expiry stays literal `бессрочно / lifetime`. Do not invent an
@@ -28,7 +31,8 @@ https://core.telegram.org/api/entities
 ## Visible changes
 
 - Connected bot > buyer > My purchases > My subscriptions.
-- Payment approval/activation messages to channel owners and customers.
+- Payment approval/activation messages to channel owners and customers,
+  including owner Rich review-confirmation cards.
 - Owner subscriber cards: subscriptions, paid history, and grant deadlines;
   classic and Rich table rendering.
 - Owner invoice-history Rich cards and classic invoice history.
