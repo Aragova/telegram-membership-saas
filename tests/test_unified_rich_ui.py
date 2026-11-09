@@ -280,7 +280,7 @@ async def test_native_support_replies_remain_readable_text(monkeypatch, prefix):
         await bot.session.close()
 
 
-async def test_both_explicit_previews_obey_platform_rollback(monkeypatch):
+async def test_both_production_rich_cards_obey_platform_rollback(monkeypatch):
     from unittest.mock import MagicMock
 
     from telegram_membership_saas.modules.file_sales import rich_ui as file_rich
@@ -295,11 +295,11 @@ async def test_both_explicit_previews_obey_platform_rollback(monkeypatch):
     markup = _keyboard()
     assert not await file_rich.send_file_card(
         bot, chat_id=123, rich_html="<h3>Rich</h3>",
-        legacy_html="<b>Classic</b>", reply_markup=markup, preview=True,
+        legacy_html="<b>Classic</b>", reply_markup=markup,
     )
     assert not await plan_rich.send_rich_subscription_offer(
         bot, chat_id=123, rich_html="<h3>Rich</h3>",
-        reply_markup=markup, preview=True,
+        reply_markup=markup,
     )
     bot.send_rich_message.assert_not_awaited()
     bot.send_message.assert_awaited_once()
