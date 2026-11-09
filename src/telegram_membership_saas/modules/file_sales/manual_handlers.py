@@ -62,7 +62,10 @@ from telegram_membership_saas.payment_review_ui import (
     rich_file_reviews_queue,
     send_payment_review,
 )
-from telegram_membership_saas.receipt_prompt_ui import send_receipt_prompt
+from telegram_membership_saas.receipt_prompt_ui import (
+    send_receipt_prompt,
+    update_receipt_prompt,
+)
 
 log = logging.getLogger(__name__)
 RECEIPT_PREFIX = "FILE_PAYMENT_RECEIPT:"
@@ -411,7 +414,7 @@ def create_manual_file_router(
                         "Заявка уже отправлена или закрыта",
                         "This request was already submitted or closed",
                     ))
-                await send_receipt_prompt(
+                prompt_id = await send_receipt_prompt(
                     bot, buyer_id=uid, kind="file", request_id=order.id,
                     cancel_data="fm:receiptstop:" + encode_uuid(order.id),
                     name=order.product_name, amount=_short_amount(order.amount),
@@ -419,15 +422,21 @@ def create_manual_file_router(
                 )
                 receipt_intents.arm(
                     bot.id, uid, kind="file", request_id=order.id,
+                    prompt_message_id=prompt_id,
                 )
             elif action.startswith("receiptstop:"):
                 try:
                     stopping_id = decode_uuid(action.split(":", 1)[1])
                 except (ValueError, IndexError):
                     raise ValueError(tr("Кнопка устарела", "Button expired")) from None
-                receipt_intents.clear(
+                if receipt_intents.clear(
                     bot.id, uid, kind="file", request_id=stopping_id,
-                )
+                ):
+                    await update_receipt_prompt(
+                        bot, buyer_id=uid,
+                        message_id=getattr(query.message, "message_id", None),
+                        status="stopped",
+                    )
             elif action.startswith("cancel:"):
                 # Buyer may cancel only before submitting proof.
                 from telegram_membership_saas.modules.file_sales.manual_service import (
@@ -687,20 +696,34 @@ def create_manual_file_router(
         # Old reply-based messages continue to work for existing invoices.
         order_id = _receipt_order_id(message, bot.id)
         if order_id is not None:
-            await _process_manual_receipt(message, bot, order_id, direct=False)
+            await _process_manual_receipt(
+                message, bot, order_id, direct=False,
+                prompt_message_id=None,
+            )
 
     @router.message(ActiveFileReceiptFilter())
     async def direct_file_receipt(message: Message, bot: Bot) -> None:
         if message.from_user is None:
             return
-        order_id = receipt_intents.consume(
+        order_id = receipt_intents.peek(
             bot.id, message.from_user.id, kind="file",
         )
-        if order_id is not None:
-            await _process_manual_receipt(message, bot, order_id, direct=True)
+        if order_id is None:
+            return
+        prompt_message_id = receipt_intents.prompt_message(
+            bot.id, message.from_user.id, kind="file", request_id=order_id,
+        )
+        receipt_intents.consume(
+            bot.id, message.from_user.id, kind="file",
+        )
+        await _process_manual_receipt(
+            message, bot, order_id, direct=True,
+            prompt_message_id=prompt_message_id,
+        )
 
     async def _process_manual_receipt(
-        message: Message, bot: Bot, order_id: UUID, *, direct: bool,
+        message: Message, bot: Bot, order_id: UUID, *,
+        direct: bool, prompt_message_id: int | None,
     ) -> None:
         if message.from_user is None:
             return
@@ -717,6 +740,7 @@ def create_manual_file_router(
                 receipt_intents.arm(
                     bot.id, message.from_user.id, kind="file",
                     request_id=order_id,
+                    prompt_message_id=prompt_message_id,
                 )
             await bot.send_message(
                 message.chat.id, tr(
@@ -768,6 +792,10 @@ def create_manual_file_router(
                     )
             except AiogramError:
                 log.warning("Unable to deliver manual file receipt to reviewer %s", reviewer)
+        await update_receipt_prompt(
+            bot, buyer_id=message.from_user.id,
+            message_id=prompt_message_id, status="sent",
+        )
         await bot.send_message(
             message.chat.id,
             tr("📨 Чек зарегистрирован. Ожидайте проверки администратором.",
