@@ -52,7 +52,9 @@ def test_unsupported_dates_and_invalid_formats_fail_safe():
     now = datetime(2026, 11, 9, tzinfo=UTC)
     far = now + timedelta(days=1099)
     before_epoch = datetime(1960, 1, 1, tzinfo=UTC)
-    assert native_telegram_time(far, "Europe/Moscow", now=now) == "12.11.2029 03:00 UTC+03:00 (Europe/Moscow)"
+    assert native_telegram_time(far, "Europe/Moscow", now=now) == (
+        "12.11.2029 03:00 UTC+03:00 (Europe/Moscow)"
+    )
     assert "<tg-time" not in native_telegram_time(
         before_epoch, "Europe/Moscow", now=now,
     )
