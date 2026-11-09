@@ -37,6 +37,9 @@ from telegram_membership_saas.modules.file_sales.recovery import (
     recover_buyer_stars,
 )
 from telegram_membership_saas.modules.file_sales.rich_ui import (
+    rich_admin_folders,
+    rich_admin_product_detail,
+    rich_admin_products,
     rich_file_card_html,
     send_file_card,
 )
@@ -261,10 +264,17 @@ def create_file_sales_router(
             rows.append([_button(tr("⬅️ Управление", "⬅️ Manage"), "admin")])
         else:
             rows.append([_button(tr("⬅️ Магазин", "⬅️ Shop"), "home")])
-        await bot.send_message(
-            user_id, tr("📁 Папки с файлами", "📁 File folders"),
-            reply_markup=_keyboard(rows),
-        )
+        legacy = tr("📁 Папки с файлами", "📁 File folders")
+        if who:
+            await send_file_card(
+                bot, chat_id=user_id,
+                rich_html=rich_admin_folders(data),
+                legacy_html=legacy, reply_markup=_keyboard(rows),
+            )
+        else:
+            await bot.send_message(
+                user_id, legacy, reply_markup=_keyboard(rows),
+            )
 
     async def show_products(bot: Bot, uid: int, folder: UUID,
                             who: UUID | None) -> None:
@@ -283,10 +293,17 @@ def create_file_sales_router(
             rows.append([_button(tr("⬅️ Папки", "⬅️ Folders"), "adminfolders")])
         else:
             rows.append([_button(tr("⬅️ Папки", "⬅️ Folders"), "shop")])
-        await bot.send_message(
-            uid, tr("📦 Товары в папке", "📦 Folder products"),
-            reply_markup=_keyboard(rows),
-        )
+        legacy = tr("📦 Товары в папке", "📦 Folder products")
+        if who:
+            await send_file_card(
+                bot, chat_id=uid,
+                rich_html=rich_admin_products(products),
+                legacy_html=legacy, reply_markup=_keyboard(rows),
+            )
+        else:
+            await bot.send_message(
+                uid, legacy, reply_markup=_keyboard(rows),
+            )
 
     async def detail(bot: Bot, uid: int, item_id: UUID,
                      who: UUID | None) -> None:
@@ -375,9 +392,18 @@ def create_file_sales_router(
                 [_button(tr("⬅️ Товары", "⬅️ Products"),
                          "folder:" + encode_uuid(item.folder_id))],
             ]
-        await bot.send_message(
-            uid, text, parse_mode="HTML", reply_markup=_keyboard(rows),
-        )
+        if who:
+            await send_file_card(
+                bot, chat_id=uid,
+                rich_html=rich_admin_product_detail(
+                    item, file_count=count, prices=prices,
+                ),
+                legacy_html=text, reply_markup=_keyboard(rows),
+            )
+        else:
+            await bot.send_message(
+                uid, text, parse_mode="HTML", reply_markup=_keyboard(rows),
+            )
 
     async def rich_preview(bot: Bot, uid: int, item_id: UUID, actor: UUID) -> None:
         """Owner-only live API test without creating an invoice or affecting buyers."""
