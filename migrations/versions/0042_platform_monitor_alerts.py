@@ -67,6 +67,27 @@ def upgrade() -> None:
             name="ck_platform_monitor_alert_status",
         ),
     )
+    # Table policies must not rely on the runtime DB role having direct
+    # SELECT rights on platform_operators. Reuse an explicit owner identity
+    # check behind the same privileged database boundary as 0019.
+    op.execute("""
+        CREATE FUNCTION public.platform_monitor_is_operator()
+        RETURNS boolean LANGUAGE sql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $function$
+            SELECT EXISTS (
+                SELECT 1 FROM public.telegram_users u
+                JOIN public.platform_operators o
+                  ON o.telegram_user_id = u.telegram_user_id
+                WHERE u.id = NULLIF(
+                    current_setting('app.current_user_id', true), ''
+                )::uuid AND o.role = 'owner'
+            )
+        $function$
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION public.platform_monitor_is_operator() FROM PUBLIC"
+    )
     for table in ("platform_monitor_incidents", "platform_monitor_alert_outbox"):
         op.execute(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY")
@@ -74,26 +95,8 @@ def upgrade() -> None:
         # owner's user context. This matches other platform RLS boundaries.
         op.execute(f"""
             CREATE POLICY platform_owner_monitor_rw ON public.{table}
-            FOR ALL USING (
-                EXISTS (
-                    SELECT 1 FROM public.telegram_users u
-                    JOIN public.platform_operators o
-                      ON o.telegram_user_id = u.telegram_user_id
-                    WHERE u.id = NULLIF(
-                        current_setting('app.current_user_id', true), ''
-                    )::uuid AND o.role = 'owner'
-                )
-            )
-            WITH CHECK (
-                EXISTS (
-                    SELECT 1 FROM public.telegram_users u
-                    JOIN public.platform_operators o
-                      ON o.telegram_user_id = u.telegram_user_id
-                    WHERE u.id = NULLIF(
-                        current_setting('app.current_user_id', true), ''
-                    )::uuid AND o.role = 'owner'
-                )
-            )
+            FOR ALL USING (public.platform_monitor_is_operator())
+            WITH CHECK (public.platform_monitor_is_operator())
         """)
 
     # Single bounded health source: existing bot_instances and Supervisor
@@ -157,6 +160,8 @@ def upgrade() -> None:
             THEN
                 GRANT EXECUTE ON FUNCTION public.platform_monitor_health_snapshot()
                     TO membership_runtime;
+                GRANT EXECUTE ON FUNCTION public.platform_monitor_is_operator()
+                    TO membership_runtime;
                 GRANT SELECT, INSERT, UPDATE
                     ON public.platform_monitor_incidents,
                        public.platform_monitor_alert_outbox
@@ -171,3 +176,4 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS public.platform_monitor_health_snapshot()")
     for table in ("platform_monitor_alert_outbox", "platform_monitor_incidents"):
         op.drop_table(table)
+    op.execute("DROP FUNCTION IF EXISTS public.platform_monitor_is_operator()")
