@@ -165,12 +165,6 @@ def _summary_text(snapshot) -> str:
         "",
         tr(f"🤖 Подключённых ботов: <b>{stats['bots']}</b>",
            f"🤖 Connected bots: <b>{stats['bots']}</b>"),
-        tr(f"✅ Зарегистрировано: {stats['bots_active']}",
-           f"✅ Registered: {stats['bots_active']}"),
-        tr(f"🟢 Работают сейчас: {stats['bots_running']}",
-           f"🟢 Running now: {stats['bots_running']}"),
-        tr(f"▫️ Отключено: {stats['bots_disabled']}",
-           f"▫️ Disabled: {stats['bots_disabled']}"),
         tr(f"👥 Владельцев: <b>{stats['owners']}</b>",
            f"👥 Owners: <b>{stats['owners']}</b>"),
         tr(f"📢 Каналов и групп: {stats['resources']}",
@@ -245,10 +239,27 @@ def _bot_list_button_label(bot: dict) -> str:
 
 
 def _bot_list(snapshot) -> str:
-    """The bot handles and per-bot figures are in the buttons, not duplicated."""
+    """The ONE global monitoring surface. Existing bot cards remain here.
+
+    A fresh worker heartbeat is the authoritative liveness signal. Pending
+    setup, queued, starting, unknown and stale bots are NOT asserted broken:
+    they are merely not confirmed running and must be checked individually.
+    """
+    stats = snapshot.counts
+    registered = int(stats["bots_active"])
+    running = int(stats["bots_running"])
+    disabled = int(stats["bots_disabled"])
+    no_running_signal = max(0, registered - running)
     lines = [
-        tr("✦ <b>Подключённые боты</b>", "✦ <b>Connected bots</b>"),
-        tr("Период: ", "Period: ") + _period_label(snapshot.period),
+        tr("✦ <b>Мониторинг · ViMi Pay</b>",
+           "✦ <b>Monitoring · ViMi Pay</b>"),
+        tr("🤖 Подключено: ", "🤖 Connected: ") + str(stats["bots"]),
+        tr("🟢 Работают: ", "🟢 Running: ") + str(running),
+        tr("🟠 Нет подтверждения работы: ", "🟠 No confirmed runtime: ")
+        + str(no_running_signal),
+        tr("⚪ Отключено: ", "⚪ Disabled: ") + str(disabled),
+        "",
+        tr("Период финансов: ", "Finance period: ") + _period_label(snapshot.period),
         tr("На странице: ", "On this page: ") + str(len(snapshot.bots)),
         "",
     ]
@@ -521,7 +532,7 @@ def create_platform_dashboard_router(
         rows = _period_rows(period, section="home")
         rows.extend([
             [
-                _button(tr("🤖 Все боты", "🤖 All bots"), f"bots:{period}:0"),
+                _button(tr("🖥 Мониторинг", "🖥 Monitoring"), f"bots:{period}:0"),
                 _button(tr("📊 История", "📊 History"), f"usage:{period}:0"),
             ],
             [
@@ -767,7 +778,7 @@ def create_platform_dashboard_router(
                     bot, chat_id=query.from_user.id,
                     text=_bot_details(report.bots[index], period=period),
                     reply_markup=_keyboard([
-                        [_button(tr("⬅️ Все боты", "⬅️ All bots"), f"bots:{period}:{page}")],
+                        [_button(tr("⬅️ Мониторинг", "⬅️ Monitoring"), f"bots:{period}:{page}")],
                     ]), message_id=message_id,
                 )
             else:
