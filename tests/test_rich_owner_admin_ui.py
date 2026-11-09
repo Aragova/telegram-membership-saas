@@ -151,6 +151,8 @@ def test_rich_subscriber_card_exact_values_local_dates_and_html(
     assert "550 RUB" in html
     assert "550.000000000000000000" not in html
     assert "11.12.2026" in html  # Moscow local time
+    assert 'format="dt"' in html and 'format="d"' in html
+    assert "<tg-time" in html and "&lt;tg-time" not in html
     assert "10.11.2026" in html
     assert "бессрочно" in html if lang == "ru" else "lifetime" in html
     assert html.count("<table bordered compact>") == 5
@@ -181,6 +183,7 @@ def test_rich_invoice_history_compact_rows_status_local_date_and_empty(
     assert "VIP &lt;Pack&gt; &amp; Name" in html
     assert "<Me>" not in html and "&lt;Me&gt;" in html
     assert "09.11.2026" in html and "10.11.2026" in html
+    assert html.count("<tg-time") == 2
     assert "7.000000000000000000" not in html
     assert empty_text in empty
     assert "<table" not in empty

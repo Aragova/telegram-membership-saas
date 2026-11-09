@@ -9,7 +9,6 @@ import inspect
 import logging
 from decimal import Decimal
 from html import escape
-from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
@@ -27,6 +26,7 @@ from telegram_membership_saas.rich_messages import (
     classic_messages,
     rich_enabled,
 )
+from telegram_membership_saas.telegram_dates import native_telegram_time
 
 log = logging.getLogger(__name__)
 
@@ -40,9 +40,12 @@ def _safe(value: object) -> str:
     return escape(str(value), quote=True)
 
 
-def _row(label: str, value: str) -> str:
-    """Caller supplies trusted markup for labels; values are always plain text."""
-    return "<tr><th>" + label + "</th><td>" + _safe(value) + "</td></tr>"
+def _row(label: str, value: str, *, native_html: bool = False) -> str:
+    """Labels are trusted markup; only explicitly built date markup is trusted."""
+    return (
+        "<tr><th>" + label + "</th><td>"
+        + (value if native_html else _safe(value)) + "</td></tr>"
+    )
 
 
 def _table_start(col1: str, col2: str) -> list[str]:
@@ -52,10 +55,10 @@ def _table_start(col1: str, col2: str) -> list[str]:
     ]
 
 
-def _customer_date(value, timezone: str) -> str:
+def _customer_date(value, timezone: str, *, fmt: str = "d") -> str:
     if value is None:
         return tr("бессрочно", "lifetime")
-    return value.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y")
+    return native_telegram_time(value, timezone, fmt=fmt)
 
 
 def rich_owner_statistics(stats: OwnerStatistics) -> str:
@@ -141,7 +144,10 @@ def rich_subscriber_card(data: SubscriberDetail, *, who: str) -> str:
             }.get(sub.status, sub.status)
             lines.append(_row(
                 _safe(sub.plan_name[:45]),
-                label + " · " + _customer_date(sub.period_end, data.project_timezone),
+                _safe(label) + " · " + _customer_date(
+                    sub.period_end, data.project_timezone, fmt="dt",
+                ),
+                native_html=True,
             ))
         lines.append("</table>")
     else:
@@ -156,8 +162,11 @@ def rich_subscriber_card(data: SubscriberDetail, *, who: str) -> str:
         for paid in data.payments[:5]:
             lines.append(_row(
                 _safe(paid.plan_name[:28]),
-                format_amount(Decimal(paid.amount), 18) + " " + paid.currency
-                + " · " + _customer_date(paid.approved_at, data.project_timezone),
+                _safe(format_amount(Decimal(paid.amount), 18) + " " + paid.currency)
+                + " · " + _customer_date(
+                    paid.approved_at, data.project_timezone,
+                ),
+                native_html=True,
             ))
         lines.append("</table>")
     else:
@@ -175,7 +184,10 @@ def rich_subscriber_card(data: SubscriberDetail, *, who: str) -> str:
             }.get(grant.source, grant.source)
             lines.append(_row(
                 _safe(grant.resource_name[:35]),
-                source + " · " + _customer_date(grant.valid_until, data.project_timezone),
+                _safe(source) + " · " + _customer_date(
+                    grant.valid_until, data.project_timezone, fmt="dt",
+                ),
+                native_html=True,
             ))
         lines.append("</table>")
     else:

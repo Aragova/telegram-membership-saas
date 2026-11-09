@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramU
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions import Subscription
+from telegram_membership_saas.telegram_dates import native_telegram_time
 
 REMINDER_DAYS = (7, 3, 1)
 DIGEST_HOUR = 10
@@ -274,10 +275,10 @@ def render_expiry_digest(
         shown = entries[:remaining]
         remaining -= len(shown)
         for row in shown:
-            deadline = row.ends_at.astimezone(ZoneInfo(timezone))
+            deadline = native_telegram_time(row.ends_at, timezone, fmt="dt")
             lines.append(
                 "• " + _display_person(row) + " · " + escape(row.plan_name[:48])
-                + f" · {deadline:%d.%m %H:%M}"
+                + " · " + deadline
             )
         extra = len(entries) - len(shown)
         if extra:

@@ -10,7 +10,6 @@ import logging
 from decimal import Decimal
 from html import escape
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
@@ -22,6 +21,7 @@ from telegram_membership_saas.rich_messages import (
     classic_messages,
     rich_enabled,
 )
+from telegram_membership_saas.telegram_dates import native_telegram_time
 
 if TYPE_CHECKING:
     from telegram_membership_saas.modules.telegram_commerce.service import (
@@ -101,13 +101,19 @@ def rich_subscription_review_result(result: ReviewResult, *, approve: bool) -> s
     ]
     if approve:
         end = result.subscription_period_end
-        until = (
-            end.astimezone(ZoneInfo(result.project_timezone)).strftime(
-                "%d.%m.%Y %H:%M",
-            ) + " (" + result.project_timezone + ")"
-            if end is not None else tr("Бессрочно", "Lifetime")
-        )
-        body.append(_row(tr("📅 Доступ до", "📅 Access until"), until))
+        label = tr("📅 Доступ до", "📅 Access until")
+        if end is None:
+            body.append(_row(label, tr("Бессрочно", "Lifetime")))
+        else:
+            # The date tag is trusted markup from the shared renderer. Keep
+            # escaping arbitrary labels and all other payment values.
+            until = native_telegram_time(
+                end, result.project_timezone, fmt="dt",
+            )
+            body.append(
+                "<tr><th>" + _escape(label) + "</th><td>"
+                + until + "</td></tr>"
+            )
     body.append("</table>")
     body.append("<p>" + (
         tr("Бот автоматически предоставит доступ покупателю.",

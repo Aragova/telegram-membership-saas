@@ -1,5 +1,17 @@
 # Project Context — Telegram Membership SaaS
 
+## Telegram 2026 — Native dates and time (current PR)
+
+After Managed Bots (#102–#103, verified live), the next agreed technology
+is native formatted dates. Render subscription/access expiry, payment history,
+and expiry reminders using Telegram `<tg-time unix="..." format="d|dt">`
+with readable text fallback. Use the common module
+`src/telegram_membership_saas/telegram_dates.py`, and
+[TELEGRAM_NATIVE_DATES.md](TELEGRAM_NATIVE_DATES.md) for exact scope
+and staging checks. UTC business timestamps, project timezone, billing,
+access checks, RU/EN and `compose.light100.yaml` remain unchanged.
+Never merge or deploy a PR without explicit owner approval.
+
 ## Rich Messages — единый интерфейс ViMi Pay (ноябрь 2026)
 
 Основной интерактивный UI платформы теперь использует Telegram Rich Messages:

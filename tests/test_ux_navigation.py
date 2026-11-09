@@ -187,7 +187,8 @@ def test_subscription_history_paginates_and_formats_expiration():
     try:
         text, keyboard = account_list_screen(account, section="subs", page=1)
         assert "Channel &amp; Co" in text
-        assert "12.12.2026 13:00 (Europe/Moscow)" in text
+        assert 'format="dt">12.12.2026 13:00 UTC+03:00</tg-time>' in text
+        assert f'unix="{int(ended.timestamp())}"' in text
         actions = [data for _, data in _buttons(keyboard)]
         assert "account:subs:0" in actions
         assert "account:subs:2" in actions
