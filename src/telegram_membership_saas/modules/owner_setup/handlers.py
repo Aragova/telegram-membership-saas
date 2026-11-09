@@ -212,6 +212,10 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     list_pending_reviews_for_actor,
 )
 from telegram_membership_saas.modules.telegram_commerce.storefront import list_buyer_offers
+from telegram_membership_saas.payment_review_ui import (
+    rich_subscription_review,
+    send_payment_review,
+)
 from telegram_membership_saas.telegram_menus import set_chat_commands
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -2241,8 +2245,12 @@ def create_owner_setup_router(
             parse_mode="HTML",
         )
         for item in items:
-            await bot.send_message(
-                user_id, _review_text(item),
+            await send_payment_review(
+                bot, chat_id=user_id,
+                rich_html=rich_subscription_review(
+                    item, receipt_attached=False,
+                ),
+                legacy_text=_review_text(item),
                 reply_markup=_review_keyboard(item.request_id),
             )
         await bot.send_message(

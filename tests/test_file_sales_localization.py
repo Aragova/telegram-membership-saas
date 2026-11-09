@@ -138,14 +138,19 @@ async def test_file_receipt_admin_notification_uses_reviewer_language(monkeypatc
         await handler(message, bot)
     finally:
         localization._language.reset(token)
-    admin = next(call for call in bot.send_message.await_args_list
-                 if call.args[0] == 456)
+    admin = next(
+        call for call in bot.send_message.await_args_list
+        if (call.args[0] if call.args else call.kwargs.get("chat_id")) == 456
+    )
     buttons = [b.text for row in admin.kwargs["reply_markup"].inline_keyboard
                for b in row]
-    assert "Verify receipt of funds." in admin.args[1]
+    admin_text = admin.args[1] if len(admin.args) > 1 else admin.kwargs["text"]
+    assert "Verify receipt of funds." in admin_text
     assert buttons == ["✅ Approve", "❌ Reject"]
-    buyer = next(call for call in bot.send_message.await_args_list
-                 if call.args[0] == 123)
+    buyer = next(
+        call for call in bot.send_message.await_args_list
+        if (call.args[0] if call.args else call.kwargs.get("chat_id")) == 123
+    )
     assert "Чек зарегистрирован" in buyer.args[1]
 
 

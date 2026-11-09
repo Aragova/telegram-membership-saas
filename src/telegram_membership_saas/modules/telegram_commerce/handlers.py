@@ -68,6 +68,11 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     offer_screen,
     rich_catalog_html,
 )
+from telegram_membership_saas.payment_review_ui import (
+    rich_subscription_review,
+    rich_subscription_review_result,
+    send_payment_review,
+)
 from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.telegram_menus import refresh_user_commands
 
@@ -819,9 +824,12 @@ def create_telegram_commerce_router(
                 )
                 # Reply to this exact receipt so concurrent submissions cannot be mixed up.
                 async with recipient_language(session_factory, reviewer_id):
-                    await bot.send_message(
-                        chat_id=reviewer_id,
-                        text=_review_text(submission.item),
+                    await send_payment_review(
+                        bot, chat_id=reviewer_id,
+                        rich_html=rich_subscription_review(
+                            submission.item, receipt_attached=True,
+                        ),
+                        legacy_text=_review_text(submission.item),
                         reply_markup=_review_keyboard(submission.request.id),
                         reply_parameters=ReplyParameters(message_id=copied.message_id),
                     )
@@ -942,12 +950,26 @@ def create_telegram_commerce_router(
                 # The decision is committed, so a stale keyboard must not undo it.
                 pass
 
-        await _safe_send_message(
-            bot,
-            callback.from_user.id,
-            _admin_review_result_text(result, approve=approve),
-            parse_mode="HTML",
-        )
+        if inspect.iscoroutinefunction(getattr(bot, "send_rich_message", None)):
+            try:
+                await send_payment_review(
+                    bot, chat_id=callback.from_user.id,
+                    rich_html=rich_subscription_review_result(
+                        result, approve=approve,
+                    ),
+                    legacy_text=_admin_review_result_text(result, approve=approve),
+                    parse_mode="HTML",
+                )
+            except AiogramError:
+                # The financial decision was committed before the UI update.
+                pass
+        else:
+            # Keep the original safe notification path on old aiogram clients.
+            await _safe_send_message(
+                bot, callback.from_user.id,
+                _admin_review_result_text(result, approve=approve),
+                parse_mode="HTML",
+            )
         async with recipient_language(
             session_factory, result.item.customer_telegram_user_id,
         ):
@@ -996,9 +1018,12 @@ def create_telegram_commerce_router(
             return
 
         for item in items:
-            await bot.send_message(
-                chat_id=message.from_user.id,
-                text=_review_text(item),
+            await send_payment_review(
+                bot, chat_id=message.from_user.id,
+                rich_html=rich_subscription_review(
+                    item, receipt_attached=False,
+                ),
+                legacy_text=_review_text(item),
                 reply_markup=_review_keyboard(item.request_id),
             )
 
