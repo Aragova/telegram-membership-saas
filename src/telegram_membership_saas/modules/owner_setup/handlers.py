@@ -1963,7 +1963,8 @@ def create_owner_setup_router(
         try:
             chat_ref = telegram_chat_reference(target.external_id)
             member = await bot.get_chat_member(chat_id=chat_ref, user_id=bot.id)
-            status = str(getattr(member, "status", ""))
+            raw_status = getattr(member, "status", "")
+            status = getattr(raw_status, "value", raw_status)
             can_welcome = getattr(member, "can_send_welcome_messages", None)
             if status in ("administrator", "creator") and can_welcome is True:
                 rights = tr(
