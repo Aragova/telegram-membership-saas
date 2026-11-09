@@ -2952,13 +2952,25 @@ def create_owner_setup_router(
                 _, id_text, generation = action.split(":", 2)
                 if not id_text.isascii() or not id_text.isdecimal():
                     raise ValueError(tr("Некорректный бот", "Invalid bot"))
-                result = await connect_managed_bot_event(
-                    factory, central_bot=bot,
-                    creator_telegram_id=user_id,
-                    managed_bot_id=int(id_text),
-                    encryption_key=get_settings().bot_token_encryption_key,
-                    generation=generation,
-                )
+                try:
+                    result = await connect_managed_bot_event(
+                        factory, central_bot=bot,
+                        creator_telegram_id=user_id,
+                        managed_bot_id=int(id_text),
+                        encryption_key=get_settings().bot_token_encryption_key,
+                        generation=generation,
+                    )
+                except (AiogramError, RuntimeError):
+                    # Transport failures can include token-bearing Telegram URLs.
+                    # Keep the pending candidate and never display raw exceptions.
+                    logging.getLogger(__name__).warning(
+                        "Managed bot confirmation failed; candidate remains pending"
+                    )
+                    await query.answer(tr(
+                        "⚠️ Telegram временно недоступен. Повторите подтверждение.",
+                        "⚠️ Telegram is temporarily unavailable. Try again.",
+                    ), show_alert=True)
+                    return
                 if result.kind != "created" or result.project_id is None:
                     raise ValueError(tr(
                         "Запрос устарел. Создайте подключение заново.",
