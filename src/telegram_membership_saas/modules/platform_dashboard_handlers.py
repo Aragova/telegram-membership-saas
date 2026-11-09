@@ -446,19 +446,41 @@ def _bot_details(
         if heartbeat is not None else
         tr("Нет данных", "No data")
     )
+    project = str(bot["project_name"]).strip()
+    username = str(bot["username"]).strip()
+    project_row = (
+        tr("Проект: ", "Project: ") + escape(project) + "\n"
+        if project.lstrip("@").casefold() != username.lstrip("@").casefold()
+        else ""
+    )
+    # One status, one timestamp. Detailed explanation only when something
+    # needs attention; no three different ways of saying "running".
+    healthy = condition.startswith("🟢")
+    status_row = (
+        tr("🟢 Состояние: ", "🟢 Status: ")
+        + tr("Работает", "Running") + "\n"
+        if healthy else
+        tr("Состояние: ", "Status: ") + escape(condition) + "\n"
+    )
+    explanation_row = (
+        tr("⚠️ Причина: ", "⚠️ Reason: ") + escape(explanation) + "\n"
+        if not healthy else ""
+    )
+    connection_row = (
+        tr("Подключение: ", "Connection: ")
+        + escape(_status_label(str(bot["status"]))) + "\n"
+        if bot["status"] in {"disabled", "deleting"} else ""
+    )
     return (
         tr("✦ <b>Статистика бота</b>\n\n",
            "✦ <b>Bot statistics</b>\n\n")
-        + "🤖 <b>@" + escape(bot["username"]) + "</b>\n"
-        + tr("Проект: ", "Project: ") + escape(bot["project_name"]) + "\n"
-        + tr("Подключение: ", "Connection: ")
-        + escape(_status_label(bot["status"])) + "\n"
-        + tr("Работа: ", "Runtime: ")
-        + escape(_status_label(bot["runtime_state"])) + "\n"
+        + "🤖 <b>@" + escape(username) + "</b>\n"
+        + project_row
+        + connection_row
+        + status_row
         + tr("📡 Последний сигнал: ", "📡 Last heartbeat: ")
         + last_signal + "\n"
-        + tr("🔎 Диагностика: ", "🔎 Diagnosis: ") + escape(condition) + "\n"
-        + escape(explanation) + "\n\n"
+        + explanation_row + "\n"
         + tr("📢 Ресурсов: ", "📢 Resources: ") + str(bot["resources"]) + "\n"
         + tr("💎 Опубликованных тарифов: ", "💎 Published plans: ")
         + str(bot["plans"]) + "\n"
