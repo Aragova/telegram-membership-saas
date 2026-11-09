@@ -56,7 +56,9 @@ def test_platform_english_reporting_and_periods() -> None:
         detail = platform_ui._bot_details(snapshot.bots[0], period="30")
         assert "My Custom Channel" in detail
         assert "Bot statistics" in detail
-        assert "registered" in detail
+        assert "Status:" in detail
+        assert "Last heartbeat:" in detail
+        assert "Latest recorded state:" not in detail
         assert "Approved payments" in detail
         listing = platform_ui._bot_list(snapshot)
         assert "Monitoring · ViMi Pay" in listing
