@@ -183,6 +183,7 @@ def test_rich_invoice_history_compact_rows_status_local_date_and_empty(
     assert "VIP &lt;Pack&gt; &amp; Name" in html
     assert "<Me>" not in html and "&lt;Me&gt;" in html
     assert "09.11.2026" in html and "10.11.2026" in html
+    assert html.count("<tg-time") == 2
     assert "7.000000000000000000" not in html
     assert empty_text in empty
     assert "<table" not in empty
