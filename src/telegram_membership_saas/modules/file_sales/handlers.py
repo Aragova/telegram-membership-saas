@@ -49,7 +49,11 @@ from telegram_membership_saas.modules.file_sales.service import (
     confirm_stars_payment,
     create_product,
     create_stars_order,
+    delete_draft_asset,
+    delete_empty_folder,
+    delete_unsold_product,
     list_folders,
+    list_product_assets,
     list_products,
     list_purchases_page,
     mark_file_delivery,
@@ -283,6 +287,8 @@ def create_file_sales_router(
         if who:
             rows.append([_button(tr("➕ Новый товар", "➕ New product"),
                                  "newproduct:" + encode_uuid(folder), "success")])
+            rows.append([_button(tr("🗑 Удалить папку", "🗑 Delete folder"),
+                                 "delfolderask:" + encode_uuid(folder), "danger")])
             rows.append([_button(tr("⬅️ Папки", "⬅️ Folders"), "adminfolders")])
         else:
             rows.append([_button(tr("⬅️ Папки", "⬅️ Folders"), "shop")])
@@ -347,6 +353,11 @@ def create_file_sales_router(
                     tr("📎 Прикрепить файлы", "📎 Add files"),
                     "upload:" + code, "success",
                 )])
+                if count:
+                    rows.append([_button(
+                        tr("📎 Управление вложениями", "📎 Manage attachments"),
+                        "assets:" + code,
+                    )])
                 rows.append([InlineKeyboardButton(
                     text=tr("💱 Цены в валютах", "💱 Currency prices"),
                     callback_data="fm:prices:" + code,
@@ -371,6 +382,10 @@ def create_file_sales_router(
                     "danger" if item.status == "published" else "success",
                 )])
             rows.append([_button(
+                tr("🗑 Удалить товар", "🗑 Delete product"),
+                "delproductask:" + code, "danger",
+            )])
+            rows.append([_button(
                 tr("⬅️ Товары папки", "⬅️ Folder products"),
                 "af:" + encode_uuid(item.folder_id),
             )])
@@ -393,6 +408,66 @@ def create_file_sales_router(
             await bot.send_message(
                 uid, text, parse_mode="HTML", reply_markup=_keyboard(rows),
             )
+
+    async def manage_assets(
+        bot: Bot, uid: int, item_id: UUID, who: UUID,
+    ) -> None:
+        item, assets = await list_product_assets(
+            factory, project_id=project_id, bot_id=bot.id,
+            actor_id=who, product_id=item_id,
+        )
+        lines = [
+            "<h3>" + tr("📎 Вложения товара", "📎 Product attachments") + "</h3>",
+            "<p>📦 <b>" + escape(item.name) + "</b></p>",
+            "<p>" + tr("Всего файлов: ", "Files: ") + str(len(assets)) + "</p>",
+        ]
+        if assets:
+            lines.extend([
+                "<table bordered compact>",
+                "<tr><th>№</th><th>" + tr("Тип", "Type") + "</th></tr>",
+            ])
+            for number, asset in enumerate(assets, 1):
+                lines.append(
+                    "<tr><td>" + str(number) + "</td><td>"
+                    + escape(asset.kind) + "</td></tr>"
+                )
+            lines.append("</table>")
+        else:
+            lines.append("<p>" + tr("Файлов пока нет", "No files yet") + "</p>")
+        rows = []
+        if item.status == "draft":
+            for number, asset in enumerate(assets, 1):
+                rows.append([_button(
+                    tr("🗑 Удалить файл №", "🗑 Delete file #") + str(number),
+                    "delassetask:" + encode_uuid(item.id) + ":"
+                    + encode_uuid(asset.id), "danger",
+                )])
+            rows.append([_button(
+                tr("➕ Добавить файлы", "➕ Add files"),
+                "upload:" + encode_uuid(item.id), "success",
+            )])
+        else:
+            lines.append("<p>" + tr(
+                "Удалять вложения опубликованных и архивных товаров нельзя: "
+                "они могут понадобиться покупателям.",
+                "Published or archived product files cannot be deleted: "
+                "buyers may need them later.",
+            ) + "</p>")
+        rows.append([_button(
+            tr("⬅️ Карточка товара", "⬅️ Product card"),
+            "ap:" + encode_uuid(item.id),
+        )])
+        await send_file_card(
+            bot, chat_id=uid, rich_html="\n".join(lines),
+            legacy_html=(
+                tr("📎 <b>Вложения товара:</b> ", "📎 <b>Product attachments:</b> ")
+                + escape(item.name) + "\n"
+                + "\n".join(str(n) + ". " + escape(asset.kind)
+                            for n, asset in enumerate(assets, 1))
+                + ("\n" if assets else tr("\nНет файлов", "\nNo files"))
+            ),
+            reply_markup=_keyboard(rows),
+        )
 
     async def my_files(bot: Bot, uid: int, page: int = 0) -> None:
         total, items = await list_purchases_page(
@@ -525,6 +600,140 @@ def create_file_sales_router(
                     actor_id=who, enabled=mode == "on",
                 )
                 await payment_method_settings(bot, uid, who)
+            elif action.startswith(("delfolderask:", "delfolderok:")):
+                if not admin or who is None:
+                    raise PermissionError(tr("Нет прав", "Access denied"))
+                verb, token = action.split(":", 1)
+                folder_id = decode_uuid(token)
+                if verb == "delfolderask":
+                    folders_now = await list_folders(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who,
+                    )
+                    item = next((f for f in folders_now if f.id == folder_id), None)
+                    if item is None:
+                        raise ValueError(tr("Папка не найдена", "Folder not found"))
+                    await bot.send_message(
+                        uid,
+                        tr("🗑 <b>Удалить папку?</b>\n", "🗑 <b>Delete folder?</b>\n")
+                        + "📁 <b>" + escape(item.name) + "</b>\n\n"
+                        + tr(
+                            "Удаление необратимо. Папка должна быть пустой. "
+                            "При наличии товаров удаление будет запрещено.",
+                            "Deletion is permanent. Folder must be empty. "
+                            "Any remaining products will block deletion.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_keyboard([
+                            [_button(tr("🗑 Да, удалить папку", "🗑 Confirm folder deletion"),
+                                     "delfolderok:" + token, "danger")],
+                            [_button(tr("⬅️ Назад", "⬅️ Back"), "af:" + token)],
+                        ]),
+                    )
+                else:
+                    await delete_empty_folder(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, folder_id=folder_id,
+                    )
+                    await bot.send_message(
+                        uid, tr("✅ Пустая папка удалена", "✅ Empty folder deleted"),
+                    )
+                    await folders(bot, uid, who)
+            elif action.startswith(("delproductask:", "delproductok:")):
+                if not admin or who is None:
+                    raise PermissionError(tr("Нет прав", "Access denied"))
+                verb, token = action.split(":", 1)
+                product_id = decode_uuid(token)
+                if verb == "delproductask":
+                    item, _ = await view_product(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, product_id=product_id,
+                    )
+                    await bot.send_message(
+                        uid,
+                        tr("🗑 <b>Удалить товар безвозвратно?</b>\n",
+                           "🗑 <b>Permanently delete product?</b>\n")
+                        + "📦 <b>" + escape(item.name) + "</b>\n\n"
+                        + tr(
+                            "Вложения и цены удалятся вместе с товаром. "
+                            "Если существует хотя бы один счёт или покупка, "
+                            "удаление запрещено. Для таких товаров есть архив.",
+                            "Attachments and prices will be removed. "
+                            "Any invoice or purchase blocks deletion. "
+                            "Archive products with payment history instead.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_keyboard([
+                            [_button(tr("🗑 Да, удалить товар", "🗑 Confirm product deletion"),
+                                     "delproductok:" + token, "danger")],
+                            [_button(tr("⬅️ Карточка товара", "⬅️ Product card"),
+                                     "ap:" + token)],
+                        ]),
+                    )
+                else:
+                    folder_id = await delete_unsold_product(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, product_id=product_id,
+                    )
+                    pending.pop(uid, None)
+                    await bot.send_message(
+                        uid, tr("✅ Товар удалён", "✅ Product deleted"),
+                    )
+                    await show_products(bot, uid, folder_id, who)
+            elif action.startswith(("delassetask:", "delassetok:")):
+                if not admin or who is None:
+                    raise PermissionError(tr("Нет прав", "Access denied"))
+                verb, ids = action.split(":", 1)
+                product_token, asset_token = ids.split(":", 1)
+                product_id = decode_uuid(product_token)
+                asset_id = decode_uuid(asset_token)
+                if verb == "delassetask":
+                    item, assets = await list_product_assets(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, product_id=product_id,
+                    )
+                    if item.status != "draft":
+                        raise ValueError(tr(
+                            "Удалять файлы можно только у черновика",
+                            "Files can only be removed from drafts",
+                        ))
+                    number = next(
+                        (n for n, asset in enumerate(assets, 1)
+                         if asset.id == asset_id), None,
+                    )
+                    if number is None:
+                        raise ValueError(tr("Файл уже удалён", "File already deleted"))
+                    await bot.send_message(
+                        uid,
+                        tr("🗑 <b>Удалить файл №", "🗑 <b>Delete file #")
+                        + str(number) + "</b>\n"
+                        + tr(
+                            "Вложение будет безвозвратно отвязано от товара.",
+                            "The attachment will be permanently removed from the product.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_keyboard([
+                            [_button(tr("🗑 Да, удалить файл", "🗑 Confirm file deletion"),
+                                     "delassetok:" + ids, "danger")],
+                            [_button(tr("⬅️ К файлам", "⬅️ Back to files"),
+                                     "assets:" + product_token)],
+                        ]),
+                    )
+                else:
+                    await delete_draft_asset(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        actor_id=who, product_id=product_id, asset_id=asset_id,
+                    )
+                    await bot.send_message(
+                        uid, tr("✅ Файл удалён", "✅ File removed"),
+                    )
+                    await manage_assets(bot, uid, product_id, who)
+            elif action.startswith("assets:"):
+                if not admin or who is None:
+                    raise PermissionError(tr("Нет прав", "Access denied"))
+                await manage_assets(
+                    bot, uid, decode_uuid(action.split(":", 1)[1]), who,
+                )
             elif action == "newfolder":
                 if not admin:
                     raise PermissionError(tr("Нет прав", "Access denied"))
