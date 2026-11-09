@@ -1,5 +1,22 @@
 # Project Context — Telegram Membership SaaS
 
+## Single platform-wide monitoring entry (agreed rule)
+
+All operator monitoring belongs in **one location**: central
+`@vimipay_bot` → `👑 Платформа` → `🖥 Мониторинг`.
+The first monitoring PR **relabels/reuses** existing `🤖 Все боты` and
+its authorized `plat:bots`/`plat:detail` read-only reports. It moves
+runtime rollups out of the central business overview; no new button, new
+Supervisor or duplicate health computation elsewhere. RU/EN and native Rich
+status table; classify non-running registered bots as "no confirmed running
+signal", NOT as definitively broken. Existing per-bot owner readiness indicators
+and necessary tenant access alerts stay where they are because these are
+separate buyer obligations, not a second global operator console.
+Next incident/alert/post-deploy checks must link back into this one
+monitoring section, with no top-level duplicate "Problems"/"Status" menu.
+
+Details: [PLATFORM_OWNER.md](PLATFORM_OWNER.md).
+
 ## Staging GitHub Actions deployment (manual, pending PR)
 
 A restricted, manually triggered `staging-deploy.yml` deploy workflow is
