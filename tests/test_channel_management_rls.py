@@ -23,6 +23,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_payment_method,
     create_owner_plan,
     create_owner_project,
+    edit_owner_draft_resource,
     ensure_telegram_actor,
     publish_owner_plan,
     save_owner_price,
@@ -233,5 +234,71 @@ async def test_unpaid_tariff_removal_is_invisible_but_preserves_invoice_snapshot
             )
         async with system_project_session_scope(factory, project) as session:
             assert await list_checkout_options(session, project_id=project) == ()
+    finally:
+        await engine.dispose()
+
+
+async def test_tombstoned_channel_cannot_be_resold_with_bulk_or_stale_draft():
+    from telegram_membership_saas.modules.owner_setup.bulk_sales import (
+        read_bulk_sales_state,
+        switch_all_sales,
+    )
+
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        _, owner, project, resource_id, plan_id, _, _ = (
+            await _new_paid_channel(factory)
+        )
+        old_bulk = await read_bulk_sales_state(
+            factory, actor_id=owner, project_id=project, kind="plan",
+        )
+        assert old_bulk.active == 1
+        await remove_channel_without_paid_purchases(
+            factory, actor_id=owner, project_id=project, resource_id=resource_id,
+        )
+        bulk = await read_bulk_sales_state(
+            factory, actor_id=owner, project_id=project, kind="plan",
+        )
+        assert bulk.active == bulk.paused == 0
+        with pytest.raises(ValueError):
+            await switch_all_sales(
+                factory, actor_id=owner, project_id=project,
+                kind="plan", enable=False, expected_revision=old_bulk.revision,
+            )
+        # Simulate a legacy/raw status mutation. Even an 'active' tombstone
+        # must never reach a buyer checkout catalog.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            old = await session.get(Plan, plan_id)
+            old.status = "active"
+        async with system_project_session_scope(factory, project) as session:
+            assert await list_checkout_options(session, project_id=project) == ()
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            old = await session.get(Plan, plan_id)
+            old.status = "archived"
+
+        other = uuid4()
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add(Resource(
+                id=other, project_id=project,
+                resource_type=ResourceType.TELEGRAM_CHANNEL.value,
+                external_id="-100" + str(_tg()), name="Another channel",
+            ))
+        draft = await create_owner_plan(
+            factory, actor_id=owner, project_id=project,
+            resource_id=other, duration_value=1, duration_unit="month",
+            name="New draft",
+        )
+        with pytest.raises(ValueError, match="действующий канал"):
+            await edit_owner_draft_resource(
+                factory, actor_id=owner, project_id=project,
+                plan_id=draft, resource_id=resource_id,
+            )
     finally:
         await engine.dispose()
