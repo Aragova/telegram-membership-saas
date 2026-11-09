@@ -687,7 +687,7 @@ def create_manual_file_router(
         # Old reply-based messages continue to work for existing invoices.
         order_id = _receipt_order_id(message, bot.id)
         if order_id is not None:
-            await _process_manual_receipt(message, bot, order_id)
+            await _process_manual_receipt(message, bot, order_id, direct=False)
 
     @router.message(ActiveFileReceiptFilter())
     async def direct_file_receipt(message: Message, bot: Bot) -> None:
@@ -697,10 +697,10 @@ def create_manual_file_router(
             bot.id, message.from_user.id, kind="file",
         )
         if order_id is not None:
-            await _process_manual_receipt(message, bot, order_id)
+            await _process_manual_receipt(message, bot, order_id, direct=True)
 
     async def _process_manual_receipt(
-        message: Message, bot: Bot, order_id: UUID,
+        message: Message, bot: Bot, order_id: UUID, *, direct: bool,
     ) -> None:
         if message.from_user is None:
             return
@@ -711,11 +711,13 @@ def create_manual_file_router(
         )):
             kind, file_id = "document", message.document.file_id
         else:
-            # Unsupported file types must not consume the selected receipt.
-            receipt_intents.arm(
-                bot.id, message.from_user.id, kind="file",
-                request_id=order_id,
-            )
+            # Only a consumed direct upload may restore its selected target.
+            # Old invalid ForceReply replies cannot overwrite another invoice.
+            if direct:
+                receipt_intents.arm(
+                    bot.id, message.from_user.id, kind="file",
+                    request_id=order_id,
+                )
             await bot.send_message(
                 message.chat.id, tr(
                     "Нужен чек: фото или PDF/JPG/PNG/WEBP.",
