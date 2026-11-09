@@ -46,9 +46,10 @@ async def _rows(session: AsyncSession, project_id: UUID, kind: str, *, lock: boo
     model = {"plan": Plan, "method": PaymentMethod}.get(kind)
     if model is None:
         raise ValueError("Неизвестный раздел управления продажами")
-    query = select(model).where(
-        model.project_id == project_id,
-    ).order_by(model.id)
+    query = select(model).where(model.project_id == project_id)
+    if kind == "plan":
+        query = query.where(Plan.removed_at.is_(None))
+    query = query.order_by(model.id)
     if lock:
         query = query.with_for_update()
     return (await session.scalars(query)).all()
@@ -95,6 +96,7 @@ async def _require_plan_sale_ready(
             PlanResource.project_id == project_id,
             PlanResource.plan_id == plan.id,
             Resource.status == "active",
+            Resource.removed_at.is_(None),
         ).limit(1)
     )
     if resource is None:
