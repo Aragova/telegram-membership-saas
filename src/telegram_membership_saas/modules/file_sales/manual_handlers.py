@@ -732,6 +732,9 @@ def create_manual_file_router(
         except (ValueError, PermissionError) as exc:
             await bot.send_message(message.chat.id, str(exc))
             return
+        receipt_intents.clear(
+            bot.id, message.from_user.id, kind="file", request_id=order_id,
+        )
         for reviewer in reviewers:
             try:
                 async with recipient_language(factory, reviewer):
