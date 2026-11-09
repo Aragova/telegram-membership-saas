@@ -5159,7 +5159,8 @@ def create_owner_setup_router(
             return
         if result.kind != "created" or result.project_id is None:
             return
-        owner_id = await actor_id_for_managed_creator(creator_id)
+        owner_id = result.actor_id
+        assert owner_id is not None
         async with recipient_language(factory, creator_id):
             await bot.send_message(
                 creator_id,
@@ -5170,14 +5171,6 @@ def create_owner_setup_router(
             await send_connected_bot(
                 bot, creator_id, owner_id, result.project_id, result.username,
             )
-
-    async def actor_id_for_managed_creator(telegram_id: int) -> UUID:
-        # The registration function already verified this Telegram account
-        # against its actor row and committed the owned project.
-        return await ensure_telegram_actor(
-            factory, telegram_id=telegram_id,
-            username=None, first_name=None,
-        )
 
     @router.managed_bot()
     async def managed_bot_updated(event: ManagedBotUpdated, bot: Bot) -> None:
