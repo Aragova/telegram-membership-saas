@@ -136,7 +136,8 @@ async def test_english_central_welcome(monkeypatch) -> None:
             b.text for row in sent.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert "➕ Connect subscription bot" in labels
+        assert "✨ Create a bot" in labels
+        assert "🔑 Via BotFather" in labels
         assert "🌐 Language / Язык" in labels
     finally:
         _language.reset(token)
