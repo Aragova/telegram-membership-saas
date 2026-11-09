@@ -15,6 +15,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.types import InlineKeyboardMarkup
 
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.owner_setup.channel_management import ChannelInsights
 from telegram_membership_saas.modules.owner_setup.statistics import OwnerStatistics
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     SubscriberDetail,
@@ -59,6 +60,79 @@ def _customer_date(value, timezone: str, *, fmt: str = "d") -> str:
     if value is None:
         return tr("бессрочно", "lifetime")
     return native_telegram_time(value, timezone, fmt=fmt)
+
+
+def rich_channel_directory(count: int) -> str:
+    """The channel picker is a concise Rich card; buttons remain the channel list."""
+    return "\n".join([
+        "<h3>" + tr("📢 Мои каналы и группы", "📢 My channels and groups") + "</h3>",
+        "<table bordered compact>",
+        _row(tr("Подключено", "Connected"), str(count)),
+        "</table>",
+        "<p>" + tr(
+            "Выберите канал ниже, чтобы посмотреть подписчиков, оплаты "
+            "и статистику или удалить канал. Новый канал или группу "
+            "можно добавить кнопками ниже.",
+            "Choose a channel below to see members, payments and statistics "
+            "or remove it. Add another channel or group using the buttons below.",
+        ) + "</p>",
+    ])
+
+
+def rich_channel_card(metrics: ChannelInsights, *, members_text: str) -> str:
+    """Explicit native Rich tables for per-channel and per-currency figures."""
+    type_label = (
+        tr("Канал", "Channel")
+        if metrics.resource_type == "telegram_channel"
+        else tr("Группа", "Group")
+    )
+    body = [
+        "<h3>" + tr("📢 Статистика канала", "📢 Channel statistics") + "</h3>",
+        "<p><b>" + _safe(metrics.name) + "</b><br>" + type_label + "</p>",
+        "<table bordered compact>",
+        _row(tr("👥 Участников Telegram", "👥 Telegram members"), members_text),
+        _row(tr("💎 Активных платных подписчиков", "💎 Active paid subscribers"),
+             str(metrics.active_paid_customers)),
+        _row(tr("👤 Уникальных покупателей", "👤 Unique paid buyers"),
+             str(metrics.paid_customers)),
+        _row(tr("📦 Активных тарифов", "📦 Active plans"),
+             str(metrics.active_plans)),
+        _row(tr("🧾 Подтверждённых оплат", "🧾 Confirmed payments"),
+             str(metrics.paid_orders)),
+        _row(tr("⏳ Неоплаченных заявок", "⏳ Unpaid invoices"),
+             str(metrics.pending_invoices)),
+        "</table>",
+        "<p><b>" + tr(
+            "💰 Продажи за всё время по валютам",
+            "💰 All-time sales by currency",
+        ) + "</b></p>",
+    ]
+    if metrics.sales_by_currency:
+        body.extend([
+            "<table bordered compact>",
+            "<tr><th>" + tr("Валюта", "Currency") + "</th><th>"
+            + tr("Сумма", "Amount") + "</th><th>"
+            + tr("Оплат", "Payments") + "</th></tr>",
+        ])
+        for currency, amount, count in metrics.sales_by_currency:
+            body.append(
+                "<tr><td>" + _safe(currency) + "</td><td>"
+                + _safe(_money(amount)) + "</td><td>" + str(count)
+                + "</td></tr>"
+            )
+        body.append("</table>")
+    else:
+        body.append("<p>" + tr(
+            "Нет подтверждённых продаж", "No confirmed sales",
+        ) + "</p>")
+    if metrics.paid_orders:
+        body.append("<p>🔒 " + tr(
+            "Есть подтверждённые покупки: удалить канал нельзя, "
+            "но его тарифы можно снять с продажи.",
+            "Confirmed purchases prevent deletion; "
+            "you can still disable plans for new sales.",
+        ) + "</p>")
+    return "\n".join(body)
 
 
 def rich_owner_statistics(stats: OwnerStatistics) -> str:
