@@ -1,5 +1,6 @@
 """PostgreSQL RLS: platform reporting is restricted and audited; tenants isolated."""
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance
+from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
@@ -71,6 +73,13 @@ async def test_platform_aggregate_requires_db_grant_and_does_not_weaken_rls():
                     username=bot_name, display_name="Sample",
                     token_ciphertext="test-encrypted-value", status="registered",
                 ))
+                if actor_id == op:
+                    session.add(CustomerBotRuntimeHealth(
+                        project_id=project, telegram_bot_id=bot_id,
+                        instance_id=uuid4(), state="error",
+                        last_heartbeat=datetime(2026, 11, 9, 18, tzinfo=UTC),
+                        error_code="missing_admin_rights",
+                    ))
                 session.add(Resource(
                     project_id=project, resource_type="telegram_channel",
                     external_id=str(-_id()), name="Example channel",
@@ -116,6 +125,15 @@ async def test_platform_aggregate_requires_db_grant_and_does_not_weaken_rls():
         assert any(
             row["username"] == bot_names[1] for row in result.bots
         )
+        diagnostics = next(
+            row for row in result.bots if row["username"] == bot_names[0]
+        )
+        assert diagnostics["error_code"] == "missing_admin_rights"
+        assert diagnostics["last_heartbeat"] is not None
+        assert all(
+            "last_heartbeat" in row and "error_code" in row for row in result.bots
+        )
+        assert "token_ciphertext" not in diagnostics
         assert result.turnover == () or all(
             "currency" in row and "amount" in row
             for row in result.turnover
