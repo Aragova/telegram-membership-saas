@@ -1,5 +1,27 @@
 # Project Context — Telegram Membership SaaS
 
+## Channel cards / paid-only catalog deletion (current PR)
+
+A practical admin upgrade takes priority over experimental Telegram Welcome
+and Ephemeral Messages; #105 was closed unmerged. Connected-bot Channels now
+gets per-channel Telegram member counts + confirmed payment/subscriber
+statistics, and add/remove navigation.
+
+Deletion of channels/tariffs/folders/files is blocked by **confirmed
+purchases** only, not by merely created, submitted, rejected or cancelled
+unpaid invoices. Do not destroy immutable financial snapshots to accomplish
+this: migration **0040_catalog_soft_removal** provides project-scoped
+`removed_at` tombstones. Catalog entries with unpaid invoice history disappear
+from new sales while their orders, media, receipt-review workflow and future
+legitimate redelivery survive. A paid channel/file remains protected. Existing
+Telegram channels are not physically deleted; previously paid subscriptions
+and manual/service access must not be interrupted.
+
+See [CHANNEL_CATALOG_LIFECYCLE.md](CHANNEL_CATALOG_LIFECYCLE.md). Migration
+0040 is mandatory **before** the central/customer bot rebuild and the
+existing `compose.light100.yaml` overlay must be preserved. No merge/deploy
+without explicit owner approval.
+
 ## Telegram 2026 — Native dates and time (current PR)
 
 After Managed Bots (#102–#103, verified live), the next agreed technology
