@@ -37,6 +37,7 @@ class ManagedBotResult:
     kind: str  # created / refreshed / unchanged / ignored
     username: str = ""
     project_id: UUID | None = None
+    actor_id: UUID | None = None
 
 
 async def _registered_bot(
@@ -142,7 +143,7 @@ async def connect_managed_bot_event(
     )
     return ManagedBotResult(
         kind="created", username=registration.username,
-        project_id=project_id,
+        project_id=project_id, actor_id=actor_id,
     )
 
 
