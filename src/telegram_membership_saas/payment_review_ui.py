@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
-from aiogram.types import InlineKeyboardMarkup, ReplyParameters
+from aiogram.types import InlineKeyboardMarkup, Message, ReplyParameters
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.rich_messages import (
@@ -251,7 +251,7 @@ async def send_payment_review(
     reply_markup: InlineKeyboardMarkup | None = None,
     reply_parameters: ReplyParameters | None = None,
     parse_mode: str | None = None,
-) -> None:
+) -> Message | None:
     """Rich send with exact keyboard and receipt reply linkage or classic fallback.
 
     Only known API rejections trigger a classic resend. Network failures
@@ -270,8 +270,7 @@ async def send_payment_review(
         if reply_parameters is not None:
             options["reply_parameters"] = reply_parameters
         try:
-            await sender(**options)
-            return
+            return await sender(**options)
         except TelegramBadRequest as exc:
             reason = str(exc).lower()
             if not any(s in reason for s in (
@@ -292,4 +291,4 @@ async def send_payment_review(
     if parse_mode is not None:
         options["parse_mode"] = parse_mode
     with classic_messages():
-        await bot.send_message(**options)
+        return await bot.send_message(**options)
