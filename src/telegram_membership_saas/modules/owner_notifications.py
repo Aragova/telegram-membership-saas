@@ -229,6 +229,61 @@ def _invoice_text(payload: dict) -> str:
 
 
 
+def _invoice_rich_html(payload: dict) -> str:
+    """Unpaid invoice notification, never a payment confirmation.
+
+    All amounts remain in their original currencies. Values come from the
+    immutable queue snapshot and are escaped before insertion in Rich HTML.
+    """
+    from telegram_membership_saas.modules.telegram_commerce.service import (
+        format_period,
+        is_period_only_plan_name,
+    )
+
+    period = format_period(payload["duration_value"], payload["duration_unit"])
+    name = payload.get("plan_name") or ""
+    label = (
+        period if not name or is_period_only_plan_name(
+            name, payload["duration_value"], payload["duration_unit"],
+        ) else name
+    )
+    username = payload.get("username")
+    buyer = "@" + username if username else tr("Покупатель", "Customer")
+    if payload.get("first_name"):
+        buyer += " · " + payload["first_name"]
+    command = customer_command(
+        telegram_id=payload.get("telegram_id"),
+        customer_id=UUID(hex=payload["customer_id"]),
+    )
+    rows = [
+        (tr("👤 Покупатель", "👤 Customer"), buyer),
+        (tr("🔖 Карточка", "🔖 Customer card"), command),
+        (tr("🎟 Тариф", "🎟 Plan"), label),
+        (tr("⏳ Срок", "⏳ Duration"), period),
+        (tr("💰 Сумма", "💰 Amount"),
+         str(payload["amount"]) + " " + str(payload["currency"])),
+        (tr("💳 Способ", "💳 Method"), payload.get("method", "")),
+        (tr("🕒 Статус", "🕒 Status"),
+         tr("Ожидает оплату", "Awaiting payment")),
+        (tr("№ Счёт", "№ Invoice"), str(payload["request_id"])[:10].upper()),
+    ]
+    lines = [
+        "<h3>" + tr("🧾 Счёт сформирован", "🧾 Payment invoice created") + "</h3>",
+        "<table bordered compact>",
+    ]
+    for label, value in rows:
+        lines.append("<tr><th>" + escape(str(label)) + "</th><td>"
+                     + escape(str(value)) + "</td></tr>")
+    lines.append("</table>")
+    lines.append("<p><i>" + tr(
+        "Счёт создан, но деньги ещё не подтверждены. "
+        "Не предоставляйте доступ до проверки оплаты.",
+        "Invoice created; no payment confirmed yet. "
+        "Do not grant access until funds are verified.",
+    ) + "</i></p>")
+    return "\n".join(lines)
+
+
 async def deliver_one_owner_notification(
     factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
     bot: Bot, now: datetime | None = None,
@@ -268,8 +323,16 @@ async def deliver_one_owner_notification(
     try:
         async with recipient_language(factory, recipient):
             if kind == "invoice":
-                await bot.send_message(
-                    recipient, _invoice_text(payload), parse_mode="HTML",
+                # Import lazily: checkout services depend on this queue.
+                from telegram_membership_saas.payment_review_ui import (
+                    send_payment_review,
+                )
+
+                await send_payment_review(
+                    bot, chat_id=recipient,
+                    rich_html=_invoice_rich_html(payload),
+                    legacy_text=_invoice_text(payload),
+                    parse_mode="HTML",
                 )
             elif kind == "expiry":
                 from telegram_membership_saas.modules.owner_expiry import (
