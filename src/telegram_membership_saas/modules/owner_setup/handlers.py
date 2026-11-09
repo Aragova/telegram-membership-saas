@@ -142,6 +142,8 @@ from telegram_membership_saas.modules.owner_setup.plan_management import (
     rename_owner_plan,
 )
 from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
+    rich_channel_card,
+    rich_channel_directory,
     rich_owner_statistics,
     rich_subscriber_card,
     rich_subscriber_invoices,
@@ -1900,8 +1902,7 @@ def create_owner_setup_router(
             [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
                      "dashboard")],
         ])
-        await bot.send_message(
-            user_id,
+        classic_text = (
             tr("📢 <b>Мои каналы и группы</b>\n",
                "📢 <b>My channels and groups</b>\n")
             + tr("Подключено: ", "Connected: ") + str(len(data.resources))
@@ -1911,8 +1912,12 @@ def create_owner_setup_router(
                 "статистики или удаления. Новые каналы добавляются ниже.",
                 "Select a channel for member counts, payments, statistics "
                 "or deletion. Add another channel below.",
-            ),
-            parse_mode="HTML", reply_markup=_markup(rows),
+            )
+        )
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=rich_channel_directory(len(data.resources)),
+            classic_html=classic_text, reply_markup=_markup(rows),
         )
 
     async def show_resource_card(
@@ -1982,8 +1987,10 @@ def create_owner_setup_router(
                 "resremoveask:" + encode_uuid(resource_id), "danger",
             )])
         buttons.append([_button(tr("⬅️ Каналы", "⬅️ Channels"), "resources")])
-        await bot.send_message(
-            user_id, text, parse_mode="HTML", reply_markup=_markup(buttons),
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=rich_channel_card(metrics, members_text=members_text),
+            classic_html=text, reply_markup=_markup(buttons),
         )
 
     async def show_plans(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
