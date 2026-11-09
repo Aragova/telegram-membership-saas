@@ -198,13 +198,8 @@ async def test_existing_plan_edit_archive_restore_and_retain_sale_history():
             factory, actor_id=owner, project_id=project, plan_id=plan,
         )
         assert info.status == "archived"
-        assert info.has_history
-        with pytest.raises(ValueError, match="историю"):
-            await delete_unused_owner_plan(
-                factory, actor_id=owner, project_id=project,
-                plan_id=plan, expected_status="archived",
-                expected_revision=info.revision,
-            )
+        assert info.has_history  # Pending invoices still exist in history.
+        assert not info.has_purchase  # But do not prevent future removal.
         with pytest.raises(ValueError, match="изменился"):
             await delete_unused_owner_plan(
                 factory, actor_id=owner, project_id=project,

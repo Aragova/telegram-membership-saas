@@ -37,6 +37,7 @@ class FileFolder(Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="active", server_default="active",
     )
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
@@ -70,6 +71,7 @@ class FileProduct(Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="draft", server_default="draft",
     )
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )

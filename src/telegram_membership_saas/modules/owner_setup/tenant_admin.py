@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.owner_setup.method_management import (
     method_revision,
 )
 from telegram_membership_saas.modules.owner_setup.plan_management import (
+    plan_has_confirmed_purchases,
     plan_has_history,
     plan_revision,
 )
@@ -72,6 +73,7 @@ class PlanInfo:
     resource_name: str | None
     prices: tuple[PriceInfo, ...]
     has_history: bool = False
+    has_purchase: bool = False
     revision: str = ""
 
 
@@ -243,6 +245,7 @@ async def get_owner_plan_info(
         plan = await session.scalar(
             select(Plan).where(
                 Plan.id == plan_id, Plan.project_id == project_id,
+                Plan.removed_at.is_(None),
             )
         )
         if plan is None:
@@ -301,6 +304,9 @@ async def get_owner_plan_info(
             duration_value=plan.duration_value, duration_unit=plan.duration_unit,
             resource_name=resource_name,
             has_history=has_history,
+            has_purchase=await plan_has_confirmed_purchases(
+                session, project_id=project_id, plan_id=plan_id,
+            ),
             revision=plan_revision(plan),
             prices=tuple(
                 PriceInfo(

@@ -60,6 +60,10 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_method_screen,
     preview_offer_screen,
 )
+from telegram_membership_saas.modules.owner_setup.channel_management import (
+    read_channel_insights,
+    remove_channel_without_paid_purchases,
+)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     archive_owner_connection,
     get_connection_disposition,
@@ -1880,31 +1884,107 @@ def create_owner_setup_router(
             )
 
 
-    async def show_resources(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
+    async def show_resources(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        """Channel list with direct management rather than a plain bullet dump."""
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = [tr("📢 <b>Каналы и группы</b>", "📢 <b>Channels and groups</b>"), ""]
-        lines.extend(
-            f"• {escape(name)} — {_status(status)}"
-            for _, name, status in data.resources
-        )
-        if not data.resources:
-            lines.append(tr("Нет подключённых каналов и групп.",
-                            "No channels or groups are connected."))
-        lines.append(tr(
-            "\nСначала добавьте своего бота администратором канала.",
-            "\nFirst, add your bot as a channel administrator.",
-        ))
+        rows = [
+            [_button("📢 " + name[:43], "resourceview:" + encode_uuid(rid))]
+            for rid, name, _ in data.resources
+        ]
+        rows.extend([
+            [_button(tr("➕ Добавить канал", "➕ Add channel"), "pick:channel", "success"),
+             _button(tr("➕ Добавить группу", "➕ Add group"), "pick:group", "success")],
+            [_button(tr("✍️ Добавить по ID", "✍️ Add by ID"), "resource:manual")],
+            [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
+                     "dashboard")],
+        ])
         await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
-            reply_markup=_markup([
-                [_button("➕ Выбрать канал", "pick:channel", "success")],
-                [_button("➕ Выбрать группу", "pick:group", "success")],
-                [_button("✍️ Ввести ID / @username", "resource:manual")],
-                [_button("➡️ Далее: способы оплаты", "methods")],
-                [_button("⬅️ Панель администратора", "dashboard")],
-            ]),
+            user_id,
+            tr("📢 <b>Мои каналы и группы</b>\n",
+               "📢 <b>My channels and groups</b>\n")
+            + tr("Подключено: ", "Connected: ") + str(len(data.resources))
+            + "\n\n"
+            + tr(
+                "Выберите канал для просмотра подписчиков, оплат, "
+                "статистики или удаления. Новые каналы добавляются ниже.",
+                "Select a channel for member counts, payments, statistics "
+                "or deletion. Add another channel below.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
         )
 
+    async def show_resource_card(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        resource_id: UUID,
+    ) -> None:
+        metrics = await read_channel_insights(
+            factory, actor_id=actor_id, project_id=project_id,
+            resource_id=resource_id,
+        )
+        members_text = tr("Недоступно", "Unavailable")
+        try:
+            # Bot API getChatMemberCount returns the actual Telegram chat
+            # members, distinct from our paid customer count.
+            chat_id = int(metrics.external_id)
+            members_text = str(await bot.get_chat_member_count(chat_id=chat_id))
+        except (ValueError, AiogramError):
+            pass
+        # Never round stored financial totals to two decimals. Crypto and
+        # other assets may use 8+ fractional digits; use plain fixed-point
+        # formatting to retain all meaningful decimal places (no 1E-8).
+        def precise_amount(amount: Decimal) -> str:
+            rendered = format(amount, "f")
+            return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+        revenues = "\n".join(
+            f"• {escape(currency)}: {precise_amount(amount)} ({count})"
+            for currency, amount, count in metrics.sales_by_currency
+        ) or tr("Нет подтверждённых продаж", "No confirmed sales")
+        type_label = tr("Канал", "Channel") if metrics.resource_type == (
+            "telegram_channel"
+        ) else tr("Группа", "Group")
+        text = (
+            "📢 <b>" + escape(metrics.name) + "</b>\n"
+            + type_label + "\n\n"
+            + tr("👥 Участников Telegram: ", "👥 Telegram members: ")
+            + members_text + "\n"
+            + tr("💎 Активных платных подписчиков: ",
+                 "💎 Active paid subscribers: ")
+            + str(metrics.active_paid_customers) + "\n"
+            + tr("👤 Уникальных покупателей: ", "👤 Unique paid buyers: ")
+            + str(metrics.paid_customers) + "\n"
+            + tr("📦 Активных тарифов: ", "📦 Active plans: ")
+            + str(metrics.active_plans) + "\n"
+            + tr("🧾 Подтверждённых оплат: ", "🧾 Confirmed payments: ")
+            + str(metrics.paid_orders) + "\n"
+            + tr("⏳ Неоплаченных заявок: ", "⏳ Unpaid invoices: ")
+            + str(metrics.pending_invoices) + "\n\n"
+            + tr("💰 <b>Продажи за всё время по валютам</b>\n",
+                 "💰 <b>All-time sales by currency</b>\n")
+            + revenues
+        )
+        if metrics.paid_orders:
+            text += "\n\n" + tr(
+                "🔒 Есть подтверждённые покупки: удалить канал нельзя, "
+                "но его тарифы можно снять с продажи.",
+                "🔒 Confirmed purchases prevent deletion; "
+                "you can still disable plans for new sales.",
+            )
+        buttons = [
+            [_button(tr("🔄 Обновить статистику", "🔄 Refresh statistics"),
+                     "resourceview:" + encode_uuid(resource_id))],
+        ]
+        if not metrics.paid_orders:
+            buttons.append([_button(
+                tr("🗑 Удалить канал", "🗑 Remove channel"),
+                "resremoveask:" + encode_uuid(resource_id), "danger",
+            )])
+        buttons.append([_button(tr("⬅️ Каналы", "⬅️ Channels"), "resources")])
+        await bot.send_message(
+            user_id, text, parse_mode="HTML", reply_markup=_markup(buttons),
+        )
 
     async def show_plans(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
@@ -2018,17 +2098,24 @@ def create_owner_setup_router(
                 tr("▶️ Вернуть в продажу", "▶️ Resume sales"),
                 "plrestore:" + token, "success",
             )])
-        if not getattr(data, "has_history", False):
+        if not data.has_purchase:
             rows.append([_button(
                 tr("🗑 Удалить тариф", "🗑 Delete plan"),
                 "pldelete:" + token, "danger",
             )])
+            if data.has_history:
+                lines.append(tr(
+                    "<i>Неоплаченные счета не мешают удалить тариф. "
+                    "История заявок и чеки сохранятся.</i>",
+                    "<i>Unpaid invoices do not prevent removing this plan. "
+                    "Invoice and receipt history remains intact.</i>",
+                ))
         else:
             lines.append(tr(
-                "<i>Удаление недоступно: по тарифу есть история покупок. "
-                "Снятие с продажи сохраняет подписки и платежи.</i>",
-                "<i>Deletion is unavailable: this plan has purchase history. "
-                "Archiving keeps subscriptions and payments intact.</i>",
+                "<i>Удаление недоступно: по тарифу есть подтверждённые "
+                "покупки. Подписки и платежи должны сохраниться.</i>",
+                "<i>Deletion is unavailable: this plan has confirmed "
+                "purchases. Existing subscriptions and payments remain.</i>",
             ))
         rows.append([_button("⬅️ Все тарифы", "plans")])
         await bot.send_message(
@@ -4284,6 +4371,66 @@ def create_owner_setup_router(
                 )
             elif action == "resources":
                 await show_resources(bot, user_id, actor_id, project_id)
+            elif action.startswith("resourceview:"):
+                resource_id = decode_uuid(action.split(":", 1)[1])
+                await show_resource_card(
+                    bot, user_id, actor_id, project_id, resource_id,
+                )
+            elif action.startswith(("resremoveask:", "resremoveok:")):
+                verb, token = action.split(":", 1)
+                resource_id = decode_uuid(token)
+                metrics = await read_channel_insights(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    resource_id=resource_id,
+                )
+                if metrics.paid_orders:
+                    raise ValueError(tr(
+                        "Удаление запрещено: есть подтверждённые покупки.",
+                        "Cannot delete: confirmed purchases exist.",
+                    ))
+                if verb == "resremoveask":
+                    await bot.send_message(
+                        user_id,
+                        tr("🗑 <b>Удалить канал из ViMi Pay?</b>\n",
+                           "🗑 <b>Remove channel from ViMi Pay?</b>\n")
+                        + "<b>" + escape(metrics.name) + "</b>\n\n"
+                        + tr(
+                            "Канал исчезнет из панели управления, "
+                            "а связанные тарифы — из новых продаж. "
+                            "Неоплаченные счета сохранятся в истории и "
+                            "не блокируют удаление. Отправленные чеки "
+                            "по-прежнему можно проверить; доступ тех, "
+                            "кто оплатил до удаления, не нарушается. "
+                            "Сам канал в Telegram не удаляется.",
+                            "The channel will disappear from the management "
+                            "panel and linked plans from new sales. "
+                            "Unpaid invoices stay in history and do not block "
+                            "removal. Submitted receipts remain reviewable; "
+                            "already-paid access stays protected. "
+                            "The Telegram channel itself is not deleted.",
+                        ),
+                        parse_mode="HTML", reply_markup=_markup([
+                            [_button(tr("🗑 Да, удалить", "🗑 Confirm removal"),
+                                     "resremoveok:" + token, "danger")],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "resourceview:" + token)],
+                        ]),
+                    )
+                else:
+                    name, hidden_plans = await remove_channel_without_paid_purchases(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        resource_id=resource_id,
+                    )
+                    await bot.send_message(
+                        user_id,
+                        tr("✅ Канал удалён из управления: ",
+                           "✅ Channel removed from management: ")
+                        + escape(name) + "\n"
+                        + tr("Скрыто тарифов: ", "Plans removed from sale: ")
+                        + str(hidden_plans),
+                        parse_mode="HTML",
+                    )
+                    await show_resources(bot, user_id, actor_id, project_id)
             elif action.startswith("pick:"):
                 kind = action.split(":", 1)[1]
                 if kind not in ("channel", "group"):
@@ -4689,28 +4836,32 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id, project_id=project_id,
                     plan_id=plan_id,
                 )
-                if info.has_history:
-                    raise ValueError(
-                        "Тариф имеет историю заявок или подписок. "
-                        "Удаление запрещено — снимите его с продажи."
-                    )
+                if info.has_purchase:
+                    raise ValueError(tr(
+                        "У тарифа есть подтверждённые покупки. "
+                        "Удаление запрещено: доступ покупателей должен сохраниться.",
+                        "This plan has confirmed purchases. "
+                        "Removal is blocked to preserve buyer access.",
+                    ))
                 status_code = {"draft": "d", "active": "a", "archived": "r"}[
                     info.status
                 ]
                 await bot.send_message(
                     user_id,
                     tr(
-                        "🗑 <b>Удалить тариф навсегда?</b>\n\n",
-                        "🗑 <b>Delete this plan permanently?</b>\n\n",
+                        "🗑 <b>Удалить тариф?</b>\n\n",
+                        "🗑 <b>Delete this plan?</b>\n\n",
                     )
                     + "<b>" + escape(info.name) + "</b>\n\n"
                     + tr(
-                        "Будут удалены настройки цен и привязка к каналу. "
-                        "Это возможно только если по тарифу никогда не было "
-                        "заявок и подписок.",
-                        "Its prices and channel assignment will be removed. "
-                        "Deletion is allowed only if there have never been "
-                        "payment requests or subscriptions for this plan.",
+                        "При отсутствии счетов тариф удаляется полностью. "
+                        "Неоплаченные счета не блокируют удаление: тариф "
+                        "скрывается из каталога, но история сохраняется. "
+                        "Подтверждённые покупки блокируют удаление.",
+                        "Plans with no invoices are deleted permanently. "
+                        "Unpaid invoices don't block removal: the plan is "
+                        "hidden while invoices stay in history. "
+                        "Confirmed purchases block deletion.",
                     ),
                     parse_mode="HTML",
                     reply_markup=_markup([

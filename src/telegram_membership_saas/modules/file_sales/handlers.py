@@ -618,10 +618,14 @@ def create_file_sales_router(
                         tr("🗑 <b>Удалить папку?</b>\n", "🗑 <b>Delete folder?</b>\n")
                         + "📁 <b>" + escape(item.name) + "</b>\n\n"
                         + tr(
-                            "Удаление необратимо. Папка должна быть пустой. "
-                            "При наличии товаров удаление будет запрещено.",
-                            "Deletion is permanent. Folder must be empty. "
-                            "Any remaining products will block deletion.",
+                            "Оплаченные покупки блокируют удаление. "
+                            "Если есть только неоплаченные счета, папка и "
+                            "товары исчезнут из каталога, но история счетов "
+                            "и отправленные чеки сохранятся.",
+                            "Confirmed purchases block deletion. If there "
+                            "are only unpaid invoices, the folder and "
+                            "products disappear from the catalog, while "
+                            "invoice and receipt history stays intact.",
                         ),
                         parse_mode="HTML",
                         reply_markup=_keyboard([
@@ -636,7 +640,8 @@ def create_file_sales_router(
                         actor_id=who, folder_id=folder_id,
                     )
                     await bot.send_message(
-                        uid, tr("✅ Пустая папка удалена", "✅ Empty folder deleted"),
+                        uid, tr("✅ Папка удалена из каталога",
+                                "✅ Folder removed from catalog"),
                     )
                     await folders(bot, uid, who)
             elif action.startswith(("delproductask:", "delproductok:")):
@@ -655,12 +660,14 @@ def create_file_sales_router(
                            "🗑 <b>Permanently delete product?</b>\n")
                         + "📦 <b>" + escape(item.name) + "</b>\n\n"
                         + tr(
-                            "Вложения и цены удалятся вместе с товаром. "
-                            "Если существует хотя бы один счёт или покупка, "
-                            "удаление запрещено. Для таких товаров есть архив.",
-                            "Attachments and prices will be removed. "
-                            "Any invoice or purchase blocks deletion. "
-                            "Archive products with payment history instead.",
+                            "Только подтверждённая покупка блокирует удаление. "
+                            "При наличии неоплаченных счетов товар исчезнет "
+                            "из каталога, но счета и чеки останутся в истории. "
+                            "Купленные файлы не удаляются.",
+                            "Only confirmed purchases block removal. "
+                            "Unpaid invoices do not: the product is hidden "
+                            "from the catalog, preserving invoices and receipts. "
+                            "Previously purchased files cannot be removed.",
                         ),
                         parse_mode="HTML",
                         reply_markup=_keyboard([
@@ -677,7 +684,8 @@ def create_file_sales_router(
                     )
                     pending.pop(uid, None)
                     await bot.send_message(
-                        uid, tr("✅ Товар удалён", "✅ Product deleted"),
+                        uid, tr("✅ Товар удалён из каталога",
+                                "✅ Product removed from catalog"),
                     )
                     await show_products(bot, uid, folder_id, who)
             elif action.startswith(("delassetask:", "delassetok:")):

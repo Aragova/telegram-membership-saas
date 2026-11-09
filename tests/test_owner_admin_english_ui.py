@@ -70,16 +70,19 @@ async def test_english_resources_and_plans(monkeypatch):
     try:
         bot, query = await _owner_action(monkeypatch, "resources")
         text = bot.send_message.await_args.args[1]
-        assert "Channels and groups" in text
-        assert "My premium channel" in text
-        assert "First, add your bot" in text
+        assert "My channels and groups" in text
+        assert "Select a channel" in text
+        assert "Connected: 1" in text
         buttons = [
             b for row in bot.send_message.await_args.kwargs[
                 "reply_markup"
             ].inline_keyboard for b in row
         ]
-        assert any(b.text == "➕ Select channel" and
+        assert any(b.text == "➕ Add channel" and
                    b.callback_data == "own:pick:channel" for b in buttons)
+        assert any("My premium channel" in b.text and
+                   b.callback_data.startswith("own:resourceview:")
+                   for b in buttons)
         query.answer.assert_awaited()
 
         bot, _ = await _owner_action(monkeypatch, "plans")

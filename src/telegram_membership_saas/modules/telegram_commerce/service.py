@@ -291,6 +291,7 @@ def _catalog_statement(project_id: UUID):
         .where(
             Plan.project_id == project_id,
             Plan.status == PlanStatus.ACTIVE.value,
+            Plan.removed_at.is_(None),
             PlanPrice.status == PlanPriceStatus.ACTIVE.value,
             CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
             PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,

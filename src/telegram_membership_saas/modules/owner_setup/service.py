@@ -63,6 +63,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     default_period_plan_name,
     list_checkout_options,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 FLOW_TTL = timedelta(minutes=15)
@@ -609,10 +610,12 @@ async def setup_overview(
             BotInstance.project_id == project_id
         ))).all())
         resources = list((await session.scalars(select(Resource).where(
-            Resource.project_id == project_id
+            Resource.project_id == project_id,
+            Resource.removed_at.is_(None),
         ))).all())
         plans = list((await session.scalars(select(Plan).where(
-            Plan.project_id == project_id
+            Plan.project_id == project_id,
+            Plan.removed_at.is_(None),
         ))).all())
         methods = list((await session.scalars(select(PaymentMethod).where(
             PaymentMethod.project_id == project_id
@@ -737,6 +740,7 @@ async def verify_channel_and_add(
             session.add(resource)
         else:
             resource.status = ResourceStatus.ACTIVE.value
+            resource.removed_at = None
         try:
             await session.flush()
         except DBAPIError as exc:
@@ -790,7 +794,8 @@ async def create_owner_plan(
         )
         resource = await session.scalar(select(Resource.id).where(
             Resource.id == resource_id, Resource.project_id == project_id,
-            Resource.status == ResourceStatus.ACTIVE.value
+            Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
         ))
         if resource is None:
             raise ValueError("Выберите действующий канал или группу")
@@ -859,13 +864,14 @@ async def publish_owner_plan(
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:
+        await checkout_retirement_lock(session, project_id)
         await _require_project_manager(
             session, project_id=project_id, actor_user_id=actor_id
         )
         plan = await session.scalar(select(Plan).where(
             Plan.id == plan_id, Plan.project_id == project_id
         ).with_for_update())
-        if plan is None:
+        if plan is None or plan.removed_at is not None:
             raise ValueError("Тариф не принадлежит выбранному проекту")
         if plan.status != expected_status:
             raise ValueError("Тариф изменился. Откройте карточку заново.")
@@ -881,6 +887,7 @@ async def publish_owner_plan(
             PlanResource.project_id == project_id, PlanResource.plan_id == plan_id,
             Resource.project_id == project_id,
             Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
         ).limit(1))
         if linked is None:
             raise ValueError("Привяжите к тарифу действующий канал")

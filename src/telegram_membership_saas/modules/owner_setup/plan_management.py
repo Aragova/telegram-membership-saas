@@ -6,6 +6,7 @@ references the plan; database FK constraints remain the final safety net.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from hashlib import blake2s
 from uuid import UUID
 
@@ -39,7 +40,7 @@ def plan_revision(plan: Plan) -> str:
 async def plan_has_history(
     session: AsyncSession, *, project_id: UUID, plan_id: UUID,
 ) -> bool:
-    """Any historical sale or access blocks permanent removal, forever."""
+    """Unpaid invoices remain visible in history even after catalog removal."""
     for model in (PaymentRequest, Payment, Subscription):
         ref = await session.scalar(
             select(model.id).where(
@@ -47,6 +48,20 @@ async def plan_has_history(
                 model.plan_id == plan_id,
             ).limit(1)
         )
+        if ref is not None:
+            return True
+    return False
+
+
+async def plan_has_confirmed_purchases(
+    session: AsyncSession, *, project_id: UUID, plan_id: UUID,
+) -> bool:
+    """Real paid orders or subscriptions prevent removal; invoices alone don't."""
+    for model in (Payment, Subscription):
+        ref = await session.scalar(select(model.id).where(
+            model.project_id == project_id,
+            model.plan_id == plan_id,
+        ).limit(1))
         if ref is not None:
             return True
     return False
@@ -61,6 +76,7 @@ async def _plan_for_owner(
     plan = await session.scalar(
         select(Plan).where(
             Plan.id == plan_id, Plan.project_id == project_id,
+            Plan.removed_at.is_(None),
         ).with_for_update()
     )
     if plan is None:
@@ -125,6 +141,7 @@ async def edit_owner_draft_resource(
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
+        await checkout_retirement_lock(session, project_id)
         plan = await _plan_for_owner(
             session, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
         )
@@ -135,6 +152,7 @@ async def edit_owner_draft_resource(
                 Resource.id == resource_id,
                 Resource.project_id == project_id,
                 Resource.status == ResourceStatus.ACTIVE.value,
+                Resource.removed_at.is_(None),
             )
         )
         if resource is None:
@@ -181,7 +199,7 @@ async def delete_unused_owner_plan(
     actor_id: UUID, project_id: UUID, plan_id: UUID,
     expected_status: str, expected_revision: str,
 ) -> str:
-    """Permanent deletion requires the exact state and revision."""
+    """Remove plans without purchases; preserve unpaid invoice snapshots."""
     if expected_status not in (
         PlanStatus.ACTIVE.value,
         PlanStatus.DRAFT.value,
@@ -198,14 +216,25 @@ async def delete_unused_owner_plan(
         if (plan.status != expected_status
                 or plan_revision(plan) != expected_revision):
             raise ValueError("Тариф изменился. Откройте карточку заново.")
-        if await plan_has_history(
+        if await plan_has_confirmed_purchases(
             session, project_id=project_id, plan_id=plan_id,
         ):
             raise ValueError(
-                "Тариф имеет историю заявок или подписок. "
-                "Удаление запрещено — снимите его с продажи."
+                "У тарифа есть подтверждённые покупки или подписки. "
+                "Для сохранения истории и доступа удаление запрещено."
             )
         name = plan.name
+        unpaid = await session.scalar(select(PaymentRequest.id).where(
+            PaymentRequest.project_id == project_id,
+            PaymentRequest.plan_id == plan_id,
+        ).limit(1))
+        if unpaid is not None:
+            # Immutable invoice snapshots/FKs must survive. Keep the plan
+            # and its price history, but remove it from all new sales and menus.
+            plan.status = PlanStatus.ARCHIVED.value
+            plan.removed_at = datetime.now(UTC)
+            await session.flush()
+            return name
         try:
             # plan_prices and plan_resources cascade; payments and
             # subscriptions are RESTRICT/NO ACTION in the database.
