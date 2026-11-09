@@ -869,7 +869,7 @@ async def publish_owner_plan(
         plan = await session.scalar(select(Plan).where(
             Plan.id == plan_id, Plan.project_id == project_id
         ).with_for_update())
-        if plan is None:
+        if plan is None or plan.removed_at is not None:
             raise ValueError("Тариф не принадлежит выбранному проекту")
         if plan.status != expected_status:
             raise ValueError("Тариф изменился. Откройте карточку заново.")
