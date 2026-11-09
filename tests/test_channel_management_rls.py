@@ -18,12 +18,12 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
 )
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     delete_unused_owner_plan,
+    edit_owner_draft_resource,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_payment_method,
     create_owner_plan,
     create_owner_project,
-    edit_owner_draft_resource,
     ensure_telegram_actor,
     publish_owner_plan,
     save_owner_price,
