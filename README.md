@@ -50,6 +50,8 @@ server-side bootstrap режим неактивен.
 
 ## Документация
 
+**Коммерческая модель ViMi Pay:** [docs/PLATFORM_COMMERCIAL_BILLING.md](docs/PLATFORM_COMMERCIAL_BILLING.md) — 72 часа / 150 ₽ / 5%, ручные SaaS-счета и защита бесплатных выдач; пока не активирована.
+
 Новый разработчик или новый чат должен читать документы в таком порядке:
 
 0. [`docs/VIMI_PAY_V2.md`](docs/VIMI_PAY_V2.md) — утверждённые роли и границы между ботами.
