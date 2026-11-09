@@ -29,7 +29,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     register_new_owner_bot,
 )
 from telegram_membership_saas.modules.projects import Project
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,21 +220,24 @@ async def managed_bot_id_for_project(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID,
 ) -> int:
-    """Look up the exact live customer bot by owned project, not user input."""
-    async with tenant_session_scope(
-        factory, TenantContext(user_id=actor_id, project_id=project_id),
-    ) as session:
-        bot_id = await session.scalar(select(BotInstance.telegram_bot_id).join(
-            Project, Project.id == BotInstance.project_id,
-        ).where(
-            Project.id == project_id,
-            Project.owner_user_id == actor_id,
-            Project.status == "active",
-            BotInstance.status == "registered",
-        ))
-        if bot_id is None:
-            raise PermissionError("No active bot owned by this user")
-        return bot_id
+    """Look up exact customer bot and normalize RLS authorization denial."""
+    try:
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=actor_id, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).join(
+                Project, Project.id == BotInstance.project_id,
+            ).where(
+                Project.id == project_id,
+                Project.owner_user_id == actor_id,
+                Project.status == "active",
+                BotInstance.status == "registered",
+            ))
+            if bot_id is None:
+                raise PermissionError("No active bot owned by this user")
+            return bot_id
+    except TenantAccessDenied:
+        raise PermissionError("No active bot owned by this user") from None
 
 
 async def sync_managed_bot_token(
