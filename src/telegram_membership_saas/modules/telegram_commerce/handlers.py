@@ -78,8 +78,8 @@ from telegram_membership_saas.receipt_prompt_ui import (
 )
 from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.support_links import support_button
-from telegram_membership_saas.telegram_menus import refresh_user_commands
 from telegram_membership_saas.telegram_dates import native_telegram_time
+from telegram_membership_saas.telegram_menus import refresh_user_commands
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
 RECEIPT_REPLY_PREFIX_EN = "Payment confirmation for request: "
