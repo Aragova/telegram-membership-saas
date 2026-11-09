@@ -33,8 +33,8 @@ from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.db_base import Base
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.identity.models import TelegramUser
-from telegram_membership_saas.tenant_context import TenantContext
 from telegram_membership_saas.telegram_dates import native_telegram_time
+from telegram_membership_saas.tenant_context import TenantContext
 
 log = logging.getLogger(__name__)
 
