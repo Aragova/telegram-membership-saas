@@ -220,6 +220,7 @@ from telegram_membership_saas.payment_review_ui import (
     send_payment_review,
 )
 from telegram_membership_saas.telegram_menus import set_chat_commands
+from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.tenant_context import TenantContext
 
 DURATIONS = {
@@ -1182,7 +1183,7 @@ def create_owner_setup_router(
     def subscriber_date(value, timezone: str) -> str:
         if value is None:
             return tr("бессрочно", "lifetime")
-        return value.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y")
+        return native_telegram_time(value, timezone, fmt="d")
 
     async def show_subscribers(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
