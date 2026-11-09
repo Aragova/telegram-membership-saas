@@ -11,13 +11,13 @@ from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
-    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas import receipt_intents
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.manual_checkout_ui import (
     manual_checkout_rich_html,
@@ -55,6 +55,7 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     CURRENCY_ICONS,
     CURRENCY_ORDER,
 )
+from telegram_membership_saas.receipt_prompt_ui import send_receipt_prompt
 from telegram_membership_saas.payment_review_ui import (
     rich_file_close_warning,
     rich_file_review,
@@ -101,6 +102,21 @@ class ManualReceiptFilter(BaseFilter):
         if message.text and message.text.startswith("/"):
             return False
         return _receipt_order_id(message, bot.id) is not None
+
+
+class ActiveFileReceiptFilter(BaseFilter):
+    """Normal private uploads only for a selected pending file purchase."""
+
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        return bool(
+            message.chat.type == "private"
+            and message.from_user is not None
+            and not message.reply_to_message
+            and (message.photo or message.document)
+            and receipt_intents.peek(
+                bot.id, message.from_user.id, kind="file",
+            ) is not None
+        )
 
 
 class ManualPriceFilter(BaseFilter):
@@ -395,15 +411,22 @@ def create_manual_file_router(
                         "Заявка уже отправлена или закрыта",
                         "This request was already submitted or closed",
                     ))
-                await bot.send_message(
-                    uid, RECEIPT_PREFIX + str(order.id) + "\n"
-                    + tr("Ответьте на это сообщение фотографией чека или "
-                         "документом PDF/JPG/PNG/WEBP. Без чека заявка "
-                         "не попадёт администратору.",
-                         "Reply to this message with a receipt photo or "
-                         "PDF/JPG/PNG/WEBP document. The request cannot "
-                         "be reviewed without proof."),
-                    reply_markup=ForceReply(selective=True),
+                await send_receipt_prompt(
+                    bot, buyer_id=uid, kind="file", request_id=order.id,
+                    cancel_data="fm:receiptstop:" + encode_uuid(order.id),
+                    name=order.product_name, amount=_short_amount(order.amount),
+                    currency=order.currency_code,
+                )
+                receipt_intents.arm(
+                    bot.id, uid, kind="file", request_id=order.id,
+                )
+            elif action.startswith("receiptstop:"):
+                try:
+                    stopping_id = decode_uuid(action.split(":", 1)[1])
+                except (ValueError, IndexError):
+                    raise ValueError(tr("Кнопка устарела", "Button expired")) from None
+                receipt_intents.clear(
+                    bot.id, uid, kind="file", request_id=stopping_id,
                 )
             elif action.startswith("cancel:"):
                 # Buyer may cancel only before submitting proof.
@@ -413,6 +436,10 @@ def create_manual_file_router(
                 await cancel_manual_order(
                     factory, project_id=project_id, bot_id=bot.id,
                     buyer_id=uid, order_id=decode_uuid(action.split(":")[1]),
+                )
+                receipt_intents.clear(
+                    bot.id, uid, kind="file",
+                    request_id=decode_uuid(action.split(":")[1]),
                 )
                 # Retire only this successfully canceled checkout card.
                 # Original file instructions stay unchanged in the message.
@@ -657,10 +684,25 @@ def create_manual_file_router(
 
     @router.message(ManualReceiptFilter())
     async def manual_receipt(message: Message, bot: Bot) -> None:
+        # Old reply-based messages continue to work for existing invoices.
+        order_id = _receipt_order_id(message, bot.id)
+        if order_id is not None:
+            await _process_manual_receipt(message, bot, order_id)
+
+    @router.message(ActiveFileReceiptFilter())
+    async def direct_file_receipt(message: Message, bot: Bot) -> None:
         if message.from_user is None:
             return
-        order_id = _receipt_order_id(message, bot.id)
-        if order_id is None:
+        order_id = receipt_intents.consume(
+            bot.id, message.from_user.id, kind="file",
+        )
+        if order_id is not None:
+            await _process_manual_receipt(message, bot, order_id)
+
+    async def _process_manual_receipt(
+        message: Message, bot: Bot, order_id: UUID,
+    ) -> None:
+        if message.from_user is None:
             return
         if message.photo:
             kind, file_id = "photo", message.photo[-1].file_id
@@ -669,9 +711,16 @@ def create_manual_file_router(
         )):
             kind, file_id = "document", message.document.file_id
         else:
+            # Unsupported file types must not consume the selected receipt.
+            receipt_intents.arm(
+                bot.id, message.from_user.id, kind="file",
+                request_id=order_id,
+            )
             await bot.send_message(
-                message.chat.id, tr("Нужен чек: фото или PDF/JPG/PNG/WEBP.",
-                                    "Please attach a photo or PDF/JPG/PNG/WEBP receipt."),
+                message.chat.id, tr(
+                    "Нужен чек: фото или PDF/JPG/PNG/WEBP.",
+                    "Please attach a photo or PDF/JPG/PNG/WEBP receipt.",
+                ),
             )
             return
         try:
