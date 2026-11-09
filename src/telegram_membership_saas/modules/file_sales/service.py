@@ -256,12 +256,15 @@ async def create_product(
     ) as session:
         await _owner(session, project_id=project_id, actor_id=actor_id,
                      bot_id=bot_id)
+        # Folder deletion locks this same row before snapshotting products.
+        # Lock and recheck here to prevent a new draft escaping tombstoning
+        # during a concurrent delete operation.
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.id == folder_id,
             FileFolder.project_id == project_id,
             FileFolder.status == "active",
             FileFolder.removed_at.is_(None),
-        ))
+        ).with_for_update())
         if folder is None:
             raise ValueError(tr("Папка недоступна", "Folder unavailable"))
         total = await session.scalar(select(func.count(FileProduct.id)).where(
