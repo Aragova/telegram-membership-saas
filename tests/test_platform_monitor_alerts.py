@@ -302,6 +302,17 @@ async def test_operator_incident_one_problem_one_recovery_and_tenant_isolation()
         ) as session:
             old_claim = await session.get(PlatformMonitorOutbox, abandoned.id)
             assert old_claim.status == "cancelled"
+            # Other CI bots can become stale during our artificial +23-minute
+            # time jump and enqueue their own incidents. Keep those outside
+            # the case so the next send is this episode's recovery.
+            other_outbox = (
+                await session.scalars(select(PlatformMonitorOutbox).where(
+                    PlatformMonitorOutbox.incident_id != second.id,
+                    PlatformMonitorOutbox.status == "pending",
+                ))
+            ).all()
+            for unrelated in other_outbox:
+                unrelated.available_at = now + timedelta(days=1)
         assert await deliver_platform_monitor_event(
             factory, bot=telegram, owner_actor_id=owner,
             owner_telegram_id=owner_tg, timezone="Europe/Moscow",
