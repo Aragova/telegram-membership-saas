@@ -401,6 +401,9 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
             and not action.startswith((
                 "own:flowback:", "own:planname:",
                 "own:duration:", "own:use:",
+                # Managed bot confirmation must retain the staged candidate
+                # and generation until atomic registration consumes them.
+                "own:managedconfirm:",
             ))
             and bot is not None
             and event.message is not None
