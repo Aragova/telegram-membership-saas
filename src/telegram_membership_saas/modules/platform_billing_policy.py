@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -116,6 +116,23 @@ def calculate_commission_lines(
         if rate is None:
             raise ValueError(f"Missing configured RUB conversion rate for {currency}")
         rate = _positive_decimal(rate, label=f"RUB conversion rate for {currency}")
+        # Numeric(38,18) snapshots and operator-supplied FX rates can exceed
+        # the default Decimal precision of 28. Avoid intermediate rounding
+        # before the explicit final kopeck rounding, regardless of the
+        # caller's ambient decimal context.
+        operands = (sale.amount, rate, commission_rate)
+        needed = sum(
+            max(len(value.as_tuple().digits), value.adjusted() + 2)
+            for value in operands
+        ) + 12
+        with localcontext() as context:
+            context.prec = max(80, needed)
+            gross_rub = (sale.amount * rate).quantize(
+                MONEY_QUANTUM, rounding=ROUND_HALF_UP,
+            )
+            commission_rub = (sale.amount * rate * commission_rate).quantize(
+                MONEY_QUANTUM, rounding=ROUND_HALF_UP,
+            )
         lines.append(
             CommissionLine(
                 source_kind=sale.source_kind,
@@ -125,12 +142,8 @@ def calculate_commission_lines(
                 original_amount=sale.amount,
                 currency_code=currency,
                 rub_per_unit=rate,
-                gross_rub=(sale.amount * rate).quantize(
-                    MONEY_QUANTUM, rounding=ROUND_HALF_UP,
-                ),
-                commission_rub=(sale.amount * rate * commission_rate).quantize(
-                    MONEY_QUANTUM, rounding=ROUND_HALF_UP,
-                ),
+                gross_rub=gross_rub,
+                commission_rub=commission_rub,
             )
         )
     return tuple(lines)
@@ -138,4 +151,12 @@ def calculate_commission_lines(
 
 def total_commission_rub(lines: tuple[CommissionLine, ...]) -> Decimal:
     """Sum already rounded line fees; invoice generation stays separate."""
-    return sum((line.commission_rub for line in lines), Decimal("0.00"))
+    amounts = tuple(line.commission_rub for line in lines)
+    # Addition itself can round under a low-precision ambient context.
+    largest = max(
+        (max(len(value.as_tuple().digits), value.adjusted() + 2) for value in amounts),
+        default=2,
+    )
+    with localcontext() as context:
+        context.prec = max(80, largest + len(str(len(amounts) or 1)) + 12)
+        return sum(amounts, Decimal("0.00"))
