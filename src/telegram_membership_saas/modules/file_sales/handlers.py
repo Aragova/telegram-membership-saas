@@ -40,7 +40,6 @@ from telegram_membership_saas.modules.file_sales.rich_ui import (
     rich_admin_folders,
     rich_admin_product_detail,
     rich_admin_products,
-    rich_file_card_html,
     send_file_card,
 )
 from telegram_membership_saas.modules.file_sales.service import (
