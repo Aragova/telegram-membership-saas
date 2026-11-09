@@ -125,7 +125,7 @@ def _diag_now():
 
 def _diag_live_now():
     from datetime import UTC, datetime
-    return _diag_live_now()
+    return datetime.now(UTC)
 
 
 def _diag_minutes(value):
