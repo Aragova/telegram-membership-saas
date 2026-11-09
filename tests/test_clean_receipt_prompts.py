@@ -265,3 +265,104 @@ def test_owner_unpaid_invoice_is_rich_escaped_and_preserves_method():
         assert "&lt;script&gt;" in html and "&amp; Friends" in html
         assert "8372688203" in html
         assert "Payment approved" not in html
+
+
+async def test_invalid_old_subscription_reply_cannot_switch_selected_order(
+    monkeypatch,
+):
+    old_id, selected_id = uuid4(), uuid4()
+    bot = _bot()
+    receipt_intents.arm(bot.id, 123, kind="subscription", request_id=selected_id)
+    submit = AsyncMock()
+    monkeypatch.setattr(subs, "submit_checkout_for_telegram_user", submit)
+    legacy = _upload(photo=False, mime_type="application/zip", reply=SimpleNamespace(
+        from_user=SimpleNamespace(id=bot.id),
+        text=subs.RECEIPT_REPLY_PREFIX + str(old_id) + "\nAttach receipt",
+    ))
+    router = subs.create_telegram_commerce_router(
+        MagicMock(), project_id=uuid4(),
+    )
+    await _handler(router, "receipt_handler")(legacy, bot)
+    submit.assert_not_awaited()
+    assert receipt_intents.peek(bot.id, 123, kind="subscription") == selected_id
+
+
+async def test_invalid_old_file_reply_cannot_switch_selected_order(monkeypatch):
+    old_id, selected_id = uuid4(), uuid4()
+    bot = _bot()
+    receipt_intents.arm(bot.id, 123, kind="file", request_id=selected_id)
+    submit = AsyncMock()
+    monkeypatch.setattr(files, "submit_manual_receipt", submit)
+    legacy = _upload(photo=False, mime_type="application/zip", reply=SimpleNamespace(
+        from_user=SimpleNamespace(id=bot.id),
+        text=files.RECEIPT_PREFIX + str(old_id),
+    ))
+    router = files.create_manual_file_router(MagicMock(), project_id=uuid4())
+    await _handler(router, "manual_receipt")(legacy, bot)
+    submit.assert_not_awaited()
+    assert receipt_intents.peek(bot.id, 123, kind="file") == selected_id
+
+
+async def test_submitted_subscription_receipt_has_explicit_retry_button(
+    monkeypatch,
+):
+    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.methods import CopyMessage
+
+    project, ident = uuid4(), uuid4()
+    bot = _bot()
+    receipt_intents.arm(bot.id, 123, kind="subscription", request_id=ident)
+    submission = SubmissionResult(
+        request=SimpleNamespace(id=ident),
+        item=ReviewItem(
+            request_id=ident, customer_telegram_user_id=123,
+            customer_username="buyer", plan_name="Premium",
+            amount=Decimal("500"), currency_code="RUB",
+            payment_method_name="Ozon", status="waiting_review",
+        ),
+        reviewer_telegram_ids=(456,), newly_submitted=True,
+    )
+    monkeypatch.setattr(subs, "system_project_session_scope", _scope)
+    monkeypatch.setattr(subs, "submit_checkout_for_telegram_user", AsyncMock(
+        return_value=submission,
+    ))
+    bot.copy_message.side_effect = TelegramBadRequest(
+        method=CopyMessage(chat_id=456, from_chat_id=123, message_id=555),
+        message="Bad Request: recipient not reachable",
+    )
+    router = subs.create_telegram_commerce_router(MagicMock(), project_id=project)
+    await _handler(router, "direct_receipt_handler")(_upload(), bot)
+    assert receipt_intents.peek(bot.id, 123, kind="subscription") is None
+    retry = bot.send_message.await_args.kwargs["reply_markup"]
+    assert retry.inline_keyboard[0][0].callback_data == (
+        "receiptretry:" + encode_uuid(ident)
+    )
+    assert "Повторить чек" in bot.send_message.await_args.kwargs["text"]
+
+
+async def test_submitted_receipt_retry_rechecks_buyer_status(monkeypatch):
+    project, ident = uuid4(), uuid4()
+    bot = _bot()
+    gate = AsyncMock()
+    prompt = AsyncMock()
+    monkeypatch.setattr(subs, "system_project_session_scope", _scope)
+    monkeypatch.setattr(subs, "require_awaiting_receipt_for_telegram_user", gate)
+    monkeypatch.setattr(subs, "send_receipt_prompt", prompt)
+    router = subs.create_telegram_commerce_router(MagicMock(), project_id=project)
+    cb = _callback("receiptretry:" + encode_uuid(ident))
+    await _handler(router, "retry_receipt_handler", callback=True)(cb, bot)
+    gate.assert_awaited_once()
+    assert gate.await_args.kwargs["retry_submitted"] is True
+    assert gate.await_args.kwargs["request_id"] == ident
+    assert gate.await_args.kwargs["telegram_user_id"] == 123
+    prompt.assert_awaited_once()
+    assert receipt_intents.peek(bot.id, 123, kind="subscription") == ident
+
+    receipt_intents.clear(bot.id, 123, kind="subscription", request_id=ident)
+    gate.side_effect = ValueError("Request reviewed")
+    prompt.reset_mock()
+    denied = _callback("receiptretry:" + encode_uuid(ident))
+    await _handler(router, "retry_receipt_handler", callback=True)(denied, bot)
+    prompt.assert_not_awaited()
+    assert denied.answer.await_args.kwargs["show_alert"] is True
+    assert receipt_intents.peek(bot.id, 123, kind="subscription") is None
