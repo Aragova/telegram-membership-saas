@@ -20,6 +20,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     KeyboardButton,
     KeyboardButtonRequestChat,
+    KeyboardButtonRequestManagedBot,
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -90,6 +91,12 @@ from telegram_membership_saas.modules.owner_setup.error_locale import owner_erro
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
     owner_runtime_label,
+)
+from telegram_membership_saas.modules.owner_setup.managed_bots import (
+    connect_managed_bot_event,
+    managed_bot_id_for_project,
+    stage_managed_bot_candidate,
+    sync_managed_bot_token,
 )
 from telegram_membership_saas.modules.owner_setup.method_management import (
     change_owner_method_status_guarded,
@@ -502,7 +509,10 @@ def create_owner_setup_router(
             lines.append(tr("Выберите проект для управления:", "Select a connection to manage:"))
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
-        rows.append([_button("➕ Подключить бота подписок", "new", "success")])
+        rows.append([
+            _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
+            _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
+        ])
         rows.append([InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
@@ -1013,9 +1023,10 @@ def create_owner_setup_router(
                 tr("⬅️ Мои подключения", "⬅️ My connections"), "projects",
             )])
         else:
-            rows.append([_button(
-                tr("➕ Подключить бота", "➕ Connect a bot"), "new", "success",
-            )])
+            rows.append([
+                _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
+                _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
+            ])
             if await list_archived_owner_connections(factory, actor_id=actor_id):
                 rows.append([_button(
                     tr("📦 Архив подключений", "📦 Archived connections"),
@@ -1115,6 +1126,12 @@ def create_owner_setup_router(
                 tr("🔑 Подключить / обновить токен", "🔑 Connect / update token"),
                 "connect",
             )])
+            if connected:
+                rows.append([_button(
+                    tr("🔄 Managed Bot: синхронизировать токен",
+                       "🔄 Managed Bot: sync token"),
+                    "managedsync:" + encode_uuid(project_id),
+                )])
         if data.can_delete_bot:
             rows.append([_button(
                 tr("✏️ Переименовать подключение", "✏️ Rename connection"),
@@ -2828,13 +2845,13 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "projects", "archives", "dashboard", "bots", "connect",
-                "help", "oblist", "cancel",
+                "new", "newmanaged", "projects", "archives", "dashboard",
+                "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             ))
             if not is_registry_action:
@@ -2846,12 +2863,13 @@ def create_owner_setup_router(
                 return
         else:
             if action in {
-                "new", "projects", "archives", "bots", "connect", "oblist",
+                "new", "newmanaged", "projects", "archives", "bots",
+                "connect", "oblist",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             )):
 
@@ -2862,6 +2880,147 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action == "newmanaged":
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
+                identity = await bot.get_me()
+                if not identity.can_manage_bots:
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⚠️ Включите <b>Bot Management Mode</b> в "
+                            "настройках @vimipay_bot через приложение @BotFather. "
+                            "После включения повторите действие. "
+                            "Ручное подключение через BotFather остаётся доступным.",
+                            "⚠️ Enable <b>Bot Management Mode</b> for "
+                            "@vimipay_bot in the @BotFather Mini App. "
+                            "Then try again. Manual token connection still works.",
+                        ),
+                        parse_mode="HTML",
+                    )
+                    await query.answer()
+                    return
+                request_id = randbelow(2_000_000_000) + 1
+                await set_flow(
+                    factory, actor_id=actor_id, step="managed_bot_create",
+                    payload={"request_id": request_id}, bot_scope_id=0,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "✨ <b>Создать бота через Telegram</b>\n\n"
+                        "Нажмите кнопку ниже, выберите имя и @username "
+                        "нового бота и подтвердите создание в Telegram.\n\n"
+                        "ViMi Pay получит токен автоматически, без отправки его "
+                        "в чат. Имя пользователя должно заканчиваться на bot.\n"
+                        "После создания подключение появится в списке.\n\n"
+                        "⏳ Подтвердите создание в течение 15 минут. "
+                        "Отмена: /cancel.",
+                        "✨ <b>Create a bot with Telegram</b>\n\n"
+                        "Tap the button below, choose a name and @username "
+                        "and approve creation in Telegram.\n\n"
+                        "ViMi Pay receives the token directly, without "
+                        "posting it to the chat. Username must end in bot.\n"
+                        "The connected bot then appears in your list.\n\n"
+                        "⏳ Confirm within 15 minutes. Cancel: /cancel.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=ReplyKeyboardMarkup(
+                        keyboard=[[
+                            KeyboardButton(
+                                text=tr("✨ Создать нового бота", "✨ Create new bot"),
+                                request_managed_bot=KeyboardButtonRequestManagedBot(
+                                    request_id=request_id,
+                                    suggested_name="ViMi Pay Channel",
+                                ),
+                            ),
+                        ]],
+                        resize_keyboard=True, one_time_keyboard=True,
+                    ),
+                )
+                await query.answer()
+                return
+            if action.startswith("managedconfirm:"):
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
+                _, id_text, generation = action.split(":", 2)
+                if not id_text.isascii() or not id_text.isdecimal():
+                    raise ValueError(tr("Некорректный бот", "Invalid bot"))
+                try:
+                    result = await connect_managed_bot_event(
+                        factory, central_bot=bot,
+                        creator_telegram_id=user_id,
+                        managed_bot_id=int(id_text),
+                        encryption_key=get_settings().bot_token_encryption_key,
+                        generation=generation,
+                    )
+                except (AiogramError, RuntimeError):
+                    # Transport failures can include token-bearing Telegram URLs.
+                    # Keep the pending candidate and never display raw exceptions.
+                    logging.getLogger(__name__).warning(
+                        "Managed bot confirmation failed; candidate remains pending"
+                    )
+                    await query.answer(tr(
+                        "⚠️ Telegram временно недоступен. Повторите подтверждение.",
+                        "⚠️ Telegram is temporarily unavailable. Try again.",
+                    ), show_alert=True)
+                    return
+                if result.kind != "created" or result.project_id is None:
+                    raise ValueError(tr(
+                        "Запрос устарел. Создайте подключение заново.",
+                        "This request has expired. Start again.",
+                    ))
+                await query.answer()
+                await bot.send_message(
+                    user_id, tr(
+                        "✅ Managed Bot подключён.",
+                        "✅ Managed Bot connected.",
+                    ),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                await send_connected_bot(
+                    bot, user_id, actor_id, result.project_id, result.username,
+                )
+                return
+            if action.startswith("managedsync:"):
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
+                project_id = decode_uuid(action.split(":", 1)[1])
+                managed_id = await managed_bot_id_for_project(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                try:
+                    result = await sync_managed_bot_token(
+                        factory, central_bot=bot, actor_id=actor_id,
+                        actor_telegram_id=user_id, managed_bot_id=managed_id,
+                        encryption_key=get_settings().bot_token_encryption_key,
+                    )
+                except AiogramError:
+                    await query.answer(tr(
+                        "Этот бот не управляется ViMi Pay. Используйте "
+                        "подключение через BotFather или включите режим управления.",
+                        "This bot isn't managed by ViMi Pay. Use BotFather "
+                        "token connection or enable Bot Management Mode.",
+                    ), show_alert=True)
+                    return
+                await bot.send_message(
+                    user_id,
+                    tr("✅ Токен синхронизирован.", "✅ Token synchronized.")
+                    if result.kind == "refreshed" else
+                    tr("✅ Токен актуален.", "✅ Token is already current."),
+                )
+                await show_bots(bot, user_id, actor_id, project_id)
+                await query.answer()
+                return
             if action == "new":
                 if get_settings().bot_token_encryption_key is None:
                     raise ValueError(tr("Подключение ботов пока недоступно",
@@ -5011,6 +5170,46 @@ def create_owner_setup_router(
             await query.answer(detail[:180], show_alert=True)
             return
         await query.answer()
+
+    @router.message(F.managed_bot_created)
+    async def managed_bot_created_message(message: Message, bot: Bot) -> None:
+        """Only a Telegram service message may offer an owner-visible candidate."""
+        if fixed_project_id is not None or not _private(message):
+            return
+        if message.from_user is None or message.managed_bot_created is None:
+            return
+        actor_id = await actor(message.from_user)
+        bot_user = message.managed_bot_created.bot_user
+        generation = await stage_managed_bot_candidate(
+            factory, actor_id=actor_id, managed_bot_id=bot_user.id,
+        )
+        if generation is None:
+            return
+        # Telegram's service message has no request_id; explicit confirmation
+        # prevents an old event from silently consuming a newer owner request.
+        label = ("@" + bot_user.username) if bot_user.username else str(bot_user.id)
+        async with recipient_language(factory, message.from_user.id):
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "🤖 <b>Telegram создал бота:</b> ",
+                    "🤖 <b>Telegram created a bot:</b> ",
+                ) + escape(label) + "\n\n" + tr(
+                    "Подтвердите подключение именно этого бота к ViMi Pay. "
+                    "Если это старое уведомление, отмените запрос.",
+                    "Confirm this exact bot for ViMi Pay. "
+                    "If this is an old notification, cancel the request.",
+                ),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [_button(
+                        tr("✅ Подключить этого бота", "✅ Connect this bot"),
+                        "managedconfirm:" + str(bot_user.id) + ":" + generation,
+                        "success",
+                    )],
+                    [_button(tr("⬅️ Мои подключения", "⬅️ My connections"), "projects")],
+                ]),
+            )
 
     @router.message(F.chat_shared)
     async def shared_chat_handler(message: Message, bot: Bot) -> None:

@@ -87,7 +87,8 @@ async def test_first_start_has_direct_bot_connection_button(monkeypatch):
         button.text for row in sent.kwargs["reply_markup"].inline_keyboard
         for button in row
     ]
-    assert any("Подключить бота подписок" in text for text in buttons)
+    assert "✨ Создать бота" in buttons
+    assert "🔑 Через BotFather" in buttons
     assert any("Language" in text for text in buttons)
 
 

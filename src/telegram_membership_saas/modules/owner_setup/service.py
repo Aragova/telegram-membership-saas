@@ -307,7 +307,7 @@ async def set_flow(
             await _require_project_manager(
                 session, project_id=chosen, actor_user_id=actor_id
             )
-        elif step not in ("project_name", "new_bot_token"):
+        elif step not in ("project_name", "new_bot_token", "managed_bot_create"):
             raise PermissionError("Сначала подключите бота")
         state.selected_project_id = chosen
         state.step = step
@@ -492,9 +492,13 @@ async def register_new_owner_bot(
     token: str,
     encryption_key: SecretStr | None,
     central_bot_id: int,
+    expected_bot_id: int | None = None,
+    managed_creation_generation: str | None = None,
 ) -> tuple[UUID, BotRegistration]:
     """Verify first; commit new project and unique bot together, or neither."""
     verified = await verify_telegram_bot(token)
+    if expected_bot_id is not None and verified.telegram_bot_id != expected_bot_id:
+        raise ValueError("Managed bot identity does not match Telegram token")
     if verified.telegram_bot_id == central_bot_id:
         raise ValueError("Нельзя подключить управляющий бот ViMi Pay")
     encrypted = encrypt_token(token, key=encryption_key)
@@ -509,6 +513,19 @@ async def register_new_owner_bot(
             )
             if actual_id != actor_telegram_user_id:
                 raise PermissionError("Не удалось подтвердить владельца бота")
+            # Managed creation is authorized and consumed atomically together
+            # with BotInstance+Project. Any failure rolls back the entire
+            # transaction and preserves the candidate for another attempt.
+            if managed_creation_generation is not None:
+                state = await _current_session(session, actor_id, 0)
+                if (
+                    state.step != "managed_bot_create"
+                    or state.generation != managed_creation_generation
+                    or state.expires_at <= datetime.now(UTC)
+                    or (state.payload or {}).get("candidate_bot_id")
+                    != expected_bot_id
+                ):
+                    raise ValueError("Managed creation request expired or replaced")
             project = Project(
                 owner_user_id=actor_id, name="@" + verified.username,
                 timezone="Europe/Moscow",
