@@ -3,7 +3,6 @@
 No new global menu, second bot list, duplicated poller or account-facing
 monitoring controls. Existing bot list/detail callbacks remain stable.
 """
-from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
