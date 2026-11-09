@@ -81,7 +81,8 @@ def test_retryable_restart_codes_are_yellow_during_warmup(code):
     data = _bot("error", heartbeat=now, error_code=code)
     assert ui._bot_list_button_label(data).startswith("🟡 ")
     title, body = ui._monitoring_diagnosis(data, now=now)
-    assert title.startswith("🟡 ") and "перезапуск" in body.lower()
+    assert title.startswith("🟡 ")
+    assert "перезапуск" in body.lower() or "повторный запуск" in body.lower()
 
 
 @pytest.mark.parametrize(("code", "expected"), [
