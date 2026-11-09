@@ -81,64 +81,71 @@ async def test_botfather_fallback_when_manager_permission_is_off(monkeypatch):
     flow.assert_not_awaited()
 
 
-async def test_managed_notifications_are_ignored_inside_customer_bot(monkeypatch):
-    called = AsyncMock(return_value=ManagedBotResult(kind="ignored"))
-    monkeypatch.setattr(ui, "connect_managed_bot_event", called)
+async def test_managed_service_message_ignored_inside_customer_bot(monkeypatch):
+    staged = AsyncMock(return_value="generation")
+    monkeypatch.setattr(ui, "stage_managed_bot_candidate", staged)
     router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=uuid4())
     bot = _bot()
-    event = SimpleNamespace(
-        user=SimpleNamespace(id=123),
-        bot_user=SimpleNamespace(id=111222333),
-    )
-    await _handler(router, "managed_bot_updated", observer="managed_bot")(event, bot)
     msg = SimpleNamespace(
         from_user=SimpleNamespace(id=123),
         chat=SimpleNamespace(id=123, type="private"),
         managed_bot_created=SimpleNamespace(
-            bot_user=SimpleNamespace(id=111222333),
+            bot_user=SimpleNamespace(id=111222333, username="created_bot"),
         ),
     )
     await _handler(router, "managed_bot_created_message", observer="message")(msg, bot)
-    called.assert_not_awaited()
+    staged.assert_not_awaited()
     bot.send_message.assert_not_awaited()
 
 
-async def test_both_managed_create_notifications_forward_exact_bot_and_creator(
+async def test_managed_create_service_message_offers_confirmation_without_token(
     monkeypatch,
 ):
+    actor_id = uuid4()
+    staged = AsyncMock(return_value="generation1")
     called = AsyncMock(return_value=ManagedBotResult(kind="ignored"))
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
+    monkeypatch.setattr(ui, "stage_managed_bot_candidate", staged)
     monkeypatch.setattr(ui, "connect_managed_bot_event", called)
+    monkeypatch.setattr(ui, "recipient_language", _language_context)
     router = ui.create_owner_setup_router(MagicMock())
     bot = _bot()
-    event = SimpleNamespace(
-        user=SimpleNamespace(id=123),
-        bot_user=SimpleNamespace(id=111222333),
-    )
-    await _handler(router, "managed_bot_updated", observer="managed_bot")(event, bot)
-    assert called.await_args.kwargs["creator_telegram_id"] == 123
-    assert called.await_args.kwargs["managed_bot_id"] == 111222333
-    called.reset_mock()
     msg = SimpleNamespace(
-        from_user=SimpleNamespace(id=456),
+        from_user=SimpleNamespace(id=456, username="owner", first_name="Owner"),
         chat=SimpleNamespace(id=456, type="private"),
         managed_bot_created=SimpleNamespace(
-            bot_user=SimpleNamespace(id=777888999),
+            bot_user=SimpleNamespace(id=777888999, username="new_sales_bot"),
         ),
     )
     await _handler(router, "managed_bot_created_message", observer="message")(msg, bot)
-    assert called.await_args.kwargs["creator_telegram_id"] == 456
-    assert called.await_args.kwargs["managed_bot_id"] == 777888999
-    bot.send_message.assert_not_awaited()
+    staged.assert_awaited_once()
+    assert staged.await_args.kwargs == {
+        "actor_id": actor_id, "managed_bot_id": 777888999,
+    }
+    called.assert_not_awaited()
+    send = bot.send_message.await_args
+    assert "@new_sales_bot" in send.args[1]
+    buttons = [
+        x.callback_data for row in send.kwargs["reply_markup"].inline_keyboard
+        for x in row
+    ]
+    assert "own:managedconfirm:777888999:generation1" in buttons
+    assert all("token" not in str(x).lower() for x in buttons)
 
 
-async def test_successful_created_event_uses_connected_bot_navigation(monkeypatch):
+async def test_managed_confirm_callback_connects_selected_bot_and_clears_keyboard(
+    monkeypatch,
+):
     owner, project = uuid4(), uuid4()
     called = AsyncMock(return_value=ManagedBotResult(
         kind="created", username="fresh_vimi_bot",
         project_id=project, actor_id=owner,
     ))
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
     monkeypatch.setattr(ui, "connect_managed_bot_event", called)
-    monkeypatch.setattr(ui, "recipient_language", _language_context)
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
     monkeypatch.setattr(ui, "get_project_import_status", AsyncMock(return_value=None))
     monkeypatch.setattr(ui, "setup_overview", AsyncMock(return_value=SimpleNamespace(
         project_name="@fresh_vimi_bot",
@@ -146,17 +153,16 @@ async def test_successful_created_event_uses_connected_bot_navigation(monkeypatc
         bot_instances=((uuid4(), "fresh_vimi_bot", "registered"),),
         bot_runtime_label="working", can_delete_bot=False,
     )))
-    router = ui.create_owner_setup_router(MagicMock())
     bot = _bot()
-    event = SimpleNamespace(
-        user=SimpleNamespace(id=123),
-        bot_user=SimpleNamespace(id=111222333),
+    await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
+        _query("managedconfirm:111222333:gen"), bot,
     )
-    await _handler(router, "managed_bot_updated", observer="managed_bot")(event, bot)
+    called.assert_awaited_once()
+    assert called.await_args.kwargs["managed_bot_id"] == 111222333
+    assert called.await_args.kwargs["generation"] == "gen"
     assert bot.send_message.await_count >= 2
     messages = [call.args[1] for call in bot.send_message.await_args_list]
     assert any("подключён" in text for text in messages)
-    assert all("123456:AA" not in text for text in messages)
     assert isinstance(bot.send_message.await_args_list[0].kwargs["reply_markup"],
                       ReplyKeyboardRemove)
 
