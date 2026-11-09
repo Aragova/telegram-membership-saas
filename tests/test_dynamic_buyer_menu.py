@@ -10,6 +10,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import encode_uu
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     buyer_root_screen,
 )
+from telegram_membership_saas.support_links import SUPPORT_URL
 
 
 def _buttons(markup):
@@ -24,17 +25,19 @@ def test_buyer_root_screen_keeps_channel_first_and_folder_names_verbatim():
         try:
             text, keyboard = buyer_root_screen("ONLY YOU FULL ❤️", folders)
             buttons = _buttons(keyboard)
-            assert len(buttons) == 4
+            assert len(buttons) == 5
             assert [b.text for b in buttons] == [
                 "ONLY YOU FULL ❤️", "📁 ёбка 🍓", "НОВЫЕ ВИДЕО 🔥",
                 "🌐 Language / Язык",
+                "🆘 Поддержка" if language == "ru" else "🆘 Support",
             ]
             assert [b.callback_data for b in buttons] == [
                 "buyer:channel",
                 "fs:folder:" + encode_uuid(folder_a),
                 "fs:folder:" + encode_uuid(folder_b),
-                "lng:menu",
+                "lng:menu", None,
             ]
+            assert buttons[-1].url == SUPPORT_URL
             assert "Выберите канал" in text if language == "ru" else "Choose the channel" in text
             assert not any(
                 b.callback_data in ("account:home", "account:support", "fs:shop")
@@ -88,10 +91,13 @@ async def test_buyer_start_with_published_folder_lists_active_channel_first(monk
     buttons = _buttons(kwargs["reply_markup"])
     assert [b.text for b in buttons] == [
         "Премиум канал ❤️", "Мои видео 🔥", "🌐 Language / Язык",
+        "🆘 Поддержка",
     ]
     assert [b.callback_data for b in buttons] == [
         "buyer:channel", "fs:folder:" + encode_uuid(folder_id), "lng:menu",
+        None,
     ]
+    assert buttons[-1].url == SUPPORT_URL
 
 
 async def test_subscription_button_uses_existing_catalog_and_denies_other_chats(monkeypatch):

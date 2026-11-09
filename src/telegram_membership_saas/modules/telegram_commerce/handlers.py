@@ -78,6 +78,7 @@ from telegram_membership_saas.receipt_prompt_ui import (
     update_receipt_prompt,
 )
 from telegram_membership_saas.rich_messages import classic_messages
+from telegram_membership_saas.support_links import support_button
 from telegram_membership_saas.telegram_menus import refresh_user_commands
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
@@ -322,7 +323,7 @@ def _account_navigation_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text=tr("💎 К тарифам", "💎 Browse plans"),
             callback_data="account:catalog",
-        )],
+        ), support_button()],
     ])
 
 

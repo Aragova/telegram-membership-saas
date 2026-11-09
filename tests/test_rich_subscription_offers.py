@@ -10,16 +10,12 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendMessage
 
 from telegram_membership_saas import localization
-from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_offer_screen,
 )
 from telegram_membership_saas.modules.telegram_commerce import handlers as buyer_ui
 from telegram_membership_saas.modules.telegram_commerce import rich_ui
-from telegram_membership_saas.modules.telegram_commerce.service import (
-    CheckoutOption,
-    encode_uuid,
-)
+from telegram_membership_saas.modules.telegram_commerce.service import CheckoutOption
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     BuyerOffer,
     offer_screen,
@@ -231,77 +227,20 @@ async def test_buyer_offer_screen_rich_and_fallback_use_same_legacy_keyboard(
     screen.assert_not_awaited()
 
 
-async def test_owner_rich_preview_is_read_only_and_permission_checked(monkeypatch):
-    offer = _offer(name="1 месяц")
-    project, owner = uuid4(), uuid4()
-    monkeypatch.setattr(
-        owner_ui, "ensure_telegram_actor", AsyncMock(return_value=owner),
-    )
-    can_manage = AsyncMock(return_value=True)
-    monkeypatch.setattr(owner_ui, "can_manage_project", can_manage)
-    monkeypatch.setattr(
-        owner_ui, "get_selected_project", AsyncMock(return_value=project),
-    )
-    monkeypatch.setattr(
-        owner_ui, "list_buyer_offers", AsyncMock(return_value=(offer,)),
-    )
-    session = MagicMock()
-    session.scalar = AsyncMock()
-    @asynccontextmanager
-    async def scope(*_args, **_kwargs):
-        yield session
-
-    monkeypatch.setattr(owner_ui, "system_project_session_scope", scope)
-    send = AsyncMock(return_value=True)
-    monkeypatch.setattr(owner_ui, "send_rich_subscription_offer", send)
-    router = owner_ui.create_owner_setup_router(
-        MagicMock(), fixed_project_id=project,
-    )
-    cb = next(h.callback for h in router.callback_query.handlers
-              if h.callback.__name__ == "owner_callback")
-    query = SimpleNamespace(
-        data="own:pvrich:" + encode_uuid(offer.option.plan_price_id) + ":0",
-        message=SimpleNamespace(
-            chat=SimpleNamespace(type="private", id=100), message_id=77,
-        ),
-        from_user=SimpleNamespace(
-            id=100, first_name="Owner", username="owner",
-        ),
-        answer=AsyncMock(),
-    )
-    bot = _bot()
-    await cb(query, bot)
-    send.assert_awaited_once()
-    sent = send.await_args.kwargs
-    assert sent["preview"] is True
-    assert "payment" not in sent["rich_html"].lower()
-    callbacks = _callbacks(sent["reply_markup"])
-    assert "own:dashboard" in callbacks
-    assert all(not x.startswith(("buy:", "paid:", "cancel:"))
-               for x in callbacks)
-    assert "own:pvmethod:" + encode_uuid(offer.option.plan_price_id) in (
-        " ".join(callbacks)
-    )
-    session.add.assert_not_called()
-    session.flush.assert_not_called()
-
-    can_manage.return_value = False
-    await cb(query, bot)
-    send.assert_awaited_once()
-    assert query.answer.await_args.kwargs["show_alert"] is True
-
-
-def test_owner_offer_preview_includes_rich_action_without_unsafe_callbacks():
+def test_guest_offer_preview_has_only_normal_safe_navigation():
     offer = _offer()
     text, keyboard = preview_offer_screen(
         (offer,), price_id=offer.option.plan_price_id,
     )
     assert "Предпросмотр" in text
     callbacks = _callbacks(keyboard)
-    assert (
-        "own:pvrich:" + encode_uuid(offer.option.plan_price_id) + ":0"
-    ) in callbacks
-    assert all(not x.startswith(("buy:", "offer:", "cat:")) for x in callbacks)
+    assert "own:dashboard" in callbacks
+    assert any(callback.startswith("own:pvmethod:") for callback in callbacks)
+    assert not any(
+        callback.startswith(("buy:", "offer:", "cat:", "own:pvrich:"))
+        for callback in callbacks
+    )
+    assert all("Rich-предпросмотр" not in row[0].text for row in keyboard.inline_keyboard)
 
 
 @pytest.mark.parametrize(("language", "notice_text"), [

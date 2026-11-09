@@ -25,6 +25,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     is_period_only_plan_name,
     list_checkout_options,
 )
+from telegram_membership_saas.support_links import support_button
 
 PAGE_SIZE = 7
 # Keep the five most requested local currencies together in a single row.
@@ -187,9 +188,13 @@ def buyer_root_screen(
             style="success",
         ),
     ] for folder_id, name in folders)
-    rows.append([InlineKeyboardButton(
-        text="🌐 Language / Язык", callback_data="lng:menu", style="success",
-    )])
+    rows.append([
+        InlineKeyboardButton(
+            text="🌐 Language / Язык", callback_data="lng:menu",
+            style="success",
+        ),
+        support_button(),
+    ])
     return tr(
         "🔻 Выберите канал или 📁 папку с файлами",
         "🔻 Choose the channel or 📁 a file folder",
@@ -210,10 +215,13 @@ def catalog_screen(
                 "✨ No plans are available for purchase yet. Please check back later! 👋",
             ),
             InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="🌐 Language / Язык",
-                    callback_data="lng:menu", style="success",
-                )],
+                [
+                    InlineKeyboardButton(
+                        text="🌐 Language / Язык",
+                        callback_data="lng:menu", style="success",
+                    ),
+                    support_button(),
+                ],
             ]),
         )
     chosen = currency if currency in currencies else currencies[0]
@@ -286,11 +294,13 @@ def catalog_screen(
         "👇 Нажмите на тариф ниже. Способ оплаты выберете на следующем шаге. 💳",
         "👇 Tap a plan below. You’ll choose a payment method next. 💳",
     )])
-    rows.append([InlineKeyboardButton(
-        text="🌐 Language / Язык",
-        callback_data="lng:menu",
-        style="success",
-    )])
+    rows.append([
+        InlineKeyboardButton(
+            text="🌐 Language / Язык",
+            callback_data="lng:menu", style="success",
+        ),
+        support_button(),
+    ])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 

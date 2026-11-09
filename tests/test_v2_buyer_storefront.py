@@ -33,8 +33,11 @@ def _option(
 
 
 def _buttons(keyboard):
+    # This helper exercises callback navigation only. Real URL buttons
+    # such as the support contact are checked in their own tests.
     return [
         button for row in keyboard.inline_keyboard for button in row
+        if button.callback_data is not None
     ]
 
 

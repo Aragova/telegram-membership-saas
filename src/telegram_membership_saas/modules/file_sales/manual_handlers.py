@@ -66,6 +66,7 @@ from telegram_membership_saas.receipt_prompt_ui import (
     send_receipt_prompt,
     update_receipt_prompt,
 )
+from telegram_membership_saas.support_links import support_button
 
 log = logging.getLogger(__name__)
 RECEIPT_PREFIX = "FILE_PAYMENT_RECEIPT:"
@@ -800,6 +801,7 @@ def create_manual_file_router(
             message.chat.id,
             tr("📨 Чек зарегистрирован. Ожидайте проверки администратором.",
                "📨 Receipt recorded. Waiting for admin review."),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[support_button()]]),
         )
 
     @router.message(ManualPriceFilter(editor))

@@ -18,6 +18,7 @@ from telegram_membership_saas.modules.telegram_commerce.account import (
     load_buyer_account,
     support_screen,
 )
+from telegram_membership_saas.support_links import SUPPORT_URL
 from telegram_membership_saas.telegram_menus import (
     commands_for,
     install_public_commands,
@@ -124,8 +125,10 @@ def test_empty_account_is_useful_and_never_shows_a_fake_subscription():
         assert "Nothing to show here yet" in text
         assert ("⬅️ My purchases", "account:home") in _buttons(keyboard)
         text, keyboard = support_screen()
-        assert "not configured a dedicated support contact" in text
+        assert "contact ViMi Pay support" in text
         assert not any("@" in label for label, _ in _buttons(keyboard))
+        assert any(button.url == SUPPORT_URL
+                   for row in keyboard.inline_keyboard for button in row)
     finally:
         _language.reset(token)
 

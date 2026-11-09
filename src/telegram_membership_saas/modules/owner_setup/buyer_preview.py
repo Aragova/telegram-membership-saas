@@ -83,18 +83,9 @@ def preview_offer_screen(
     if rendered is None:
         return None
     text, keyboard = rendered
-    safe_keyboard = _preview_markup(keyboard, page=page)
-    # Owner-only visual experiment: this callback cannot create an invoice.
-    preview_button = InlineKeyboardButton(
-        text=tr("✨ Rich-предпросмотр", "✨ Rich preview"),
-        callback_data=f"own:pvrich:{encode_uuid(price_id)}:{page}",
-        style="success",
-    )
-    rows = list(safe_keyboard.inline_keyboard)
-    rows.insert(-1, [preview_button])
     return (
         _preview_title() + text + _preview_disclaimer(),
-        InlineKeyboardMarkup(inline_keyboard=rows),
+        _preview_markup(keyboard, page=page),
     )
 
 
