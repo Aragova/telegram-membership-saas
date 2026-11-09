@@ -5,7 +5,7 @@ but each button performs a fresh server-side role check.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -40,6 +40,7 @@ from telegram_membership_saas.modules.platform_usage import (
     platform_usage_report,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.telegram_menus import set_chat_commands
 
 PERIOD_LABELS_EN = {
@@ -88,6 +89,9 @@ def _status_label(value: str) -> str:
         "active": ("активен", "active"),
         "starting": ("запускается", "starting"),
         "failed": ("ошибка", "failed"),
+        "error": ("ошибка", "error"),
+        "queued": ("ожидает запуска", "queued"),
+        "setup_needed": ("нужна настройка", "setup needed"),
     }
     labels = states.get(value)
     return tr(*labels) if labels is not None else value
@@ -213,14 +217,122 @@ def _summary_text(snapshot) -> str:
 _RUNTIME_ICONS = {
     "running": "🟢",
     "starting": "🟡",
+    "queued": "🟡",
+    "setup_needed": "🟡",
     "stale": "🟠",
     "stopped": "🔴",
     "failed": "🔴",
+    "error": "🔴",
     "disabled": "⚪",
     "deleting": "⚪",
     "registered": "⚪",
     "unknown": "⚪",
 }
+
+
+# UI-only thresholds. Never use these to mute/produce incident notifications.
+# The DB report remains the sole source of truth for runtime and heartbeat.
+_STARTUP_GRACE = timedelta(minutes=5)
+_ERROR_TEXT = {
+    "invalid_credentials": (
+        "Проблема с токеном: требуется проверить подключение бота",
+        "Bot token problem: check the bot connection",
+    ),
+    "telegram_check_failed": (
+        "Telegram не подтвердил подключение: проверьте API и webhook",
+        "Telegram connection check failed: verify API and webhook",
+    ),
+    "missing_admin_rights": (
+        "Боту не хватает прав администратора в канале",
+        "Bot is missing channel administrator rights",
+    ),
+    "startup_failed": (
+        "Запуск завершился ошибкой; Supervisor повторит попытку",
+        "Startup failed; Supervisor will retry",
+    ),
+    "worker_stopped": (
+        "Рабочий процесс завершился; ожидается повторный запуск",
+        "Worker stopped; waiting for retry",
+    ),
+    "lock_lost": (
+        "Смена рабочего процесса или потеря блокировки; ожидается перезапуск",
+        "Worker handoff or lease lost; waiting for restart",
+    ),
+}
+
+
+def _heartbeat_time(bot: dict) -> datetime | None:
+    """Parse only the authorized platform report, never raw exception content."""
+    raw = bot.get("last_heartbeat")
+    if not isinstance(raw, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None and moment.utcoffset() is not None else None
+
+
+def _monitoring_diagnosis(
+    bot: dict, *, now: datetime | None = None,
+) -> tuple[str, str]:
+    """A current observation, NOT a persistent incident or automatic alert.
+
+    During a deployment the bot may briefly be queued, starting or stopped.
+    Last heartbeat alone is not enough to prove a repeated failure.
+    """
+    runtime = str(bot.get("runtime_state") or "unknown")
+    status = str(bot.get("status") or "unknown")
+    seen = _heartbeat_time(bot)
+    current = now or datetime.now(UTC)
+    elapsed = current - seen if seen is not None else None
+
+    if status == "disabled":
+        return (tr("⚪ Отключён владельцем", "⚪ Disabled by owner"),
+                tr("Это не авария", "This is not an incident"))
+    if status == "deleting":
+        return (tr("⚪ Удаляется", "⚪ Being removed"),
+                tr("Это не авария", "This is not an incident"))
+    if runtime == "running" and (elapsed is None or elapsed <= timedelta(seconds=120)):
+        return (tr("🟢 Работает", "🟢 Running"),
+                tr("Последний записанный статус: работает", "Latest recorded state: running"))
+    if runtime in {"starting", "queued", "setup_needed"}:
+        return (
+            "🟡 " + _status_label(runtime),
+            tr("Бот настраивается или запускается. Это не подтверждённая авария.",
+               "Bot is being configured or started. This is not a confirmed outage."),
+        )
+    if runtime in {"stale", "running"}:
+        if elapsed is not None and elapsed <= _STARTUP_GRACE:
+            return (
+                tr("🟠 Сигнал задерживается", "🟠 Heartbeat delayed"),
+                tr("Возможен прогрев после обновления. Повторите проверку через несколько минут.",
+                   "This may be startup after deployment. Recheck in a few minutes."),
+            )
+        return (
+            tr("🟠 Нет свежего сигнала", "🟠 No recent heartbeat"),
+            tr("Проверьте Supervisor и Telegram. Один сигнал не подтверждает аварию.",
+               "Check Supervisor and Telegram. A single observation does not confirm an outage."),
+        )
+    if runtime in {"error", "failed"}:
+        code = str(bot.get("error_code") or "")
+        return (
+            tr("🔴 Ошибка запуска", "🔴 Startup error"),
+            tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
+            tr("Supervisor зафиксировал ошибку. Проверьте повторный запуск.",
+               "Supervisor recorded an error. Check the next startup attempt."),
+        )
+    if runtime == "stopped":
+        return (
+            tr("🟡 Остановлен", "🟡 Stopped"),
+            tr("Возможно, бот перезапускается после обновления. Проверьте повторно.",
+               "Bot may be restarting after deployment. Recheck before treating as outage."),
+        )
+    return (
+        tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
+        tr("Нет актуального подтверждения от Supervisor; не считать аварией без проверки.",
+           "No confirmed Supervisor signal; do not classify as an outage without checking."),
+    )
 
 
 def _bot_list_button_label(bot: dict) -> str:
@@ -297,6 +409,13 @@ def _bot_details(bot: dict, *, period: str) -> str:
             "No approved payments in this period.",
         )
     )
+    condition, explanation = _monitoring_diagnosis(bot)
+    heartbeat = _heartbeat_time(bot)
+    last_signal = (
+        native_telegram_time(heartbeat, "Europe/Moscow", fmt="dt")
+        if heartbeat is not None else
+        tr("Нет данных", "No data")
+    )
     return (
         tr("✦ <b>Статистика бота</b>\n\n",
            "✦ <b>Bot statistics</b>\n\n")
@@ -305,7 +424,11 @@ def _bot_details(bot: dict, *, period: str) -> str:
         + tr("Подключение: ", "Connection: ")
         + escape(_status_label(bot["status"])) + "\n"
         + tr("Работа: ", "Runtime: ")
-        + escape(_status_label(bot["runtime_state"])) + "\n\n"
+        + escape(_status_label(bot["runtime_state"])) + "\n"
+        + tr("📡 Последний сигнал: ", "📡 Last heartbeat: ")
+        + last_signal + "\n"
+        + tr("🔎 Диагностика: ", "🔎 Diagnosis: ") + escape(condition) + "\n"
+        + escape(explanation) + "\n\n"
         + tr("📢 Ресурсов: ", "📢 Resources: ") + str(bot["resources"]) + "\n"
         + tr("💎 Опубликованных тарифов: ", "💎 Published plans: ")
         + str(bot["plans"]) + "\n"
