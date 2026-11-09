@@ -1,5 +1,22 @@
 # Project Context — Telegram Membership SaaS
 
+## Platform monitoring diagnostics — PR #110
+
+Continue ONLY central `@vimipay_bot → 👑 Платформа → 🖥 Мониторинг`.
+Do not introduce another menu, scanner or monitoring worker.
+Existing audited `platform_report_snapshot` gains two safe per-bot
+fields (`last_heartbeat` and `error_code`) in Alembic
+`0041_monitoring_details`, unchanged authorization, finance and grants.
+One bot card shows recent heartbeat and reason mapped from allowlisted
+Supervisor error codes; never expose raw errors or secrets.
+Recent restarts (5-minute display grace) and queued/starting workers are
+**not confirmed outages**. No new automatic alerts in this slice; future
+incident tracking must distinguish persistent failures and dedupe
+recovery signals in the same monitoring section.
+Deploy staging DB migration before central-bot code and preserve
+`compose.light100.yaml`. Merge only after owner permission and exact-head
+CI/Codex review.
+
 ## Single platform-wide monitoring entry (agreed rule)
 
 All operator monitoring belongs in **one location**: central
