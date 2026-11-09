@@ -1180,10 +1180,10 @@ def create_owner_setup_router(
         name = ("@" + username if username else first_name) or str(user_id)
         return str(name)[:45]
 
-    def subscriber_date(value, timezone: str) -> str:
+    def subscriber_date(value, timezone: str, *, fmt: str = "d") -> str:
         if value is None:
             return tr("бессрочно", "lifetime")
-        return native_telegram_time(value, timezone, fmt="d")
+        return native_telegram_time(value, timezone, fmt=fmt)
 
     async def show_subscribers(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -1363,7 +1363,7 @@ def create_owner_setup_router(
             lines.append(
                 "• " + escape(sub.plan_name[:45]) + " · "
                 + escape(status_label) + " · "
-                + subscriber_date(sub.period_end, data.project_timezone)
+                + subscriber_date(sub.period_end, data.project_timezone, fmt="dt")
             )
         lines.extend([
             "",
@@ -1398,7 +1398,7 @@ def create_owner_setup_router(
             lines.append(
                 "• " + escape(grant.resource_name[:35]) + ": "
                 + escape(label) + " · "
-                + subscriber_date(grant.valid_until, data.project_timezone)
+                + subscriber_date(grant.valid_until, data.project_timezone, fmt="dt")
             )
         if data.access:
             lines.extend([
