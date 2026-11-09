@@ -171,12 +171,6 @@ from telegram_membership_saas.modules.owner_setup.service import (
     verify_channel_and_add,
 )
 from telegram_membership_saas.modules.owner_setup.statistics import read_owner_statistics
-from telegram_membership_saas.modules.owner_setup.welcome_messages import (
-    WELCOME_PAGE_SIZE,
-    public_chat_url,
-    read_welcome_target,
-    telegram_chat_reference,
-)
 from telegram_membership_saas.modules.owner_setup.subscribers import (
     FILTERS as SUBSCRIBER_FILTERS,
 )
@@ -202,6 +196,12 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     get_owner_method_info,
     get_owner_plan_info,
     list_owner_methods,
+)
+from telegram_membership_saas.modules.owner_setup.welcome_messages import (
+    WELCOME_PAGE_SIZE,
+    public_chat_url,
+    read_welcome_target,
+    telegram_chat_reference,
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
