@@ -19,12 +19,16 @@ class ReceiptTarget:
     kind: str
     request_id: UUID
     expires_at: float
+    prompt_message_id: int | None = None
 
 
 _selected: dict[tuple[int, int], ReceiptTarget] = {}
 
 
-def arm(bot_id: int, buyer_id: int, *, kind: str, request_id: UUID) -> None:
+def arm(
+    bot_id: int, buyer_id: int, *, kind: str, request_id: UUID,
+    prompt_message_id: int | None = None,
+) -> None:
     if kind not in ("subscription", "file"):
         raise ValueError("Unknown receipt kind")
     now = monotonic()
@@ -34,8 +38,16 @@ def arm(bot_id: int, buyer_id: int, *, kind: str, request_id: UUID) -> None:
         for key, target in list(_selected.items()):
             if target.expires_at <= now:
                 _selected.pop(key, None)
+    old = _selected.get((bot_id, buyer_id))
+    if (
+        prompt_message_id is None and old is not None
+        and old.kind == kind and old.request_id == request_id
+        and old.expires_at > now
+    ):
+        prompt_message_id = old.prompt_message_id
     _selected[(bot_id, buyer_id)] = ReceiptTarget(
         kind=kind, request_id=request_id, expires_at=now + _RECEIPT_TIMEOUT,
+        prompt_message_id=prompt_message_id,
     )
 
 
@@ -48,6 +60,18 @@ def peek(bot_id: int, buyer_id: int, *, kind: str) -> UUID | None:
         _selected.pop(key, None)
         return None
     return entry.request_id if entry.kind == kind else None
+
+
+def prompt_message(
+    bot_id: int, buyer_id: int, *, kind: str, request_id: UUID,
+) -> int | None:
+    entry = _selected.get((bot_id, buyer_id))
+    if (
+        entry is None or entry.expires_at <= monotonic()
+        or entry.kind != kind or entry.request_id != request_id
+    ):
+        return None
+    return entry.prompt_message_id
 
 
 def consume(bot_id: int, buyer_id: int, *, kind: str) -> UUID | None:

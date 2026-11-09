@@ -109,3 +109,129 @@ async def send_file_card(
             chat_id, legacy_html, parse_mode="HTML", reply_markup=reply_markup,
         )
     return False
+
+
+def rich_admin_folders(folders) -> str:
+    """Short management overview; all folder actions remain in the keyboard."""
+    count = len(folders)
+    active = sum(folder.status == "active" for folder in folders)
+    lines = [
+        "<h3>" + tr("📁 Управление папками", "📁 Manage folders") + "</h3>",
+        "<p>" + tr("Всего: ", "Total: ") + str(count)
+        + " · " + tr("Активных: ", "Active: ") + str(active) + "</p>",
+    ]
+    if folders:
+        lines.extend([
+            "<table bordered compact>",
+            "<tr><th>" + tr("Папка", "Folder") + "</th><th>"
+            + tr("Статус", "Status") + "</th></tr>",
+        ])
+        for folder in folders[:10]:
+            status = (tr("🟢 Активна", "🟢 Active")
+                      if folder.status == "active" else
+                      tr("⚪ Архив", "⚪ Archived"))
+            lines.append("<tr><td>" + escape(folder.name)
+                         + "</td><td>" + status + "</td></tr>")
+        lines.append("</table>")
+        if count > 10:
+            lines.append("<p>" + tr(
+                "Показаны первые 10. Все папки доступны кнопками ниже.",
+                "First 10 shown. Use the buttons to open any folder.",
+            ) + "</p>")
+    else:
+        lines.append("<p>" + tr("Папок пока нет.", "No folders yet.") + "</p>")
+    lines.append("<p>" + tr("👇 Выберите папку", "👇 Select a folder") + "</p>")
+    return "\n".join(lines)
+
+
+def rich_admin_products(products) -> str:
+    """Owner folder inventory without leaking draft products to buyers."""
+    total = len(products)
+    published = sum(item.status == "published" for item in products)
+    lines = [
+        "<h3>" + tr("📦 Товары папки", "📦 Folder products") + "</h3>",
+        "<p>" + tr("Всего: ", "Total: ") + str(total)
+        + " · " + tr("В продаже: ", "Published: ") + str(published) + "</p>",
+    ]
+    if products:
+        lines.extend([
+            "<table bordered compact>",
+            "<tr><th>" + tr("Название", "Name") + "</th><th>"
+            + tr("Статус", "Status") + "</th></tr>",
+        ])
+        states = {
+            "draft": tr("📝 Черновик", "📝 Draft"),
+            "published": tr("🟢 В продаже", "🟢 Published"),
+            "archived": tr("⚪ Архив", "⚪ Archived"),
+        }
+        for product in products[:10]:
+            lines.append("<tr><td>" + escape(product.name[:100])
+                         + "</td><td>" + escape(
+                             states.get(product.status, product.status),
+                         ) + "</td></tr>")
+        lines.append("</table>")
+        if total > 10:
+            lines.append("<p>" + tr(
+                "Показаны первые 10. Все товары доступны кнопками ниже.",
+                "First 10 shown. All products remain available below.",
+            ) + "</p>")
+    else:
+        lines.append("<p>" + tr("Товаров пока нет.", "No products yet.") + "</p>")
+    lines.append("<p>" + tr("👇 Выберите товар", "👇 Select a product") + "</p>")
+    return "\n".join(lines)
+
+
+def rich_admin_product_detail(item, *, file_count: int, prices) -> str:
+    """Manage one product, preserving raw amounts and all original actions."""
+    status = {
+        "draft": tr("📝 Черновик", "📝 Draft"),
+        "published": tr("🟢 В продаже", "🟢 Published"),
+        "archived": tr("⚪ Снят с продажи", "⚪ Archived"),
+    }.get(item.status, item.status)
+    lines = [
+        "<h3>" + tr("📦 Управление товаром", "📦 Manage product") + "</h3>",
+        "<table bordered compact>",
+        "<tr><th>" + tr("🏷 Название", "🏷 Name") + "</th><td>"
+        + escape(item.name) + "</td></tr>",
+        "<tr><th>" + tr("📎 Файлов", "📎 Files") + "</th><td>"
+        + str(file_count) + "</td></tr>",
+        "<tr><th>" + tr("📌 Статус", "📌 Status") + "</th><td>"
+        + escape(status) + "</td></tr>",
+        "<tr><th>" + tr("⭐ Звёзды", "⭐ Stars") + "</th><td>"
+        + (str(item.stars_price) + " XTR" if item.stars_price is not None
+           else tr("Не установлена", "Not set")) + "</td></tr>",
+        "</table>",
+        "<p><b>" + tr("💱 Ручные цены", "💱 Manual prices") + "</b></p>",
+    ]
+    priced = [(currency, amount) for currency, amount in prices
+              if amount is not None]
+    if priced:
+        lines.extend([
+            "<table bordered compact>",
+            "<tr><th>" + tr("Валюта", "Currency") + "</th><th>"
+            + tr("Цена", "Price") + "</th></tr>",
+        ])
+        for currency, amount in priced:
+            value = format(amount, "f")
+            if "." in value:
+                value = value.rstrip("0").rstrip(".")
+            lines.append("<tr><td>" + escape(currency) + "</td><td>"
+                         + escape(value) + "</td></tr>")
+        lines.append("</table>")
+    else:
+        lines.append("<p>" + tr("Нет ручных цен", "No manual prices") + "</p>")
+    if item.description:
+        description = "".join(
+            "<p>" + escape(line) + "</p>"
+            for line in item.description.splitlines() if line.strip()
+        )
+        if description:
+            lines.append(
+                "<details><summary>" + tr("📝 Описание", "📝 Description")
+                + "</summary>" + description + "</details>"
+            )
+    lines.append("<p>" + tr(
+        "👇 Управляйте товаром кнопками ниже",
+        "👇 Use the buttons below to manage this product",
+    ) + "</p>")
+    return "\n".join(lines)
