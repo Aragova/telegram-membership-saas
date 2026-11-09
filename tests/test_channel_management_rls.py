@@ -16,6 +16,10 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
+from telegram_membership_saas.modules.owner_setup.plan_management import (
+    delete_unused_owner_plan,
+)
+from telegram_membership_saas.modules.owner_setup.tenant_admin import get_owner_plan_info
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_payment_method,
     create_owner_plan,
@@ -195,5 +199,39 @@ async def test_confirmed_payment_blocks_channel_deletion_permanently():
         assert (await setup_overview(
             factory, actor_id=owner, project_id=project,
         )).resources
+    finally:
+        await engine.dispose()
+
+
+async def test_unpaid_tariff_removal_is_invisible_but_preserves_invoice_snapshot():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        _, owner, project, _, plan, request, _ = (
+            await _new_paid_channel(factory)
+        )
+        info = await get_owner_plan_info(
+            factory, actor_id=owner, project_id=project, plan_id=plan,
+        )
+        assert info.has_history and not info.has_purchase
+        await delete_unused_owner_plan(
+            factory, actor_id=owner, project_id=project,
+            plan_id=plan, expected_status="active",
+            expected_revision=info.revision,
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            old_plan = await session.get(Plan, plan)
+            old_invoice = await session.get(PaymentRequest, request)
+            assert old_plan is not None
+            assert old_plan.removed_at is not None and old_plan.status == "archived"
+            assert old_invoice is not None
+        with pytest.raises(ValueError, match="Тариф не найден"):
+            await get_owner_plan_info(
+                factory, actor_id=owner, project_id=project, plan_id=plan,
+            )
+        async with system_project_session_scope(factory, project) as session:
+            assert await list_checkout_options(session, project_id=project) == ()
     finally:
         await engine.dispose()
