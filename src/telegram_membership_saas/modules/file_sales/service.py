@@ -182,7 +182,12 @@ async def delete_empty_folder(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID, folder_id: UUID,
 ) -> None:
-    """Delete an empty project folder only; never cascade products of other bots."""
+    """Remove a folder with only unpaid invoices, retaining immutable history.
+
+    Empty folders are physically deleted. Nonempty folders/products become
+    invisible tombstones, so an old submitted receipt can still be reviewed
+    and any later valid payment can still receive its originally sold assets.
+    """
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
@@ -190,22 +195,39 @@ async def delete_empty_folder(
                      bot_id=bot_id)
         folder = await session.scalar(select(FileFolder).where(
             FileFolder.id == folder_id, FileFolder.project_id == project_id,
+            FileFolder.removed_at.is_(None),
         ).with_for_update())
         if folder is None:
             raise ValueError(tr("Папка не найдена", "Folder not found"))
-        occupied = await session.scalar(select(FileProduct.id).where(
+        products = (await session.scalars(select(FileProduct).where(
             FileProduct.folder_id == folder_id,
             FileProduct.project_id == project_id,
-        ).limit(1))
-        if occupied is not None:
+        ).with_for_update())).all()
+        if any(item.telegram_bot_id != bot_id for item in products):
             raise ValueError(tr(
-                "Сначала удалите товары из папки. Товары с историей "
-                "покупок удалять нельзя: их можно убрать с продажи.",
-                "Remove the folder's products first. Products with "
-                "purchase history cannot be deleted; archive them instead.",
+                "В папке есть товары другого бота. Удаление запрещено.",
+                "This folder contains products from another bot.",
             ))
-        await session.delete(folder)
-
+        for item in products:
+            if await _has_paid_purchase(
+                session, project_id=project_id, product_id=item.id,
+            ):
+                raise ValueError(tr(
+                    "В папке есть оплаченные товары. Удаление запрещено; "
+                    "оплаченные файлы должны оставаться доступными.",
+                    "Folder contains paid purchases. Deletion is blocked "
+                    "so existing buyers can redownload files.",
+                ))
+        if not products:
+            await session.delete(folder)
+            return
+        now = datetime.now(UTC)
+        for item in products:
+            item.status = "archived"
+            item.removed_at = now
+        folder.status = "archived"
+        folder.removed_at = now
+        await session.flush()
 
 async def create_product(
     factory: async_sessionmaker[AsyncSession], *,
@@ -429,15 +451,34 @@ async def _has_orders(
     return False
 
 
+async def _has_paid_purchase(
+    session: AsyncSession, *, project_id: UUID, product_id: UUID,
+) -> bool:
+    """Confirmed Stars charges or approved manual file orders block deletion."""
+    stars = await session.scalar(select(FilePurchase.id).where(
+        FilePurchase.project_id == project_id,
+        FilePurchase.product_id == product_id,
+        FilePurchase.status == "paid",
+    ).limit(1))
+    if stars is not None:
+        return True
+    manual = await session.scalar(select(FileManualOrder.id).where(
+        FileManualOrder.project_id == project_id,
+        FileManualOrder.product_id == product_id,
+        FileManualOrder.status == "approved",
+    ).limit(1))
+    return manual is not None
+
+
 async def delete_unsold_product(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID, product_id: UUID,
 ) -> UUID:
-    """Delete only never-ordered products and their non-financial draft data.
+    """Unpaid orders do not block removal; immutable invoices remain intact.
 
-    Any invoice, even unpaid/cancelled, blocks deletion. This prevents both
-    losing purchase history and implicit CASCADE of Stars receipts.
-    The product row lock serializes with Stars/manual checkout creation.
+    Physical deletion is allowed only without any order. Existing unpaid
+    invoice rows require a hidden tombstone because the PostgreSQL schema
+    deliberately forbids deleting even rejected/cancelled order snapshots.
     """
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
@@ -445,14 +486,23 @@ async def delete_unsold_product(
         await _owner(session, project_id=project_id, actor_id=actor_id,
                      bot_id=bot_id)
         item = await _product(session, project_id, bot_id, product_id, lock=True)
-        if await _has_orders(session, project_id=project_id, product_id=product_id):
+        if item.removed_at is not None:
+            raise ValueError(tr("Товар уже удалён", "Product already removed"))
+        if await _has_paid_purchase(
+            session, project_id=project_id, product_id=product_id,
+        ):
             raise ValueError(tr(
-                "У товара уже есть счета или покупки. Удалять его нельзя; "
-                "уберите товар с продажи, чтобы сохранить историю и доступ.",
-                "This product has invoices or purchases. It cannot be "
-                "deleted; archive it to preserve history and file access.",
+                "У товара есть реальная покупка. Удалять его нельзя: "
+                "покупатель должен сохранять доступ к файлу.",
+                "This file has a confirmed purchase. Removal is blocked "
+                "to preserve the buyer's file access.",
             ))
         folder_id = item.folder_id
+        if await _has_orders(session, project_id=project_id, product_id=product_id):
+            item.status = "archived"
+            item.removed_at = datetime.now(UTC)
+            await session.flush()
+            return folder_id
         await session.execute(delete(FileAsset).where(
             FileAsset.project_id == project_id,
             FileAsset.product_id == product_id,
@@ -463,7 +513,6 @@ async def delete_unsold_product(
         ))
         await session.delete(item)
         return folder_id
-
 
 async def list_product_assets(
     factory: async_sessionmaker[AsyncSession], *,
@@ -546,6 +595,8 @@ async def change_product_status(
         await _owner(session, project_id=project_id, actor_id=actor_id,
                      bot_id=bot_id)
         item = await _product(session, project_id, bot_id, product_id, lock=True)
+        if item.removed_at is not None:
+            raise ValueError(tr("Товар удалён", "Product was removed"))
         if status == "published":
             assets = await session.scalar(select(func.count(FileAsset.id)).where(
                 FileAsset.project_id == project_id,
