@@ -330,6 +330,18 @@ async def _claim_event(
             # a sustained recovery has already been observed in the DB.
             event.status = "cancelled"
             return None
+        if event.kind == "recovered":
+            newer_episode = await session.scalar(
+                select(PlatformMonitorIncident.id).where(
+                    PlatformMonitorIncident.bot_instance_id == incident.bot_instance_id,
+                    PlatformMonitorIncident.suspected_since > incident.suspected_since,
+                ).limit(1)
+            )
+            if newer_episode is not None:
+                # Do not announce a stale "recovered" event after a newer
+                # outage has begun or its red alert was sent.
+                event.status = "cancelled"
+                return None
         event.status = "sending"
         event.attempts += 1
         event.claimed_at = now
