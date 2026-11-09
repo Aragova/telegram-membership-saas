@@ -1,4 +1,5 @@
 """Connected-bot channel list and per-channel read-only statistics UI."""
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -146,3 +147,25 @@ async def test_unpaid_channel_deletion_confirms_and_hides_plans(monkeypatch):
     }
     rendered = [call.args[1] for call in bot.send_message.await_args_list]
     assert any("Скрыто тарифов: 2" in text for text in rendered)
+
+
+async def test_channel_revenue_keeps_fractional_crypto_precision(monkeypatch):
+    project, channel = uuid4(), uuid4()
+    _auth(monkeypatch, project)
+    insights = replace(
+        _metrics(channel, orders=1),
+        sales_by_currency=(
+            ("BTC", Decimal("0.00010000"), 1),
+            ("RUB", Decimal("550.000000"), 1),
+        ),
+        paid_orders=2,
+    )
+    monkeypatch.setattr(ui, "read_channel_insights", AsyncMock(
+        return_value=insights,
+    ))
+    bot = _bot()
+    await _handler(project)(_query("resourceview:" + encode_uuid(channel)), bot)
+    text = bot.send_message.await_args.args[1]
+    assert "BTC: 0.0001 (1)" in text
+    assert "RUB: 550 (1)" in text
+    assert "BTC: 0.00" not in text
