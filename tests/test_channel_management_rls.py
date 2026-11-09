@@ -1,11 +1,9 @@
 """Channel removal keeps pending invoices and blocks real paid purchases."""
 import os
-from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
@@ -83,23 +81,24 @@ async def _new_paid_channel(factory):
     await publish_owner_plan(
         factory, actor_id=actor, project_id=project, plan_id=plan,
     )
+    buyer_tg = _tg()
     async with system_project_session_scope(factory, project) as session:
         offer = (await list_checkout_options(session, project_id=project))[0]
         checkout = await create_checkout_for_telegram_user(
             session, project_id=project,
-            telegram_user_id=_tg(), username="buyer",
+            telegram_user_id=buyer_tg, username="buyer",
             first_name="Buyer", plan_price_id=offer.plan_price_id,
             payment_method_id=offer.payment_method_id,
         )
         request_id = checkout.request.id
-    return owner_tg, actor, project, resource, plan, request_id
+    return owner_tg, actor, project, resource, plan, request_id, buyer_tg
 
 
 async def test_pending_invoice_does_not_block_channel_removal_and_can_be_reviewed():
     engine = build_engine(Settings())
     factory = build_session_factory(engine)
     try:
-        owner_tg, owner, project, resource, plan, request = (
+        owner_tg, owner, project, resource, plan, request, buyer_tid = (
             await _new_paid_channel(factory)
         )
         outsider = await ensure_telegram_actor(
@@ -150,10 +149,14 @@ async def test_pending_invoice_does_not_block_channel_removal_and_can_be_reviewe
         async with system_project_session_scope(factory, project) as session:
             await submit_checkout_for_telegram_user(
                 session, project_id=project,
-                request_id=request,
-                telegram_user_id=(await session.get(PaymentRequest, request)
-                                  ).customer.telegram_user_id if False else 0,
+                request_id=request, telegram_user_id=buyer_tid,
             )
+        async with system_project_session_scope(factory, project) as session:
+            approved = await review_payment_request_from_telegram(
+                session, project_id=project, request_id=request,
+                actor_telegram_user_id=owner_tg, approve=True,
+            )
+            assert approved.changed
     finally:
         await engine.dispose()
 
@@ -162,21 +165,9 @@ async def test_confirmed_payment_blocks_channel_deletion_permanently():
     engine = build_engine(Settings())
     factory = build_session_factory(engine)
     try:
-        owner_tg, owner, project, resource, _, request = (
+        owner_tg, owner, project, resource, _, request, buyer_id = (
             await _new_paid_channel(factory)
         )
-        # Set request to submitted using a verified buyer from the actual record
-        # (the helper returns a stable identity through customer linkage).
-        from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
-        async with tenant_session_scope(
-            factory, TenantContext(user_id=owner, project_id=project),
-        ) as session:
-            customer = await session.scalar(select(ProjectCustomer).join(
-                PaymentRequest, ProjectCustomer.id == PaymentRequest.customer_id,
-            ).where(PaymentRequest.id == request))
-            buyer_id = await session.scalar(select(TelegramUser.telegram_user_id).where(
-                TelegramUser.id == customer.user_id,
-            ))
         async with system_project_session_scope(factory, project) as session:
             await submit_checkout_for_telegram_user(
                 session, project_id=project,
