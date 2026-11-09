@@ -13,7 +13,7 @@ from uuid import UUID
 from aiogram import Bot
 from pydantic import SecretStr
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.bots import BotInstance
@@ -108,19 +108,70 @@ async def managed_connected_bot(
     return row[0] if row is not None else None
 
 
+async def stage_managed_bot_candidate(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, managed_bot_id: int,
+) -> str | None:
+    """Stage Telegram service-message candidate for explicit owner confirmation.
+
+    Telegram does not include the request_id in ManagedBotCreated or
+    ManagedBotUpdated, so we MUST NOT consume a creation intent from either.
+    A pending owner can accept only this exact candidate and generation.
+    """
+    if managed_bot_id <= 0:
+        return None
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id),
+    ) as session:
+        state = await session.get(
+            OwnerSetupSession, (actor_id, 0), with_for_update=True,
+        )
+        if (
+            state is None or state.step != "managed_bot_create"
+            or state.expires_at <= datetime.now(UTC)
+            or not state.generation
+        ):
+            return None
+        payload = dict(state.payload or {})
+        # A delayed second notification cannot replace the already shown
+        # candidate. Owner may cancel and start a fresh request.
+        if payload.get("candidate_bot_id") not in (None, managed_bot_id):
+            return None
+        payload["candidate_bot_id"] = managed_bot_id
+        state.payload = payload
+        return state.generation
+
+
+async def pending_managed_candidate(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, managed_bot_id: int, generation: str,
+) -> bool:
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id),
+    ) as session:
+        flow = await session.get(OwnerSetupSession, (actor_id, 0))
+        return bool(
+            flow is not None and flow.step == "managed_bot_create"
+            and flow.expires_at > datetime.now(UTC)
+            and flow.generation == generation
+            and (flow.payload or {}).get("candidate_bot_id") == managed_bot_id
+        )
+
+
 async def connect_managed_bot_event(
     factory: async_sessionmaker[AsyncSession], *,
     central_bot: Bot,
     creator_telegram_id: int,
     managed_bot_id: int,
     encryption_key: SecretStr | None,
+    generation: str,
 ) -> ManagedBotResult:
     """Onboard only a new bot explicitly requested by its Telegram creator.
 
-    Handles both managed_bot update and managed_bot_created service message.
-    First event wins the persistent 15-minute wizard lock. Later duplicates
-    are ignored. Existing linked bots are never rotated by an unsolicited
-    owner-transfer/token update: an explicit owner sync action is required.
+    Called ONLY after the owner clicks Confirm on a real Telegram service
+    message candidate. The callback generation and candidate are checked
+    again under the durable wizard lock. Raw managed_bot updates never
+    consume onboarding intents or rotate existing tokens.
     """
     if creator_telegram_id <= 0 or managed_bot_id <= 0:
         return ManagedBotResult(kind="ignored")
@@ -131,7 +182,10 @@ async def connect_managed_bot_event(
         factory, actor_id=actor_id, managed_bot_id=managed_bot_id,
     ) is not None:
         return ManagedBotResult(kind="ignored")
-    if not await managed_creation_pending(factory, actor_id):
+    if not await pending_managed_candidate(
+        factory, actor_id=actor_id, managed_bot_id=managed_bot_id,
+        generation=generation,
+    ):
         return ManagedBotResult(kind="ignored")
 
     # Telegram authorizes manager access. Never accept a user-supplied token
@@ -143,7 +197,7 @@ async def connect_managed_bot_event(
     try:
         await consume_button_flow(
             factory, actor_id=actor_id, expected_step="managed_bot_create",
-            bot_scope_id=0,
+            generation=generation, bot_scope_id=0,
         )
     except ValueError:
         # Another update or a user cancel won the wizard row lock.
