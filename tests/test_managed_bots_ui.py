@@ -167,6 +167,47 @@ async def test_managed_confirm_callback_connects_selected_bot_and_clears_keyboar
                       ReplyKeyboardRemove)
 
 
+
+async def test_managed_confirm_preserves_staged_wizard_through_callback_middleware(
+    monkeypatch,
+):
+    """Real callback middleware must not clear the candidate before confirmation."""
+    actor_id = uuid4()
+    ensure = AsyncMock(return_value=actor_id)
+    cancel = AsyncMock()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", ensure)
+    monkeypatch.setattr(ui, "cancel_owner_flow", cancel)
+    middleware = ui.ClearOwnerInputOnNavigation(MagicMock(), None)
+    handler = AsyncMock(return_value="handled")
+
+    result = await middleware(
+        handler, _query("managedconfirm:777888999:generation1"),
+        {"bot": _bot()},
+    )
+
+    assert result == "handled"
+    handler.assert_awaited_once()
+    ensure.assert_not_awaited()
+    cancel.assert_not_awaited()
+
+
+async def test_other_navigation_still_cancels_owner_wizard(monkeypatch):
+    """Only the confirmation exception is added; ordinary navigation still clears input."""
+    actor_id = uuid4()
+    ensure = AsyncMock(return_value=actor_id)
+    cancel = AsyncMock()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", ensure)
+    monkeypatch.setattr(ui, "cancel_owner_flow", cancel)
+    middleware = ui.ClearOwnerInputOnNavigation(MagicMock(), None)
+    handler = AsyncMock(return_value=None)
+
+    await middleware(handler, _query("projects"), {"bot": _bot()})
+
+    cancel.assert_awaited_once_with(
+        middleware.factory, actor_id=actor_id, bot_scope_id=0,
+    )
+    handler.assert_awaited_once()
+
 class _language_context:
     def __init__(self, *_args, **_kwargs):
         pass
