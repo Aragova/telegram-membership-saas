@@ -302,6 +302,12 @@ def _monitoring_diagnosis(
             tr("Бот настраивается или запускается. Это не подтверждённая авария.",
                "Bot is being configured or started. This is not a confirmed outage."),
         )
+    if runtime == "running" and elapsed is None:
+        return (
+            tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
+            tr("Нет сохранённого времени heartbeat; проверьте Supervisor.",
+               "No recorded heartbeat timestamp; check Supervisor."),
+        )
     if runtime in {"stale", "running"}:
         if elapsed is not None and elapsed <= _STARTUP_GRACE:
             return (
