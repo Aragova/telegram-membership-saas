@@ -885,6 +885,7 @@ async def publish_owner_plan(
             PlanResource.project_id == project_id, PlanResource.plan_id == plan_id,
             Resource.project_id == project_id,
             Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
         ).limit(1))
         if linked is None:
             raise ValueError("Привяжите к тарифу действующий канал")
