@@ -419,7 +419,9 @@ async def test_file_management_routes_keep_owner_only_actions_and_buyer_classic(
         for row in opts["reply_markup"].inline_keyboard for button in row
     ]
     assert "fs:editname:" + file_admin.encode_uuid(product.id) in buttons
-    assert "fs:richpreview:" + file_admin.encode_uuid(product.id) in buttons
+    assert not any(cb.startswith("fs:richpreview:") for cb in buttons)
+    assert "fs:editname:" + file_admin.encode_uuid(product.id) in buttons
+    assert "fs:af:" + file_admin.encode_uuid(product.folder_id) in buttons
 
     monkeypatch.setattr(
         file_admin, "can_manage_project", AsyncMock(return_value=False),
