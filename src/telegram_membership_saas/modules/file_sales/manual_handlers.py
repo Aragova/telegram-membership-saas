@@ -55,7 +55,6 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     CURRENCY_ICONS,
     CURRENCY_ORDER,
 )
-from telegram_membership_saas.receipt_prompt_ui import send_receipt_prompt
 from telegram_membership_saas.payment_review_ui import (
     rich_file_close_warning,
     rich_file_review,
@@ -63,6 +62,7 @@ from telegram_membership_saas.payment_review_ui import (
     rich_file_reviews_queue,
     send_payment_review,
 )
+from telegram_membership_saas.receipt_prompt_ui import send_receipt_prompt
 
 log = logging.getLogger(__name__)
 RECEIPT_PREFIX = "FILE_PAYMENT_RECEIPT:"
