@@ -5,7 +5,6 @@ from contextlib import nullcontext
 from datetime import datetime
 from html import escape
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import AiogramError
@@ -80,6 +79,7 @@ from telegram_membership_saas.receipt_prompt_ui import (
 from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.support_links import support_button
 from telegram_membership_saas.telegram_menus import refresh_user_commands
+from telegram_membership_saas.telegram_dates import native_telegram_time
 
 RECEIPT_REPLY_PREFIX = "Подтверждение оплаты по заявке: "
 RECEIPT_REPLY_PREFIX_EN = "Payment confirmation for request: "
@@ -235,14 +235,14 @@ def _review_text(item: ReviewItem) -> str:
 def _subscription_end_text(ends_at: datetime | None, timezone: str) -> str:
     if ends_at is None:
         return tr("Бессрочно", "Lifetime")
-    return f"{ends_at.astimezone(ZoneInfo(timezone)):%d.%m.%Y %H:%M} ({timezone})"
+    return native_telegram_time(ends_at, timezone, fmt="dt")
 
 
 
 def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
     item = result.item
-    expiration = escape(
-        _subscription_end_text(result.subscription_period_end, result.project_timezone)
+    expiration = _subscription_end_text(
+        result.subscription_period_end, result.project_timezone,
     )
     username = f"@{item.customer_username}" if item.customer_username else str(
         item.customer_telegram_user_id
@@ -271,8 +271,8 @@ def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
 
 
 def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
-    expiration = escape(
-        _subscription_end_text(result.subscription_period_end, result.project_timezone)
+    expiration = _subscription_end_text(
+        result.subscription_period_end, result.project_timezone,
     )
     if approve:
         return (
