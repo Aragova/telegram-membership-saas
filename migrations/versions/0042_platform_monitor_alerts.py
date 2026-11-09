@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.Column("last_observed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("last_runtime_state", sa.String(24), nullable=False),
         sa.Column("last_error_code", sa.String(40), nullable=True),
+        sa.Column("last_heartbeat", sa.DateTime(timezone=True), nullable=True),
         sa.Column("healthy_since", sa.DateTime(timezone=True), nullable=True),
         sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("recovered_at", sa.DateTime(timezone=True), nullable=True),
