@@ -21,7 +21,6 @@ from aiogram.types import (
     KeyboardButton,
     KeyboardButtonRequestChat,
     KeyboardButtonRequestManagedBot,
-    ManagedBotUpdated,
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -96,6 +95,7 @@ from telegram_membership_saas.modules.owner_setup.labels import (
 from telegram_membership_saas.modules.owner_setup.managed_bots import (
     connect_managed_bot_event,
     managed_bot_id_for_project,
+    stage_managed_bot_candidate,
     sync_managed_bot_token,
 )
 from telegram_membership_saas.modules.owner_setup.method_management import (
@@ -2851,7 +2851,7 @@ def create_owner_setup_router(
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "managedsync:", "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             ))
             if not is_registry_action:
@@ -2869,7 +2869,7 @@ def create_owner_setup_router(
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "managedsync:", "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             )):
 
@@ -2942,6 +2942,39 @@ def create_owner_setup_router(
                     ),
                 )
                 await query.answer()
+                return
+            if action.startswith("managedconfirm:"):
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
+                _, id_text, generation = action.split(":", 2)
+                if not id_text.isascii() or not id_text.isdecimal():
+                    raise ValueError(tr("Некорректный бот", "Invalid bot"))
+                result = await connect_managed_bot_event(
+                    factory, central_bot=bot,
+                    creator_telegram_id=user_id,
+                    managed_bot_id=int(id_text),
+                    encryption_key=get_settings().bot_token_encryption_key,
+                    generation=generation,
+                )
+                if result.kind != "created" or result.project_id is None:
+                    raise ValueError(tr(
+                        "Запрос устарел. Создайте подключение заново.",
+                        "This request has expired. Start again.",
+                    ))
+                await query.answer()
+                await bot.send_message(
+                    user_id, tr(
+                        "✅ Managed Bot подключён.",
+                        "✅ Managed Bot connected.",
+                    ),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                await send_connected_bot(
+                    bot, user_id, actor_id, result.project_id, result.username,
+                )
                 return
             if action.startswith("managedsync:"):
                 if get_settings().bot_token_encryption_key is None:
@@ -5126,70 +5159,45 @@ def create_owner_setup_router(
             return
         await query.answer()
 
-    async def process_created_managed_bot(
-        bot: Bot, *, creator_id: int, created_bot_id: int,
-    ) -> None:
-        if fixed_project_id is not None:
-            return
-        try:
-            result = await connect_managed_bot_event(
-                factory, central_bot=bot,
-                creator_telegram_id=creator_id,
-                managed_bot_id=created_bot_id,
-                encryption_key=get_settings().bot_token_encryption_key,
-            )
-        except (AiogramError, ValueError, PermissionError, RuntimeError):
-            # Bot API errors may contain URLs/credentials. Never send or log
-            # the raw exception or returned token.
-            logging.getLogger(__name__).warning(
-                "Managed bot linking failed without exposing credentials"
-            )
-            async with recipient_language(factory, creator_id):
-                await bot.send_message(
-                    creator_id, tr(
-                        "⚠️ Telegram создал бота, но подключить его не удалось. "
-                        "Проверьте режим управления и повторите подключение "
-                        "через BotFather. Токен в этот чат не отправляйте.",
-                        "⚠️ Telegram created the bot but ViMi Pay could not "
-                        "connect it. Check Bot Management Mode and reconnect "
-                        "through BotFather. Never post your token here.",
-                    ),
-                    reply_markup=ReplyKeyboardRemove(),
-                )
-            return
-        if result.kind != "created" or result.project_id is None:
-            return
-        owner_id = result.actor_id
-        assert owner_id is not None
-        async with recipient_language(factory, creator_id):
-            await bot.send_message(
-                creator_id,
-                tr("✅ Новый Managed Bot создан и подключён.",
-                   "✅ New managed bot created and connected."),
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            await send_connected_bot(
-                bot, creator_id, owner_id, result.project_id, result.username,
-            )
-
-    @router.managed_bot()
-    async def managed_bot_updated(event: ManagedBotUpdated, bot: Bot) -> None:
-        if fixed_project_id is not None:
-            return
-        await process_created_managed_bot(
-            bot, creator_id=event.user.id, created_bot_id=event.bot_user.id,
-        )
-
     @router.message(F.managed_bot_created)
     async def managed_bot_created_message(message: Message, bot: Bot) -> None:
+        """Only a Telegram service message may offer an owner-visible candidate."""
         if fixed_project_id is not None or not _private(message):
             return
         if message.from_user is None or message.managed_bot_created is None:
             return
-        await process_created_managed_bot(
-            bot, creator_id=message.from_user.id,
-            created_bot_id=message.managed_bot_created.bot_user.id,
+        actor_id = await actor(message.from_user)
+        bot_user = message.managed_bot_created.bot_user
+        generation = await stage_managed_bot_candidate(
+            factory, actor_id=actor_id, managed_bot_id=bot_user.id,
         )
+        if generation is None:
+            return
+        # Telegram's service message has no request_id; explicit confirmation
+        # prevents an old event from silently consuming a newer owner request.
+        label = ("@" + bot_user.username) if bot_user.username else str(bot_user.id)
+        async with recipient_language(factory, message.from_user.id):
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "🤖 <b>Telegram создал бота:</b> ",
+                    "🤖 <b>Telegram created a bot:</b> ",
+                ) + escape(label) + "\n\n" + tr(
+                    "Подтвердите подключение именно этого бота к ViMi Pay. "
+                    "Если это старое уведомление, отмените запрос.",
+                    "Confirm this exact bot for ViMi Pay. "
+                    "If this is an old notification, cancel the request.",
+                ),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [_button(
+                        tr("✅ Подключить этого бота", "✅ Connect this bot"),
+                        "managedconfirm:" + str(bot_user.id) + ":" + generation,
+                        "success",
+                    )],
+                    [_button(tr("⬅️ Мои подключения", "⬅️ My connections"), "projects")],
+                ]),
+            )
 
     @router.message(F.chat_shared)
     async def shared_chat_handler(message: Message, bot: Bot) -> None:
