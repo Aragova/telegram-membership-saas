@@ -19,7 +19,6 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     delete_unused_owner_plan,
 )
-from telegram_membership_saas.modules.owner_setup.tenant_admin import get_owner_plan_info
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_payment_method,
     create_owner_plan,
@@ -29,7 +28,8 @@ from telegram_membership_saas.modules.owner_setup.service import (
     save_owner_price,
     setup_overview,
 )
-from telegram_membership_saas.modules.payments import PaymentRequest
+
+from telegram_membership_saas.modules.owner_setup.tenant_admin import get_owner_plan_infofrom telegram_membership_saas.modules.payments import PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.resources import Resource, ResourceType
 from telegram_membership_saas.modules.telegram_commerce import (
