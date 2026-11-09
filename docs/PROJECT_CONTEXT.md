@@ -1,5 +1,21 @@
 # Project Context — Telegram Membership SaaS
 
+## Telegram 2026 — Native Welcome Messages (current PR)
+
+After Telegram native dates (#104, verified in real Telegram), implement a
+read-only **native welcome setup assistant** in the connected bot's Channels
+screen, NOT the central registrar. Owners configure their channel's actual
+welcome pack in Telegram (channel profile → Edit → Welcome Message).
+Bot API 10.3 provides `can_send_welcome_messages` permission info but
+no HTTP endpoint to read or set the native welcome pack. ViMi Pay checks
+rights, provides a RU/EN starter message copy button and links only to public
+channels. See [TELEGRAM_NATIVE_WELCOME.md](TELEGRAM_NATIVE_WELCOME.md).
+
+This does not send extra messages, modify existing subscriptions, request
+broader admin rights, or use Ephemeral Messages (separate next stage).
+No migrations; preserve `compose.light100.yaml`. No merge/deploy without
+explicit owner permission.
+
 ## Telegram 2026 — Native dates and time (current PR)
 
 After Managed Bots (#102–#103, verified live), the next agreed technology
