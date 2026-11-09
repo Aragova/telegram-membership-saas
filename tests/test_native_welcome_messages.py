@@ -165,7 +165,9 @@ async def test_stale_or_cross_project_welcome_target_never_reaches_telegram(monk
     query = _query("welcome:chat:" + encode_uuid(resource_id))
     await _callback(MagicMock(), project_id)(query, bot)
     bot.get_chat_member.assert_not_awaited()
-    assert "Channel unavailable" in str(bot.send_message.await_args)
+    bot.send_message.assert_not_awaited()
+    query.answer.assert_awaited_once()
+    assert query.answer.await_args.kwargs["show_alert"] is True
 
 
 async def test_no_customer_or_central_bot_can_open_owner_welcome_setup(monkeypatch):
