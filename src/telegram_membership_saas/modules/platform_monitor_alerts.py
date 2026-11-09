@@ -197,32 +197,46 @@ async def scan_platform_monitor(
                     continue
                 events = {
                     ev.kind: ev for ev in (
-                        await session.scalars(select(PlatformMonitorOutbox).where(
-                            PlatformMonitorOutbox.incident_id == incident.id,
-                        ))
+                        await session.scalars(
+                            select(PlatformMonitorOutbox)
+                            .where(PlatformMonitorOutbox.incident_id == incident.id)
+                            .with_for_update()
+                        )
                     ).all()
                 }
                 problem = events.get("problem")
-                if threshold is None or problem is None or (
-                    problem.status in {"pending", "cancelled"}
-                ):
+                if threshold is None or problem is None:
                     if problem is not None and problem.status == "pending":
                         problem.status = "cancelled"
                     incident.recovered_at = moment
                     continue
-
-                if problem.status == "sending":
-                    # Do not queue recovery until the possible in-flight alert
-                    # is acknowledged or its lease is reclaimed.
-                    incident.healthy_since = incident.healthy_since or moment
-                    continue
-                if incident.healthy_since is None:
-                    incident.healthy_since = moment
-                if moment - incident.healthy_since >= HEALTHY_FOR_RECOVERY:
+                if problem.status == "pending":
+                    # Locked row: a concurrent sender cannot claim a stale
+                    # problem between our check and cancellation.
+                    problem.status = "cancelled"
                     incident.recovered_at = moment
-                    if problem.status == "sent" and threshold is not None:
-                        session.add(_new_event(incident.id, "recovered", now=moment))
-                        created += 1
+                    continue
+
+                incident.healthy_since = incident.healthy_since or moment
+                if moment - incident.healthy_since < HEALTHY_FOR_RECOVERY:
+                    continue
+                if problem.status == "sending":
+                    # The sending process may have died after claiming. Once
+                    # its lease expires and recovery is stable, do NOT replay
+                    # an already-obsolete problem. Whether it sent is unknown;
+                    # a recovery message safely closes that possibility.
+                    if (
+                        problem.claimed_at is None
+                        or moment - problem.claimed_at < DELIVERY_LEASE
+                    ):
+                        continue
+                    problem.status = "cancelled"
+                elif problem.status not in {"sent", "cancelled"}:
+                    continue
+                incident.recovered_at = moment
+                if problem.status == "sent" or problem.attempts > 0:
+                    session.add(_new_event(incident.id, "recovered", now=moment))
+                    created += 1
                 continue
 
             if incident is None:
@@ -301,6 +315,15 @@ async def _claim_event(
         ) or (
             event.kind == "recovered" and incident.recovered_at is None
         ):
+            event.status = "cancelled"
+            return None
+        if (
+            event.kind == "problem"
+            and incident.healthy_since is not None
+            and now - incident.healthy_since >= HEALTHY_FOR_RECOVERY
+        ):
+            # An expired delivery lease never resurrects a stale alert once
+            # a sustained recovery has already been observed in the DB.
             event.status = "cancelled"
             return None
         event.status = "sending"
