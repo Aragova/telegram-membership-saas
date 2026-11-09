@@ -31,18 +31,14 @@ def rich_file_checkout_enabled(bot_id: int) -> bool:
 
 def rich_file_card_html(
     *, product_name: str, description: str | None, price: str,
-    file_count: int, preview: bool = False,
+    file_count: int,
 ) -> str:
     """Rich HTML for supported Telegram clients, never interpolating raw user HTML."""
     title = tr("💎 Покупка файла", "💎 File purchase")
     label_name = tr("🏷 Название", "🏷 Name")
     label_price = tr("💰 Цена", "💰 Price")
     label_files = tr("📎 Файлов", "📎 Files")
-    prompt = (
-        tr("✨ Предпросмотр оформления товара", "✨ Product design preview")
-        if preview else
-        tr("👇 Выберите способ оплаты ниже", "👇 Select a payment method below")
-    )
+    prompt = tr("👇 Выберите способ оплаты ниже", "👇 Select a payment method below")
     parts = [
         "<h3>" + title + "</h3>",
         "<table bordered compact>",
@@ -69,7 +65,6 @@ def rich_file_card_html(
 async def send_file_card(
     bot: Bot, *, chat_id: int, rich_html: str, legacy_html: str,
     reply_markup: InlineKeyboardMarkup,
-    preview: bool = False,
 ) -> bool:
     """Return True if Rich succeeded, False for the unchanged legacy screen.
 
@@ -78,7 +73,7 @@ async def send_file_card(
     failures (where a retry could result in duplicate messages).
     """
     if getattr(get_settings(), "rich_messages_enabled", True) and (
-        preview or rich_file_checkout_enabled(bot.id)
+        rich_file_checkout_enabled(bot.id)
     ):
         try:
             from aiogram.types import InputRichMessage
