@@ -128,7 +128,9 @@ async def test_durable_invoice_queue_owner_only_and_project_rls():
         assert await deliver_one_owner_notification(factory, project_id=project_id, bot=bot)
         assert not await deliver_one_owner_notification(factory, project_id=project_id, bot=bot)
         bot.send_message.assert_awaited_once()
-        text = bot.send_message.await_args.args[1]
+        message_call = bot.send_message.await_args
+        text = (message_call.args[1] if len(message_call.args) > 1
+                else message_call.kwargs["text"])
         assert "Счёт сформирован" in text
         assert "/c" in text  # previously queued notifications lack telegram_id
         assert "reply_markup" not in bot.send_message.await_args.kwargs
