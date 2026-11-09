@@ -823,6 +823,10 @@ def create_telegram_commerce_router(
         if message.from_user is None:
             return
         if not _acceptable_receipt(message):
+            receipt_intents.arm(
+                bot.id, message.from_user.id, kind="subscription",
+                request_id=request_id,
+            )
             await bot.send_message(
                 chat_id=message.chat.id,
                 text=(
@@ -847,6 +851,10 @@ def create_telegram_commerce_router(
             await bot.send_message(chat_id=message.chat.id, text=_buyer_error(exc))
             return
 
+        receipt_intents.clear(
+            bot.id, message.from_user.id,
+            kind="subscription", request_id=request_id,
+        )
         delivered = 0
         for reviewer_id in submission.reviewer_telegram_ids:
             try:
