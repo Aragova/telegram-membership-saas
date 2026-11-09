@@ -16,6 +16,9 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
 )
 from telegram_membership_saas.modules.access import enqueue_due_access_recalculations
+from telegram_membership_saas.modules.platform_monitor_alerts import (
+    run_central_platform_monitor,
+)
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
     claim_next_outbox_event,
@@ -271,6 +274,7 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
     worker: asyncio.Task[None] | None = None
     polling: asyncio.Task[None] | None = None
     guard: asyncio.Task[None] | None = None
+    central_monitor: asyncio.Task[None] | None = None
 
     async def stop_dispatcher() -> None:
         if polling is not None:
@@ -288,18 +292,35 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
     try:
         await install_public_commands(bot, customer=False)
         if not current.telegram_central_access_enabled:
-            # Central ViMi Pay must remain available for every new owner,
-            # without a per-owner project UUID in deployment settings.
+            # Central ViMi Pay must remain available for every new owner.
+            # Platform alerts share THIS process; do not launch another bot
+            # scanner, Telegram poller, Supervisor or standalone service.
             polling = asyncio.create_task(
                 dispatcher.start_polling(
                     bot, handle_signals=False, handle_as_tasks=False,
                     close_bot_session=False,
                 )
             )
+            if current.platform_owner_telegram_id is not None:
+                central_monitor = asyncio.create_task(
+                    run_central_platform_monitor(
+                        factory, bot=bot, settings=current,
+                    )
+                )
             try:
                 await asyncio.shield(polling)
             finally:
-                await complete_cleanup(stop_dispatcher())
+                async def stop_central() -> None:
+                    try:
+                        await stop_dispatcher()
+                    finally:
+                        cancel_once(central_monitor)
+                        if central_monitor is not None:
+                            await asyncio.gather(
+                                central_monitor, return_exceptions=True,
+                            )
+
+                await complete_cleanup(stop_central())
         else:
             project_id = current.telegram_project_id
             assert project_id is not None
