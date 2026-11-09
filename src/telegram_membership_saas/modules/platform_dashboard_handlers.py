@@ -305,8 +305,8 @@ def _monitoring_diagnosis(
     if runtime == "running" and elapsed is None:
         return (
             tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
-            tr("Нет сохранённого времени heartbeat; проверьте Supervisor.",
-               "No recorded heartbeat timestamp; check Supervisor."),
+            tr("Нет подтверждения: время последнего сигнала отсутствует; проверьте Supervisor.",
+               "Runtime is not confirmed: no recorded heartbeat; check Supervisor."),
         )
     if runtime in {"stale", "running"}:
         if elapsed is not None and elapsed <= _STARTUP_GRACE:
