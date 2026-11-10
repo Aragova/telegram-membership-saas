@@ -43,6 +43,12 @@ from telegram_membership_saas.modules.pricing import (
     PlanPrice,
     ProjectEnabledCurrency,
 )
+from telegram_membership_saas.modules.platform_saas_billing_models import (
+    PlatformSaasInvoice,
+    PlatformSaasInvoiceLine,
+    PlatformSaasOwnerExemption,
+    PlatformSaasReceipt,
+)
 from telegram_membership_saas.modules.projects import Project, ProjectMember
 from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.subscriptions import Subscription
@@ -78,6 +84,10 @@ __all__ = [
     "PaymentMethod",
     "PaymentMethodCurrency",
     "PaymentRequest",
+    "PlatformSaasInvoice",
+    "PlatformSaasInvoiceLine",
+    "PlatformSaasOwnerExemption",
+    "PlatformSaasReceipt",
     "Plan",
     "PlanPrice",
     "ProjectEnabledCurrency",
