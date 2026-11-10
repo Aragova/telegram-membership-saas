@@ -176,7 +176,6 @@ def upgrade() -> None:
           trial_started timestamptz;
           invoice_id uuid;
           invoice_status text;
-          source_project uuid;
           exemption text;
           service_key text;
         BEGIN
@@ -188,13 +187,14 @@ def upgrade() -> None:
               USING ERRCODE='22023';
           END IF;
           PERFORM pg_advisory_xact_lock(
-            hashtextextended('saas:bot:'||p_bot::text||':'||p_start::text,0)
+            hashtextextended('saas:bot:'||p_bot::text,0)
           );
-          SELECT b.project_id, p.merchant_id, p.owner_user_id
+          SELECT b.project_id, p.merchant_id, p.owner_user_id,
+                 b.created_at AS connected_at
           INTO entry FROM public.bot_instances b
           JOIN public.projects p ON p.id=b.project_id
           WHERE b.id=p_bot AND b.status='registered';
-          IF entry.project_id IS NULL THEN
+          IF NOT FOUND OR p_start<entry.connected_at THEN
             RAISE EXCEPTION 'Connected billable bot required'
               USING ERRCODE='22023';
           END IF;
@@ -224,6 +224,18 @@ def upgrade() -> None:
               USING ERRCODE='42501';
           END IF;
           service_key := 'bot:'||p_bot::text||':'||p_start::text;
+          -- Prevent overlapping monthly charges for the same connection.
+          IF EXISTS(
+            SELECT 1 FROM public.platform_saas_invoices prior
+            WHERE prior.bot_instance_id=p_bot
+              AND prior.kind='prepayment' AND prior.status<>'void'
+              AND prior.invoice_key<>service_key
+              AND tstzrange(prior.period_start,prior.period_end,'[)')
+                  && tstzrange(p_start,p_end,'[)')
+          ) THEN
+            RAISE EXCEPTION 'Overlapping service invoices are forbidden'
+              USING ERRCODE='23514';
+          END IF;
           SELECT i.id,i.status INTO invoice_id,invoice_status
             FROM public.platform_saas_invoices i
             WHERE i.invoice_key=service_key FOR UPDATE;
@@ -296,7 +308,7 @@ def upgrade() -> None:
           period_start := p_month::timestamp AT TIME ZONE 'Europe/Moscow';
           period_end := (p_month::timestamp + interval '1 month')
                         AT TIME ZONE 'Europe/Moscow';
-          IF period_start<first_charge OR period_end>clock_timestamp() THEN
+          IF period_end<=first_charge OR period_end>clock_timestamp() THEN
             RAISE EXCEPTION 'Commission month not closed or before rollout'
               USING ERRCODE='42501';
           END IF;
