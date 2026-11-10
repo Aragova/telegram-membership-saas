@@ -15,6 +15,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    UniqueConstraint,
     Uuid,
     func,
     text,
@@ -80,6 +81,14 @@ class PlatformSaasInvoice(Base):
             "period_end > period_start AND due_at >= period_start",
             name="ck_saas_invoice_period",
         ),
+        Index(
+            "uq_saas_bot_service_month", "bot_instance_id", "period_start",
+            unique=True, postgresql_where=text("kind = 'prepayment'"),
+        ),
+        Index(
+            "uq_saas_merchant_commission_month", "merchant_id", "period_start",
+            unique=True, postgresql_where=text("kind = 'commission'"),
+        ),
         Index("ix_saas_invoice_owner", "owner_user_id", "due_at"),
         Index("ix_saas_invoice_merchant", "merchant_id", "period_start"),
     )
@@ -127,9 +136,9 @@ class PlatformSaasInvoiceLine(Base):
                 "source_kind IN ('subscription','file_manual')",
             ),
         ),
-        Index(
-            "uq_saas_invoice_line_local_source",
-            "invoice_id", "source_kind", "source_id", unique=True,
+        UniqueConstraint(
+            "invoice_id", "source_kind", "source_id",
+            name="uq_saas_invoice_line_local_source",
         ),
     )
     id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
