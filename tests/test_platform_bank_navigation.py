@@ -36,14 +36,18 @@ async def test_global_navigation_clears_bank_editor_for_owner_language_and_platf
 async def test_global_commands_cancel_pending_bank_entry_but_cancel_stays_available():
     navigation = ui.PlatformBankNavigationMiddleware()
     called = AsyncMock()
-    for command in ("/billing", "/platform", "/start", "/menu", "/help"):
+    for command in (
+        "/billing", "/platform", "/start", "/menu", "/help",
+        "/billing please", "  /billing",
+    ):
         navigation.pending.add(7777)
         await navigation(called, _message(command), {})
         assert 7777 not in navigation.pending
-    navigation.pending.add(7777)
-    await navigation(called, _message("/cancel"), {})
-    assert 7777 in navigation.pending
-    assert called.await_count == 6
+    for command in ("/cancel", "/cancel@vimipay_bot", "/cancel please"):
+        navigation.pending.add(7777)
+        await navigation(called, _message(command), {})
+        assert 7777 in navigation.pending
+    assert called.await_count == 10
 
 
 async def test_editor_filter_rejects_unrelated_commands_while_pending():
@@ -51,9 +55,12 @@ async def test_editor_filter_rejects_unrelated_commands_while_pending():
     navigation.pending.add(7777)
     guard = ui._PlatformBankEntryFilter(navigation.pending)
     assert not await guard(_message("/billing"))
+    assert not await guard(_message("  /billing please"))
     assert not await guard(_message("/platform"))
     assert not await guard(_message("/start"))
     assert await guard(_message("/cancel"))
+    assert await guard(_message("/cancel@vimipay_bot"))
+    assert await guard(_message("/cancel please"))
     assert await guard(_message("Bank recipient, account 12345"))
     assert not await guard(_message("Bank recipient, account 12345", uid=8888))
 
@@ -90,3 +97,38 @@ async def test_platform_navigation_leaves_bank_editor_even_without_dispatcher(mo
     await handler(navigate, bot)
     assert 7777 not in navigation.pending
     assert answer.await_count == 2
+
+
+async def test_editor_accepts_cancel_forms_but_never_writes_bank_details(monkeypatch):
+    navigation = ui.PlatformBankNavigationMiddleware()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    save = AsyncMock()
+    monkeypatch.setattr(ui, "configure_platform_saas_payment", save)
+    monkeypatch.setattr(
+        ui, "platform_saas_payment_details",
+        AsyncMock(return_value={
+            "configured": False, "instructions": None,
+            "billing_enabled": False, "trial_enabled": False,
+            "holds_enabled": False,
+        }),
+    )
+    router = ui.create_platform_dashboard_router(
+        MagicMock(), settings=Settings(platform_owner_telegram_id=7777),
+        bank_navigation=navigation,
+    )
+    bank_handler = next(
+        entry.callback for entry in router.message.handlers
+        if entry.callback.__name__ == "platform_bank_entry"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    for command in ("/cancel", "/cancel@vimipay_bot", "/cancel please"):
+        navigation.pending.add(7777)
+        message = _message(command)
+        await bank_handler(message, bot)
+        assert 7777 not in navigation.pending
+    for command in ("/billing", " /billing please", "/platform"):
+        navigation.pending.add(7777)
+        await bank_handler(_message(command), bot)
+        assert 7777 not in navigation.pending
+    save.assert_not_awaited()
