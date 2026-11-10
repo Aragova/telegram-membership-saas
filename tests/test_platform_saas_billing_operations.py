@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_platform_saas_invoice_rls import _project, _tid
@@ -63,8 +64,8 @@ async def test_disabled_billing_denies_invoice_writes_and_tenant_report():
                 ), {"id": operator_tg})
                 await _actor(admin, operator)
                 state = (await admin.execute(text(
-                    "SELECT public.platform_saas_invoice_report(0,6)"
-                ))).scalar_one()
+                    "SELECT public.platform_saas_invoice_report(0,6) AS snapshot"
+                ).columns(snapshot=JSONB))).scalar_one()
                 assert state["enabled"] is False
                 with pytest.raises(DBAPIError) as error:
                     async with admin.begin_nested():
