@@ -44,6 +44,7 @@ _STATISTICS = (
     "Мои покупки", "My purchases",
     "Статистика бота", "Bot statistics",
     "ViMi Pay · Счета", "ViMi Pay · Invoices",
+    "ViMi Pay · Реквизиты", "ViMi Pay · Payment instructions",
     "Мониторинг · ViMi Pay", "Monitoring · ViMi Pay",
 )
 
