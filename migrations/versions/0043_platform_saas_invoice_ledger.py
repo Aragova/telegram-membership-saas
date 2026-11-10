@@ -106,6 +106,16 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
+        "uq_saas_bot_service_month", "platform_saas_invoices",
+        ["bot_instance_id", "period_start"], unique=True,
+        postgresql_where=sa.text("kind = 'prepayment'"),
+    )
+    op.create_index(
+        "uq_saas_merchant_commission_month", "platform_saas_invoices",
+        ["merchant_id", "period_start"], unique=True,
+        postgresql_where=sa.text("kind = 'commission'"),
+    )
+    op.create_index(
         "ix_saas_invoice_owner", "platform_saas_invoices",
         ["owner_user_id", "due_at"],
     )
