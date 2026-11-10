@@ -37,6 +37,9 @@ from telegram_membership_saas.modules.payments import (
     render_manual_instruction,
 )
 from telegram_membership_saas.modules.payments.request_service import require_payment_permission
+from telegram_membership_saas.modules.platform_saas_hold_errors import (
+    translate_commercial_hold,
+)
 from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects import Permission, Project, ProjectMember
 from telegram_membership_saas.modules.telegram_commerce.service import format_amount
@@ -260,6 +263,7 @@ async def set_manual_price(
         return amount
 
 
+@translate_commercial_hold
 async def create_manual_order(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, product_id: UUID,

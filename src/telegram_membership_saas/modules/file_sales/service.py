@@ -38,6 +38,9 @@ from telegram_membership_saas.modules.payments import (
     PaymentMethodCurrency,
     PaymentMethodStatus,
 )
+from telegram_membership_saas.modules.platform_saas_hold_errors import (
+    translate_commercial_hold,
+)
 from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects.models import Project, ProjectStatus
 from telegram_membership_saas.modules.telegram_admin.service import (
@@ -710,6 +713,7 @@ async def _load_paid(
     )
 
 
+@translate_commercial_hold
 async def create_stars_order(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, product_id: UUID,

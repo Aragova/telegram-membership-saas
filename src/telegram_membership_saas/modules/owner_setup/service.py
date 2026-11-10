@@ -568,6 +568,13 @@ async def register_new_owner_bot(
         # The same DB rollback also removes the newly created project.
         raise ValueError("Этот Telegram-бот уже подключён в другом проекте") from None
     except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "P6711":
+            raise ValueError(
+                "Подключение нового бота временно ограничено: у владельца "
+                "есть просроченный счёт ViMi Pay. Действующие боты и "
+                "подписчики продолжают работать. / New bot connections "
+                "are paused until the owner's overdue invoice is paid."
+            ) from None
         if getattr(exc.orig, "sqlstate", None) == "P6703":
             raise ValueError(
                 "Во время бесплатного ознакомления доступен только один бот "
@@ -749,6 +756,13 @@ async def verify_channel_and_add(
         try:
             await session.flush()
         except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == "P6711":
+                raise ValueError(
+                    "Добавление нового канала временно ограничено из-за "
+                    "просроченного счёта ViMi Pay. Действующие каналы и "
+                    "подписчики продолжают работать. / New channel connections "
+                    "are paused until the owner's overdue invoice is paid."
+                ) from None
             if getattr(exc.orig, "sqlstate", None) == "P6501":
                 raise ValueError(
                     "Этот канал уже использовался в другом вашем подключении. "

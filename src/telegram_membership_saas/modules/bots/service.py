@@ -220,6 +220,13 @@ async def register_customer_bot(
         # Do not disclose the other tenant or SQL parameters in an exception chain.
         raise ValueError("Этот Telegram-бот уже привязан к другому проекту") from None
     except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "P6711":
+            raise ValueError(
+                "Подключение нового бота временно ограничено: у владельца "
+                "есть просроченный счёт ViMi Pay. Действующие боты и "
+                "подписчики продолжают работать. / New bot connections "
+                "are paused until the owner's overdue invoice is paid."
+            ) from None
         if getattr(exc.orig, "sqlstate", None) == "P6703":
             raise ValueError(
                 "Во время бесплатного ознакомления доступен только один бот "
