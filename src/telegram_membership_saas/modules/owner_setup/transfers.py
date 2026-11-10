@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from aiogram import Bot
 from pydantic import SecretStr
 from sqlalchemy import func, or_, select, text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
@@ -383,9 +384,18 @@ async def finalize_transfer(
         # the old owner stops being able to SELECT the changed row. Only
         # this narrowly privileged DB function performs the final update,
         # revalidates both participants and consumes the consent record.
-        await session.execute(text(
-            "SELECT public.complete_bot_ownership_transfer(:pid, :tid)"
-        ), {"pid": project_id, "tid": transfer_id})
+        try:
+            await session.execute(text(
+                "SELECT public.complete_bot_ownership_transfer(:pid, :tid)"
+            ), {"pid": project_id, "tid": transfer_id})
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == "P6703":
+                raise ValueError(
+                    "Получателю во время 72-часового теста разрешён один бот. "
+                    "Передача пока недоступна. / Trial recipients may connect "
+                    "only one bot."
+                ) from None
+            raise
         # Merchant SECURITY DEFINER project trigger atomically closes the
         # old owner's historical period, opens the new one, and consumes the
         # ACCEPTED transfer (clearing the encrypted pending token).
