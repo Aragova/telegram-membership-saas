@@ -24,6 +24,7 @@ from telegram_membership_saas.modules.owner_setup.transfer_handlers import (
     create_transfer_router,
 )
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
+    PlatformBankNavigationMiddleware,
     create_platform_dashboard_router,
 )
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
@@ -55,10 +56,16 @@ def create_dispatcher(
             render_main_menu=render_main_menu,
         ))
         if get_settings().platform_owner_telegram_id is not None:
-            # Only the configured central control bot gets the platform panel;
-            # connected buyer bots never include these routes.
+            # Navigation through ANY central router must cancel the operator
+            # bank-entry form before another message can be interpreted as
+            # payment details. Connected buyer bots never use this middleware.
+            bank_navigation = PlatformBankNavigationMiddleware()
+            dispatcher.callback_query.outer_middleware(bank_navigation)
+            dispatcher.message.outer_middleware(bank_navigation)
             dispatcher.include_router(
-                create_platform_dashboard_router(session_factory)
+                create_platform_dashboard_router(
+                    session_factory, bank_navigation=bank_navigation,
+                )
             )
         # This dispatcher always belongs to the central tms-bot process.
         # Its legacy deployment may still have TMS_TELEGRAM_PROJECT_ID set,
