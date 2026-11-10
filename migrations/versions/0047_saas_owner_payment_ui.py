@@ -96,7 +96,13 @@ def upgrade() -> None:
           SELECT instructions INTO bank
             FROM public.platform_saas_payment_details WHERE id=1;
           RETURN jsonb_build_object(
-            'configured',bank IS NOT NULL, 'instructions',bank
+            'configured',bank IS NOT NULL, 'instructions',bank,
+            'billing_enabled',(SELECT enabled
+              FROM public.platform_saas_billing_control WHERE id=1),
+            'trial_enabled',(SELECT enabled
+              FROM public.platform_saas_access_policy WHERE id=1),
+            'holds_enabled',(SELECT enabled
+              FROM public.platform_saas_hold_control WHERE id=1)
           );
         END;
         $fn$
