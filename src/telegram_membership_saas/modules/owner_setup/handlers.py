@@ -203,10 +203,10 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
     list_owner_methods,
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
+from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_statements,
 )
-from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
