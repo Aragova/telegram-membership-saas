@@ -3,9 +3,9 @@
 All privileged ledger writes run inside a rollback-only transaction. They
 cannot enable the SaaS billing product or touch real tenant transactions.
 """
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-import os
 from uuid import uuid4
 
 import pytest
