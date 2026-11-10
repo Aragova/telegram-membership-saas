@@ -33,11 +33,11 @@ from telegram_membership_saas.modules.platform_dashboard import (
     is_configured_platform_owner,
     platform_report,
 )
+from telegram_membership_saas.modules.platform_risk import platform_merchant_risk_report
 from telegram_membership_saas.modules.platform_saas_billing_service import (
     confirm_saas_receipt,
     platform_saas_invoice_report,
 )
-from telegram_membership_saas.modules.platform_risk import platform_merchant_risk_report
 from telegram_membership_saas.modules.platform_usage import (
     BOT_EVENT_LABELS,
     EVENT_LABELS,
