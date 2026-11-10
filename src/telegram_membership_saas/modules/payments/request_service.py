@@ -13,10 +13,10 @@ from telegram_membership_saas.modules.payments.models import (
     PaymentRequest,
     PaymentRequestStatus,
 )
+from telegram_membership_saas.modules.plans import Plan, PlanStatus
 from telegram_membership_saas.modules.platform_saas_hold_errors import (
     translate_commercial_hold,
 )
-from telegram_membership_saas.modules.plans import Plan, PlanStatus
 from telegram_membership_saas.modules.pricing import (
     CurrencyAsset,
     CurrencyAssetStatus,
