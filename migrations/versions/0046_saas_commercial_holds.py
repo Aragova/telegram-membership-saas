@@ -136,10 +136,13 @@ def upgrade() -> None:
           at_time timestamptz;
         BEGIN
           IF TG_OP<>'INSERT' THEN RETURN NEW; END IF;
-          IF TG_TABLE_NAME='resources'
-             AND NEW.resource_type NOT IN (
-               'telegram_channel','telegram_group'
-             ) THEN RETURN NEW; END IF;
+          -- PL/pgSQL can resolve a NEW field before evaluating AND.
+          -- Only the resources row type has resource_type, so branch first.
+          IF TG_TABLE_NAME='resources' THEN
+            IF NEW.resource_type NOT IN (
+              'telegram_channel','telegram_group'
+            ) THEN RETURN NEW; END IF;
+          END IF;
           SELECT p.owner_user_id,p.merchant_id
             INTO liable_owner,merchant
           FROM public.projects p WHERE p.id=NEW.project_id;
