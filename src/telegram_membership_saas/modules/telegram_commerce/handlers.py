@@ -31,6 +31,7 @@ from telegram_membership_saas.manual_checkout_ui import (
     retire_cancelled_checkout,
     send_manual_checkout,
 )
+from telegram_membership_saas.modules.platform_saas_hold_errors import CommercialHoldError
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.account import (
     ACCOUNT_MAX_PAGE,
@@ -293,6 +294,10 @@ def _customer_review_result_text(result: ReviewResult, *, approve: bool) -> str:
 
 def _buyer_error(exc: Exception) -> str:
     """Return safe English UI errors; do not expose unexpected service internals."""
+    # Only this DB-authenticated and locally translated exception may be
+    # shown verbatim in English. Arbitrary ValueError text is still hidden.
+    if isinstance(exc, CommercialHoldError):
+        return str(exc)
     if current_language() == "ru":
         return str(exc)
     translated = {
