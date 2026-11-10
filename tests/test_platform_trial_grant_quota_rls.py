@@ -50,7 +50,9 @@ async def _set_policy(admin_engine, *, active, effective_at=None):
         })
 
 
-async def _connect(factory, actor, project, *, status="registered"):
+async def _connect(
+    factory, actor, project, *, status="registered", backdated=False,
+):
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor, project_id=project),
     ) as session:
@@ -59,6 +61,8 @@ async def _connect(factory, actor, project, *, status="registered"):
             username="trial_test_bot", display_name="Trial test bot",
             token_ciphertext="placeholder-do-not-use", status=status,
         )
+        if backdated:
+            bot.created_at = datetime.now(UTC) - timedelta(days=30)
         session.add(bot)
         await session.flush()
         return bot.id
@@ -110,6 +114,21 @@ async def test_trial_is_opt_in_once_per_owner_and_first_bot_only():
             await _connect(factory, owner, project_b)
         assert getattr(error.value.orig, "sqlstate", None) == "P6703"
         assert await _count_claims(admin_engine, owner) == 1
+        # Falsifying a row's created_at must not bypass trial enrollment.
+        spoof_owner = await ensure_telegram_actor(
+            factory, telegram_id=tg_id(), username=None, first_name=None,
+        )
+        spoof_first = await create_owner_project(
+            factory, actor_id=spoof_owner, name="Backdated bot origin",
+        )
+        spoof_second = await create_owner_project(
+            factory, actor_id=spoof_owner, name="Second backdated origin",
+        )
+        await _connect(factory, spoof_owner, spoof_first, backdated=True)
+        assert await _count_claims(admin_engine, spoof_owner) == 1
+        with pytest.raises(DBAPIError) as error:
+            await _connect(factory, spoof_owner, spoof_second, backdated=True)
+        assert getattr(error.value.orig, "sqlstate", None) == "P6703"
         # A pre-rollout user's first trial must not be backdated or issued.
         await _connect(factory, old_owner, grandfathered, status="disabled")
         assert await _count_claims(admin_engine, old_owner) == 0
@@ -194,6 +213,25 @@ async def test_combined_free_grant_and_plan_activation_quota_is_per_channel():
             customer_id=customer_d, resource_id=channel_b, days=7,
         )
         assert result.changed
+        # Revoking a counted free entitlement must never permit a second
+        # activation, nor may a revoked manual grant be resurrected by SQL.
+        with pytest.raises(DBAPIError) as error:
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                old = await session.get(EntitlementGrant, third.grant_id)
+                old.status = "active"
+                old.revoked_at = None
+                await session.flush()
+        assert getattr(error.value.orig, "sqlstate", None) == "42501"
+        with pytest.raises(DBAPIError) as error:
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                old = await session.get(EntitlementGrant, third.grant_id)
+                old.customer_id = customer_d
+                await session.flush()
+        assert getattr(error.value.orig, "sqlstate", None) == "42501"
         async with admin_engine.connect() as admin:
             stats = (await admin.execute(text("""
                 SELECT channel_chat_id,count(*) AS used
