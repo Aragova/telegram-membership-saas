@@ -130,6 +130,7 @@ def upgrade() -> None:
         DECLARE
           liable_owner uuid;
           merchant uuid;
+          caller_project uuid;
           bot_uuid uuid;
           bot_count bigint;
           project_hold text;
@@ -142,6 +143,15 @@ def upgrade() -> None:
             IF NEW.resource_type NOT IN (
               'telegram_channel','telegram_group'
             ) THEN RETURN NEW; END IF;
+          END IF;
+          -- BEFORE INSERT SECURITY DEFINER triggers fire before RLS.
+          -- A forged project id without a bound tenant/system project
+          -- scope must never reveal an owner's private overdue status.
+          caller_project:=NULLIF(
+            current_setting('app.current_project_id',true),''
+          )::uuid;
+          IF caller_project IS DISTINCT FROM NEW.project_id THEN
+            RETURN NEW; -- existing tenant RLS rejects the unscopeable write
           END IF;
           SELECT p.owner_user_id,p.merchant_id
             INTO liable_owner,merchant
