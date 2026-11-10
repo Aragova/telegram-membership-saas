@@ -10,7 +10,7 @@ from html import escape
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from aiogram import Bot, F, Router
+from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
@@ -755,6 +755,28 @@ def _saas_invoice_text(report) -> str:
     return "\n".join(lines)
 
 
+class PlatformBankNavigationMiddleware(BaseMiddleware):
+    """Discard a pending bank edit whenever central UI navigation occurs.
+
+    Installed on the dispatcher, not only on the platform router, so own:/lng:
+    callbacks and commands cannot leave a stale payment editor intercepting
+    unrelated text. The editor remains an explicit user-initiated one-shot flow.
+    """
+
+    def __init__(self) -> None:
+        self.pending: set[int] = set()
+
+    async def __call__(self, handler, event, data):
+        user = getattr(event, "from_user", None)
+        if user is not None:
+            if isinstance(event, CallbackQuery):
+                self.pending.discard(user.id)
+            elif isinstance(event, Message) and (event.text or "").startswith("/"):
+                if (event.text or "").split(maxsplit=1)[0].split("@")[0] != "/cancel":
+                    self.pending.discard(user.id)
+        return await handler(event, data)
+
+
 class _PlatformBankEntryFilter(BaseFilter):
     def __init__(self, pending: set[int]) -> None:
         self.pending = pending
@@ -765,6 +787,10 @@ class _PlatformBankEntryFilter(BaseFilter):
             and message.chat.type == "private"
             and message.from_user.id in self.pending
             and message.text is not None
+            # Never let a slash command become bank instructions. /cancel
+            # deliberately remains the only accepted editor command.
+            and (not message.text.startswith("/")
+                 or message.text.split(maxsplit=1)[0].split("@")[0] == "/cancel")
         )
 
 
@@ -809,10 +835,13 @@ def _platform_bank_text(details: dict) -> str:
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
+    bank_navigation: PlatformBankNavigationMiddleware | None = None,
 ) -> Router:
     config = settings or get_settings()
     router = Router(name="platform-dashboard")
-    pending_bank_entry: set[int] = set()
+    pending_bank_entry = (
+        bank_navigation.pending if bank_navigation is not None else set()
+    )
 
     async def _show_bank_screen(bot: Bot, user, message_id: int | None = None) -> None:
         actor_id = await ensure_telegram_actor(
@@ -883,6 +912,8 @@ def create_platform_dashboard_router(
         Command("start", "platform"), PlatformOwnerStartFilter(config),
     )
     async def platform_start(message: Message, bot: Bot) -> None:
+        if message.from_user is not None:
+            pending_bank_entry.discard(message.from_user.id)
         try:
             await set_chat_commands(
                 bot, chat_id=message.from_user.id, role="platform",
@@ -956,6 +987,9 @@ def create_platform_dashboard_router(
                 show_alert=True,
             )
             return
+        # Also cover standalone router tests that bypass dispatcher middleware.
+        # All platform navigations leave the form; bankedit reopens it below.
+        pending_bank_entry.discard(query.from_user.id)
         tokens = (query.data or "").split(":")
         message_id = getattr(query.message, "message_id", None)
         try:
