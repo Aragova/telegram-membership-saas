@@ -10,8 +10,8 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
-
 from test_platform_saas_invoice_rls import _project, _tid
+
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory
 
