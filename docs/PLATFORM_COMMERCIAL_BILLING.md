@@ -73,14 +73,21 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 
 ## 7a. Read-only launch audit (PR #119 candidate, 2026-11-10)
 
-The existing **👑 Platform → Finance → Invoices → Payment instructions** screen
-also displays the operator's registered bot/channel exemption inventory.
-The operator-only PostgreSQL function
-`platform_saas_exemption_preflight()` returns aggregate counts of registered
-operator-owned bots, verified creator-exemption records and bots requiring
-manual ownership review, plus up to eight usernames for diagnosis.
-It performs **no SQL writes**, does not issue bills, and does not enable
-billing, trial quotas or overdue holds.
+The existing **👑 Platform → Finance → Invoices** menu has two distinct
+functions: **Payment instructions** shows only banking details and their
+edit/clear actions; **Exemption audit** shows the registered bots attached
+to the authenticated platform operator, the verified exemption count, and
+unverified bots across compact pages of eight. These are sibling screens
+inside the same finance menu, not new top-level features or duplicate buttons.
+The read-only SQL function `platform_saas_exemption_preflight_page(page,size)`
+enforces operator-only access and scopes the list to the authenticated owner.
+Earlier aggregate-only `platform_saas_exemption_preflight()` remains compatible
+but is no longer mixed into the bank editor.
+
+Do not label every connected bot a Telegram creator-owned channel; the
+registered account's role is not creator verification. The audit has no
+self-service waiver button. It **does not write data**, issue bills, or
+enable billing, trials or holds.
 
 These counts are **not proof of Telegram creator status**. Verification
 requires trustworthy Telegram creator evidence and a separate controlled
