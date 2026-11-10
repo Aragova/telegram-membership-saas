@@ -18,6 +18,9 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.platform_saas_hold_errors import (
+    translate_commercial_hold,
+)
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.file_sales.manual_models import (
     FileManualOrder,
@@ -710,6 +713,7 @@ async def _load_paid(
     )
 
 
+@translate_commercial_hold
 async def create_stars_order(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, product_id: UUID,
