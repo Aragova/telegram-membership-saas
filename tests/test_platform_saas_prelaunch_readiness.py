@@ -82,6 +82,17 @@ async def test_prelaunch_report_is_read_only_owner_scoped_and_exemption_specific
                 assert first["operator_bots"] == 2
                 assert first["pending"] == 2
 
+                # CI provisions membership_runtime after migrations.
+                # Execute through the real restricted role, not only the
+                # privileged migration connection used by other tests.
+                await admin.execute(text("SET LOCAL ROLE membership_runtime"))
+                try:
+                    runtime_page = await _page(admin, 0, 1)
+                    assert runtime_page["operator_bots"] == 2
+                    assert runtime_page["pending"] == 2
+                finally:
+                    await admin.execute(text("RESET ROLE"))
+
                 with pytest.raises(DBAPIError) as error:
                     async with admin.begin_nested():
                         await _page(admin, -1, 8)
