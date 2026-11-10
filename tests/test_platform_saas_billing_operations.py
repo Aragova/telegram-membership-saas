@@ -143,7 +143,7 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                 await admin.execute(text(
                     "UPDATE platform_saas_billing_control SET "
                     "enabled=true,effective_from=:start WHERE id=1"
-                ), {"start": now - timedelta(days=1)})
+                ), {"start": now - timedelta(days=120)})
                 await admin.execute(text("""
                     INSERT INTO merchant_platform_trial_claims(
                         id,merchant_id,owner_user_id,policy_key,scope,claimed_at
@@ -151,9 +151,22 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                               'owner',:claimed)
                 """), {
                     "id": uuid4(), "merchant": merchant_id,
-                    "owner": merchant, "claimed": now - timedelta(days=10),
+                    "owner": merchant, "claimed": now - timedelta(days=130),
                 })
                 await _actor(admin, operator)
+                # A closed empty commission month must produce no invoice,
+                # and must not accidentally match another invoice_key.
+                last_month = (
+                    now.date().replace(day=1) - timedelta(days=1)
+                ).replace(day=1)
+                no_commission = (await admin.execute(text(
+                    "SELECT public.platform_saas_issue_commission_invoice("
+                    ":merchant,:owner,:month,CAST('{}' AS jsonb))"
+                ), {
+                    "merchant": merchant_id, "owner": merchant,
+                    "month": last_month,
+                })).scalar_one()
+                assert no_commission is None
                 own = (await admin.execute(text(
                     "SELECT public.platform_saas_issue_bot_invoice("
                     ":bot,:start,:end)"
