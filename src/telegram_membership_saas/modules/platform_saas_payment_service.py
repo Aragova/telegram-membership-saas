@@ -43,13 +43,20 @@ async def platform_saas_payment_details(
     stmt = text(
         "SELECT public.platform_saas_payment_details_read() AS data"
     ).columns(data=JSONB)
+    preflight_stmt = text(
+        "SELECT public.platform_saas_exemption_preflight() AS data"
+    ).columns(data=JSONB)
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_user_id),
     ) as session:
         result = (await session.execute(stmt)).scalar_one()
+        preflight = (await session.execute(preflight_stmt)).scalar_one()
     if not isinstance(result, dict):
         raise RuntimeError("Invalid platform payment instructions")
-    return result
+    if not isinstance(preflight, dict):
+        raise RuntimeError("Invalid platform exemption preflight")
+    # Visible only to the platform owner; no invoice creation or policy write.
+    return {**result, "preflight": preflight}
 
 
 async def configure_platform_saas_payment(

@@ -803,10 +803,17 @@ class _PlatformBankEntryFilter(BaseFilter):
 
 
 def _platform_bank_text(details: dict) -> str:
+    """Existing owner-only bank screen with read-only launch verification."""
     configured = bool(details["configured"])
     state = tr("✅ Указаны", "✅ Configured") if configured else tr(
         "⚪ Не указаны", "⚪ Not configured",
     )
+
+    def _switch(enabled: bool) -> str:
+        return tr("✅ вкл.", "✅ ON") if enabled else tr(
+            "⚪ выкл.", "⚪ OFF",
+        )
+
     lines = [
         tr("💳 <b>ViMi Pay · Реквизиты</b>",
            "💳 <b>ViMi Pay · Payment instructions</b>"),
@@ -814,6 +821,7 @@ def _platform_bank_text(details: dict) -> str:
         "",
     ]
     if configured:
+        # Content is owner-authored; preserve it verbatim and escape HTML.
         lines.append("<pre>" + escape(str(details["instructions"])) + "</pre>")
     else:
         lines.append(tr(
@@ -822,19 +830,60 @@ def _platform_bank_text(details: dict) -> str:
         ))
     lines.extend([
         "",
-        tr("Подготовка к запуску:", "Launch readiness:"),
-        "• " + tr("Счета: ", "Billing: ")
-        + ("✅ ON" if details["billing_enabled"] else "⚪ OFF"),
-        "• " + tr("Тестовый период: ", "Trial: ")
-        + ("✅ ON" if details["trial_enabled"] else "⚪ OFF"),
-        "• " + tr("Ограничения: ", "Holds: ")
-        + ("✅ ON" if details["holds_enabled"] else "⚪ OFF"),
+        tr("<b>Подготовка к запуску</b>", "<b>Launch readiness</b>"),
+        tr("Счета: ", "Billing: ") + _switch(bool(details["billing_enabled"])),
+        tr("Тестовый период: ", "Trial: ")
+        + _switch(bool(details["trial_enabled"])),
+        tr("Ограничения: ", "Holds: ")
+        + _switch(bool(details["holds_enabled"])),
+    ])
+    preflight = details.get("preflight")
+    if isinstance(preflight, dict):
+        lines.extend([
+            "",
+            tr("<b>Проверка собственных каналов</b>",
+               "<b>Platform-owned channel verification</b>"),
+            tr("Подключённых своих ботов: ", "Operator-owned bots: ")
+            + str(int(preflight["operator_bots"])),
+            tr("Освобождение подтверждено: ", "Verified exemptions: ")
+            + str(int(preflight["verified"])),
+            tr("Нужна проверка: ", "Pending review: ")
+            + str(int(preflight["pending"])),
+        ])
+        pending = preflight.get("pending_bots") or []
+        if pending:
+            for item in pending[:8]:
+                username = escape(str(item.get("username", ""))[:64])
+                label = tr("проверить владельца", "verify ownership")
+                if item.get("state") == "needs_review":
+                    label = tr("проверить канал", "review channel")
+                lines.append("• @" + username + " · " + label)
+            if int(preflight["pending"]) > len(pending):
+                lines.append(tr("Показаны первые 8.", "First 8 shown."))
+        lines.extend([
+            "",
+            tr(
+                "<i>Статус владельца платформы сам по себе не подтверждает "
+                "владение каналом. Пока освобождение не проверено, "
+                "автоматическое выставление счетов включать нельзя.</i>",
+                "<i>Platform owner role alone is not proof of channel "
+                "ownership. Do not enable billing before exemption "
+                "verification is complete.</i>",
+            ),
+        ])
+    lines.extend([
         "",
         tr(
-            "<i>Здесь сохраняются только реквизиты. Ни один переключатель "
-            "монетизации не активируется автоматически.</i>",
-            "<i>This screen only saves bank instructions. "
-            "No commercial rollout switches are activated automatically.</i>",
+            "<i>Курсы валют для комиссий, возвраты и спорные начисления "
+            "требуют отдельной проверки перед запуском.</i>",
+            "<i>Commission FX rates, refunds and disputed charges "
+            "still require separate prelaunch verification.</i>",
+        ),
+        tr(
+            "<i>Этот экран ничего не начисляет и не включает "
+            "коммерческие ограничения.</i>",
+            "<i>This screen does not issue charges or enable "
+            "commercial restrictions.</i>",
         ),
     ])
     return "\n".join(lines)

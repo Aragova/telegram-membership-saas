@@ -1,3 +1,20 @@
+## Prelaunch exemption readiness inventory (2026-11-10)
+
+Read-only prelaunch slice: the **existing** central platform owner
+Finances → Invoices → Payment instructions page shows registered
+platform-owner bots, actual creator-exemption records, and pending review
+bots (at most 8 shown). Database function
+`platform_saas_exemption_preflight()` requires the authenticated owner,
+returns no bank details or tenant financial ledgers, and writes nothing.
+This is a verification checklist, **not** a creator-verification mechanism;
+the Telegram creator proof must be checked before making an exemption record.
+Never infer exemption from being an administrator, nor automatically charge
+an unverified platform owner. No new menus, subscription changes, trial
+enabling or overdue holds. RU/EN and native Rich are required.
+The existing billing/hold/trial flags remain OFF. Before commercial rollout,
+also verify actual bank instructions, refunds, disputes and versioned FX.
+See [PLATFORM_COMMERCIAL_BILLING.md](PLATFORM_COMMERCIAL_BILLING.md).
+
 ## PR #117: merchant invoices, owner bank instructions and notices (2026-11-10)
 
 Migration `0047_saas_owner_payment_ui` adds a single operator-controlled payment-instructions record, plus a durable, idempotent platform-invoice notification queue. These are **separate from merchant-to-customer payment methods**; no customer-facing checkout details, payment cards, or subscription access rights are changed.
