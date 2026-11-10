@@ -313,8 +313,16 @@ async def test_receipt_requires_real_owner_confirmation_and_is_immutable():
         async with tenant_session_scope(
             factory, TenantContext(user_id=merchant, project_id=project),
         ) as session:
-            with pytest.raises(DBAPIError):
-                await session.execute(text("SELECT * FROM platform_saas_receipts"))
+            # With FORCE RLS and zero tenant policies PostgreSQL may
+            # return no rows instead of raising a permission error.
+            try:
+                rows = (await session.execute(text(
+                    "SELECT * FROM platform_saas_receipts"
+                ))).all()
+            except DBAPIError:
+                pass  # Both explicit denial and an empty RLS view are safe.
+            else:
+                assert rows == []
     finally:
         await engine.dispose()
         await admin_engine.dispose()
