@@ -70,9 +70,12 @@ async def _project(factory, telegram_id):
         return user, merchant, project, bot.id, chat
 
 
-async def _invoice(admin, owner, merchant, bot, *, kind="prepayment", total="150.00"):
+async def _invoice(
+    admin, owner, merchant, bot, *,
+    kind="prepayment", total="150.00", period_start=None,
+):
     invoice_id = uuid4()
-    now = datetime.now(UTC)
+    now = period_start or datetime.now(UTC)
     await admin.execute(text("""
         INSERT INTO platform_saas_invoices
         (id,invoice_key,merchant_id,owner_user_id,kind,bot_instance_id,
@@ -157,6 +160,53 @@ async def test_own_verified_channel_is_exempt_but_unverified_is_billable():
                             "bot_fee", own_bot,
                         )
                 assert getattr(error.value.orig, "sqlstate", None) == "42501"
+
+                # A new bot in this same project must NOT inherit the
+                # first bot's creator-verified exemption.
+                replacement = uuid4()
+                await admin.execute(text("""
+                    INSERT INTO bot_instances
+                    (id,project_id,telegram_bot_id,username,
+                     display_name,token_ciphertext,status)
+                    VALUES (:id,:project,:telegram_id,'new_test_bot',
+                            'Replacement','test-only-placeholder','registered')
+                """), {
+                    "id": replacement, "project": own_project,
+                    "telegram_id": _tid(),
+                })
+                replaced_invoice = await _invoice(
+                    admin, owner, own_merchant, replacement,
+                )
+                await _line(
+                    admin, replaced_invoice, own_project, "bot_fee", replacement,
+                )
+
+                # Ending the old bot's exemption cannot make a formerly
+                # exempt service period retroactively billable.
+                (verified_at,) = (await admin.execute(text("""
+                    SELECT verified_at FROM platform_saas_owner_exemptions
+                    WHERE project_id=:p
+                """), {"p": own_project})).one()
+                exemption_end = verified_at + timedelta(minutes=10)
+                await admin.execute(text("""
+                    UPDATE platform_saas_owner_exemptions SET ended_at=:ended
+                    WHERE project_id=:p
+                """), {"ended": exemption_end, "p": own_project})
+                with pytest.raises(DBAPIError) as error:
+                    async with admin.begin_nested():
+                        await _line(
+                            admin, own_invoice, own_project, "bot_fee", own_bot,
+                        )
+                assert getattr(error.value.orig, "sqlstate", None) == "42501"
+
+                # Future periods after the exemption ends can be charged.
+                later_invoice = await _invoice(
+                    admin, owner, own_merchant, own_bot,
+                    period_start=exemption_end + timedelta(days=1),
+                )
+                await _line(
+                    admin, later_invoice, own_project, "bot_fee", own_bot,
+                )
 
                 # A channel owned by another project owner does not inherit
                 # the platform owner's exemption, even if he is an admin.
