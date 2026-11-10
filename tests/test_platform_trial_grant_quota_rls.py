@@ -521,3 +521,142 @@ async def test_incoming_project_with_two_bot_rows_cannot_start_trial(monkeypatch
         await _set_policy(admin_engine, active=False)
         await engine.dispose()
         await admin_engine.dispose()
+
+
+
+async def test_delayed_activation_cannot_issue_trial_with_an_existing_bot():
+    """An unclaimed post-cutoff bot must reserve the only 72-hour slot.
+
+    A policy enabled after effective_from, or briefly disabled, may leave
+    connected bots with no recorded trial. Their owners must not be allowed
+    to connect a second bot by claiming a new trial on that second insert.
+    """
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    try:
+        owner = await ensure_telegram_actor(
+            factory, telegram_id=tg_id(), username=None, first_name=None,
+        )
+        first_project = await create_owner_project(
+            factory, actor_id=owner, name="Delayed rollout existing bot",
+        )
+        second_project = await create_owner_project(
+            factory, actor_id=owner, name="Delayed rollout second bot",
+        )
+        # Policy is OFF, although its future configured cutoff will
+        # precede the first bot's actual connection.
+        first = await _connect(factory, owner, first_project)
+        assert await _count_claims(admin_engine, owner) == 0
+        await _set_policy(
+            admin_engine, active=True,
+            effective_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+        with pytest.raises(DBAPIError) as error:
+            await _connect(factory, owner, second_project)
+        assert getattr(error.value.orig, "sqlstate", None) == "P6703"
+        assert await _count_claims(admin_engine, owner) == 0
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=first_project),
+        ) as session:
+            assert (await session.get(BotInstance, first)) is not None
+    finally:
+        await _set_policy(admin_engine, active=False)
+        await engine.dispose()
+        await admin_engine.dispose()
+
+
+async def test_returning_original_owner_keeps_pre_rollout_grandfathering(
+    monkeypatch,
+):
+    """A project returned after rollout preserves its first owner's history."""
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    telegram_bot_id = 0
+
+    async def verify_bot(_token):
+        return VerifiedBot(
+            telegram_bot_id=telegram_bot_id,
+            username="trial_test_bot",
+            display_name="Returned legacy project",
+        )
+
+    async def verify_channel(_factory, **_kwargs):
+        return None
+
+    monkeypatch.setattr(transfer_service, "verify_telegram_bot", verify_bot)
+    monkeypatch.setattr(
+        transfer_service, "_verify_recipient_channel_admin", verify_channel,
+    )
+    monkeypatch.setattr(
+        transfer_service, "encrypt_token",
+        lambda token, key: "returned-project-credential",
+    )
+    try:
+        original, temporary, _, project, _, _, _, temporary_tid = (
+            await setup_subscriber(factory)
+        )
+        async with admin_engine.connect() as admin:
+            original_tid = (await admin.execute(text(
+                "SELECT telegram_user_id FROM telegram_users WHERE id=:user"
+            ), {"user": original})).scalar_one()
+        # Bot is originally connected and handed to a different owner while
+        # the commercial policy is still OFF.
+        bot_id = await _connect(factory, original, project)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=original, project_id=project),
+        ) as session:
+            bot = await session.get(BotInstance, bot_id)
+            telegram_bot_id = bot.telegram_bot_id
+        invite = await transfer_service.create_transfer_invite(
+            factory, actor_id=original, project_id=project,
+            recipient_telegram_id=temporary_tid,
+        )
+        await transfer_service.accept_transfer_invite(
+            factory, actor_id=temporary,
+            actor_telegram_id=temporary_tid,
+            transfer_id=invite.id, fresh_token="FIRST-LEGACY-TRANSFER",
+            encryption_key=None,
+        )
+        first_transfer = await transfer_service.finalize_transfer(
+            factory, actor_id=original, project_id=project,
+            transfer_id=invite.id,
+        )
+        assert first_transfer.status == "completed"
+
+        await _set_policy(
+            admin_engine, active=True, effective_at=datetime.now(UTC),
+        )
+        # The original owner's verified pre-rollout period in the SAME
+        # project must be considered before treating a return as new trial.
+        return_invite = await transfer_service.create_transfer_invite(
+            factory, actor_id=temporary, project_id=project,
+            recipient_telegram_id=original_tid,
+        )
+        await transfer_service.accept_transfer_invite(
+            factory, actor_id=original,
+            actor_telegram_id=original_tid,
+            transfer_id=return_invite.id,
+            fresh_token="RETURN-LEGACY-TRANSFER", encryption_key=None,
+        )
+        return_transfer = await transfer_service.finalize_transfer(
+            factory, actor_id=temporary, project_id=project,
+            transfer_id=return_invite.id,
+        )
+        assert return_transfer.status == "completed"
+        assert await _count_claims(admin_engine, original) == 0
+        # A subsequent second project also remains grandfathered and
+        # should never be given a retroactive trial invoice.
+        other_project = await create_owner_project(
+            factory, actor_id=original, name="Returned owner's project",
+        )
+        next_bot = await _connect(factory, original, other_project)
+        assert next_bot is not None
+        assert await _count_claims(admin_engine, original) == 0
+    finally:
+        await _set_policy(admin_engine, active=False)
+        await engine.dispose()
+        await admin_engine.dispose()
