@@ -755,6 +755,14 @@ def _saas_invoice_text(report) -> str:
     return "\n".join(lines)
 
 
+def _editor_command(text: str | None) -> str | None:
+    """Only a slash command at the beginning of a message is a command."""
+    value = (text or "").lstrip()
+    if not value.startswith("/"):
+        return None
+    return value.split(maxsplit=1)[0].split("@", 1)[0].lower()
+
+
 class PlatformBankNavigationMiddleware(BaseMiddleware):
     """Discard a pending bank edit whenever central UI navigation occurs.
 
@@ -771,8 +779,9 @@ class PlatformBankNavigationMiddleware(BaseMiddleware):
         if user is not None:
             if isinstance(event, CallbackQuery):
                 self.pending.discard(user.id)
-            elif isinstance(event, Message) and (event.text or "").startswith("/"):
-                if (event.text or "").split(maxsplit=1)[0].split("@")[0] != "/cancel":
+            elif isinstance(event, Message):
+                command = _editor_command(event.text)
+                if command is not None and command != "/cancel":
                     self.pending.discard(user.id)
         return await handler(event, data)
 
@@ -789,8 +798,7 @@ class _PlatformBankEntryFilter(BaseFilter):
             and message.text is not None
             # Never let a slash command become bank instructions. /cancel
             # deliberately remains the only accepted editor command.
-            and (not message.text.startswith("/")
-                 or message.text.split(maxsplit=1)[0].split("@")[0] == "/cancel")
+            and (_editor_command(message.text) in (None, "/cancel"))
         )
 
 
@@ -938,9 +946,19 @@ def create_platform_dashboard_router(
         if not is_configured_platform_owner(user.id, config):
             pending_bank_entry.discard(user.id)
             return
-        if message.text.strip() == "/cancel":
+        if _editor_command(message.text) == "/cancel":
             pending_bank_entry.discard(user.id)
             await _show_bank_screen(bot, user)
+            return
+        # Do not save slash-prefixed content as bank instructions, even
+        # when this callback is invoked without the router's filter.
+        if _editor_command(message.text) is not None:
+            pending_bank_entry.discard(user.id)
+            await bot.send_message(
+                user.id,
+                tr("Команда не является реквизитами. Откройте редактирование снова.",
+                   "Commands are not bank details. Reopen the editor."),
+            )
             return
         raw = message.text.strip()
         if len(raw) < 8 or len(raw) > 900:
