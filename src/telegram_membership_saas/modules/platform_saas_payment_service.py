@@ -83,7 +83,7 @@ async def configure_platform_saas_payment(
 async def merchant_saas_statements(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID,
-    project_id: UUID,
+    project_id: UUID | None = None,
     page: int = 0,
 ) -> MerchantSaasStatements:
     """Real *current* project owner reads their own historical account invoices.
@@ -99,11 +99,16 @@ async def merchant_saas_statements(
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_user_id, project_id=project_id),
     ) as session:
-        holder = await session.scalar(
-            select(Project.owner_user_id).where(Project.id == project_id)
-        )
-        if holder != actor_user_id:
-            raise PermissionError("Only actual project owner may view SaaS statements")
+        if project_id is not None:
+            holder = await session.scalar(
+                select(Project.owner_user_id).where(Project.id == project_id)
+            )
+            if holder != actor_user_id:
+                raise PermissionError(
+                    "Only actual project owner may view SaaS statements"
+                )
+        # Central /billing works even after a user transferred out their
+        # final project. Liability follows historical account, not the bot.
         data = (await session.execute(stmt, {"page": page})).scalar_one()
     if not isinstance(data, dict) or not isinstance(data.get("invoices"), list):
         raise RuntimeError("Invalid merchant billing snapshot")
