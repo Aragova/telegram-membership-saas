@@ -426,8 +426,31 @@ def upgrade() -> None:
         RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
         SET search_path = pg_catalog, public
         AS $guard$
+        DECLARE
+          effective_at timestamptz;
+          account_owner uuid;
         BEGIN
           IF OLD.source<>'manual' AND NEW.source<>'manual' THEN RETURN NEW; END IF;
+          SELECT effective_from INTO effective_at
+          FROM public.platform_saas_access_policy
+          WHERE id=1 AND enabled=true;
+          IF effective_at IS NULL OR clock_timestamp()<effective_at
+          THEN RETURN NEW; END IF;
+          SELECT p.owner_user_id INTO account_owner
+          FROM public.projects p WHERE p.id=OLD.project_id;
+          IF account_owner IS NULL OR NOT (
+            EXISTS(
+              SELECT 1 FROM public.merchant_platform_trial_claims t
+              WHERE t.owner_user_id=account_owner AND t.scope='owner'
+                AND t.policy_key='vimi-saas-72h-v1'
+                AND t.claimed_at>=effective_at
+            ) OR EXISTS(
+              SELECT 1 FROM public.telegram_users u
+              JOIN public.platform_operators o
+                ON o.telegram_user_id=u.telegram_user_id
+              WHERE u.id=account_owner AND o.role='owner'
+            )
+          ) THEN RETURN NEW; END IF;
           IF (OLD.id,OLD.project_id,OLD.customer_id,OLD.resource_id,
               OLD.source,OLD.source_id,OLD.manual_plan_id,
               OLD.valid_from,OLD.valid_until,OLD.created_at)
