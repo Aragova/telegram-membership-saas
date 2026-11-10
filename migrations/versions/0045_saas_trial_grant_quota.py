@@ -199,6 +199,102 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION public.platform_saas_first_bot_trial_guard()
     """)
 
+    # Ownership transfers update projects.owner_user_id, not bot_instances.
+    # Enroll the recipient atomically with the existing consent/merchant
+    # transfer transaction. Reusing the prior owner's Merchant ID as a trial
+    # claim would fail the original initial_owner guard, so an owner-origin
+    # identity is selected or created ONLY as the recipient's trial anchor.
+    # Historical payments and project Merchant ID are never reassigned.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_transferred_bot_trial_guard()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $guard$
+        DECLARE
+          effective_at timestamptz;
+          recipient uuid;
+          started timestamptz;
+          new_merchant uuid;
+          prior_bot boolean;
+          other_connected boolean;
+        BEGIN
+          IF NEW.owner_user_id IS NOT DISTINCT FROM OLD.owner_user_id
+          THEN RETURN NEW; END IF;
+          SELECT effective_from INTO effective_at
+          FROM public.platform_saas_access_policy
+          WHERE id=1 AND enabled=true;
+          IF effective_at IS NULL OR clock_timestamp()<effective_at
+          THEN RETURN NEW; END IF;
+          recipient:=NEW.owner_user_id;
+          IF NOT EXISTS(
+            SELECT 1 FROM public.bot_instances b
+            WHERE b.project_id=NEW.id AND b.status='registered'
+          ) THEN RETURN NEW; END IF;
+          PERFORM pg_advisory_xact_lock(
+            hashtextextended('saas-trial-owner:'||recipient::text,0)
+          );
+          -- An operator-owned personal channel is exempt only if creator
+          -- verified; admin-only transfers need separate manual review.
+          IF EXISTS(
+            SELECT 1 FROM public.telegram_users u
+            JOIN public.platform_operators o
+              ON o.telegram_user_id=u.telegram_user_id
+            WHERE u.id=recipient AND o.role='owner'
+          ) THEN RETURN NEW; END IF;
+          SELECT claimed_at INTO started
+          FROM public.merchant_platform_trial_claims
+          WHERE owner_user_id=recipient AND scope='owner'
+            AND policy_key='vimi-saas-72h-v1';
+          IF started IS NULL THEN
+            SELECT EXISTS(
+              SELECT 1 FROM public.platform_usage_events ev
+              JOIN public.merchant_project_periods mp
+                ON mp.project_id=ev.project_id AND mp.owner_user_id=recipient
+               AND mp.started_at<=ev.occurred_at
+               AND (mp.ended_at IS NULL OR mp.ended_at>=ev.occurred_at)
+              WHERE ev.event_type='bot_connected'
+                AND ev.project_id<>NEW.id AND ev.occurred_at<effective_at
+            ) INTO prior_bot;
+            IF prior_bot THEN RETURN NEW; END IF;
+          END IF;
+          SELECT EXISTS(
+            SELECT 1 FROM public.bot_instances b
+            JOIN public.projects p ON p.id=b.project_id
+            WHERE p.owner_user_id=recipient AND p.id<>NEW.id
+              AND b.status<>'deleting'
+          ) INTO other_connected;
+          IF other_connected AND (started IS NULL
+              OR clock_timestamp()<started+interval '72 hours') THEN
+            RAISE EXCEPTION 'Only one bot allowed during transferred trial'
+              USING ERRCODE='P6703';
+          END IF;
+          IF started IS NULL THEN
+            SELECT id INTO new_merchant
+            FROM public.merchant_identities
+            WHERE initial_owner_user_id=recipient
+            ORDER BY created_at,id LIMIT 1;
+            IF new_merchant IS NULL THEN
+              new_merchant:=gen_random_uuid();
+              INSERT INTO public.merchant_identities(id,initial_owner_user_id)
+              VALUES(new_merchant,recipient);
+            END IF;
+            INSERT INTO public.merchant_platform_trial_claims(
+              id,merchant_id,owner_user_id,policy_key,scope,claimed_at
+            ) VALUES(
+              gen_random_uuid(),new_merchant,recipient,
+              'vimi-saas-72h-v1','owner',clock_timestamp()
+            );
+          END IF;
+          RETURN NEW;
+        END;
+        $guard$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_saas_transferred_bot_trial
+        AFTER UPDATE OF owner_user_id ON public.projects
+        FOR EACH ROW EXECUTE FUNCTION public.platform_saas_transferred_bot_trial_guard()
+    """)
+
     # Fire at actual DB grant insertion, not just the UI callback.
     # The manual plan path inserts one grant per resource with a shared
     # source ID, so the quota is per channel, and both paths share one pool.
@@ -321,6 +417,52 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION public.platform_saas_complimentary_grant_guard()
     """)
 
+    # Prevent a second source of free access via UPDATE instead of INSERT.
+    # Grant identity, customer, resource, source, plan and validity are frozen.
+    # Ordinary active->revoked transition still works; changes to payment
+    # entitlements that remain payment-sourced are unaffected.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_manual_grant_update_guard()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $guard$
+        BEGIN
+          IF OLD.source<>'manual' AND NEW.source<>'manual' THEN RETURN NEW; END IF;
+          IF (OLD.id,OLD.project_id,OLD.customer_id,OLD.resource_id,
+              OLD.source,OLD.source_id,OLD.manual_plan_id,
+              OLD.valid_from,OLD.valid_until,OLD.created_at)
+             IS DISTINCT FROM
+             (NEW.id,NEW.project_id,NEW.customer_id,NEW.resource_id,
+              NEW.source,NEW.source_id,NEW.manual_plan_id,
+              NEW.valid_from,NEW.valid_until,NEW.created_at)
+          THEN
+            RAISE EXCEPTION 'Manual grant identity and validity are immutable'
+              USING ERRCODE='42501';
+          END IF;
+          IF OLD.status='revoked' AND NEW.status<>'revoked' THEN
+            RAISE EXCEPTION 'Revoked manual access cannot be reactivated'
+              USING ERRCODE='42501';
+          END IF;
+          IF OLD.status='active' AND NEW.status='active' AND
+             NEW.revoked_at IS DISTINCT FROM OLD.revoked_at THEN
+            RAISE EXCEPTION 'Manual grant revocation invalid'
+              USING ERRCODE='42501';
+          END IF;
+          IF OLD.status='revoked' AND
+             NEW.revoked_at IS DISTINCT FROM OLD.revoked_at THEN
+            RAISE EXCEPTION 'Manual grant revocation immutable'
+              USING ERRCODE='42501';
+          END IF;
+          RETURN NEW;
+        END;
+        $guard$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_saas_manual_grant_update_guard
+        BEFORE UPDATE ON public.entitlement_grants
+        FOR EACH ROW EXECUTE FUNCTION public.platform_saas_manual_grant_update_guard()
+    """)
+
     # Financial history and the immutable grant/claim log are not deletable.
     op.execute("""
         CREATE FUNCTION public.platform_saas_immutable_event_guard()
@@ -340,7 +482,9 @@ def upgrade() -> None:
     """)
     for fn in (
         "platform_saas_first_bot_trial_guard()",
+        "platform_saas_transferred_bot_trial_guard()",
         "platform_saas_complimentary_grant_guard()",
+        "platform_saas_manual_grant_update_guard()",
         "platform_saas_immutable_event_guard()",
     ):
         op.execute(f"REVOKE ALL ON FUNCTION public.{fn} FROM PUBLIC")
@@ -362,13 +506,17 @@ def downgrade() -> None:
     for table, trigger in (
         ("platform_saas_complimentary_events",
          "trg_saas_complimentary_event_immutable"),
+        ("entitlement_grants", "trg_saas_manual_grant_update_guard"),
         ("entitlement_grants", "trg_saas_complimentary_grant"),
+        ("projects", "trg_saas_transferred_bot_trial"),
         ("bot_instances", "trg_saas_first_bot_trial"),
     ):
         op.execute(f"DROP TRIGGER IF EXISTS {trigger} ON public.{table}")
     for fn in (
         "platform_saas_immutable_event_guard()",
+        "platform_saas_manual_grant_update_guard()",
         "platform_saas_complimentary_grant_guard()",
+        "platform_saas_transferred_bot_trial_guard()",
         "platform_saas_first_bot_trial_guard()",
     ):
         op.execute(f"DROP FUNCTION IF EXISTS public.{fn}")
