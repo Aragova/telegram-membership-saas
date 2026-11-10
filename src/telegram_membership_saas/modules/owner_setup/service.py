@@ -568,6 +568,11 @@ async def register_new_owner_bot(
         # The same DB rollback also removes the newly created project.
         raise ValueError("Этот Telegram-бот уже подключён в другом проекте") from None
     except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "P6703":
+            raise ValueError(
+                "Во время бесплатного ознакомления доступен только один бот "
+                "(72 часа). / Only one bot is allowed during the 72-hour trial."
+            ) from None
         if getattr(exc.orig, "sqlstate", None) == "P6701":
             raise ValueError(
                 "Достигнут установленный лимит подключённых ботов. "
