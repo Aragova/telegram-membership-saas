@@ -1,6 +1,6 @@
 """Isolated ViMi Pay SaaS invoice ledger. Disabled until an approved billing rollout.
 
-Revision ID: 0043_platform_saas_invoice_ledger
+Revision ID: 0043_platform_saas_invoices
 Revises: 0042_platform_monitor_alerts
 
 No user-facing billing, new charges, policy activation, or changes to tenant
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0043_platform_saas_invoice_ledger"
+revision: str = "0043_platform_saas_invoices"
 down_revision: str | None = "0042_platform_monitor_alerts"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
