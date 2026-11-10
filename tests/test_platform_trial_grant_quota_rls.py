@@ -109,12 +109,29 @@ async def test_trial_is_opt_in_once_per_owner_and_first_bot_only():
         await _set_policy(
             admin_engine, active=True, effective_at=datetime.now(UTC),
         )
-        await _connect(factory, owner, project_a)
+        first_bot = await _connect(factory, owner, project_a)
         assert await _count_claims(admin_engine, owner) == 1
         # Same account, another project & Merchant ID: no second free bot.
         with pytest.raises(DBAPIError) as error:
             await _connect(factory, owner, project_b)
         assert getattr(error.value.orig, "sqlstate", None) == "P6703"
+        assert await _count_claims(admin_engine, owner) == 1
+        # Marking bot A as 'deleting' must NOT release the trial slot
+        # before the actual row is removed. Otherwise A can be restored
+        # to 'registered' after adding bot B in another project.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_a),
+        ) as session:
+            item = await session.get(BotInstance, first_bot)
+            item.status = "deleting"
+        with pytest.raises(DBAPIError) as error:
+            await _connect(factory, owner, project_b)
+        assert getattr(error.value.orig, "sqlstate", None) == "P6703"
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_a),
+        ) as session:
+            item = await session.get(BotInstance, first_bot)
+            item.status = "registered"
         assert await _count_claims(admin_engine, owner) == 1
         # Falsifying a row's created_at must not bypass trial enrollment.
         spoof_owner = await ensure_telegram_actor(
@@ -339,6 +356,103 @@ async def test_transfer_recipient_gets_one_trial_not_two(monkeypatch):
                 transfer_id=second_invite.id,
             )
         assert await _count_claims(admin_engine, recipient) == 1
+    finally:
+        await _set_policy(admin_engine, active=False)
+        await engine.dispose()
+        await admin_engine.dispose()
+
+
+async def test_pre_rollout_transfer_recipient_remains_grandfathered(monkeypatch):
+    """A pre-rollout bot obtained by transfer counts as prior ownership.
+
+    Its original connection event predates the recipient's owner period.
+    """
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    telegram_bot_id = 0
+
+    async def verify_bot(_token):
+        return VerifiedBot(
+            telegram_bot_id=telegram_bot_id,
+            username="trial_test_bot", display_name="Transferred legacy bot",
+        )
+
+    async def verify_channel(_factory, **_kwargs):
+        return None
+
+    monkeypatch.setattr(transfer_service, "verify_telegram_bot", verify_bot)
+    monkeypatch.setattr(
+        transfer_service, "_verify_recipient_channel_admin", verify_channel,
+    )
+    monkeypatch.setattr(
+        transfer_service, "encrypt_token",
+        lambda token, key: "pre-rollout-transfer-test-credential",
+    )
+    try:
+        sender, recipient, _, sender_project, _, _, _, recipient_tid = (
+            await setup_subscriber(factory)
+        )
+        # Connect and transfer entirely BEFORE enabling commercial access.
+        source_bot = await _connect(factory, sender, sender_project)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=sender, project_id=sender_project),
+        ) as session:
+            item = await session.get(BotInstance, source_bot)
+            telegram_bot_id = item.telegram_bot_id
+        invite = await transfer_service.create_transfer_invite(
+            factory, actor_id=sender, project_id=sender_project,
+            recipient_telegram_id=recipient_tid,
+        )
+        await transfer_service.accept_transfer_invite(
+            factory, actor_id=recipient, actor_telegram_id=recipient_tid,
+            transfer_id=invite.id, fresh_token="LEGACY-BOT-TOKEN",
+            encryption_key=None,
+        )
+        completed = await transfer_service.finalize_transfer(
+            factory, actor_id=sender, project_id=sender_project,
+            transfer_id=invite.id,
+        )
+        assert completed.status == "completed"
+        assert await _count_claims(admin_engine, recipient) == 0
+
+        new_project = await create_owner_project(
+            factory, actor_id=recipient, name="Legacy recipient second project",
+        )
+        await _set_policy(
+            admin_engine, active=True, effective_at=datetime.now(UTC),
+        )
+        second_bot = await _connect(factory, recipient, new_project)
+        assert second_bot is not None
+        assert await _count_claims(admin_engine, recipient) == 0
+
+        # Grandfathering also protects this recipient from the second
+        # pre-rollout-history check in the incoming transfer path.
+        other_sender, _, _, other_project, _, _, _, _ = (
+            await setup_subscriber(factory)
+        )
+        extra_bot = await _connect(factory, other_sender, other_project)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=other_sender, project_id=other_project),
+        ) as session:
+            item = await session.get(BotInstance, extra_bot)
+            telegram_bot_id = item.telegram_bot_id
+        extra_invite = await transfer_service.create_transfer_invite(
+            factory, actor_id=other_sender, project_id=other_project,
+            recipient_telegram_id=recipient_tid,
+        )
+        await transfer_service.accept_transfer_invite(
+            factory, actor_id=recipient, actor_telegram_id=recipient_tid,
+            transfer_id=extra_invite.id, fresh_token="LEGACY-EXTRA-TOKEN",
+            encryption_key=None,
+        )
+        accepted = await transfer_service.finalize_transfer(
+            factory, actor_id=other_sender, project_id=other_project,
+            transfer_id=extra_invite.id,
+        )
+        assert accepted.status == "completed"
+        assert await _count_claims(admin_engine, recipient) == 0
     finally:
         await _set_policy(admin_engine, active=False)
         await engine.dispose()
