@@ -18,6 +18,8 @@ from telegram_membership_saas.db import (
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.entitlements import EntitlementGrant, EntitlementSource
 from telegram_membership_saas.modules.identity import ProjectCustomer
+from telegram_membership_saas.modules.bots.service import VerifiedBot
+from telegram_membership_saas.modules.owner_setup import transfers as transfer_service
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
@@ -250,6 +252,93 @@ async def test_combined_free_grant_and_plan_activation_quota_is_per_channel():
                 EntitlementGrant.project_id == project,
                 EntitlementGrant.source == EntitlementSource.MANUAL.value,
             )) == 5
+    finally:
+        await _set_policy(admin_engine, active=False)
+        await engine.dispose()
+        await admin_engine.dispose()
+
+
+async def test_transfer_recipient_gets_one_trial_not_two(monkeypatch):
+    """An ownership transfer must count as a connected bot for its recipient."""
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    current_bot_telegram_id = 0
+
+    async def verified_bot(_token):
+        return VerifiedBot(
+            telegram_bot_id=current_bot_telegram_id,
+            username="trial_test_bot", display_name="Trial transfer",
+        )
+
+    async def verify_channel_access(_factory, **_kwargs):
+        return None
+
+    monkeypatch.setattr(transfer_service, "verify_telegram_bot", verified_bot)
+    monkeypatch.setattr(
+        transfer_service, "_verify_recipient_channel_admin",
+        verify_channel_access,
+    )
+    monkeypatch.setattr(
+        transfer_service, "encrypt_token",
+        lambda token, key: "transfer-test-fresh-credential",
+    )
+    try:
+        sender, recipient, _, first_project, _, _, _, recipient_tid = (
+            await setup_subscriber(factory)
+        )
+        await _set_policy(admin_engine, active=True)
+        first_bot = await _connect(factory, sender, first_project)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=sender, project_id=first_project),
+        ) as session:
+            first = await session.get(BotInstance, first_bot)
+            current_bot_telegram_id = first.telegram_bot_id
+        invite = await transfer_service.create_transfer_invite(
+            factory, actor_id=sender, project_id=first_project,
+            recipient_telegram_id=recipient_tid,
+        )
+        accepted = await transfer_service.accept_transfer_invite(
+            factory, actor_id=recipient, actor_telegram_id=recipient_tid,
+            transfer_id=invite.id, fresh_token="TEST-FRESH-TOKEN",
+            encryption_key=None,
+        )
+        assert accepted.status == "accepted"
+        completed = await transfer_service.finalize_transfer(
+            factory, actor_id=sender, project_id=first_project,
+            transfer_id=invite.id,
+        )
+        assert completed.status == "completed"
+        assert await _count_claims(admin_engine, recipient) == 1
+
+        # Another sender offers the recipient a second bot during 72 hours.
+        # It must NOT bypass the recipient's trial just because no new
+        # bot_instances row is inserted during completion.
+        sender_two, _, _, second_project, _, _, _, _ = (
+            await setup_subscriber(factory)
+        )
+        second_bot = await _connect(factory, sender_two, second_project)
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=sender_two, project_id=second_project),
+        ) as session:
+            second = await session.get(BotInstance, second_bot)
+            current_bot_telegram_id = second.telegram_bot_id
+        second_invite = await transfer_service.create_transfer_invite(
+            factory, actor_id=sender_two, project_id=second_project,
+            recipient_telegram_id=recipient_tid,
+        )
+        await transfer_service.accept_transfer_invite(
+            factory, actor_id=recipient, actor_telegram_id=recipient_tid,
+            transfer_id=second_invite.id, fresh_token="TEST-FRESH-TOKEN-2",
+            encryption_key=None,
+        )
+        with pytest.raises(ValueError, match="72-часового теста"):
+            await transfer_service.finalize_transfer(
+                factory, actor_id=sender_two, project_id=second_project,
+                transfer_id=second_invite.id,
+            )
+        assert await _count_claims(admin_engine, recipient) == 1
     finally:
         await _set_policy(admin_engine, active=False)
         await engine.dispose()
