@@ -117,7 +117,6 @@ def upgrade() -> None:
           actor := public.platform_saas_require_owner();
           IF p_text IS NOT NULL AND (
                length(btrim(p_text))<8 OR length(p_text)>900
-               OR strpos(p_text,chr(0))<>0
           ) THEN
             RAISE EXCEPTION 'Invalid platform bank instructions'
               USING ERRCODE='22023';
