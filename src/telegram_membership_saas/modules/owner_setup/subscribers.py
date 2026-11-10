@@ -579,8 +579,9 @@ def _complimentary_quota_error(operation):
         except DBAPIError as exc:
             if getattr(exc.orig, "sqlstate", None) == "P6702":
                 raise ValueError(
-                    "Лимит бесплатных активаций для этого канала исчерпан "
-                    "(3 в месяц). Используйте обычную оплату."
+                    "Лимит бесплатных активаций для этого канала исчерпан. "
+                    "Используйте обычную оплату. / Monthly free-access "
+                    "quota reached for this channel. Use paid checkout."
                 ) from None
             raise
 
