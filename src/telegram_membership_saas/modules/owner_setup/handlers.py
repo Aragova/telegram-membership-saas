@@ -633,7 +633,7 @@ def create_owner_setup_router(
 
     async def show_saas_statements(
         bot: Bot, user_id: int, actor_id: UUID,
-        project_id: UUID, *, page: int = 0,
+        project_id: UUID | None, *, page: int = 0,
     ) -> None:
         report = await merchant_saas_statements(
             factory, actor_user_id=actor_id, project_id=project_id,
@@ -705,7 +705,11 @@ def create_owner_setup_router(
         if nav:
             rows.append(nav)
         rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
-        rows.append([_button(tr("⬅️ Настройки", "⬅️ Settings"), "settings")])
+        rows.append([_button(
+            tr("⬅️ Мои боты", "⬅️ My bots") if project_id is None
+            else tr("⬅️ Настройки", "⬅️ Settings"),
+            "projects" if project_id is None else "settings",
+        )])
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
@@ -3010,6 +3014,24 @@ def create_owner_setup_router(
         else:
             await show_dashboard(bot, message.chat.id, actor_id, project_id)
 
+    @router.message(Command("billing"))
+    async def owner_platform_billing_command(message: Message, bot: Bot) -> None:
+        if not _private(message) or message.from_user is None:
+            return
+        actor_id = await actor(message.from_user)
+        try:
+            await show_saas_statements(
+                bot, message.from_user.id, actor_id,
+                fixed_project_id,
+            )
+        except PermissionError:
+            await bot.send_message(
+                message.from_user.id, tr(
+                    "Управление счетами доступно только владельцу.",
+                    "Only the owner can view platform invoices.",
+                ),
+            )
+
     @router.callback_query(F.data.startswith("own:"))
     async def owner_callback(query: CallbackQuery, bot: Bot) -> None:
         if query.message is None or query.message.chat.type != "private":
@@ -3034,7 +3056,7 @@ def create_owner_setup_router(
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
-                "connarchive:", "connarchiveok:",
+                "connarchive:", "connarchiveok:", "saasinvoices:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -3912,8 +3934,6 @@ def create_owner_setup_router(
                     )
                 await show_notifications(bot, user_id, actor_id, project_id)
             elif action.startswith("saasinvoices:"):
-                if fixed_project_id is None:
-                    raise PermissionError("Open your connected admin bot")
                 page_text = action.split(":", 1)[1]
                 if not page_text.isascii() or not page_text.isdecimal():
                     raise ValueError("Invalid platform invoice page")
