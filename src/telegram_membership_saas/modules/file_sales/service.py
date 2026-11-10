@@ -18,9 +18,6 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.modules.platform_saas_hold_errors import (
-    translate_commercial_hold,
-)
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.file_sales.manual_models import (
     FileManualOrder,
@@ -40,6 +37,9 @@ from telegram_membership_saas.modules.payments import (
     PaymentMethod,
     PaymentMethodCurrency,
     PaymentMethodStatus,
+)
+from telegram_membership_saas.modules.platform_saas_hold_errors import (
+    translate_commercial_hold,
 )
 from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects.models import Project, ProjectStatus
