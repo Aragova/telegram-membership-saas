@@ -16,9 +16,9 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance
+from telegram_membership_saas.modules.bots.service import VerifiedBot
 from telegram_membership_saas.modules.entitlements import EntitlementGrant, EntitlementSource
 from telegram_membership_saas.modules.identity import ProjectCustomer
-from telegram_membership_saas.modules.bots.service import VerifiedBot
 from telegram_membership_saas.modules.owner_setup import transfers as transfer_service
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
