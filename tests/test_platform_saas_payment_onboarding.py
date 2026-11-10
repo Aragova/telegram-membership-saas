@@ -5,7 +5,7 @@ No real billing, trial, hold flag or merchant account is activated.
 """
 import os
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
@@ -181,7 +181,7 @@ async def test_invoice_notice_outbox_dedupes_retries_and_stops_after_receipt():
                     "SELECT public.platform_saas_notice_finish("
                     ":id,:attempt,true)"
                 ), {
-                    "id": uuid4() if not claimed.get("id") else claimed["id"],
+                    "id": UUID(claimed["id"]),
                     "attempt": claimed["attempt"],
                 })).scalar_one()
                 assert delivered is True
@@ -189,7 +189,7 @@ async def test_invoice_notice_outbox_dedupes_retries_and_stops_after_receipt():
                     "SELECT public.platform_saas_notice_finish("
                     ":id,:attempt,true)"
                 ), {
-                    "id": claimed["id"], "attempt": claimed["attempt"],
+                    "id": UUID(claimed["id"]), "attempt": claimed["attempt"],
                 })).scalar_one()
                 assert again is False
 
