@@ -86,7 +86,7 @@ class PlatformSaasInvoice(Base):
             unique=True, postgresql_where=text("kind = 'prepayment'"),
         ),
         Index(
-            "uq_saas_merchant_commission_month", "merchant_id", "period_start",
+            "uq_saas_merchant_commission_month", "merchant_id", "owner_user_id", "period_start",
             unique=True, postgresql_where=text("kind = 'commission'"),
         ),
         Index("ix_saas_invoice_owner", "owner_user_id", "due_at"),
@@ -148,6 +148,7 @@ class PlatformSaasInvoiceLine(Base):
     project_id: Mapped[UUID] = mapped_column(Uuid(), nullable=False)
     source_kind: Mapped[str] = mapped_column(String(16), nullable=False)
     source_id: Mapped[UUID] = mapped_column(Uuid(), nullable=False)
+    bot_instance_id: Mapped[UUID] = mapped_column(Uuid(), nullable=False)
     original_amount: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
     original_currency: Mapped[str] = mapped_column(String(16), nullable=False)
     rub_per_unit: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
