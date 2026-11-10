@@ -266,10 +266,18 @@ def upgrade() -> None:
             SET status='cancelled'
           FROM public.platform_saas_invoices i
           WHERE n.invoice_id=i.id AND n.status='pending'
-            AND (i.status<>'issued' OR EXISTS(
-              SELECT 1 FROM public.platform_saas_receipts r
-              WHERE r.invoice_id=i.id
-            ));
+            AND (
+              i.status<>'issued' OR EXISTS(
+                SELECT 1 FROM public.platform_saas_receipts r
+                WHERE r.invoice_id=i.id
+              )
+              -- Prevent a paused delivery from replaying an obsolete
+              -- invoice stage together with a newer due/overdue stage.
+              OR (n.kind='issued' AND now_at >=
+                  greatest(i.due_at,i.issued_at)+interval '1 day')
+              OR (n.kind='due' AND now_at >=
+                  greatest(i.due_at,i.issued_at)+interval '7 days')
+            );
           RETURN notice_count;
         END;
         $fn$
@@ -308,7 +316,12 @@ def upgrade() -> None:
           IF item.status<>'issued' OR EXISTS(
             SELECT 1 FROM public.platform_saas_receipts r
             WHERE r.invoice_id=item.invoice_id
-          ) THEN
+          )
+          OR (item.kind='issued' AND now_at>=
+              greatest(item.due_at,item.issued_at)+interval '1 day')
+          OR (item.kind='due' AND now_at>=
+              greatest(item.due_at,item.issued_at)+interval '7 days')
+          THEN
             UPDATE public.platform_saas_notice_outbox
               SET status='cancelled' WHERE id=item.id;
             RETURN NULL;
