@@ -73,7 +73,7 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 
 ## 8. Dormant invoice ledger — PR #113
 
-Migration `0043_platform_saas_invoice_ledger` adds four private, non-tenant-editable tables:
+Migration `0043_platform_saas_invoices` adds four private, non-tenant-editable tables:
 
 - `platform_saas_owner_exemptions`: each verified personal channel/bot is an explicit, operator-only record. The DB ensures that the recorded project, bot and channel actually belong to the DB-authorized platform owner identity; evidence `telegram_creator_verified` must come from an independently performed Telegram *creator/owner*, not admin-only, check. No automatic exemption by merely having an admin role. Ended exemption periods remain in history.
 - `platform_saas_invoices`: durable merchant/owner attribution, separate prepaid bot-service and month-end commission periods, fixed RUB total, stable invoice key and immutable issued snapshot. A draft cannot become issued until its lines sum to its exact amount; paid invoices cannot be voided.
