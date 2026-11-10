@@ -54,6 +54,46 @@ def test_rich_first_party_metrics_are_tables_in_both_languages():
         assert "Confirmed turnover: 100 RUB" in result
 
 
+@pytest.mark.parametrize(
+    ("language", "label", "status"),
+    [
+        ("ru", "Биллинг", "не запущен"),
+        ("en", "Billing", "not activated"),
+    ],
+)
+def test_platform_invoices_are_native_rich_metrics_not_plain_paragraphs(
+    language, label, status,
+):
+    """The operator invoice screen must render structured metrics in RU/EN."""
+    from telegram_membership_saas.localization import _language
+    from telegram_membership_saas.modules.platform_dashboard_handlers import (
+        _saas_invoice_text,
+    )
+
+    report = SimpleNamespace(
+        enabled=False, issued=0, unpaid=0, unpaid_rub=Decimal("0.00"),
+        received_rub=Decimal("0.00"), holds_enabled=False,
+        grace_days=7, held_owners=0, grace_owners=0,
+        invoices=(), page=0, pages=1,
+    )
+    token = _language.set(language)
+    try:
+        legacy = _saas_invoice_text(report)
+    finally:
+        _language.reset(token)
+    rendered = rich.to_rich_html(legacy)
+    assert "<h3>" in rendered
+    assert "<table bordered compact>" in rendered
+    assert (
+        f"<tr><th>{label}</th><td><b>{status}</b></td></tr>"
+        in rendered
+    )
+    assert (
+        "Выставленных счетов пока нет." if language == "ru"
+        else "No issued invoices yet."
+    ) in rendered
+
+
 def test_owner_payment_instructions_remain_byte_identical_after_heading():
     instruction = "Оплатите 500 RUB\nСБП: +7 999 000-00-00\nhttp://example.org/?x=1&amp;y=2"
     legacy = "💎 <b>Оформление подписки</b>\n\n" + instruction
