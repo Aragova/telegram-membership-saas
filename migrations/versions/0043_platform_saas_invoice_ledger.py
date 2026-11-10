@@ -112,7 +112,7 @@ def upgrade() -> None:
     )
     op.create_index(
         "uq_saas_merchant_commission_month", "platform_saas_invoices",
-        ["merchant_id", "period_start"], unique=True,
+        ["merchant_id", "owner_user_id", "period_start"], unique=True,
         postgresql_where=sa.text("kind = 'commission'"),
     )
     op.create_index(
@@ -133,6 +133,9 @@ def upgrade() -> None:
         sa.Column("project_id", sa.Uuid(), nullable=False),
         sa.Column("source_kind", sa.String(16), nullable=False),
         sa.Column("source_id", sa.Uuid(), nullable=False),
+        # Historical bot identity at the moment of the approved purchase.
+        # Never infer exemption solely from the Merchant/project.
+        sa.Column("bot_instance_id", sa.Uuid(), nullable=False),
         sa.Column("original_amount", sa.Numeric(38, 18), nullable=False),
         sa.Column("original_currency", sa.String(16), nullable=False),
         sa.Column("rub_per_unit", sa.Numeric(38, 18), nullable=False),
