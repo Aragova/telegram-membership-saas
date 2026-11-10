@@ -134,3 +134,42 @@ async def test_editor_accepts_cancel_forms_but_never_writes_bank_details(monkeyp
         await bank_handler(_message(command), bot)
         assert 7777 not in navigation.pending
     save.assert_not_awaited()
+
+
+async def test_exemption_pages_navigate_inside_invoices_without_bank_editor(
+    monkeypatch,
+):
+    navigation = ui.PlatformBankNavigationMiddleware()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    audit = AsyncMock(return_value={
+        "operator_bots": 25, "verified": 0, "pending": 25,
+        "page": 1, "pages": 4,
+        "pending_bots": [{"username": "review_bot", "state": "not_exempt"}],
+    })
+    monkeypatch.setattr(ui, "platform_saas_exemption_page", audit)
+    router = ui.create_platform_dashboard_router(
+        MagicMock(), settings=Settings(platform_owner_telegram_id=7777),
+        bank_navigation=navigation,
+    )
+    handler = next(
+        record.callback for record in router.callback_query.handlers
+        if record.callback.__name__ == "platform_callback"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    answer = AsyncMock()
+    monkeypatch.setattr(CallbackQuery, "answer", answer)
+    navigation.pending.add(7777)
+    await handler(_callback("plat:exemptions:1"), bot)
+    assert 7777 not in navigation.pending
+    audit.assert_awaited_once()
+    assert audit.await_args.kwargs["page"] == 1
+    body = bot.send_message.await_args.args[1]
+    assert "review_bot" in body
+    buttons = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    actions = [button.callback_data for row in buttons for button in row]
+    assert actions == [
+        "plat:exemptions:0", "plat:exemptions:2", "plat:billing:0",
+    ]
+    assert "plat:bankedit" not in actions
+    assert answer.await_count == 1
