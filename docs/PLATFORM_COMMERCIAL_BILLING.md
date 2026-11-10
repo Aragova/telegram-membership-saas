@@ -113,3 +113,9 @@ Migration `0045_saas_trial_grant_quota` introduces a separate **`platform_saas_a
 - Trial and quota flags have NO tenant write privilege. With access policy OFF, all existing handlers remain compatible and unchanged. No new charging, no blocking, no copying of grants into Payments, and no revocation or expiry changes.
 
 **Implementation gate:** the platform owner must separately approve and perform commercial onboarding after the complete trial UI, subscriber billing instructions, payment reconciliation, appeals and commercial-hold safety are tested. Do not flip the feature flag just because migration 0045 is present.
+
+### Hardened alternate-path protections (PR #115)
+
+- An incoming verified ownership transfer also enrolls a first-time recipient, or refuses a second connected bot during an active 72-hour trial. The recipient trial claim uses an owner-origin MerchantIdentity, not the sender's frozen original project Merchant ID. No transfer changes historical merchant ownership, and the original two-party consent checks still apply.
+- New bot enrollment depends on a trusted DB-clock transaction and durable prior ownership history, not a runtime-provided `created_at`. The inserted bot itself never makes a backdated usage event count as a pre-rollout legacy connection.
+- For eligible owners, manual entitlement core identity, buyer, channel, validity and source fields are immutable after creation, including after revocation. Ordinary revocation is still allowed and paid-entitlement updates remain unchanged. This closes the UPDATE/reactivation bypass of an INSERT-only quota.
