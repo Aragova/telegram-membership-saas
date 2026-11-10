@@ -164,9 +164,9 @@ def upgrade() -> None:
         $f$
     """)
 
-    # Issue a prepaid bot-service invoice once, after the owner's trial and
-    # only after explicit rollout. Non-clients are excluded regardless of
-    # whether operator's own-channel exemption records have been populated.
+    # Issue prepaid service fees only after the trial and explicit rollout.
+    # Platform-owned channels require an actual creator-verification record;
+    # platform operator role alone is not proof of channel ownership.
     op.execute("""
         CREATE FUNCTION public.platform_saas_issue_bot_invoice(
             p_bot uuid, p_start timestamptz, p_end timestamptz
@@ -201,14 +201,22 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Connected billable bot required'
               USING ERRCODE='22023';
           END IF;
-          -- Check owner by DB membership, not a self-service admin flag.
+          -- A platform owner may administer third-party channels.
+          -- Never treat DB owner role as proof of channel creator status.
+          -- A matching creator-verified record is required to waive fees;
+          -- without one, block billing pending an ownership review.
           IF EXISTS(
             SELECT 1 FROM public.telegram_users u
             JOIN public.platform_operators o
               ON o.telegram_user_id=u.telegram_user_id
             WHERE u.id=entry.owner_user_id AND o.role='owner'
           ) THEN
-            RETURN NULL;
+            exemption := public.platform_saas_exemption_state(
+                entry.project_id,p_bot,entry.merchant_id,
+                entry.owner_user_id,p_start);
+            IF exemption='exempt' THEN RETURN NULL; END IF;
+            RAISE EXCEPTION 'Platform-admin project requires creator review'
+              USING ERRCODE='42501';
           END IF;
           SELECT min(claimed_at) INTO trial_started
           FROM public.merchant_platform_trial_claims t
