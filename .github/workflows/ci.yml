@@ -127,6 +127,12 @@ jobs:
                       "public.platform_merchant_risk_snapshot(timestamptz, integer, integer) "
                       "TO membership_runtime"
                   )
+                  await connection.execute(
+                      "GRANT EXECUTE ON FUNCTION "
+                      "public.platform_saas_hold_invoice_report(integer,integer) "
+                      "TO membership_runtime"
+                  )
+
                   # Match production: migration 0029 explicitly denies
                   # runtime CRUD on platform-only commercial tables.
                   await connection.execute(
