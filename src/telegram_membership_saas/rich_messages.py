@@ -151,7 +151,14 @@ def to_rich_html(legacy_html: str) -> str:
         body = legacy_html
 
     if has_heading and any(marker in first for marker in _STATISTICS):
-        body = "\n".join(_tableize_metrics(body.split("\n")))
+        # Never transform inside existing Rich blocks. In particular the
+        # owner's multiline bank instructions live in <pre>...</pre>, and
+        # labels such as "Account: ..." must stay byte-for-byte intact.
+        body = "".join(
+            chunk if _BLOCK_START.match(chunk.strip())
+            else "\n".join(_tableize_metrics(chunk.split("\n")))
+            for chunk in _BLOCK_SPLIT.split(body)
+        )
 
     blocks = _rich_paragraphs(body)
     return "\n".join(([header] if header else []) + blocks)
