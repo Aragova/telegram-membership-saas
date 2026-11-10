@@ -33,13 +33,20 @@ from telegram_membership_saas.modules.platform_dashboard import (
     is_configured_platform_owner,
     platform_report,
 )
+from telegram_membership_saas.modules.platform_saas_billing_service import (
+    confirm_saas_receipt,
+    platform_saas_invoice_report,
+)
 from telegram_membership_saas.modules.platform_risk import platform_merchant_risk_report
 from telegram_membership_saas.modules.platform_usage import (
     BOT_EVENT_LABELS,
     EVENT_LABELS,
     platform_usage_report,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
+from telegram_membership_saas.modules.telegram_commerce.service import (
+    decode_uuid,
+    encode_uuid,
+)
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.telegram_menus import set_chat_commands
 
@@ -681,6 +688,57 @@ def _risk_review_text(snapshot, *, timezone: str) -> str:
     return "\n".join(lines)
 
 
+def _saas_invoice_text(report) -> str:
+    """One compact owner-only billing screen inside existing Finances."""
+    lines = [
+        tr("✦ <b>ViMi Pay · Счета</b>", "✦ <b>ViMi Pay · Invoices</b>"),
+        tr(
+            "Биллинг: <b>активен</b>" if report.enabled
+            else "Биллинг: <b>не запущен</b>",
+            "Billing: <b>active</b>" if report.enabled
+            else "Billing: <b>not activated</b>",
+        ),
+        tr("Выставленных счетов: ", "Issued invoices: ") + str(report.issued),
+        tr("Неоплаченных: ", "Unpaid: ") + str(report.unpaid),
+        tr("Задолженность: ", "Outstanding: ")
+        + escape(format(report.unpaid_rub, ".2f")) + " ₽",
+        tr("Получено: ", "Received: ")
+        + escape(format(report.received_rub, ".2f")) + " ₽",
+        "",
+    ]
+    if not report.invoices:
+        lines.append(tr(
+            "Выставленных счетов пока нет.",
+            "No issued invoices yet.",
+        ))
+    for item in report.invoices:
+        status = tr("Оплачен", "Paid") if item["status"] == "paid" else tr(
+            "Ожидается оплата", "Awaiting payment",
+        )
+        due = datetime.fromisoformat(str(item["due_at"]).replace("Z", "+00:00"))
+        lines.extend([
+            "• <b>" + escape(str(item["kind"])) + "</b>: "
+            + escape(str(item["total_rub"])) + " ₽",
+            "  " + status + " · "
+            + due.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y"),
+        ])
+    lines.extend([
+        "",
+        tr(
+            "<i>Подтверждать поступление можно только после "
+            "проверки денег по банковским реквизитам.</i>",
+            "<i>Confirm payment only after independently verifying "
+            "receipt in the bank.</i>",
+        ),
+    ])
+    if report.pages > 1:
+        lines.append(
+            tr("Страница ", "Page ") + str(report.page + 1)
+            + tr(" из ", " of ") + str(report.pages)
+        )
+    return "\n".join(lines)
+
+
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
@@ -850,6 +908,10 @@ def create_platform_dashboard_router(
                 rows.append([_button(
                     tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0",
                 )])
+                rows.append([_button(
+                    tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                    "billing:0",
+                )])
                 chunks = _merchant_text_chunks(report)
                 if len(chunks) == 1:
                     await _render_platform_screen(
@@ -864,6 +926,130 @@ def create_platform_dashboard_router(
                                 _keyboard(rows) if index == len(chunks) - 1 else None
                             ),
                         )
+            elif len(tokens) == 3 and tokens[1] == "billing":
+                page_token = tokens[2]
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid billing page")
+                page = int(page_token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_saas_invoice_report(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, page=page,
+                    settings=config,
+                )
+                rows = []
+                for item in report.invoices:
+                    name = str(item["kind"])
+                    label = ("✅ " if item["status"] == "paid" else "💳 ")
+                    label += name + " · " + str(item["total_rub"]) + " ₽"
+                    rows.append([_button(
+                        label[:55],
+                        "billcheck:" + encode_uuid(UUID(item["id"])) + ":" + str(page),
+                    )])
+                nav = []
+                if page > 0:
+                    nav.append(_button("⬅️", f"billing:{page - 1}"))
+                if page+1 < report.pages:
+                    nav.append(_button("➡️", f"billing:{page + 1}"))
+                if nav:
+                    rows.append(nav)
+                rows.append([_button(
+                    tr("⬅️ Финансы", "⬅️ Finances"), "merchants:30:0",
+                )])
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=_saas_invoice_text(report),
+                    reply_markup=_keyboard(rows), message_id=message_id,
+                )
+            elif len(tokens) == 4 and tokens[1] == "billcheck":
+                _, _, token, page_token = tokens
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid invoice page")
+                page = int(page_token)
+                invoice_id = decode_uuid(token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_saas_invoice_report(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, page=page,
+                    settings=config,
+                )
+                item = next((
+                    row for row in report.invoices
+                    if row["id"] == str(invoice_id)
+                ), None)
+                if item is None:
+                    raise ValueError("Invoice no longer on this page")
+                is_paid = item["status"] == "paid"
+                rows = []
+                if not is_paid:
+                    rows.append([_button(
+                        tr("✅ Подтвердить поступление",
+                           "✅ Confirm bank receipt"),
+                        "billcommit:" + token + ":" + str(page),
+                    )])
+                rows.append([_button(
+                    tr("⬅️ К счетам", "⬅️ Invoices"), f"billing:{page}",
+                )])
+                body = (
+                    tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay invoice</b>")
+                    + "\n" + escape(str(item["total_rub"])) + " ₽"
+                    + "\n" + tr("Статус: ", "Status: ")
+                    + escape(str(item["status"]))
+                    + "\n\n" + tr(
+                        "Нажимай подтверждение только после проверки "
+                        "поступления денег в банке.",
+                        "Only confirm after verifying receipt in the bank.",
+                    )
+                )
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=body, reply_markup=_keyboard(rows),
+                    message_id=message_id,
+                )
+            elif len(tokens) == 4 and tokens[1] == "billcommit":
+                _, _, token, page_token = tokens
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid invoice page")
+                page = int(page_token)
+                invoice_id = decode_uuid(token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_saas_invoice_report(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, page=page,
+                    settings=config,
+                )
+                if not any(x["id"] == str(invoice_id) for x in report.invoices):
+                    raise ValueError("Invoice no longer on this page")
+                await confirm_saas_receipt(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    invoice_id=invoice_id, settings=config,
+                )
+                refreshed = await platform_saas_invoice_report(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, page=page,
+                    settings=config,
+                )
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=_saas_invoice_text(refreshed),
+                    reply_markup=_keyboard([[
+                        _button(tr("⬅️ К счетам", "⬅️ Invoices"),
+                                f"billing:{page}"),
+                    ]]), message_id=message_id,
+                )
             elif len(tokens) == 4 and tokens[1] == "risks":
                 _, _, period, page_token = tokens
                 if period not in PERIODS or (
