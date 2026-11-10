@@ -70,3 +70,22 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 - A copied or fake proof cannot mark platform invoice paid; only authorized operator can confirm.
 - Overdue account cannot start **new** checkout but old purchases and entitlements continue to completion and expiry.
 - No runtime effect until new billing policy is deliberately enabled; preserve compose.light100.yaml and existing staging consumers.
+
+## 8. Dormant invoice ledger — PR #113
+
+Migration `0043_platform_saas_invoices` adds four private, non-tenant-editable tables:
+
+- `platform_saas_owner_exemptions`: each verified personal channel/bot is an explicit, operator-only record. The DB ensures that the recorded project, bot and channel actually belong to the DB-authorized platform owner identity; evidence `telegram_creator_verified` must come from an independently performed Telegram *creator/owner*, not admin-only, check. No automatic exemption by merely having an admin role. Ended exemption periods remain in history.
+- `platform_saas_invoices`: durable merchant/owner attribution, separate prepaid bot-service and month-end commission periods, fixed RUB total, stable invoice key and immutable issued snapshot. A draft cannot become issued until its lines sum to its exact amount; paid invoices cannot be voided.
+- Each invoice line records the original **historical bot UUID**, resolved from the immutable connection/removal events at purchase approval time. Ambiguous multi-bot sale attribution stops invoice creation for operator review, rather than inheriting an exemption from an old bot. Commission month reservations are separate for each liable owner when Merchant ID ownership changes mid-month.
+- Owner exemption is time-bound by `verified_at` and `ended_at`, and applies only to the verified bot/channel identity **at the effective time of the service period or sale**. An expired exemption never makes old exempt purchases billable; a replacement bot never inherits the old UUID's exemption. Mixed/ambiguous channel histories require manual review before charging.
+- `platform_saas_invoice_lines`: each source ties to a genuine original Payment or approved FileManualOrder with its exact amount, currency, approved timestamp and Merchant ID period. No other purchase or fake manual grant can be billed. One global unique sale key prevents cross-invoice double charges. Bot service lines are exactly 150 RUB and unique per bot/service-start.
+- `platform_saas_receipts`: one full payment confirmation per issued invoice, immutable afterward, available only through a privileged operator record. Submission of a receipt or an ordinary owner click does NOT mark the invoice paid.
+
+The four tables use FORCE RLS and explicit runtime privilege revocation. There is no tenant SQL policy or billing/payment UI yet. New operator billing commands will need their own audited, narrow APIs in a separate reviewed PR. After migration **all tables start empty**: no historical charges, no automatic invoices, no enabled quotas or trial, and no customer restriction.
+
+Supported commission sources in this first persistence slice are manually approved subscriptions and manually approved file orders. Stars file purchases require a separately reviewed exchange-rate policy and billing adapter before they can be charged; do not silently count their amount as RUB.
+
+Integration tests use rollback-only privileged transactions to verify owner exemptions, rejection of unapproved sales, immutability, duplicate invoices, and refusal of payment confirmation by a tenant administrator. The only deployment change is applying the Alembic migration. No connected customer service needs a new UI or routing.
+
+**Required before launch:** verified exemption provisioning, invoice issuance and FX policy, SaaS payment review UI, positive end-to-end merchant commission tests, grace logic and safe commercial holds. Do not activate paid billing from this migration alone.
