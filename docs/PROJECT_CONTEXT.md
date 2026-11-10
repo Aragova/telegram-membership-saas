@@ -1,6 +1,6 @@
 ## PR #114 — 2026-11-10: platform SaaS invoices (OFF by default)
 
-Owner-only SECURITY DEFINER SQL operations for prepaid 150 RUB per bot, monthly 5% commission on approved subscriptions/manual file orders (explicit FX), single owner finance screen to review invoice status, two-step manual bank-receipt confirmation. Database control enabled=false by default, no paid invoices or blocks until an approved launch. Requires provisioned 72-hour owner trial, and platform owner projects remain exempt. See docs/PLATFORM_COMMERCIAL_BILLING.md for safety and next stages.
+Owner-only SECURITY DEFINER SQL operations for prepaid 150 RUB per bot, monthly 5% commission on approved subscriptions/manual file orders (explicit FX), single owner finance screen to review invoice status, two-step manual bank-receipt confirmation. Database control enabled=false by default, no paid invoices or blocks until an approved launch. Requires provisioned 72-hour owner trial, and verified platform-owned channels remain exempt; operator status alone is not ownership proof, so ambiguous projects require manual review. See docs/PLATFORM_COMMERCIAL_BILLING.md for safety and next stages.
 
 ## PR #113 — dormant ViMi Pay platform invoice persistence (2026-11-10)
 
