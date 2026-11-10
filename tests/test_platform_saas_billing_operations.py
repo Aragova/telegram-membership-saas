@@ -167,6 +167,22 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                     "month": last_month,
                 })).scalar_one()
                 assert no_commission is None
+                # Both sessions address the same typed billing month.
+                # DateStyle changes date::text, not the canonical key.
+                await admin.execute(text("SET LOCAL DateStyle = 'German, DMY'"))
+                canonical = (await admin.execute(text(
+                    "SELECT to_char(CAST(:month AS date), 'YYYY-MM-DD')"
+                ), {"month": last_month})).scalar_one()
+                assert canonical == last_month.isoformat()
+                again_empty = (await admin.execute(text(
+                    "SELECT public.platform_saas_issue_commission_invoice("
+                    ":merchant,:owner,:month,CAST('{}' AS jsonb))"
+                ), {
+                    "merchant": merchant_id, "owner": merchant,
+                    "month": last_month,
+                })).scalar_one()
+                assert again_empty is None
+                await admin.execute(text("SET LOCAL DateStyle = 'ISO, MDY'"))
                 # Being the ViMi Pay platform owner alone is not proof
                 # of Telegram creator status for a third-party channel.
                 with pytest.raises(DBAPIError) as error:
