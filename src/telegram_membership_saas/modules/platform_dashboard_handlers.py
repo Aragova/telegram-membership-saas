@@ -945,7 +945,10 @@ def create_platform_dashboard_router(
                 for item in report.invoices:
                     name = str(item["kind"])
                     label = ("✅ " if item["status"] == "paid" else "💳 ")
-                    label += name + " · " + str(item["total_rub"]) + " ₽"
+                    label += (
+                        name + " · " + str(item["total_rub"]) + " ₽"
+                        + " #" + str(item["id"])[:8]
+                    )
                     rows.append([_button(
                         label[:55],
                         "billcheck:" + encode_uuid(UUID(item["id"])) + ":" + str(page),
@@ -998,15 +1001,35 @@ def create_platform_dashboard_router(
                 rows.append([_button(
                     tr("⬅️ К счетам", "⬅️ Invoices"), f"billing:{page}",
                 )])
+                start_at = datetime.fromisoformat(
+                    str(item["period_start"]).replace("Z", "+00:00")
+                ).astimezone(ZoneInfo("Europe/Moscow"))
+                end_at = datetime.fromisoformat(
+                    str(item["period_end"]).replace("Z", "+00:00")
+                ).astimezone(ZoneInfo("Europe/Moscow"))
                 body = (
                     tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay invoice</b>")
-                    + "\n" + escape(str(item["total_rub"])) + " ₽"
+                    + "\n<b>ID:</b> <code>" + escape(str(item["id"])) + "</code>"
+                    + "\n" + tr("Бизнес: ", "Merchant: ")
+                    + "<code>" + escape(str(item["merchant"])) + "</code>"
+                    + "\n" + tr("Владелец: ", "Owner: ")
+                    + "<code>" + escape(str(item["owner"])) + "</code>"
+                    + "\n" + tr("Тип: ", "Type: ")
+                    + escape(str(item["kind"]))
+                    + "\n" + tr("Бот: ", "Bot: ")
+                    + escape(str(item.get("bot") or "—"))
+                    + "\n" + tr("Период: ", "Period: ")
+                    + start_at.strftime("%d.%m.%Y") + " – "
+                    + end_at.strftime("%d.%m.%Y")
+                    + "\n" + tr("Сумма: ", "Amount: ")
+                    + "<b>" + escape(str(item["total_rub"])) + " ₽</b>"
                     + "\n" + tr("Статус: ", "Status: ")
                     + escape(str(item["status"]))
                     + "\n\n" + tr(
-                        "Нажимай подтверждение только после проверки "
-                        "поступления денег в банке.",
-                        "Only confirm after verifying receipt in the bank.",
+                        "Подтверждай только после проверки перевода по банку. "
+                        "ID и владелец должны совпадать с проверяемым счётом.",
+                        "Confirm only after checking the bank transfer. "
+                        "The invoice ID and owner must match your bank record.",
                     )
                 )
                 await _render_platform_screen(
