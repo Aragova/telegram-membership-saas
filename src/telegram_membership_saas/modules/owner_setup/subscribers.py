@@ -6,8 +6,8 @@ outbox/reconciliation remains the only writer of physical chat membership.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import wraps
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, exists, func, or_, select
