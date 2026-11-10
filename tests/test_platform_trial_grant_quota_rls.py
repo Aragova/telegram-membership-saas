@@ -37,14 +37,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-async def _set_policy(admin_engine, *, active):
+async def _set_policy(admin_engine, *, active, effective_at=None):
     async with admin_engine.begin() as admin:
         await admin.execute(text(
             "UPDATE platform_saas_access_policy "
             "SET enabled=:active,effective_from=:effective WHERE id=1"
         ), {
             "active": active,
-            "effective": datetime.now(UTC) - timedelta(hours=1) if active else None,
+            "effective": (
+                effective_at or datetime.now(UTC) - timedelta(hours=1)
+            ) if active else None,
         })
 
 
@@ -96,7 +98,11 @@ async def test_trial_is_opt_in_once_per_owner_and_first_bot_only():
         # With policy OFF, connecting does not claim trials or restrict users.
         await _connect(factory, old_owner, grandfathered)
         assert await _count_claims(admin_engine, old_owner) == 0
-        await _set_policy(admin_engine, active=True)
+        # The rollout instant must be AFTER the existing bot's connection,
+        # otherwise that connection would correctly count as a new owner.
+        await _set_policy(
+            admin_engine, active=True, effective_at=datetime.now(UTC),
+        )
         await _connect(factory, owner, project_a)
         assert await _count_claims(admin_engine, owner) == 1
         # Same account, another project & Merchant ID: no second free bot.
