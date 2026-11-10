@@ -28,6 +28,10 @@ from telegram_membership_saas.tenant_context import TenantContext
 @dataclass(frozen=True, slots=True)
 class SaasInvoiceSnapshot:
     enabled: bool
+    holds_enabled: bool
+    grace_days: int
+    held_owners: int
+    grace_owners: int
     issued: int
     unpaid: int
     unpaid_rub: Decimal
@@ -53,7 +57,7 @@ async def platform_saas_invoice_report(
     if not 0 <= page <= 100000:
         raise ValueError("Invalid SaaS invoice page")
     stmt = text(
-        "SELECT public.platform_saas_invoice_report(:page, :size) AS snapshot"
+        "SELECT public.platform_saas_hold_invoice_report(:page, :size) AS snapshot"
     ).columns(snapshot=JSONB)
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_user_id),
@@ -63,6 +67,10 @@ async def platform_saas_invoice_report(
         raise RuntimeError("Invalid SaaS invoice report")
     return SaasInvoiceSnapshot(
         enabled=bool(data["enabled"]),
+        holds_enabled=bool(data["holds_enabled"]),
+        grace_days=int(data["grace_days"]),
+        held_owners=int(data["held_owners"]),
+        grace_owners=int(data["grace_owners"]),
         issued=int(data["total"]),
         unpaid=int(data["unpaid"]),
         unpaid_rub=Decimal(str(data["unpaid_rub"])),
