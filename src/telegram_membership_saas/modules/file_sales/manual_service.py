@@ -16,9 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.modules.platform_saas_hold_errors import (
-    translate_commercial_hold,
-)
 from telegram_membership_saas.modules.file_sales.manual_models import (
     FileManualOrder,
     FileManualPrice,
@@ -40,6 +37,9 @@ from telegram_membership_saas.modules.payments import (
     render_manual_instruction,
 )
 from telegram_membership_saas.modules.payments.request_service import require_payment_permission
+from telegram_membership_saas.modules.platform_saas_hold_errors import (
+    translate_commercial_hold,
+)
 from telegram_membership_saas.modules.pricing import CurrencyAsset, CurrencyAssetStatus
 from telegram_membership_saas.modules.projects import Permission, Project, ProjectMember
 from telegram_membership_saas.modules.telegram_commerce.service import format_amount
