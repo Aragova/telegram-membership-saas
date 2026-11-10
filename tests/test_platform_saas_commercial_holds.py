@@ -25,6 +25,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
 )
+from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.tenant_context import TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -115,7 +116,7 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
             # to run, because it is a BEFORE INSERT trigger.
             for table in (
                 "payment_requests", "file_sale_manual_orders",
-                "file_sale_purchases", "resources",
+                "file_sale_purchases",
             ):
                 async with admin.begin():
                     statement = (
@@ -128,6 +129,21 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                                 "id": uuid4(), "project": project,
                             })
                     assert getattr(error.value.orig, "sqlstate", None) == "P6711"
+
+        # Resource creation has its own pre-existing owner/RLS guard.
+        # Exercise the actual authenticated owner path, not a raw
+        # unscoped admin INSERT that the earlier guard correctly rejects.
+        with pytest.raises(DBAPIError) as error:
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                session.add(Resource(
+                    project_id=project, resource_type="telegram_channel",
+                    external_id="-100" + str(uuid4().int % 10**12).zfill(12),
+                    name="New channel during hold", status="active",
+                ))
+                await session.flush()
+        assert getattr(error.value.orig, "sqlstate", None) == "P6711"
 
         # Same owner cannot evade an overdue invoice via new Merchant ID.
         with pytest.raises(DBAPIError) as error:
