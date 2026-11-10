@@ -5,9 +5,6 @@ from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from telegram_membership_saas.modules.platform_saas_hold_errors import (
-    translate_commercial_hold,
-)
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments.models import (
     PaymentMethod,
@@ -15,6 +12,9 @@ from telegram_membership_saas.modules.payments.models import (
     PaymentMethodStatus,
     PaymentRequest,
     PaymentRequestStatus,
+)
+from telegram_membership_saas.modules.platform_saas_hold_errors import (
+    translate_commercial_hold,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanStatus
 from telegram_membership_saas.modules.pricing import (
