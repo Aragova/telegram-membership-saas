@@ -123,8 +123,7 @@ async def issue_saas_monthly_commission(
         rates[currency] = str(rate)
     # Validate input in Python; SQL repeats authorization and source checks.
     # jsonb numeric values are safe and exact for numeric conversions.
-    data = dumps({k: Decimal(v) and float(v) for k, v in rates.items()})
-    # Decimal -> float risks lost precision: use literal numeric JSON tokens.
+    # Decimal values stay literal JSON numbers; do not round via float.
     data = "{" + ",".join(
         dumps(k) + ":" + str(Decimal(v)) for k, v in rates.items()
     ) + "}"
