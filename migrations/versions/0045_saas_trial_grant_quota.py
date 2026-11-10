@@ -92,6 +92,34 @@ def upgrade() -> None:
         END $revoke$
     """)
 
+    # Platform usage metering (migration 0020) persists the bot_connected
+    # event's occurred_at from bot_instances.created_at. The runtime can
+    # supply that column, so an attacker could backdate a connection made
+    # while billing was disabled and later claim pre-rollout grandfathering.
+    # Normalize new bot timestamps at insertion even while SaaS access policy
+    # is OFF; existing rows and historical events are NOT modified.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_bot_timestamp_guard()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $guard$
+        BEGIN
+          IF TG_OP='INSERT' THEN
+            NEW.created_at := clock_timestamp();
+          ELSIF NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+            RAISE EXCEPTION 'Bot connection timestamp is immutable'
+              USING ERRCODE='42501';
+          END IF;
+          RETURN NEW;
+        END;
+        $guard$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_saas_trusted_bot_clock
+        BEFORE INSERT OR UPDATE OF created_at ON public.bot_instances
+        FOR EACH ROW EXECUTE FUNCTION public.platform_saas_bot_timestamp_guard()
+    """)
+
     # Registration is already atomic with project creation in both token
     # and Managed Bots flows. DB trigger works regardless of Python handler.
     op.execute("""
@@ -533,6 +561,7 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION public.platform_saas_immutable_event_guard()
     """)
     for fn in (
+        "platform_saas_bot_timestamp_guard()",
         "platform_saas_first_bot_trial_guard()",
         "platform_saas_transferred_bot_trial_guard()",
         "platform_saas_complimentary_grant_guard()",
@@ -562,6 +591,7 @@ def downgrade() -> None:
         ("entitlement_grants", "trg_saas_complimentary_grant"),
         ("projects", "trg_saas_transferred_bot_trial"),
         ("bot_instances", "trg_saas_first_bot_trial"),
+        ("bot_instances", "trg_saas_trusted_bot_clock"),
     ):
         op.execute(f"DROP TRIGGER IF EXISTS {trigger} ON public.{table}")
     for fn in (
@@ -570,6 +600,7 @@ def downgrade() -> None:
         "platform_saas_complimentary_grant_guard()",
         "platform_saas_transferred_bot_trial_guard()",
         "platform_saas_first_bot_trial_guard()",
+        "platform_saas_bot_timestamp_guard()",
     ):
         op.execute(f"DROP FUNCTION IF EXISTS public.{fn}")
     op.drop_table("platform_saas_complimentary_events")
