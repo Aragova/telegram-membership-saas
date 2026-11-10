@@ -547,8 +547,23 @@ async def test_delayed_activation_cannot_issue_trial_with_an_existing_bot():
         )
         # Policy is OFF, although its future configured cutoff will
         # precede the first bot's actual connection.
-        first = await _connect(factory, owner, first_project)
+        # Even while the policy is OFF, spoofed timestamps must not
+        # create fake pre-rollout bot_connected audit events.
+        first = await _connect(
+            factory, owner, first_project, backdated=True,
+        )
         assert await _count_claims(admin_engine, owner) == 0
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=first_project),
+        ) as session:
+            existing = await session.get(BotInstance, first)
+            assert existing.created_at >= datetime.now(UTC) - timedelta(minutes=2)
+        async with admin_engine.connect() as admin:
+            audit_time = (await admin.execute(text("""
+                SELECT occurred_at FROM platform_usage_events
+                WHERE source_id=:id AND event_type='bot_connected'
+            """), {"id": first})).scalar_one()
+            assert audit_time >= datetime.now(UTC) - timedelta(minutes=2)
         await _set_policy(
             admin_engine, active=True,
             effective_at=datetime.now(UTC) - timedelta(hours=1),
@@ -561,6 +576,15 @@ async def test_delayed_activation_cannot_issue_trial_with_an_existing_bot():
             factory, TenantContext(user_id=owner, project_id=first_project),
         ) as session:
             assert (await session.get(BotInstance, first)) is not None
+        # Post-connection edits to created_at cannot rewrite history.
+        with pytest.raises(DBAPIError) as error:
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=first_project),
+            ) as session:
+                existing = await session.get(BotInstance, first)
+                existing.created_at = datetime.now(UTC) - timedelta(days=45)
+                await session.flush()
+        assert getattr(error.value.orig, "sqlstate", None) == "42501"
     finally:
         await _set_policy(admin_engine, active=False)
         await engine.dispose()
