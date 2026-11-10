@@ -133,6 +133,25 @@ jobs:
                       "TO membership_runtime"
                   )
 
+                  # CI creates membership_runtime AFTER applying migrations.
+                  # Grant only the narrow SECURITY DEFINER RPC entry points.
+                  for function in (
+                      "platform_saas_payment_details_read()",
+                      "platform_saas_payment_details_set(text)",
+                      "platform_saas_owner_invoice_report(integer,integer)",
+                      "platform_saas_notice_schedule()",
+                      "platform_saas_notice_claim()",
+                      "platform_saas_notice_finish(uuid,integer,boolean)",
+                  ):
+                      await connection.execute(
+                          f"GRANT EXECUTE ON FUNCTION public.{function} "
+                          "TO membership_runtime"
+                      )
+                  await connection.execute(
+                      "REVOKE ALL ON public.platform_saas_payment_details, "
+                      "public.platform_saas_notice_outbox FROM membership_runtime"
+                  )
+
                   # Match production: migration 0029 explicitly denies
                   # runtime CRUD on platform-only commercial tables.
                   await connection.execute(
