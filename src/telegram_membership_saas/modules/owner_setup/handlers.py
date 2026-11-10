@@ -3314,6 +3314,18 @@ def create_owner_setup_router(
                 await show_home(bot, user_id, actor_id)
                 await query.answer()
                 return
+            if action.startswith("saasinvoices:"):
+                # Historical debts belong to the Telegram account, even after
+                # its last project has been transferred away.
+                page_text = action.split(":", 1)[1]
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Invalid platform invoice page")
+                await show_saas_statements(
+                    bot, user_id, actor_id, fixed_project_id,
+                    page=int(page_text),
+                )
+                await query.answer()
+                return
             project_id = await get_selected_project(
                 factory, actor_id=actor_id,
                 bot_scope_id=bot.id if fixed_project_id else 0,
@@ -3933,14 +3945,6 @@ def create_owner_setup_router(
                         category=category, enabled=raw == "1",
                     )
                 await show_notifications(bot, user_id, actor_id, project_id)
-            elif action.startswith("saasinvoices:"):
-                page_text = action.split(":", 1)[1]
-                if not page_text.isascii() or not page_text.isdecimal():
-                    raise ValueError("Invalid platform invoice page")
-                await show_saas_statements(
-                    bot, user_id, actor_id, fixed_project_id,
-                    page=int(page_text),
-                )
             elif action == "settings":
                 await show_settings(bot, user_id)
             elif action == "dashboard":
