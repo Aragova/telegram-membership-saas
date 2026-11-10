@@ -56,14 +56,14 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 ## 6. Safe implementation slices
 
 1. **Contract + deterministic commission computation** (this PR): explicit policies, tested source identity, snapshot, RUB conversion and rounding; no migration, side effects, restrictions, invoices or live charges.
-2. **Financial persistence:** migration for billing statements, line items, payment confirmations and immutable adjustments; strict PostgreSQL RLS/privileges, unique source keys for subscriptions **and files**, Merchant ID attribution, atomic invoice generation, operator-only receipt confirmation, reliable audit. Integrate both approved-sale sources, including any verified file/Stars paths, without changing customer payment flows.
+2. **Financial persistence + platform-owner exemption:** implement operator-verified, project/channel-scoped owner exemptions **before** issuing any billable entries; migration for billing statements, line items, payment confirmations and immutable adjustments; strict PostgreSQL RLS/privileges, unique source keys for subscriptions **and files**, Merchant ID attribution, atomic invoice generation, operator-only receipt confirmation, reliable audit. Integrate both approved-sale sources, including any verified file/Stars paths, without changing customer payment flows.
 3. **Trial + grant quota:** reuse owner-scoped trial-claim table, implement durable shared complimentary-grant counters and owner-only exceptions. Enforce in all service paths with PostgreSQL concurrency tests. No retroactive quota to existing users.
 4. **Central bot UI + manual settlement:** single bilingual billing entry, invoice details, bank instructions from secure configuration, confirmation upload, platform-owner review and receipt ledger.
 5. **Commercial hold + operational rollout:** guarded new checkout/attachment paths, overdue notices, grace, safe restoration and paid-obligation continuance; staging E2E and explicit owner activation. Do not silently activate for existing customers.
 
 ## 7. Acceptance gates
 
-- One verified owner cannot claim a second trial through a new bot/project/merchant.
+- ViMi Pay's own verified channels/bots never receive SaaS invoices or fee/commission charges, consume trial, or become blocked for SaaS debt; another channel where the operator is only admin is still billed. Transferring a channel changes exemption only prospectively.\n- One verified owner cannot claim a second trial through a new bot/project/merchant.
 - Two concurrent free grants cannot bypass quota; staff cannot issue free paid plans; OWNER_SERVICE remains privileged.
 - One approved Payment or approved FileManualOrder generates one billable event, by frozen price, and remains one event after retries, deletions and reconnections.
 - FX and ruble rounding explicit; missing rate blocks invoice creation; refunds are compensating entries.
