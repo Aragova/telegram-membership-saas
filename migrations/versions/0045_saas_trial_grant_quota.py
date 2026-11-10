@@ -352,6 +352,42 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION public.platform_saas_transferred_bot_trial_guard()
     """)
 
+    # Historic grandfathering is about actual bot-connected and verified
+    # owner-period overlap, not the mere ABSENCE of a trial claim. During a
+    # delayed enablement some owners had bots after effective_from while the
+    # policy was OFF; they must still consume free-grant quota on activation.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_owner_was_legacy(
+            p_owner uuid, p_effective timestamptz
+        ) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $legacy$
+          SELECT EXISTS(
+            SELECT 1 FROM public.platform_usage_events ev
+            JOIN public.merchant_project_periods mp
+              ON mp.project_id=ev.project_id
+             AND mp.owner_user_id=p_owner
+            WHERE ev.event_type='bot_connected'
+              AND ev.occurred_at<p_effective
+              AND mp.started_at<p_effective
+              AND coalesce(mp.ended_at,'infinity'::timestamptz)
+                  > greatest(ev.occurred_at,mp.started_at)
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_usage_events gone
+                WHERE gone.project_id=ev.project_id
+                  AND gone.source_id=ev.source_id
+                  AND gone.event_type='bot_removed'
+                  AND gone.occurred_at
+                      <= greatest(ev.occurred_at,mp.started_at)
+              )
+          )
+        $legacy$
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION public.platform_saas_owner_was_legacy("
+        "uuid,timestamptz) FROM PUBLIC"
+    )
+
     # Fire at actual DB grant insertion, not just the UI callback.
     # The manual plan path inserts one grant per resource with a shared
     # source ID, so the quota is per channel, and both paths share one pool.
@@ -389,10 +425,10 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Project owner missing' USING ERRCODE='42501';
           END IF;
 
-          -- Existing tenant owners are grandfathered until specifically
-          -- enrolled later. Platform operators are NOT automatically exempt:
-          -- on third-party channels they are subject to the same quota
-          -- unless that exact bot/channel has creator verification.
+          -- A missing trial claim does NOT prove an owner is legacy.
+          -- The access policy can be enabled after its effective_from:
+          -- previously connected, unclaimed post-cutoff accounts are
+          -- commercial and must consume the same free-grant quota.
           SELECT EXISTS(
             SELECT 1 FROM public.telegram_users u
             JOIN public.platform_operators o
@@ -404,6 +440,8 @@ def upgrade() -> None:
             WHERE t.owner_user_id=recorded_owner AND t.scope='owner'
               AND t.policy_key='vimi-saas-72h-v1'
               AND t.claimed_at>=effective_at
+          ) AND public.platform_saas_owner_was_legacy(
+              recorded_owner,effective_at
           ) THEN RETURN NEW; END IF;
 
           actor := NULLIF(current_setting('app.current_user_id',true),'')::uuid;
@@ -495,19 +533,23 @@ def upgrade() -> None:
           THEN RETURN NEW; END IF;
           SELECT p.owner_user_id INTO account_owner
           FROM public.projects p WHERE p.id=OLD.project_id;
-          IF account_owner IS NULL OR NOT (
-            EXISTS(
+          IF account_owner IS NULL THEN RETURN NEW; END IF;
+          -- Preserve pre-rollout legacy entitlements, but do NOT let an
+          -- unclaimed post-cutoff account mutate grants to avoid quotas.
+          IF NOT EXISTS(
               SELECT 1 FROM public.merchant_platform_trial_claims t
               WHERE t.owner_user_id=account_owner AND t.scope='owner'
                 AND t.policy_key='vimi-saas-72h-v1'
                 AND t.claimed_at>=effective_at
-            ) OR EXISTS(
+            ) AND NOT EXISTS(
               SELECT 1 FROM public.telegram_users u
               JOIN public.platform_operators o
                 ON o.telegram_user_id=u.telegram_user_id
               WHERE u.id=account_owner AND o.role='owner'
+            ) AND public.platform_saas_owner_was_legacy(
+              account_owner,effective_at
             )
-          ) THEN RETURN NEW; END IF;
+          THEN RETURN NEW; END IF;
           IF (OLD.id,OLD.project_id,OLD.customer_id,OLD.resource_id,
               OLD.source,OLD.source_id,OLD.manual_plan_id,
               OLD.valid_from,OLD.valid_until,OLD.created_at)
@@ -603,5 +645,9 @@ def downgrade() -> None:
         "platform_saas_bot_timestamp_guard()",
     ):
         op.execute(f"DROP FUNCTION IF EXISTS public.{fn}")
+    op.execute(
+        "DROP FUNCTION IF EXISTS public.platform_saas_owner_was_legacy("
+        "uuid,timestamptz)"
+    )
     op.drop_table("platform_saas_complimentary_events")
     op.drop_table("platform_saas_access_policy")
