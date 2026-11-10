@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
@@ -568,6 +570,25 @@ async def list_subscriber_invoices(
         )
 
 
+def _complimentary_quota_error(operation):
+    """Expose an actionable RU/EN-friendly business error, not PostgreSQL P6702."""
+    @wraps(operation)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await operation(*args, **kwargs)
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == "P6702":
+                raise ValueError(
+                    "Лимит бесплатных активаций для этого канала исчерпан. "
+                    "Используйте обычную оплату. / Monthly free-access "
+                    "quota reached for this channel. Use paid checkout."
+                ) from None
+            raise
+
+    return wrapper
+
+
+@_complimentary_quota_error
 async def grant_manual_access(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, customer_id: UUID,
@@ -764,6 +785,7 @@ async def list_activatable_plans(
         ) for pid, name, value, unit, count in rows)
 
 
+@_complimentary_quota_error
 async def activate_manual_plan(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, customer_id: UUID, plan_id: UUID,
