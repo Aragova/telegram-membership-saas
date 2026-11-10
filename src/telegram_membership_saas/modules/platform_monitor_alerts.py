@@ -34,6 +34,10 @@ from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.db_base import Base
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.identity.models import TelegramUser
+from telegram_membership_saas.modules.platform_saas_notices import (
+    deliver_one_saas_notice,
+    schedule_saas_reminders,
+)
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -489,6 +493,19 @@ async def run_central_platform_monitor(
                         timezone=settings.platform_timezone,
                     ):
                         break
+                # Platform billing notices share the SAME central process.
+                # Never let a reminder failure interfere with bot monitoring.
+                try:
+                    await schedule_saas_reminders(
+                        factory, platform_actor_id=actor,
+                    )
+                    for _ in range(3):
+                        if not await deliver_one_saas_notice(
+                            factory, bot=bot, platform_actor_id=actor,
+                        ):
+                            break
+                except Exception:
+                    log.warning("Platform SaaS reminder scan/delivery deferred")
         except asyncio.CancelledError:
             raise
         except Exception:

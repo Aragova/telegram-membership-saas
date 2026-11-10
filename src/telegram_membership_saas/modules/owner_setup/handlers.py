@@ -204,6 +204,9 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
+from telegram_membership_saas.modules.platform_saas_payment_service import (
+    merchant_saas_statements,
+)
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
@@ -619,12 +622,97 @@ def create_owner_setup_router(
                 [_button(tr("📋 Готовность", "📋 Readiness"), "readiness"),
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
+                [_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"), "saasinvoices:0")],
                 [_button(tr("🛡 Модераторы", "🛡 Moderators"), "modmanage")],
                 [_button(tr("🔁 Передать бота", "🔁 Transfer bot"), "transfer")],
                 [_button(tr("❔ Помощь", "❔ Help"), "help")],
                 [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
                          "dashboard")],
             ]),
+        )
+
+    async def show_saas_statements(
+        bot: Bot, user_id: int, actor_id: UUID,
+        project_id: UUID | None, *, page: int = 0,
+    ) -> None:
+        report = await merchant_saas_statements(
+            factory, actor_user_id=actor_id, project_id=project_id,
+            page=page,
+        )
+        lines = [
+            tr("🧾 <b>ViMi Pay · Счета платформы</b>",
+               "🧾 <b>ViMi Pay · Platform invoices</b>"),
+            tr("Всего: ", "Total: ") + str(report.total),
+            tr("Неоплаченных: ", "Unpaid: ") + str(report.unpaid),
+            tr("К оплате: ", "Outstanding: ")
+            + escape(format(report.outstanding_rub, ".2f")) + " ₽",
+            "",
+        ]
+        if not report.invoices:
+            lines.append(tr("Счетов пока нет.", "No platform invoices yet."))
+        for item in report.invoices:
+            is_paid = item["status"] == "paid"
+            state = (
+                tr("Оплачен", "Paid") if is_paid
+                else tr("Ожидает подтверждения", "Awaiting confirmation")
+            )
+            kind = (
+                tr("Обслуживание бота", "Bot service") if item["kind"] == "prepayment"
+                else tr("Комиссия с продаж", "Sales commission")
+            )
+            lines.extend([
+                ("✅ " if is_paid else "⏳ ") + "<b>"
+                + escape(str(item["amount_rub"])) + " ₽</b> · "
+                + escape(kind),
+                "  № <code>" + escape(str(item["id"])) + "</code>",
+                "  " + tr("Срок: ", "Due: ")
+                + escape(str(item["due_at"])[:10]) + " · " + state,
+            ])
+        if report.unpaid:
+            lines.append("")
+            if report.configured:
+                lines.append(tr("💳 <b>Реквизиты ViMi Pay</b>",
+                                "💳 <b>ViMi Pay bank instructions</b>"))
+                lines.append("<pre>" + escape(str(report.instructions)) + "</pre>")
+                lines.append(tr(
+                    "Укажите полный номер счёта в назначении платежа. "
+                    "После перевода платформа проверит поступление. "
+                    "Отправка денег сама по себе не отмечает счёт оплаченным.",
+                    "Include the full invoice ID in your transfer memo. "
+                    "The platform verifies receipt independently; "
+                    "a transfer does not automatically mark an invoice paid.",
+                ))
+            else:
+                lines.append(tr(
+                    "⚠️ Реквизиты ещё не опубликованы. "
+                    "Не переводите деньги до их появления.",
+                    "⚠️ Payment instructions have not been published. "
+                    "Do not transfer funds until they appear.",
+                ))
+        lines.append("")
+        lines.append(tr(
+            "<i>Это только счета за обслуживание ViMi Pay, "
+            "не счета ваших покупателей. Оплаченный доступ не отзывается.</i>",
+            "<i>These are platform service invoices, not customer "
+            "invoices. Previously paid access is preserved.</i>",
+        ))
+        rows: list[list[InlineKeyboardButton]] = []
+        nav = []
+        if page:
+            nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
+        if (page + 1) * 6 < report.total:
+            nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
+        if nav:
+            rows.append(nav)
+        rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
+        rows.append([_button(
+            tr("⬅️ Мои боты", "⬅️ My bots") if project_id is None
+            else tr("⬅️ Настройки", "⬅️ Settings"),
+            "projects" if project_id is None else "settings",
+        )])
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_markup(rows),
         )
 
     async def show_moderators(
@@ -2926,6 +3014,24 @@ def create_owner_setup_router(
         else:
             await show_dashboard(bot, message.chat.id, actor_id, project_id)
 
+    @router.message(Command("billing"))
+    async def owner_platform_billing_command(message: Message, bot: Bot) -> None:
+        if not _private(message) or message.from_user is None:
+            return
+        actor_id = await actor(message.from_user)
+        try:
+            await show_saas_statements(
+                bot, message.from_user.id, actor_id,
+                fixed_project_id,
+            )
+        except PermissionError:
+            await bot.send_message(
+                message.from_user.id, tr(
+                    "Управление счетами доступно только владельцу.",
+                    "Only the owner can view platform invoices.",
+                ),
+            )
+
     @router.callback_query(F.data.startswith("own:"))
     async def owner_callback(query: CallbackQuery, bot: Bot) -> None:
         if query.message is None or query.message.chat.type != "private":
@@ -2950,7 +3056,7 @@ def create_owner_setup_router(
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
-                "connarchive:", "connarchiveok:",
+                "connarchive:", "connarchiveok:", "saasinvoices:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -3206,6 +3312,18 @@ def create_owner_setup_router(
                     reply_markup=ReplyKeyboardRemove(),
                 )
                 await show_home(bot, user_id, actor_id)
+                await query.answer()
+                return
+            if action.startswith("saasinvoices:"):
+                # Historical debts belong to the Telegram account, even after
+                # its last project has been transferred away.
+                page_text = action.split(":", 1)[1]
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Invalid platform invoice page")
+                await show_saas_statements(
+                    bot, user_id, actor_id, fixed_project_id,
+                    page=int(page_text),
+                )
                 await query.answer()
                 return
             project_id = await get_selected_project(
