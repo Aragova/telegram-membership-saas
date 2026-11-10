@@ -126,7 +126,7 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
     admin_engine = create_async_engine(settings.migration_database_url)
     operator_tg = _tid()
     try:
-        operator, own_merchant, own_project, own_bot, _ = (
+        operator, own_merchant, own_project, own_bot, own_chat = (
             await _project(factory, operator_tg)
         )
         merchant, merchant_id, project, bot, _ = await _project(factory, _tid())
@@ -167,6 +167,28 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                     "month": last_month,
                 })).scalar_one()
                 assert no_commission is None
+                # Being the ViMi Pay platform owner alone is not proof
+                # of Telegram creator status for a third-party channel.
+                with pytest.raises(DBAPIError) as error:
+                    async with admin.begin_nested():
+                        await admin.execute(text(
+                            "SELECT public.platform_saas_issue_bot_invoice("
+                            ":bot,:start,:end)"
+                        ), {
+                            "bot": own_bot, "start": start, "end": end,
+                        })
+                assert getattr(error.value.orig, "sqlstate", None) == "42501"
+                await admin.execute(text("""
+                    INSERT INTO platform_saas_owner_exemptions
+                    (id,merchant_id,project_id,bot_instance_id,channel_chat_id,
+                     owner_user_id,verified_by,proof_kind)
+                    VALUES (:id,:merchant,:project,:bot,:chat,:owner,:owner,
+                            'telegram_creator_verified')
+                """), {
+                    "id": uuid4(), "merchant": own_merchant,
+                    "project": own_project, "bot": own_bot,
+                    "chat": own_chat, "owner": operator,
+                })
                 own = (await admin.execute(text(
                     "SELECT public.platform_saas_issue_bot_invoice("
                     ":bot,:start,:end)"
