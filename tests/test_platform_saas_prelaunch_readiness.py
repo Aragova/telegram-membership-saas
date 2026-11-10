@@ -34,6 +34,16 @@ async def _report(admin):
     )).scalar_one()
 
 
+async def _page(admin, page, size):
+    return (await admin.execute(
+        text(
+            "SELECT public.platform_saas_exemption_preflight_page("
+            ":page,:size) AS data"
+        ).columns(data=JSONB),
+        {"page": page, "size": size},
+    )).scalar_one()
+
+
 async def test_prelaunch_report_is_read_only_owner_scoped_and_exemption_specific():
     settings = Settings()
     engine = build_engine(settings)
@@ -63,6 +73,19 @@ async def test_prelaunch_report_is_read_only_owner_scoped_and_exemption_specific
                 assert before["verified"] == 0
                 assert before["pending"] == 2
                 assert len(before["pending_bots"]) == 2
+                first = await _page(admin, 0, 1)
+                second = await _page(admin, 1, 1)
+                assert first["page"] == 0 and second["page"] == 1
+                assert first["pages"] == second["pages"] == 2
+                assert len(first["pending_bots"]) == 1
+                assert len(second["pending_bots"]) == 1
+                assert first["operator_bots"] == 2
+                assert first["pending"] == 2
+
+                with pytest.raises(DBAPIError) as error:
+                    async with admin.begin_nested():
+                        await _page(admin, -1, 8)
+                assert getattr(error.value.orig, "sqlstate", None) == "22023"
 
                 # Only the channel with an explicit creator-verification row
                 # may count as exempt. Platform operator role is insufficient.
@@ -82,6 +105,12 @@ async def test_prelaunch_report_is_read_only_owner_scoped_and_exemption_specific
                 assert after["verified"] == 1
                 assert after["pending"] == 1
                 assert len(after["pending_bots"]) == 1
+                after_page = await _page(admin, 0, 8)
+                assert after_page["operator_bots"] == 2
+                assert after_page["verified"] == 1
+                assert after_page["pending"] == 1
+                assert after_page["pages"] == 1
+                assert len(after_page["pending_bots"]) == 1
 
                 # Read-only audit must not switch on billing/holds/trials.
                 switches = (await admin.execute(text("""
@@ -97,6 +126,10 @@ async def test_prelaunch_report_is_read_only_owner_scoped_and_exemption_specific
                     async with admin.begin_nested():
                         await _report(admin)
                 assert getattr(error.value.orig, "sqlstate", None) == "42501"
+                with pytest.raises(DBAPIError) as denied:
+                    async with admin.begin_nested():
+                        await _page(admin, 0, 8)
+                assert getattr(denied.value.orig, "sqlstate", None) == "42501"
             finally:
                 await tx.rollback()
     finally:
