@@ -266,6 +266,53 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION public.platform_saas_exemption_guard()
     """)
 
+    # Temporal, bot-scoped owner exemption. It never propagates from a
+    # deleted bot to its replacement or to another channel in the project.
+    # Ambiguous multi-channel projects require an operator review; do not
+    # accidentally charge an owner's own content or waive another's fee.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_exemption_state(
+            p_project uuid, p_bot uuid, p_merchant uuid,
+            p_owner uuid, p_effective timestamptz
+        ) RETURNS text LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $function$
+        DECLARE
+          exempt record;
+          channel_count integer;
+          matched boolean;
+        BEGIN
+          SELECT * INTO exempt
+            FROM public.platform_saas_owner_exemptions e
+           WHERE e.project_id=p_project
+             AND e.bot_instance_id=p_bot
+             AND e.merchant_id=p_merchant
+             AND e.owner_user_id=p_owner
+             AND e.verified_at<=p_effective
+             AND (e.ended_at IS NULL OR e.ended_at>p_effective)
+           ORDER BY e.verified_at DESC LIMIT 1;
+          IF NOT FOUND THEN
+            RETURN 'not_exempt';
+          END IF;
+          SELECT count(*),
+                 bool_or(c.telegram_chat_id=exempt.channel_chat_id)
+            INTO channel_count,matched
+            FROM public.merchant_channel_periods c
+           WHERE c.project_id=p_project AND c.merchant_id=p_merchant
+             AND c.started_at<=p_effective
+             AND (c.ended_at IS NULL OR c.ended_at>p_effective);
+          IF channel_count <> 1 OR matched IS DISTINCT FROM true THEN
+            RETURN 'needs_review';
+          END IF;
+          RETURN 'exempt';
+        END;
+        $function$
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION public.platform_saas_exemption_state("
+        "uuid,uuid,uuid,uuid,timestamptz) FROM PUBLIC"
+    )
+
     op.execute("""
         CREATE FUNCTION public.platform_saas_line_guard()
         RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
@@ -274,6 +321,10 @@ def upgrade() -> None:
         DECLARE
           parent record;
           sale record;
+          source_bot uuid;
+          bot_count bigint;
+          effective_at timestamptz;
+          exemption_state text;
         BEGIN
           IF TG_OP <> 'INSERT' THEN
             RAISE EXCEPTION 'Platform invoice lines are immutable'
@@ -283,19 +334,6 @@ def upgrade() -> None:
             WHERE id=NEW.invoice_id FOR UPDATE;
           IF parent.id IS NULL OR parent.status <> 'draft' THEN
             RAISE EXCEPTION 'Invoice is not editable' USING ERRCODE='42501';
-          END IF;
-          -- Absolutely no charges for explicitly verified personal channels.
-          -- A project where the platform owner is *merely an admin* will not
-          -- have an exemption record and is treated as normal commerce.
-          IF EXISTS(
-            SELECT 1 FROM public.platform_saas_owner_exemptions e
-            WHERE e.project_id=NEW.project_id
-              AND e.merchant_id=parent.merchant_id
-              AND e.owner_user_id=parent.owner_user_id
-              AND e.ended_at IS NULL
-          ) THEN
-            RAISE EXCEPTION 'Own platform channel is exempt from SaaS charges'
-              USING ERRCODE='42501';
           END IF;
           IF NEW.source_kind = 'bot_fee' THEN
             IF parent.kind <> 'prepayment'
@@ -316,6 +354,8 @@ def upgrade() -> None:
               RAISE EXCEPTION 'Invalid bot prepayment source'
                 USING ERRCODE='23514';
             END IF;
+            source_bot := NEW.source_id;
+            effective_at := parent.period_start;
           ELSE
             IF parent.kind <> 'commission' OR NEW.fee_rate <> 0.05 THEN
               RAISE EXCEPTION 'Invalid commission policy'
@@ -332,6 +372,28 @@ def upgrade() -> None:
             ELSE
               RAISE EXCEPTION 'Unknown paid source' USING ERRCODE='23514';
             END IF;
+            -- Source identity is reconstructed from immutable bot-connected
+            -- and bot-removed events at the approval time, not the bot that
+            -- happens to be connected when month-end billing runs.
+            -- Ambiguous histories are not silently assigned a replacement.
+            SELECT count(*), max(connected.source_id::text)::uuid
+              INTO bot_count,source_bot
+              FROM public.platform_usage_events connected
+             WHERE connected.project_id=NEW.project_id
+               AND connected.event_type='bot_connected'
+               AND connected.occurred_at<=sale.paid_at
+               AND NOT EXISTS(
+                   SELECT 1 FROM public.platform_usage_events removed
+                   WHERE removed.project_id=NEW.project_id
+                     AND removed.source_id=connected.source_id
+                     AND removed.event_type='bot_removed'
+                     AND removed.occurred_at<=sale.paid_at
+               );
+            IF bot_count<>1 THEN
+              RAISE EXCEPTION 'Paid source bot history is ambiguous'
+                USING ERRCODE='23514';
+            END IF;
+            effective_at := sale.paid_at;
             IF sale.project_id IS DISTINCT FROM NEW.project_id
                OR sale.amount IS DISTINCT FROM NEW.original_amount
                OR sale.currency_code IS DISTINCT FROM NEW.original_currency
@@ -353,6 +415,18 @@ def upgrade() -> None:
               RAISE EXCEPTION 'Approved purchase / commission snapshot mismatch'
                 USING ERRCODE='23514';
             END IF;
+          END IF;
+          IF NEW.bot_instance_id IS DISTINCT FROM source_bot THEN
+            RAISE EXCEPTION 'Historical bot identity mismatch'
+              USING ERRCODE='23514';
+          END IF;
+          SELECT public.platform_saas_exemption_state(
+            NEW.project_id, source_bot, parent.merchant_id,
+            parent.owner_user_id, effective_at
+          ) INTO exemption_state;
+          IF exemption_state <> 'not_exempt' THEN
+            RAISE EXCEPTION 'Verified platform channel exempt or needs review'
+              USING ERRCODE='42501';
           END IF;
           RETURN NEW;
         END;
@@ -408,10 +482,22 @@ def upgrade() -> None:
             IF line_count=0 OR sum_lines<>OLD.total_rub
                OR EXISTS (
                  SELECT 1 FROM public.platform_saas_invoice_lines l
-                 JOIN public.platform_saas_owner_exemptions e
-                   ON e.project_id=l.project_id AND e.merchant_id=OLD.merchant_id
-                  AND e.owner_user_id=OLD.owner_user_id
-                 WHERE l.invoice_id=OLD.id AND e.ended_at IS NULL
+                 WHERE l.invoice_id=OLD.id AND
+                 public.platform_saas_exemption_state(
+                   l.project_id, l.bot_instance_id,
+                   OLD.merchant_id, OLD.owner_user_id,
+                   CASE l.source_kind
+                     WHEN 'bot_fee' THEN OLD.period_start
+                     WHEN 'subscription' THEN (
+                       SELECT p.approved_at FROM public.payments p
+                       WHERE p.id=l.source_id
+                     )
+                     WHEN 'file_manual' THEN (
+                       SELECT f.paid_at FROM public.file_sale_manual_orders f
+                       WHERE f.id=l.source_id
+                     )
+                   END
+                 ) <> 'not_exempt'
                ) THEN
               RAISE EXCEPTION 'Invoice lines / exemption mismatch'
                 USING ERRCODE='23514';
@@ -516,5 +602,9 @@ def downgrade() -> None:
         "platform_saas_exemption_guard",
     ):
         op.execute(f"DROP FUNCTION IF EXISTS public.{fn}()")
+    op.execute(
+        "DROP FUNCTION IF EXISTS public.platform_saas_exemption_state("
+        "uuid,uuid,uuid,uuid,timestamptz)"
+    )
     for table in reversed(TABLES):
         op.drop_table(table)
