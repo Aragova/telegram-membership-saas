@@ -112,8 +112,11 @@ def upgrade() -> None:
           SELECT effective_from INTO effective_at
           FROM public.platform_saas_access_policy
           WHERE id=1 AND enabled=true;
+          -- NEW.created_at is writable by the runtime role; never use it
+          -- to decide enrollment. Only the DB clock and prior trusted
+          -- connection events (excluding this NEW bot) may do so.
           IF effective_at IS NULL OR clock_timestamp()<effective_at
-             OR NEW.created_at<effective_at THEN RETURN NEW; END IF;
+          THEN RETURN NEW; END IF;
           SELECT p.owner_user_id,p.merchant_id
             INTO recorded_owner,recorded_merchant
           FROM public.projects p WHERE p.id=NEW.project_id;
@@ -121,31 +124,6 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Verified project owner required'
               USING ERRCODE='42501';
           END IF;
-
-          -- Owner accounts with bots before rollout remain grandfathered;
-          -- no retroactive trial, invoices or quota. Deleted old bots remain
-          -- detectable via permanent usage events + historical owner periods.
-          SELECT EXISTS(
-            SELECT 1 FROM public.platform_usage_events ev
-            JOIN public.merchant_project_periods mp
-              ON mp.project_id=ev.project_id
-             AND mp.owner_user_id=recorded_owner
-             AND mp.started_at<=ev.occurred_at
-             AND (mp.ended_at IS NULL OR mp.ended_at>=ev.occurred_at)
-            WHERE ev.event_type='bot_connected'
-              AND ev.occurred_at<effective_at
-          ) INTO legacy_bot;
-          IF legacy_bot THEN RETURN NEW; END IF;
-
-          -- A platform operator can administer third-party channels.
-          -- Do not auto-claim a platform owner's personal trial or grant
-          -- an exemption from a mere role flag; require owner review later.
-          IF EXISTS(
-            SELECT 1 FROM public.telegram_users u
-            JOIN public.platform_operators o
-              ON o.telegram_user_id=u.telegram_user_id
-            WHERE u.id=recorded_owner AND o.role='owner'
-          ) THEN RETURN NEW; END IF;
 
           actor := NULLIF(current_setting('app.current_user_id',true),'')::uuid;
           IF actor IS NOT NULL AND actor<>recorded_owner THEN
@@ -159,6 +137,33 @@ def upgrade() -> None:
           FROM public.merchant_platform_trial_claims t
           WHERE t.owner_user_id=recorded_owner AND t.scope='owner'
             AND t.policy_key='vimi-saas-72h-v1';
+
+          -- A platform operator can administer third-party channels.
+          -- Do not consume their personal trial or infer creator proof.
+          IF EXISTS(
+            SELECT 1 FROM public.telegram_users u
+            JOIN public.platform_operators o
+              ON o.telegram_user_id=u.telegram_user_id
+            WHERE u.id=recorded_owner AND o.role='owner'
+          ) THEN RETURN NEW; END IF;
+
+          -- Owner accounts with genuine bots before rollout are grandfathered.
+          -- Do not include this row's potentially forged created_at/event;
+          -- once claimed, that claim always takes priority over old events.
+          IF started IS NULL THEN
+            SELECT EXISTS(
+              SELECT 1 FROM public.platform_usage_events ev
+              JOIN public.merchant_project_periods mp
+                ON mp.project_id=ev.project_id
+               AND mp.owner_user_id=recorded_owner
+               AND mp.started_at<=ev.occurred_at
+               AND (mp.ended_at IS NULL OR mp.ended_at>=ev.occurred_at)
+              WHERE ev.event_type='bot_connected'
+                AND ev.source_id<>NEW.id
+                AND ev.occurred_at<effective_at
+            ) INTO legacy_bot;
+            IF legacy_bot THEN RETURN NEW; END IF;
+          END IF;
 
           IF started IS NULL THEN
             -- No duplicate trial after reconnect. A second owner project
