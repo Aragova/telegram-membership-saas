@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_platform_saas_invoice_rls import _invoice, _line, _project, _tid
@@ -24,7 +25,6 @@ from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
 )
-from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.tenant_context import TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -155,11 +155,10 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                     "SELECT set_config('app.current_user_id',:uid,true)"
                 ), {"uid": str(operator)})
                 report = (await admin.execute(text(
-                    "SELECT public.platform_saas_hold_invoice_report(0,6)"
-                ))).scalar_one()
-                assert '"held_owners": 1' in str(report) or (
-                    isinstance(report, dict) and report["held_owners"] == 1
-                )
+                    "SELECT public.platform_saas_hold_invoice_report(0,6) AS snapshot"
+                ).columns(snapshot=JSONB))).scalar_one()
+                assert report["held_owners"] == 1
+                assert report["holds_enabled"] is True
                 receipt = (await admin.execute(text(
                     "SELECT public.platform_saas_confirm_receipt(:id,:ref)"
                 ), {"id": invoice, "ref": "bank-reviewed-test"})).scalar_one()
@@ -208,13 +207,15 @@ async def test_old_issued_invoice_and_other_owner_never_trigger_hold():
             ), {"id": invoice})
         await _switch(
             admin_engine, billing=True, hold=True, grace=0,
-            cutoff=now + timedelta(microseconds=1),
+            cutoff=now + timedelta(minutes=5),
         )
-        # The issuer predates policy activation, so old unpaid invoices
-        # never take an existing merchant offline without a future charge.
-        assert await _owner_state(admin_engine, owner) == "disabled" or (
-            await _owner_state(admin_engine, owner) == "clear"
-        )
+        # Policy is not active until the future cutoff.
+        assert await _owner_state(admin_engine, owner) == "disabled"
+        # Even after rollout, a pre-rollout invoice is NOT grandfathered
+        # into an automatic hold; a new approved charge is needed.
+        assert await _owner_state(
+            admin_engine, owner, at=now + timedelta(days=1),
+        ) == "clear"
         assert await _owner_state(
             admin_engine, other_owner, at=now + timedelta(days=1),
         ) == "clear"
