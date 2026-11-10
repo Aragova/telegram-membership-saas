@@ -228,7 +228,7 @@ def upgrade() -> None:
           started timestamptz;
           new_merchant uuid;
           prior_bot boolean;
-          other_connected boolean;
+          recipient_bot_count integer;
         BEGIN
           IF NEW.owner_user_id IS NOT DISTINCT FROM OLD.owner_user_id
           THEN RETURN NEW; END IF;
@@ -278,13 +278,15 @@ def upgrade() -> None:
             ) INTO prior_bot;
             IF prior_bot THEN RETURN NEW; END IF;
           END IF;
-          SELECT EXISTS(
-            SELECT 1 FROM public.bot_instances b
-            JOIN public.projects p ON p.id=b.project_id
-            -- A 'deleting' bot still reserves the recipient's slot.
-            WHERE p.owner_user_id=recipient AND p.id<>NEW.id
-          ) INTO other_connected;
-          IF other_connected AND (started IS NULL
+          -- Count ALL persisted bots the recipient now owns, including
+          -- additional rows in the incoming project itself. A disabled or
+          -- retiring bot reserves a trial slot until physically removed.
+          -- The AFTER UPDATE trigger sees NEW.owner_user_id on this project.
+          SELECT count(*) INTO recipient_bot_count
+          FROM public.bot_instances b
+          JOIN public.projects p ON p.id=b.project_id
+          WHERE p.owner_user_id=recipient;
+          IF recipient_bot_count>1 AND (started IS NULL
               OR clock_timestamp()<started+interval '72 hours') THEN
             RAISE EXCEPTION 'Only one bot allowed during transferred trial'
               USING ERRCODE='P6703';
