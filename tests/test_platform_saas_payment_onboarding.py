@@ -156,10 +156,16 @@ async def test_invoice_notice_outbox_dedupes_retries_and_stops_after_receipt():
                     "SELECT public.platform_saas_notice_schedule()"
                 ))).scalar_one() == 0
 
+                # Use this statement's actual issue timestamp as rollout.
+                # Other integration tests may leave older issued invoices
+                # in their shared disposable CI database.
+                issued_at = (await admin.execute(text(
+                    "SELECT issued_at FROM platform_saas_invoices WHERE id=:id"
+                ), {"id": invoice})).scalar_one()
                 await admin.execute(text("""
                     UPDATE platform_saas_billing_control
                       SET enabled=true,effective_from=:started WHERE id=1
-                """), {"started": datetime.now(UTC) - timedelta(hours=1)})
+                """), {"started": issued_at})
                 assert (await admin.execute(text(
                     "SELECT public.platform_saas_notice_schedule()"
                 ))).scalar_one() == 1
