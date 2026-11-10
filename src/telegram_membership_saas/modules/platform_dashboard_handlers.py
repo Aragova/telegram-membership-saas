@@ -704,6 +704,18 @@ def _saas_invoice_text(report) -> str:
         + escape(format(report.unpaid_rub, ".2f")) + " ₽",
         tr("Получено: ", "Received: ")
         + escape(format(report.received_rub, ".2f")) + " ₽",
+        tr(
+            "Ограничения: <b>активны</b>" if report.holds_enabled
+            else "Ограничения: <b>выключены</b>",
+            "Commercial holds: <b>active</b>" if report.holds_enabled
+            else "Commercial holds: <b>off</b>",
+        ),
+        tr("Льготный период: ", "Grace period: ")
+        + str(report.grace_days) + tr(" дн.", " days"),
+        tr("Просрочивших владельцев: ", "Owners on hold: ")
+        + str(report.held_owners),
+        tr("В льготном периоде: ", "In grace period: ")
+        + str(report.grace_owners),
         "",
     ]
     if not report.invoices:
