@@ -361,7 +361,7 @@ def upgrade() -> None:
               USING ERRCODE='42501';
           END IF;
           v_invoice_key := 'commission:'||p_merchant::text||':'||
-                         p_owner::text||':'||p_month::text;
+                         p_owner::text||':'||to_char(p_month,'YYYY-MM-DD');
           PERFORM pg_advisory_xact_lock(
             hashtextextended('saas:'||v_invoice_key,0)
           );
