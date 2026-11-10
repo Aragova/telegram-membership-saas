@@ -231,10 +231,17 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Project owner missing' USING ERRCODE='42501';
           END IF;
 
-          -- Existing connected owners are grandfathered until specifically
-          -- enrolled later. Only owners whose trial began after rollout are
-          -- subject to new quotas; no surprise limits to active projects.
-          IF NOT EXISTS(
+          -- Existing tenant owners are grandfathered until specifically
+          -- enrolled later. Platform operators are NOT automatically exempt:
+          -- on third-party channels they are subject to the same quota
+          -- unless that exact bot/channel has creator verification.
+          SELECT EXISTS(
+            SELECT 1 FROM public.telegram_users u
+            JOIN public.platform_operators o
+              ON o.telegram_user_id=u.telegram_user_id
+            WHERE u.id=recorded_owner AND o.role='owner'
+          ) INTO owner_is_operator;
+          IF NOT owner_is_operator AND NOT EXISTS(
             SELECT 1 FROM public.merchant_platform_trial_claims t
             WHERE t.owner_user_id=recorded_owner AND t.scope='owner'
               AND t.policy_key='vimi-saas-72h-v1'
@@ -260,12 +267,6 @@ def upgrade() -> None:
             RAISE EXCEPTION 'An active channel is required for free grant'
               USING ERRCODE='23514';
           END IF;
-          SELECT EXISTS(
-            SELECT 1 FROM public.telegram_users u
-            JOIN public.platform_operators o
-              ON o.telegram_user_id=u.telegram_user_id
-            WHERE u.id=recorded_owner AND o.role='owner'
-          ) INTO owner_is_operator;
           IF owner_is_operator THEN
             SELECT count(*),max(b.id::text)::uuid
               INTO bots_count,original_bot FROM public.bot_instances b
