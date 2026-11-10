@@ -89,3 +89,15 @@ Supported commission sources in this first persistence slice are manually approv
 Integration tests use rollback-only privileged transactions to verify owner exemptions, rejection of unapproved sales, immutability, duplicate invoices, and refusal of payment confirmation by a tenant administrator. The only deployment change is applying the Alembic migration. No connected customer service needs a new UI or routing.
 
 **Required before launch:** verified exemption provisioning, invoice issuance and FX policy, SaaS payment review UI, positive end-to-end merchant commission tests, grace logic and safe commercial holds. Do not activate paid billing from this migration alone.
+
+## 9. Owner-only billing operations — PR #114
+
+Migration `0044_saas_billing_operations` adds a billing master control that is **OFF by default**, owner-authenticated invoice-issuing functions, bank receipt confirmation and a platform-only invoice report. The 0043 ledgers remain FORCE RLS, invisible to tenant roles.
+
+- **150 RUB service fee:** payable in advance per active bot, once per non-overlapping service month, after an explicitly claimed 72-hour owner trial. The platform owner's own projects are excluded, even before their verified channel exemptions have been populated.
+- **5% monthly commission:** on approved subscriptions and manually approved files only. Original amount/currency/owner/bot at approval time is the source of truth. Only fully closed Moscow months are eligible, and the explicit month-specific Decimal conversion rates are snapshotted in individual invoice lines. Missing FX, source identity or valid trial claim prevents invoicing. Approval-time owner transfers and bot replacement histories are checked.
+- **Manual settlement:** only the provisioned platform owner can mark an issued invoice paid, after independently verifying the bank receipt. The confirmed receipt is immutable. No customer's 'I paid' click can grant platform service.
+- **Central owner UI:** the existing 👑 Platform → 💼 Finances section gains one invoice view; no new platform menu, no customer menu pollution or duplicate reporting. RU/EN, with a two-step confirmation before recording money received.
+- **No live charging:** the configuration table remains disabled, there are no scheduled bill runners, no automatic payouts, no debts/holds and no changes to tenant checkout or existing entitlements.
+
+Still needed before commercial launch: explicitly owner-verified trial starts, free-grant quotas, refund adjustments, payment instructions configured outside git, invoice delivery to each merchant and separate owner-approved activation. This stage alone must never be treated as a production billing launch.
