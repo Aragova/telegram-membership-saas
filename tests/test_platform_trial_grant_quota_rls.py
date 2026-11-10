@@ -684,3 +684,83 @@ async def test_returning_original_owner_keeps_pre_rollout_grandfathering(
         await _set_policy(admin_engine, active=False)
         await engine.dispose()
         await admin_engine.dispose()
+
+
+async def test_unclaimed_post_cutoff_owner_still_has_free_grant_quota():
+    """An owner with an unclaimed late-enabled bot is not grandfathered."""
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    try:
+        owner, _, _, project, _, first_customer, channel, _ = (
+            await setup_subscriber(factory)
+        )
+        first_bot = await _connect(factory, owner, project)
+        assert first_bot is not None
+        assert await _count_claims(admin_engine, owner) == 0
+        # Cutoff predates this bot, but the policy wasn't switched on
+        # until AFTER its connection. No trial claim currently exists.
+        await _set_policy(
+            admin_engine, active=True,
+            effective_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+        users = [
+            await ensure_telegram_actor(
+                factory, telegram_id=tg_id(),
+                username=None, first_name=None,
+            ) for _ in range(3)
+        ]
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            customers = [
+                ProjectCustomer(project_id=project, user_id=user_id)
+                for user_id in users
+            ]
+            session.add_all(customers)
+            await session.flush()
+            second_customer, third_customer, fourth_customer = (
+                row.id for row in customers
+            )
+        for customer in (first_customer, second_customer, third_customer):
+            result = await grant_manual_access(
+                factory, actor_id=owner, project_id=project,
+                customer_id=customer, resource_id=channel, days=7,
+            )
+            assert result.changed
+        assert await _count_claims(admin_engine, owner) == 0
+        with pytest.raises(ValueError, match="Лимит бесплатных активаций"):
+            await grant_manual_access(
+                factory, actor_id=owner, project_id=project,
+                customer_id=fourth_customer, resource_id=channel, days=7,
+            )
+        async with admin_engine.connect() as admin:
+            count = (await admin.execute(text("""
+                SELECT count(*) FROM platform_saas_complimentary_events
+                WHERE owner_user_id=:owner
+            """), {"owner": owner})).scalar_one()
+            assert count == 3
+        # The update guard must apply even though no trial claim exists.
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            grant_id = (await session.scalar(
+                select(EntitlementGrant.id).where(
+                    EntitlementGrant.project_id == project,
+                    EntitlementGrant.source == EntitlementSource.MANUAL.value,
+                ).limit(1)
+            ))
+            assert grant_id is not None
+        with pytest.raises(DBAPIError) as error:
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=project),
+            ) as session:
+                grant = await session.get(EntitlementGrant, grant_id)
+                grant.customer_id = fourth_customer
+                await session.flush()
+        assert getattr(error.value.orig, "sqlstate", None) == "42501"
+    finally:
+        await _set_policy(admin_engine, active=False)
+        await engine.dispose()
+        await admin_engine.dispose()
