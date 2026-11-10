@@ -71,6 +71,41 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 - Overdue account cannot start **new** checkout but old purchases and entitlements continue to completion and expiry.
 - No runtime effect until new billing policy is deliberately enabled; preserve compose.light100.yaml and existing staging consumers.
 
+## 7a. Read-only launch audit (PR #119 candidate, 2026-11-10)
+
+The existing **👑 Platform → Finance → Invoices → Payment instructions** screen
+also displays the operator's registered bot/channel exemption inventory.
+The operator-only PostgreSQL function
+`platform_saas_exemption_preflight()` returns aggregate counts of registered
+operator-owned bots, verified creator-exemption records and bots requiring
+manual ownership review, plus up to eight usernames for diagnosis.
+It performs **no SQL writes**, does not issue bills, and does not enable
+billing, trial quotas or overdue holds.
+
+These counts are **not proof of Telegram creator status**. Verification
+requires trustworthy Telegram creator evidence and a separate controlled
+operator process that creates the existing immutable
+`platform_saas_owner_exemptions` record. Do not add a self-service toggle,
+auto-exempt every bot attached to a platform administrator or treat lack of
+an exemption record as authorization to charge that administrator.
+Project owner identity and single-channel history must still match; transfers
+and multiple-channel ambiguity remain review blockers.
+
+Before explicit commercial activation also require:
+
+- ViMi Pay payment instructions genuinely saved and reviewed through the
+  existing owner-only screen, with only the owner confirming actual receipts;
+- outstanding creator-owned exceptions resolved; **zero pending** does not
+  itself mean platform-wide billing is approved;
+- month-specific, approved FX rates for every non-RUB commission currency,
+  refund/credit and dispute process, and a merchant communications plan;
+- isolated staged dry-run with billing flags OFF; no retroactive invoices,
+  customer freezes, or interruption of already paid access;
+- separate explicit owner authorization for each rollout switch and date.
+
+Avoid new top-level monitoring/finance sections or duplicate buttons.
+Use native Rich UI for financial summaries in RU/EN.
+
 ## 8. Dormant invoice ledger — PR #113
 
 Migration `0043_platform_saas_invoices` adds four private, non-tenant-editable tables:
