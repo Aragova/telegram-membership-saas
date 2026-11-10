@@ -104,11 +104,16 @@ async def test_disabled_billing_denies_invoice_writes_and_tenant_report():
         async with tenant_session_scope(
             factory, TenantContext(user_id=merchant),
         ) as session:
-            with pytest.raises(DBAPIError):
-                await session.execute(text(
+            # FORCE RLS with no tenant policy may silently affect zero rows.
+            try:
+                result = await session.execute(text(
                     "UPDATE platform_saas_billing_control SET enabled=true "
-                    "WHERE id=1"
+                    "WHERE id=1 RETURNING id"
                 ))
+            except DBAPIError:
+                pass
+            else:
+                assert result.fetchall() == []
     finally:
         await engine.dispose()
         await admin_engine.dispose()
