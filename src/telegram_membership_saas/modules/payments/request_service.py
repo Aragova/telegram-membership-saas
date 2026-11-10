@@ -5,6 +5,9 @@ from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.modules.platform_saas_hold_errors import (
+    translate_commercial_hold,
+)
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments.models import (
     PaymentMethod,
@@ -78,6 +81,7 @@ async def get_or_create_project_customer(
     return customer
 
 
+@translate_commercial_hold
 async def create_payment_request(
     session: AsyncSession,
     *,
