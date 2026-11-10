@@ -20,7 +20,8 @@ def _message(text: str, uid: int = 7777) -> Message:
 
 def _callback(data: str, uid: int = 7777) -> CallbackQuery:
     return CallbackQuery.model_construct(
-        from_user=SimpleNamespace(id=uid), data=data,
+        from_user=SimpleNamespace(id=uid, username="owner", first_name="Owner"),
+        data=data,
         message=SimpleNamespace(chat=SimpleNamespace(type="private", id=uid)),
     )
 
