@@ -119,6 +119,11 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                 "file_sale_purchases",
             ):
                 async with admin.begin():
+                    # Real checkouts bind a trusted project scope before
+                    # entering the SECURITY DEFINER trigger.
+                    await admin.execute(text(
+                        "SELECT set_config('app.current_project_id',:id,true)"
+                    ), {"id": str(project)})
                     statement = (
                         "INSERT INTO " + table + " (id,project_id) "
                         "VALUES (:id,:project)"
@@ -129,6 +134,16 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                                 "id": uuid4(), "project": project,
                             })
                     assert getattr(error.value.orig, "sqlstate", None) == "P6711"
+            # A forged/unbound project must not disclose another owner's
+            # overdue status through a SECURITY DEFINER BEFORE INSERT.
+            async with admin.begin():
+                with pytest.raises(DBAPIError) as error:
+                    async with admin.begin_nested():
+                        await admin.execute(text(
+                            "INSERT INTO file_sale_purchases(id,project_id) "
+                            "VALUES (:id,:project)"
+                        ), {"id": uuid4(), "project": project})
+                assert getattr(error.value.orig, "sqlstate", None) != "P6711"
 
         # Resource creation has its own pre-existing owner/RLS guard.
         # Exercise the actual authenticated owner path, not a raw
