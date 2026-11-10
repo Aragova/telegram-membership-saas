@@ -756,6 +756,13 @@ async def verify_channel_and_add(
         try:
             await session.flush()
         except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) == "P6711":
+                raise ValueError(
+                    "Добавление нового канала временно ограничено из-за "
+                    "просроченного счёта ViMi Pay. Действующие каналы и "
+                    "подписчики продолжают работать. / New channel connections "
+                    "are paused until the owner's overdue invoice is paid."
+                ) from None
             if getattr(exc.orig, "sqlstate", None) == "P6501":
                 raise ValueError(
                     "Этот канал уже использовался в другом вашем подключении. "
