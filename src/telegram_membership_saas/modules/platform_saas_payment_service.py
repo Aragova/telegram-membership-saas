@@ -43,20 +43,41 @@ async def platform_saas_payment_details(
     stmt = text(
         "SELECT public.platform_saas_payment_details_read() AS data"
     ).columns(data=JSONB)
-    preflight_stmt = text(
-        "SELECT public.platform_saas_exemption_preflight() AS data"
-    ).columns(data=JSONB)
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_user_id),
     ) as session:
         result = (await session.execute(stmt)).scalar_one()
-        preflight = (await session.execute(preflight_stmt)).scalar_one()
     if not isinstance(result, dict):
         raise RuntimeError("Invalid platform payment instructions")
-    if not isinstance(preflight, dict):
-        raise RuntimeError("Invalid platform exemption preflight")
-    # Visible only to the platform owner; no invoice creation or policy write.
-    return {**result, "preflight": preflight}
+    return result
+
+
+async def platform_saas_exemption_page(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID,
+    actor_telegram_id: int,
+    page: int = 0,
+    settings: Settings | None = None,
+) -> dict:
+    """Read-only operator-scoped exemption audit; no billing side effects."""
+    _check_actor(actor_telegram_id, settings)
+    if not 0 <= page <= 100000:
+        raise ValueError("Invalid exemption page")
+    stmt = text(
+        "SELECT public.platform_saas_exemption_preflight_page("
+        ":page, :size) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id),
+    ) as session:
+        result = (await session.execute(
+            stmt, {"page": page, "size": 8},
+        )).scalar_one()
+    if not isinstance(result, dict) or not isinstance(result.get("pending_bots"), list):
+        raise RuntimeError("Invalid creator exemption report")
+    if page >= int(result["pages"]):
+        raise ValueError("Exemption page out of range")
+    return result
 
 
 async def configure_platform_saas_payment(
