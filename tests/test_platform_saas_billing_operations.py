@@ -212,6 +212,16 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                     "bot": bot, "start": start, "end": end,
                 })).scalar_one()
                 assert repeated == invoice
+                # The key must survive a session timezone change.
+                await admin.execute(text("SET LOCAL TIME ZONE 'Europe/Moscow'"))
+                repeated_msk = (await admin.execute(text(
+                    "SELECT public.platform_saas_issue_bot_invoice("
+                    ":bot,:start,:end)"
+                ), {
+                    "bot": bot, "start": start, "end": end,
+                })).scalar_one()
+                assert repeated_msk == invoice
+                await admin.execute(text("SET LOCAL TIME ZONE 'UTC'"))
                 statement = (await admin.execute(text(
                     "SELECT total_rub,status FROM platform_saas_invoices "
                     "WHERE id=:id"
