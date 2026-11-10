@@ -1,3 +1,16 @@
+## Financial UI separation (2026-11-10)
+
+The confusing 25-bot audit does **not** belong in the bank instructions
+screen. Under central Platform → Finance → Invoices, keep two separate
+navigation buttons: **Payment instructions** (short bank status and editor)
+and **Exemption audit** (authenticated operator's connected bots, verified
+creator exemptions and a full paginated list of unverified bots, eight per
+page). Both use the existing platform Rich UI and RU/EN, with a single back
+route to Invoices. Never imply all 25 connected bots are creator-owned.
+There is no self-verification/waiver toggle. Read-only migration
+`0049_saas_exemption_pages` restricts the report to the authenticated
+platform owner; billing, trials and holds stay OFF.
+
 ## Prelaunch exemption readiness inventory (2026-11-10)
 
 Read-only prelaunch slice: the **existing** central platform owner

@@ -40,6 +40,7 @@ from telegram_membership_saas.modules.platform_saas_billing_service import (
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     configure_platform_saas_payment,
+    platform_saas_exemption_page,
     platform_saas_payment_details,
 )
 from telegram_membership_saas.modules.platform_usage import (
@@ -803,17 +804,11 @@ class _PlatformBankEntryFilter(BaseFilter):
 
 
 def _platform_bank_text(details: dict) -> str:
-    """Existing owner-only bank screen with read-only launch verification."""
+    """Keep bank instructions focused; audit is a sibling invoices screen."""
     configured = bool(details["configured"])
     state = tr("✅ Указаны", "✅ Configured") if configured else tr(
         "⚪ Не указаны", "⚪ Not configured",
     )
-
-    def _switch(enabled: bool) -> str:
-        return tr("✅ вкл.", "✅ ON") if enabled else tr(
-            "⚪ выкл.", "⚪ OFF",
-        )
-
     lines = [
         tr("💳 <b>ViMi Pay · Реквизиты</b>",
            "💳 <b>ViMi Pay · Payment instructions</b>"),
@@ -821,69 +816,69 @@ def _platform_bank_text(details: dict) -> str:
         "",
     ]
     if configured:
-        # Content is owner-authored; preserve it verbatim and escape HTML.
+        # Never transform, summarize or log owner-authored banking fields.
         lines.append("<pre>" + escape(str(details["instructions"])) + "</pre>")
     else:
         lines.append(tr(
-            "Пока реквизиты не заданы, уведомления об оплате не рассылаются.",
-            "Billing reminders are not delivered until payment details are configured.",
+            "Реквизиты пока не заданы. Уведомления об оплате не рассылаются.",
+            "No bank details yet. Payment reminders are not delivered.",
         ))
     lines.extend([
         "",
-        tr("<b>Подготовка к запуску</b>", "<b>Launch readiness</b>"),
-        tr("Счета: ", "Billing: ") + _switch(bool(details["billing_enabled"])),
-        tr("Тестовый период: ", "Trial: ")
-        + _switch(bool(details["trial_enabled"])),
-        tr("Ограничения: ", "Holds: ")
-        + _switch(bool(details["holds_enabled"])),
+        tr(
+            "<i>Реквизиты нужны только для счетов ViMi Pay. "
+            "Их сохранение не запускает биллинг.</i>",
+            "<i>These instructions are only for ViMi Pay invoices. "
+            "Saving them does not enable billing.</i>",
+        ),
     ])
-    preflight = details.get("preflight")
-    if isinstance(preflight, dict):
-        lines.extend([
-            "",
-            tr("<b>Проверка собственных каналов</b>",
-               "<b>Platform-owned channel verification</b>"),
-            tr("Подключённых своих ботов: ", "Operator-owned bots: ")
-            + str(int(preflight["operator_bots"])),
-            tr("Освобождение подтверждено: ", "Verified exemptions: ")
-            + str(int(preflight["verified"])),
-            tr("Нужна проверка: ", "Pending review: ")
-            + str(int(preflight["pending"])),
-        ])
-        pending = preflight.get("pending_bots") or []
-        if pending:
-            for item in pending[:8]:
-                username = escape(str(item.get("username", ""))[:64])
-                label = tr("проверить владельца", "verify ownership")
-                if item.get("state") == "needs_review":
-                    label = tr("проверить канал", "review channel")
-                lines.append("• @" + username + " · " + label)
-            if int(preflight["pending"]) > len(pending):
-                lines.append(tr("Показаны первые 8.", "First 8 shown."))
-        lines.extend([
-            "",
-            tr(
-                "<i>Статус владельца платформы сам по себе не подтверждает "
-                "владение каналом. Пока освобождение не проверено, "
-                "автоматическое выставление счетов включать нельзя.</i>",
-                "<i>Platform owner role alone is not proof of channel "
-                "ownership. Do not enable billing before exemption "
-                "verification is complete.</i>",
-            ),
-        ])
+    return "\n".join(lines)
+
+
+def _platform_exemption_text(report: dict) -> str:
+    """Compact read-only audit of registered bots; not creator verification."""
+    lines = [
+        tr("🛡 <b>ViMi Pay · Исключения</b>",
+           "🛡 <b>ViMi Pay · Exemptions</b>"),
+        tr("Ботов на аккаунте: ", "Account bots: ")
+        + str(int(report["operator_bots"])),
+        tr("Освобождение подтверждено: ", "Exemptions verified: ")
+        + str(int(report["verified"])),
+        tr("Нет подтверждения: ", "Unverified: ")
+        + str(int(report["pending"])),
+        "",
+    ]
+    pending = report.get("pending_bots") or []
+    if pending:
+        lines.append(tr(
+            "<b>Подключения без подтверждения</b>",
+            "<b>Connections without verification</b>",
+        ))
+        for item in pending:
+            username = escape(str(item.get("username", ""))[:64])
+            status = tr("нужна проверка", "review needed")
+            if item.get("state") == "needs_review":
+                status = tr("проверить канал", "review channel")
+            lines.append("• @" + username + " · " + status)
+    else:
+        lines.append(tr(
+            "Неподтверждённых подключений нет.",
+            "No unverified connections.",
+        ))
     lines.extend([
         "",
+        tr("Страница ", "Page ") + str(int(report["page"]) + 1)
+        + tr(" из ", " of ") + str(int(report["pages"])),
+        "",
         tr(
-            "<i>Курсы валют для комиссий, возвраты и спорные начисления "
-            "требуют отдельной проверки перед запуском.</i>",
-            "<i>Commission FX rates, refunds and disputed charges "
-            "still require separate prelaunch verification.</i>",
-        ),
-        tr(
-            "<i>Этот экран ничего не начисляет и не включает "
-            "коммерческие ограничения.</i>",
-            "<i>This screen does not issue charges or enable "
-            "commercial restrictions.</i>",
+            "<i>Это боты, подключённые к вашему аккаунту, а не список "
+            "доказанных собственных каналов. Освобождение от счетов "
+            "появляется только после отдельной проверки статуса создателя "
+            "канала в Telegram. Здесь ничего не начисляется.</i>",
+            "<i>These are bots connected to your account, not proof of "
+            "channel ownership. A billing exemption requires separate "
+            "Telegram channel creator verification. No charges are issued "
+            "here.</i>",
         ),
     ])
     return "\n".join(lines)
@@ -1163,6 +1158,39 @@ def create_platform_dashboard_router(
                                 _keyboard(rows) if index == len(chunks) - 1 else None
                             ),
                         )
+            elif len(tokens) == 3 and tokens[1] == "exemptions":
+                page_token = tokens[2]
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid exemption page")
+                page = int(page_token)
+                if page > 100000:
+                    raise ValueError("Invalid exemption page")
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_saas_exemption_page(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, page=page,
+                    settings=config,
+                )
+                rows = []
+                nav = []
+                if page > 0:
+                    nav.append(_button("⬅️", f"exemptions:{page - 1}"))
+                if page + 1 < int(report["pages"]):
+                    nav.append(_button("➡️", f"exemptions:{page + 1}"))
+                if nav:
+                    rows.append(nav)
+                rows.append([_button(
+                    tr("⬅️ Счета", "⬅️ Invoices"), "billing:0",
+                )])
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=_platform_exemption_text(report),
+                    reply_markup=_keyboard(rows), message_id=message_id,
+                )
             elif tokens[1:] == ["bankdetails"]:
                 await _show_bank_screen(
                     bot, query.from_user, message_id=message_id,
@@ -1250,6 +1278,10 @@ def create_platform_dashboard_router(
                 rows.append([_button(
                     tr("💳 Реквизиты ViMi Pay", "💳 ViMi Pay payment details"),
                     "bankdetails",
+                )])
+                rows.append([_button(
+                    tr("🛡 Проверка исключений", "🛡 Exemption audit"),
+                    "exemptions:0",
                 )])
                 rows.append([_button(
                     tr("⬅️ Финансы", "⬅️ Finances"), "merchants:30:0",
