@@ -141,6 +141,9 @@ def upgrade() -> None:
                     'id',j.id::text, 'owner',j.owner_user_id::text,
                     'merchant',j.merchant_id::text,
                     'kind',j.kind, 'total_rub',j.total_rub::text,
+                    'invoice_key',j.invoice_key,
+                    'bot',j.bot_instance_id::text,
+                    'period_start',j.period_start,'period_end',j.period_end,
                     'due_at',j.due_at, 'status',
                     CASE WHEN j.received_at IS NOT NULL THEN 'paid'
                          ELSE j.status END
@@ -295,7 +298,7 @@ def upgrade() -> None:
           total numeric := 0;
           invoice_id uuid;
           previous record;
-          invoice_key text;
+          v_invoice_key text;
           exemption text;
         BEGIN
           first_charge := public.platform_saas_require_rollout();
@@ -332,13 +335,14 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Trial claim is not provisioned'
               USING ERRCODE='42501';
           END IF;
-          invoice_key := 'commission:'||p_merchant::text||':'||
+          v_invoice_key := 'commission:'||p_merchant::text||':'||
                          p_owner::text||':'||p_month::text;
           PERFORM pg_advisory_xact_lock(
-            hashtextextended('saas:'||invoice_key,0)
+            hashtextextended('saas:'||v_invoice_key,0)
           );
-          SELECT id,status INTO previous FROM public.platform_saas_invoices
-            WHERE invoice_key=invoice_key FOR UPDATE;
+          SELECT i.id,i.status INTO previous
+            FROM public.platform_saas_invoices i
+            WHERE i.invoice_key=v_invoice_key FOR UPDATE;
           IF previous.id IS NOT NULL THEN
             IF previous.status<>'issued' THEN
               RAISE EXCEPTION 'Existing commission invoice is not issued'
@@ -423,7 +427,7 @@ def upgrade() -> None:
              id,invoice_key,merchant_id,owner_user_id,kind,
              period_start,period_end,due_at,total_rub
           ) VALUES (
-             invoice_id,invoice_key,p_merchant,p_owner,'commission',
+             invoice_id,v_invoice_key,p_merchant,p_owner,'commission',
              period_start,period_end,period_end+interval '7 days',total
           );
           FOR datum IN SELECT value FROM jsonb_array_elements(quote) LOOP
