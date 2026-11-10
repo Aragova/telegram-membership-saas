@@ -94,13 +94,14 @@ async def _line(admin, invoice, project, source_kind, source_id, *,
                 fee_rate="1", charge="150.00"):
     await admin.execute(text("""
         INSERT INTO platform_saas_invoice_lines
-        (id,invoice_id,project_id,source_kind,source_id,original_amount,
-         original_currency,rub_per_unit,fee_rate,charge_rub)
-        VALUES (:id,:invoice,:project,:kind,:source,:amount,:currency,
+        (id,invoice_id,project_id,source_kind,source_id,bot_instance_id,
+         original_amount,original_currency,rub_per_unit,fee_rate,charge_rub)
+        VALUES (:id,:invoice,:project,:kind,:source,:bot,:amount,:currency,
                 :rate,:fee_rate,:charge)
     """), {
         "id": uuid4(), "invoice": invoice, "project": project,
-        "kind": source_kind, "source": source_id, "amount": amount,
+        "kind": source_kind, "source": source_id, "bot": source_id,
+        "amount": amount,
         "currency": currency, "rate": rate, "fee_rate": fee_rate,
         "charge": charge,
     })
