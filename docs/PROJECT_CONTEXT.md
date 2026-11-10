@@ -1,3 +1,7 @@
+## PR #114 — 2026-11-10: platform SaaS invoices (OFF by default)
+
+Owner-only SECURITY DEFINER SQL operations for prepaid 150 RUB per bot, monthly 5% commission on approved subscriptions/manual file orders (explicit FX), single owner finance screen to review invoice status, two-step manual bank-receipt confirmation. Database control enabled=false by default, no paid invoices or blocks until an approved launch. Requires provisioned 72-hour owner trial, and platform owner projects remain exempt. See docs/PLATFORM_COMMERCIAL_BILLING.md for safety and next stages.
+
 ## PR #113 — dormant ViMi Pay platform invoice persistence (2026-11-10)
 
 Migration 0043 introduces strict platform-only invoice, paid-source lines, immutable manually confirmed receipts and verified own-channel exemptions. It does NOT generate invoices, activate charging, alter any customer grants/payment access, or add Telegram buttons. New tables have FORCE RLS and no runtime CRUD permission. Only real approved Payment/FileManualOrder snapshots are eligible for the 5% ledger, with global source dedupe; a fixed RUB 150 line applies to an individual bot service period. Exemption requires platform owner identity plus a verified creator-owned channel/bot record; merely administrating another person's channel is not eligible. See docs/PLATFORM_COMMERCIAL_BILLING.md for the staged rollout and acceptance gates. No merge/deploy without exact-head CI/Codex review and explicit owner permission.
