@@ -71,6 +71,7 @@ def upgrade() -> None:
         DECLARE
           hold_enabled boolean;
           billing_enabled boolean;
+          billing_started timestamptz;
           started timestamptz;
           grace integer;
           pending bigint;
@@ -83,11 +84,13 @@ def upgrade() -> None:
           SELECT enabled,effective_from,grace_days
             INTO hold_enabled,started,grace
             FROM public.platform_saas_hold_control WHERE id=1;
-          SELECT enabled INTO billing_enabled
+          SELECT enabled, effective_from
+            INTO billing_enabled,billing_started
             FROM public.platform_saas_billing_control WHERE id=1;
           IF hold_enabled IS DISTINCT FROM true
              OR billing_enabled IS DISTINCT FROM true
-             OR started IS NULL OR p_at<started THEN
+             OR started IS NULL OR billing_started IS NULL
+             OR p_at<greatest(started,billing_started) THEN
             RETURN 'disabled';
           END IF;
           SELECT count(*),count(*) FILTER(
@@ -207,6 +210,7 @@ def upgrade() -> None:
           report jsonb;
           enabled boolean;
           billing_enabled boolean;
+          billing_started timestamptz;
           started timestamptz;
           grace integer;
           held bigint := 0;
@@ -220,11 +224,15 @@ def upgrade() -> None:
           SELECT c.enabled,c.effective_from,c.grace_days
           INTO enabled,started,grace
           FROM public.platform_saas_hold_control c WHERE c.id=1;
-          SELECT c.enabled INTO billing_enabled
+          SELECT c.enabled,c.effective_from
+          INTO billing_enabled,billing_started
           FROM public.platform_saas_billing_control c WHERE c.id=1;
           enabled:=coalesce(enabled,false)
-                   AND coalesce(billing_enabled,false);
-          IF enabled AND started IS NOT NULL AND now_at>=started THEN
+                   AND coalesce(billing_enabled,false)
+                   AND started IS NOT NULL
+                   AND billing_started IS NOT NULL
+                   AND now_at>=greatest(started,billing_started);
+          IF enabled THEN
             FOR account IN
               SELECT DISTINCT i.owner_user_id
               FROM public.platform_saas_invoices i
