@@ -12,6 +12,7 @@ from html import escape
 from uuid import UUID
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -96,6 +97,12 @@ async def deliver_one_saas_notice(
         async with recipient_language(factory, recipient):
             await bot.send_message(
                 recipient, _notice_text(item), parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text=tr("🧾 Мои счета", "🧾 My invoices"),
+                        callback_data="own:saasinvoices:0",
+                    ),
+                ]]),
             )
         sent = True
     except Exception:
