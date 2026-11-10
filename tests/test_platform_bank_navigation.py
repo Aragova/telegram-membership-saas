@@ -79,11 +79,14 @@ async def test_platform_navigation_leaves_bank_editor_even_without_dispatcher(mo
     )
     bot = MagicMock()
     bot.send_message = AsyncMock()
+    # aiogram CallbackQuery is a frozen Pydantic model; mock the method on
+    # the class rather than trying to assign it on an instance.
+    answer = AsyncMock()
+    monkeypatch.setattr(CallbackQuery, "answer", answer)
     edit = _callback("plat:bankedit")
-    edit.answer = AsyncMock()
     await handler(edit, bot)
     assert 7777 in navigation.pending
     navigate = _callback("plat:bankdetails")
-    navigate.answer = AsyncMock()
     await handler(navigate, bot)
     assert 7777 not in navigation.pending
+    assert answer.await_count == 2
