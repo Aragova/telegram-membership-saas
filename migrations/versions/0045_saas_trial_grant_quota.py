@@ -176,10 +176,26 @@ def upgrade() -> None:
             IF legacy_bot THEN RETURN NEW; END IF;
           END IF;
 
+          -- Even the FIRST trial claim must count existing bot rows.
+          -- When access policy was enabled late or toggled OFF after its
+          -- effective_from, an owner can already have an unclaimed bot.
+          -- Exclude only the row currently being inserted, and reserve
+          -- disabled/deleting rows until physical removal.
+          IF started IS NULL
+             OR clock_timestamp()<started+interval '72 hours' THEN
+            SELECT EXISTS(
+              SELECT 1 FROM public.bot_instances b
+              JOIN public.projects p ON p.id=b.project_id
+              WHERE p.owner_user_id=recorded_owner AND b.id<>NEW.id
+            ) INTO other_connected;
+            IF other_connected THEN
+              RAISE EXCEPTION 'Only one bot is allowed during SaaS trial'
+                USING ERRCODE='P6703';
+            END IF;
+          END IF;
           IF started IS NULL THEN
-            -- No duplicate trial after reconnect. A second owner project
-            -- cannot win this race due to the transaction-scoped lock and
-            -- database partial UNIQUE index on owner + policy key.
+            -- A transaction-scoped owner lock and unique owner claim make
+            -- the first enrolled bot atomic across projects and retries.
             INSERT INTO public.merchant_platform_trial_claims(
               id,merchant_id,owner_user_id,policy_key,scope,claimed_at
             ) VALUES (
@@ -187,19 +203,6 @@ def upgrade() -> None:
               'vimi-saas-72h-v1','owner',clock_timestamp()
             );
             RETURN NEW;
-          END IF;
-          IF clock_timestamp()<started+interval '72 hours' THEN
-            SELECT EXISTS(
-              SELECT 1 FROM public.bot_instances b
-              JOIN public.projects p ON p.id=b.project_id
-              -- A retiring bot still reserves the trial slot until
-              -- its row is physically removed, including crash recovery.
-              WHERE p.owner_user_id=recorded_owner AND b.id<>NEW.id
-            ) INTO other_connected;
-            IF other_connected THEN
-              RAISE EXCEPTION 'Only one bot is allowed during SaaS trial'
-                USING ERRCODE='P6703';
-            END IF;
           END IF;
           RETURN NEW;
         END;
@@ -263,7 +266,10 @@ def upgrade() -> None:
               JOIN public.merchant_project_periods mp
                 ON mp.project_id=ev.project_id AND mp.owner_user_id=recipient
               WHERE ev.event_type='bot_connected'
-                AND ev.project_id<>NEW.id AND ev.occurred_at<effective_at
+                -- Historical owner periods in the incoming project
+                -- count too. The just-created recipient period starts at
+                -- transfer time, so the cutoff already excludes it.
+                AND ev.occurred_at<effective_at
                 AND mp.started_at<effective_at
                 AND coalesce(mp.ended_at,'infinity'::timestamptz)
                     > greatest(ev.occurred_at,mp.started_at)
