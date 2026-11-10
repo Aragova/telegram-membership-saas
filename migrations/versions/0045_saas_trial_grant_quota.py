@@ -156,11 +156,22 @@ def upgrade() -> None:
               JOIN public.merchant_project_periods mp
                 ON mp.project_id=ev.project_id
                AND mp.owner_user_id=recorded_owner
-               AND mp.started_at<=ev.occurred_at
-               AND (mp.ended_at IS NULL OR mp.ended_at>=ev.occurred_at)
               WHERE ev.event_type='bot_connected'
                 AND ev.source_id<>NEW.id
                 AND ev.occurred_at<effective_at
+                AND mp.started_at<effective_at
+                -- A recipient may have acquired an already connected bot:
+                -- connection time precedes their owner period in that case.
+                AND coalesce(mp.ended_at,'infinity'::timestamptz)
+                    > greatest(ev.occurred_at,mp.started_at)
+                AND NOT EXISTS(
+                  SELECT 1 FROM public.platform_usage_events removed
+                  WHERE removed.project_id=ev.project_id
+                    AND removed.source_id=ev.source_id
+                    AND removed.event_type='bot_removed'
+                    AND removed.occurred_at
+                        <= greatest(ev.occurred_at,mp.started_at)
+                )
             ) INTO legacy_bot;
             IF legacy_bot THEN RETURN NEW; END IF;
           END IF;
@@ -181,8 +192,9 @@ def upgrade() -> None:
             SELECT EXISTS(
               SELECT 1 FROM public.bot_instances b
               JOIN public.projects p ON p.id=b.project_id
+              -- A retiring bot still reserves the trial slot until
+              -- its row is physically removed, including crash recovery.
               WHERE p.owner_user_id=recorded_owner AND b.id<>NEW.id
-                AND b.status<>'deleting'
             ) INTO other_connected;
             IF other_connected THEN
               RAISE EXCEPTION 'Only one bot is allowed during SaaS trial'
@@ -250,18 +262,27 @@ def upgrade() -> None:
               SELECT 1 FROM public.platform_usage_events ev
               JOIN public.merchant_project_periods mp
                 ON mp.project_id=ev.project_id AND mp.owner_user_id=recipient
-               AND mp.started_at<=ev.occurred_at
-               AND (mp.ended_at IS NULL OR mp.ended_at>=ev.occurred_at)
               WHERE ev.event_type='bot_connected'
                 AND ev.project_id<>NEW.id AND ev.occurred_at<effective_at
+                AND mp.started_at<effective_at
+                AND coalesce(mp.ended_at,'infinity'::timestamptz)
+                    > greatest(ev.occurred_at,mp.started_at)
+                AND NOT EXISTS(
+                  SELECT 1 FROM public.platform_usage_events removed
+                  WHERE removed.project_id=ev.project_id
+                    AND removed.source_id=ev.source_id
+                    AND removed.event_type='bot_removed'
+                    AND removed.occurred_at
+                        <= greatest(ev.occurred_at,mp.started_at)
+                )
             ) INTO prior_bot;
             IF prior_bot THEN RETURN NEW; END IF;
           END IF;
           SELECT EXISTS(
             SELECT 1 FROM public.bot_instances b
             JOIN public.projects p ON p.id=b.project_id
+            -- A 'deleting' bot still reserves the recipient's slot.
             WHERE p.owner_user_id=recipient AND p.id<>NEW.id
-              AND b.status<>'deleting'
           ) INTO other_connected;
           IF other_connected AND (started IS NULL
               OR clock_timestamp()<started+interval '72 hours') THEN
