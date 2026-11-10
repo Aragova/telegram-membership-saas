@@ -177,7 +177,10 @@ def upgrade() -> None:
                   )
             ),
             'details_configured',bank IS NOT NULL,
-            'instructions',bank,
+            'instructions',CASE WHEN EXISTS(
+                SELECT 1 FROM public.platform_saas_invoices visible
+                WHERE visible.owner_user_id=actor AND visible.status='issued'
+            ) THEN bank ELSE NULL END,
             'invoices',coalesce((
               SELECT jsonb_agg(jsonb_build_object(
                   'id',f.id::text,
@@ -241,6 +244,18 @@ def upgrade() -> None:
           ) AS k(kind,notify_at)
           WHERE i.status='issued' AND i.issued_at>=started
             AND k.notify_at<=now_at
+            -- If an invoice has gone unattended for weeks, do not blast
+            -- issued + due + overdue messages in the same poll cycle.
+            -- Enqueue only the latest relevant reminder stage.
+            AND (
+              (k.kind='issued' AND now_at<
+                greatest(i.due_at,i.issued_at)+interval '1 day')
+              OR (k.kind='due' AND now_at>=
+                greatest(i.due_at,i.issued_at)+interval '1 day'
+                AND now_at<greatest(i.due_at,i.issued_at)+interval '7 days')
+              OR (k.kind='overdue' AND now_at>=
+                greatest(i.due_at,i.issued_at)+interval '7 days')
+            )
             AND NOT EXISTS(
               SELECT 1 FROM public.platform_saas_receipts r
               WHERE r.invoice_id=i.id
