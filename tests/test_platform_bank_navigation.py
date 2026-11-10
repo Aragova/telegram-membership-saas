@@ -11,7 +11,9 @@ from telegram_membership_saas.modules import platform_dashboard_handlers as ui
 
 def _message(text: str, uid: int = 7777) -> Message:
     return Message.model_construct(
-        from_user=SimpleNamespace(id=uid), text=text,
+        from_user=SimpleNamespace(
+            id=uid, username="owner", first_name="Owner",
+        ), text=text,
         chat=SimpleNamespace(type="private", id=uid),
     )
 
