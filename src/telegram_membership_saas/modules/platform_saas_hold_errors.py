@@ -6,6 +6,10 @@ from sqlalchemy.exc import DBAPIError
 from telegram_membership_saas.localization import tr
 
 
+class CommercialHoldError(ValueError):
+    """Safe, localizable, server-authored P6711 customer notice."""
+
+
 def translate_commercial_hold(operation):
     """Translate ONLY the dedicated P6711 state, never mask database errors."""
     @wraps(operation)
@@ -14,7 +18,7 @@ def translate_commercial_hold(operation):
             return await operation(*args, **kwargs)
         except DBAPIError as exc:
             if getattr(exc.orig, "sqlstate", None) == "P6711":
-                raise ValueError(tr(
+                raise CommercialHoldError(tr(
                     "Новые покупки в этом боте временно недоступны из-за "
                     "неоплаченного счёта ViMi Pay. Уже оплаченный доступ "
                     "и ранее созданные заказы сохраняются. "
