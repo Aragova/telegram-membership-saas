@@ -201,6 +201,20 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Connected billable bot required'
               USING ERRCODE='22023';
           END IF;
+          -- Only the owner who actually held this project for the ENTIRE
+          -- service period may be charged. A mid-period transfer requires
+          -- operator resolution, not an invoice against the new owner.
+          IF NOT EXISTS(
+            SELECT 1 FROM public.merchant_project_periods mp
+            WHERE mp.project_id=entry.project_id
+              AND mp.merchant_id=entry.merchant_id
+              AND mp.owner_user_id=entry.owner_user_id
+              AND mp.started_at<=p_start
+              AND (mp.ended_at IS NULL OR mp.ended_at>=p_end)
+          ) THEN
+            RAISE EXCEPTION 'Service period owner attribution needs review'
+              USING ERRCODE='42501';
+          END IF;
           -- A platform owner may administer third-party channels.
           -- Never treat DB owner role as proof of channel creator status.
           -- A matching creator-verified record is required to waive fees;
@@ -234,7 +248,10 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Channel exemption needs manual verification'
               USING ERRCODE='42501';
           END IF;
-          service_key := 'bot:'||p_bot::text||':'||p_start::text;
+          -- UTC rendering is canonical across DB session TimeZone values.
+          service_key := 'bot:'||p_bot::text||':'||
+                         to_char(p_start AT TIME ZONE 'UTC',
+                                 'YYYYMMDD"T"HH24MISS.US');
           -- Prevent overlapping monthly charges for the same connection.
           IF EXISTS(
             SELECT 1 FROM public.platform_saas_invoices prior
