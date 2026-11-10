@@ -38,6 +38,10 @@ from telegram_membership_saas.modules.platform_saas_billing_service import (
     confirm_saas_receipt,
     platform_saas_invoice_report,
 )
+from telegram_membership_saas.modules.platform_saas_payment_service import (
+    configure_platform_saas_payment,
+    platform_saas_payment_details,
+)
 from telegram_membership_saas.modules.platform_usage import (
     BOT_EVENT_LABELS,
     EVENT_LABELS,
@@ -751,12 +755,88 @@ def _saas_invoice_text(report) -> str:
     return "\n".join(lines)
 
 
+class _PlatformBankEntryFilter(BaseFilter):
+    def __init__(self, pending: set[int]) -> None:
+        self.pending = pending
+
+    async def __call__(self, message: Message) -> bool:
+        return bool(
+            message.from_user
+            and message.chat.type == "private"
+            and message.from_user.id in self.pending
+            and message.text is not None
+        )
+
+
+def _platform_bank_text(details: dict) -> str:
+    configured = bool(details["configured"])
+    state = tr("✅ Указаны", "✅ Configured") if configured else tr(
+        "⚪ Не указаны", "⚪ Not configured",
+    )
+    lines = [
+        tr("💳 <b>ViMi Pay · Реквизиты</b>",
+           "💳 <b>ViMi Pay · Payment instructions</b>"),
+        tr("Статус: ", "Status: ") + state,
+        "",
+    ]
+    if configured:
+        lines.append("<pre>" + escape(str(details["instructions"])) + "</pre>")
+    else:
+        lines.append(tr(
+            "Пока реквизиты не заданы, уведомления об оплате не рассылаются.",
+            "Billing reminders are not delivered until payment details are configured.",
+        ))
+    lines.extend([
+        "",
+        tr("Подготовка к запуску:", "Launch readiness:"),
+        "• " + tr("Счета: ", "Billing: ")
+        + ("✅ ON" if details["billing_enabled"] else "⚪ OFF"),
+        "• " + tr("Тестовый период: ", "Trial: ")
+        + ("✅ ON" if details["trial_enabled"] else "⚪ OFF"),
+        "• " + tr("Ограничения: ", "Holds: ")
+        + ("✅ ON" if details["holds_enabled"] else "⚪ OFF"),
+        "",
+        tr(
+            "<i>Здесь сохраняются только реквизиты. Ни один переключатель "
+            "монетизации не активируется автоматически.</i>",
+            "<i>This screen only saves bank instructions. "
+            "No commercial rollout switches are activated automatically.</i>",
+        ),
+    ])
+    return "\n".join(lines)
+
+
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
 ) -> Router:
     config = settings or get_settings()
     router = Router(name="platform-dashboard")
+    pending_bank_entry: set[int] = set()
+
+    async def _show_bank_screen(bot: Bot, user, message_id: int | None = None) -> None:
+        actor_id = await ensure_telegram_actor(
+            factory, telegram_id=user.id, username=user.username,
+            first_name=user.first_name,
+        )
+        details = await platform_saas_payment_details(
+            factory, actor_user_id=actor_id, actor_telegram_id=user.id,
+            settings=config,
+        )
+        buttons = [[_button(
+            tr("✍️ Изменить реквизиты", "✍️ Edit instructions"), "bankedit",
+        )]]
+        if details["configured"]:
+            buttons.append([_button(
+                tr("🗑 Убрать реквизиты", "🗑 Clear instructions"), "bankclearask",
+            )])
+        buttons.append([_button(
+            tr("⬅️ Счета", "⬅️ Invoices"), "billing:0",
+        )])
+        await _render_platform_screen(
+            bot, chat_id=user.id, text=_platform_bank_text(details),
+            reply_markup=_keyboard(buttons), message_id=message_id,
+        )
 
     async def read_report(user, *, period: str, page: int = 0):
         if not is_configured_platform_owner(user.id, config):
@@ -818,6 +898,50 @@ def create_platform_dashboard_router(
                    "👑 Platform dashboard is temporarily unavailable. "
                    "Check operator access and connectivity."),
             )
+
+    @router.message(_PlatformBankEntryFilter(pending_bank_entry))
+    async def platform_bank_entry(message: Message, bot: Bot) -> None:
+        if message.from_user is None:
+            return
+        user = message.from_user
+        if not is_configured_platform_owner(user.id, config):
+            pending_bank_entry.discard(user.id)
+            return
+        if message.text.strip() == "/cancel":
+            pending_bank_entry.discard(user.id)
+            await _show_bank_screen(bot, user)
+            return
+        raw = message.text.strip()
+        if len(raw) < 8 or len(raw) > 900:
+            await bot.send_message(
+                user.id,
+                tr("Введите реквизиты длиной 8–900 символов или /cancel.",
+                   "Enter 8–900 characters or /cancel."),
+            )
+            return
+        try:
+            actor_id = await ensure_telegram_actor(
+                factory, telegram_id=user.id, username=user.username,
+                first_name=user.first_name,
+            )
+            await configure_platform_saas_payment(
+                factory, actor_user_id=actor_id, actor_telegram_id=user.id,
+                instructions=raw, settings=config,
+            )
+        except (PermissionError, ValueError):
+            await bot.send_message(
+                user.id, tr("Реквизиты отклонены. Проверьте длину и права.",
+                            "Instructions rejected. Check length and permissions."),
+            )
+            return
+        except Exception:
+            await bot.send_message(
+                user.id, tr("Не удалось сохранить реквизиты. Попробуйте ещё раз.",
+                            "Unable to save instructions. Please retry."),
+            )
+            return
+        pending_bank_entry.discard(user.id)
+        await _show_bank_screen(bot, user)
 
     @router.callback_query(F.data.startswith("plat:"))
     async def platform_callback(query: CallbackQuery, bot: Bot) -> None:
@@ -938,6 +1062,56 @@ def create_platform_dashboard_router(
                                 _keyboard(rows) if index == len(chunks) - 1 else None
                             ),
                         )
+            elif tokens[1:] == ["bankdetails"]:
+                await _show_bank_screen(
+                    bot, query.from_user, message_id=message_id,
+                )
+            elif tokens[1:] == ["bankedit"]:
+                pending_bank_entry.add(query.from_user.id)
+                await bot.send_message(
+                    query.from_user.id,
+                    tr(
+                        "✍️ <b>Реквизиты для счетов ViMi Pay</b>\n"
+                        "Пришлите одним сообщением получателя, банк, "
+                        "номер счёта/карты и назначение платежа. "
+                        "8–900 символов. Отмена: /cancel.\n\n"
+                        "Не отправляйте коды доступа, пароли или API-токены.",
+                        "✍️ <b>ViMi Pay bank instructions</b>\n"
+                        "Send recipient, bank, account/card reference and "
+                        "transfer memo in one message (8–900 characters). "
+                        "Cancel: /cancel.\n\n"
+                        "Never submit passwords, login codes or API tokens.",
+                    ),
+                    parse_mode="HTML",
+                )
+            elif tokens[1:] == ["bankclearask"]:
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=tr(
+                        "⚠️ Удалить реквизиты ViMi Pay? Новые уведомления "
+                        "об оплате не будут отправляться.",
+                        "⚠️ Clear ViMi Pay payment instructions? "
+                        "New billing reminders will be paused.",
+                    ), reply_markup=_keyboard([
+                        [_button(tr("🗑 Подтвердить", "🗑 Confirm"), "bankclearok")],
+                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bankdetails")],
+                    ]), message_id=message_id,
+                )
+            elif tokens[1:] == ["bankclearok"]:
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                await configure_platform_saas_payment(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    instructions=None, settings=config,
+                )
+                pending_bank_entry.discard(query.from_user.id)
+                await _show_bank_screen(
+                    bot, query.from_user, message_id=message_id,
+                )
             elif len(tokens) == 3 and tokens[1] == "billing":
                 page_token = tokens[2]
                 if not page_token.isascii() or not page_token.isdecimal():
@@ -972,6 +1146,10 @@ def create_platform_dashboard_router(
                     nav.append(_button("➡️", f"billing:{page + 1}"))
                 if nav:
                     rows.append(nav)
+                rows.append([_button(
+                    tr("💳 Реквизиты ViMi Pay", "💳 ViMi Pay payment details"),
+                    "bankdetails",
+                )])
                 rows.append([_button(
                     tr("⬅️ Финансы", "⬅️ Finances"), "merchants:30:0",
                 )])
