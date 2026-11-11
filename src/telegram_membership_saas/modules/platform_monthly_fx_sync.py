@@ -25,7 +25,13 @@ from telegram_membership_saas.tenant_context import TenantContext
 
 LOG = logging.getLogger(__name__)
 SOURCE_URL = "https://www.cbr.ru/scripts/XML_daily.asp"
-FIAT_CURRENCIES = frozenset({"USD", "EUR", "UAH", "BYN"})
+CORE_FIAT = frozenset({"USD", "EUR", "UAH", "BYN"})
+# Other active fiat sale currencies in migration 0004. CBR quotes these
+# on the days when published; an unavailable optional code fails closed
+# for its sale, never silently converts it at a made-up rate.
+FIAT_CURRENCIES = CORE_FIAT | frozenset({
+    "GBP", "KZT", "GEL", "AMD", "AED",
+})
 # Never flood the public CBR endpoint or block a supervisor reconciliation.
 MAX_DAYS_PER_RUN = 7
 
@@ -62,7 +68,7 @@ def parse_official_rates(
             rates[code] = rate.quantize(Decimal("0.000000000000000001"))
         except (ArithmeticError, InvalidOperation) as exc:
             raise ValueError("Unusable official currency quotation") from exc
-    if set(rates) != FIAT_CURRENCIES:
+    if not CORE_FIAT.issubset(rates):
         raise ValueError("CBR feed is missing required currencies")
     return actual, rates
 
@@ -114,7 +120,7 @@ async def sync_official_daily_rates(
             existing = (await session.execute(text(
                 "SELECT public.platform_saas_daily_fx(:day) AS data"
             ).columns(data=JSONB), {"day": day})).scalar_one()
-            if not FIAT_CURRENCIES.issubset(existing.get("rates", {})):
+            if not CORE_FIAT.issubset(existing.get("rates", {})):
                 missing.append(day)
     if not missing:
         return 0
