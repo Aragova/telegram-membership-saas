@@ -35,6 +35,9 @@ from telegram_membership_saas.manual_checkout_ui import (
 )
 from telegram_membership_saas.modules.platform_saas_hold_errors import CommercialHoldError
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
+from telegram_membership_saas.modules.stars_subscription_recovery import (
+    recover_subscription_stars,
+)
 from telegram_membership_saas.modules.stars_subscription_service import (
     confirm_subscription_stars_payment,
     create_stars_subscription_order,
@@ -536,6 +539,41 @@ def create_telegram_commerce_router(
             return
         await refresh_menu(bot, message.from_user.id)
         await send_account(bot, user_id=message.from_user.id)
+
+    @router.message(Command("starsrecover"))
+    async def stars_subscription_recovery_command(
+        message: Message, bot: Bot,
+    ) -> None:
+        if message.from_user is None or message.chat.type != "private":
+            return
+        try:
+            restored = await recover_subscription_stars(
+                session_factory, bot=bot, project_id=project_id,
+                buyer_id=message.from_user.id,
+            )
+        except Exception:
+            logger.exception("Stars subscription transaction recovery unavailable")
+            await bot.send_message(
+                message.chat.id, tr(
+                    "⚠️ Не удалось проверить журнал Stars. Не платите повторно. "
+                    "Обратитесь в /support.",
+                    "⚠️ Cannot check the Telegram Stars ledger. "
+                    "Do not pay again. Use /support.",
+                ),
+            )
+            return
+        await bot.send_message(
+            message.chat.id,
+            (
+                tr("✅ Восстановлено подписок: ", "✅ Recovered subscriptions: ")
+                + str(len(restored)) + ". /subscriptions"
+            ) if restored else tr(
+                "ℹ️ Новых подтверждённых оплат Stars не найдено. "
+                "Если звёзды списаны, обратитесь в /support.",
+                "ℹ️ No new confirmed Stars charges found. "
+                "If Stars were debited, use /support.",
+            ),
+        )
 
     @router.message(Command("support"))
     async def support_command(message: Message, bot: Bot) -> None:
