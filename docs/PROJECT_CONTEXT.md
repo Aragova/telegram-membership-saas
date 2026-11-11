@@ -1,3 +1,23 @@
+## Telegram creator status live audit (2026-11-11)
+
+The existing owner-only **Platform → Finances → Invoices → Exemption audit**
+screen adds **one** "Check this page" callback, never one button per bot.
+It checks up to 8 pending bot/channel registrations directly via the
+registered customer bot's Telegram token (decrypted only in server memory):
+verify bot ID with `getMe`, require exactly one active channel, ensure the
+customer bot is channel administrator, then query the authenticated platform
+owner's `getChatMember` status. Only `creator` is a Telegram channel owner;
+`administrator` is not proof. Errors, missing/broken tokens, bot mismatches
+and ambiguous channels fail closed. Never log secrets or remote URL errors.
+
+**This is a read-only live audit, not exemption provisioning.** Results
+are ephemeral, no SQL writes, no new access/financial exemptions, no
+billing/trial/hold activation, and no automatic sweep of all operator bots.
+A later audited PR may add explicit owner-only, creator-verified exemption
+provisioning with DB transaction checks and before/after tests. Do not
+automatically exempt a platform operator's administrator-only channels.
+All screens RU/EN, native Rich where useful, no duplicate menus.
+
 ## Financial UI separation (2026-11-10)
 
 The confusing 25-bot audit does **not** belong in the bank instructions
