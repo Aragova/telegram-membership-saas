@@ -13,7 +13,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
     ReplyParameters,
 )
 from sqlalchemy import select
@@ -33,6 +35,11 @@ from telegram_membership_saas.manual_checkout_ui import (
 )
 from telegram_membership_saas.modules.platform_saas_hold_errors import CommercialHoldError
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
+from telegram_membership_saas.modules.stars_subscription_service import (
+    confirm_subscription_stars_payment,
+    create_stars_subscription_order,
+    stars_subscription_precheckout,
+)
 from telegram_membership_saas.modules.telegram_commerce.account import (
     ACCOUNT_MAX_PAGE,
     account_home_screen,
@@ -703,6 +710,37 @@ def create_telegram_commerce_router(
             _, price_token, method_token = callback.data.split(":", 2)
             plan_price_id = decode_uuid(price_token)
             payment_method_id = decode_uuid(method_token)
+            if payment_method_id.int == 0:
+                # Synthetic provider token zero is the native XTR rail,
+                # NEVER a PaymentMethod foreign key or a manual bank transfer.
+                if not _buyer_screen_callback(callback):
+                    raise PermissionError("Open the bot's private chat")
+                async with system_project_session_scope(
+                    session_factory, project_id,
+                ) as session:
+                    order = await create_stars_subscription_order(
+                        session, project_id=project_id, bot_id=bot.id,
+                        buyer_id=callback.from_user.id,
+                        username=callback.from_user.username,
+                        first_name=callback.from_user.first_name,
+                        plan_price_id=plan_price_id,
+                    )
+                await callback.answer()
+                label = order.plan_name_snapshot[:32]
+                await bot.send_invoice(
+                    chat_id=callback.from_user.id,
+                    title=label,
+                    description=tr(
+                        "Подписка · срок: ", "Subscription · period: ",
+                    ) + format_period(
+                        order.duration_value, order.duration_unit,
+                    ),
+                    payload=order.invoice_payload,
+                    currency="XTR",
+                    prices=[LabeledPrice(label=label, amount=order.stars_amount)],
+                    provider_token="",
+                )
+                return
             async with system_project_session_scope(session_factory, project_id) as session:
                 checkout = await create_checkout_for_telegram_user(
                     session,
@@ -761,6 +799,80 @@ def create_telegram_commerce_router(
             ),
             legacy_html=legacy_html, instruction=checkout.instruction,
             reply_markup=_checkout_keyboard(checkout.request.id),
+        )
+
+    @router.pre_checkout_query(F.invoice_payload.startswith("sp:"))
+    async def stars_subscription_precheckout_handler(
+        query: PreCheckoutQuery, bot: Bot,
+    ) -> None:
+        try:
+            async with system_project_session_scope(
+                session_factory, project_id,
+            ) as session:
+                allowed = await stars_subscription_precheckout(
+                    session, project_id=project_id, bot_id=bot.id,
+                    buyer_id=query.from_user.id,
+                    payload=query.invoice_payload, currency=query.currency,
+                    amount=query.total_amount,
+                )
+        except Exception:
+            allowed = False
+        await bot.answer_pre_checkout_query(
+            pre_checkout_query_id=query.id, ok=allowed,
+            error_message=None if allowed else tr(
+                "Счёт устарел или тариф недоступен. Откройте /plans заново.",
+                "Invoice expired or plan unavailable. Reopen /plans.",
+            ),
+        )
+
+    @router.message(F.successful_payment.invoice_payload.startswith("sp:"))
+    async def stars_subscription_success_handler(
+        message: Message, bot: Bot,
+    ) -> None:
+        payment = message.successful_payment
+        if (
+            message.chat.type != "private" or payment is None
+            or message.from_user is None
+            or message.from_user.id != message.chat.id
+        ):
+            return
+        try:
+            async with system_project_session_scope(
+                session_factory, project_id,
+            ) as session:
+                _, subscription = await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot.id,
+                    buyer_id=message.from_user.id,
+                    payload=payment.invoice_payload,
+                    currency=payment.currency,
+                    amount=payment.total_amount,
+                    charge_id=payment.telegram_payment_charge_id,
+                    paid_at=message.date,
+                )
+        except Exception:
+            # Telegram has already charged Stars. Never ask this buyer to
+            # pay again or declare an unsuccessful transaction. The buyer
+            # must have a recovery path if PostgreSQL is briefly unavailable.
+            logger.exception("CRITICAL: paid Stars subscription grant pending")
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ ⭐ Telegram подтвердил оплату, но доступ пока не "
+                    "выдан. Не платите повторно. Откройте /starsrecover "
+                    "или /support.",
+                    "⚠️ ⭐ Telegram confirmed your payment but access is "
+                    "not ready. Do not pay twice. Use /starsrecover or /support.",
+                ),
+            )
+            return
+        await bot.send_message(
+            message.chat.id,
+            tr(
+                "✅ ⭐ Подписка оплачена и активирована. "
+                "Доступ к каналу выдаётся автоматически. /subscriptions",
+                "✅ ⭐ Subscription paid and activated. "
+                "Channel access is granted automatically. /subscriptions",
+            ),
         )
 
     @router.callback_query(F.data.startswith("paid:"))
