@@ -318,6 +318,15 @@ async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice(
                 assert credit_report["application_status"] == (
                     "pending_future_statement"
                 )
+                with pytest.raises(DBAPIError) as credit_void:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "UPDATE platform_saas_invoices SET status='void' "
+                            "WHERE id=:id"
+                        ), {"id": invoice})
+                assert getattr(
+                    credit_void.value.orig, "sqlstate", None
+                ) == "42501"
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await conn.execute(text(
