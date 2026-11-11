@@ -135,3 +135,26 @@ def test_parser_rejects_out_of_date_snapshot(day):
         parse_official_rates(
             _sample(date_str="06.11.2026"), day=day,
         )
+
+
+def test_additional_supported_fiat_currency_is_converted_from_cbr_nominal():
+    xml = _sample(date_str="11.11.2026", amount="80,00")
+    fragment = (
+        b"<Valute><CharCode>KZT</CharCode><Nominal>100</Nominal>"
+        b"<Value>19,00</Value></Valute>"
+    )
+    xml = xml.replace(b"</ValCurs>", fragment + b"</ValCurs>")
+    quoted, rates = parse_official_rates(xml, day=date(2026, 11, 11))
+    assert quoted == date(2026, 11, 11)
+    assert rates["KZT"] == Decimal("0.19")
+    assert rates["USD"] == Decimal("80")
+
+
+def test_absent_optional_cbr_currency_does_not_block_core_sales():
+    quoted, rates = parse_official_rates(
+        _sample(date_str="11.11.2026", amount="80,00"),
+        day=date(2026, 11, 11),
+    )
+    assert quoted == date(2026, 11, 11)
+    assert "GBP" not in rates
+    assert all(code in rates for code in ("USD", "EUR", "UAH", "BYN"))
