@@ -508,6 +508,13 @@ def upgrade() -> None:
             WHERE s.paid_at >= (p_month::timestamp AT TIME ZONE 'Europe/Moscow')
               AND s.paid_at < ((p_month::timestamp + interval '1 month')
                                AT TIME ZONE 'Europe/Moscow')
+              AND EXISTS (
+                SELECT 1 FROM public.merchant_project_periods mp
+                WHERE mp.project_id=p_project
+                  AND mp.owner_user_id=actor
+                  AND mp.started_at<=s.paid_at
+                  AND (mp.ended_at IS NULL OR mp.ended_at>s.paid_at)
+              )
           ),
           aggregates AS (
             SELECT currency,count(*) AS operations,
