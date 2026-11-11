@@ -155,6 +155,65 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                         "month": month, "currency": currency,
                         "rate": Decimal(rate), "source_date": month,
                     })
+                # The connected-bot Bill preview must use the SAME
+                # billability cutoff as the invoice issuer. Show native
+                # turnover even when some sales are non-chargeable.
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(merchant_owner)})
+                for rollout, trial_start in (
+                    # A sale before commercial launch is never charged.
+                    (paid_at + timedelta(hours=1), start),
+                    # A sale inside the first 72 hours is never charged.
+                    (start - timedelta(days=5),
+                     paid_at - timedelta(hours=48)),
+                ):
+                    await conn.execute(text(
+                        "UPDATE platform_saas_billing_control "
+                        "SET effective_from=:rollout WHERE id=1"
+                    ), {"rollout": rollout})
+                    await conn.execute(text(
+                        "UPDATE merchant_platform_trial_claims "
+                        "SET claimed_at=:claimed "
+                        "WHERE owner_user_id=:owner AND scope='owner' "
+                        "AND policy_key='vimi-saas-72h-v1'"
+                    ), {"claimed": trial_start, "owner": merchant_owner})
+                    preview = (await conn.execute(text(
+                        "SELECT public.platform_saas_project_preview("
+                        ":project,:month) AS data"
+                    ).columns(data=JSONB), {
+                        "project": project, "month": month,
+                    })).scalar_one()
+                    by_currency = {
+                        item["currency"]: item for item in preview["rows"]
+                    }
+                    assert Decimal(str(by_currency["USD"]["gross"])) == 80
+                    assert Decimal(str(by_currency["USD"]["fee_rub"])) == 120
+                    assert Decimal(str(preview["fiat_commission_rub"])) == 120
+                    assert preview["estimate_complete"] is True
+                    quote = (await conn.execute(text(
+                        "SELECT public.platform_saas_quote_project_bill("
+                        ":project,:month,'RUB') AS data"
+                    ).columns(data=JSONB), {
+                        "project": project, "month": month,
+                    })).scalar_one()
+                    assert quote["quote_ready"] is True
+                    assert Decimal(str(quote["estimated_total"])) == 270
+                # Restore the original rollout and completed trial.
+                await conn.execute(text(
+                    "UPDATE merchant_platform_trial_claims "
+                    "SET claimed_at=:claimed "
+                    "WHERE owner_user_id=:owner AND scope='owner' "
+                    "AND policy_key='vimi-saas-72h-v1'"
+                ), {"claimed": start, "owner": merchant_owner})
+                await conn.execute(text(
+                    "UPDATE platform_saas_billing_control "
+                    "SET effective_from=:rollout WHERE id=1"
+                ), {"rollout": start - timedelta(days=5)})
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(operator)})
+
                 with pytest.raises(DBAPIError) as override:
                     async with conn.begin_nested():
                         await _commission(
