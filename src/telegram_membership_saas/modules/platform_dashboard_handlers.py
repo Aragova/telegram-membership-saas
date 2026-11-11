@@ -6,6 +6,7 @@ but each button performs a fresh server-side role check.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from html import escape
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -42,6 +43,16 @@ from telegram_membership_saas.modules.platform_saas_payment_service import (
     configure_platform_saas_payment,
     platform_saas_payment_details,
 )
+from telegram_membership_saas.modules.platform_saas_settlement_service import (
+    confirm_saas_currency_receipt,
+    saas_invoice_credit_history,
+    saas_invoice_currency_snapshot,
+)
+from telegram_membership_saas.modules.platform_saas_invoice_ui import (
+    issued_invoice_classic,
+    issued_invoice_rich,
+)
+from telegram_membership_saas.modules.owner_setup.rich_admin_ui import send_owner_rich
 from telegram_membership_saas.modules.platform_usage import (
     BOT_EVENT_LABELS,
     EVENT_LABELS,
@@ -1226,52 +1237,43 @@ def create_platform_dashboard_router(
                 ), None)
                 if item is None:
                     raise ValueError("Invoice no longer on this page")
+                snapshot = await saas_invoice_currency_snapshot(
+                    factory, actor_user_id=actor_id, invoice_id=invoice_id,
+                )
+                credits = await saas_invoice_credit_history(
+                    factory, actor_user_id=actor_id, invoice_id=invoice_id,
+                )
                 is_paid = item["status"] == "paid"
                 rows = []
                 if not is_paid:
+                    label = tr("✅ Подтвердить поступление",
+                               "✅ Confirm bank receipt")
+                    if snapshot.get("locked"):
+                        label += " · " + str(snapshot["amount"]) + " " + str(
+                            snapshot["currency"]
+                        )
                     rows.append([_button(
-                        tr("✅ Подтвердить поступление",
-                           "✅ Confirm bank receipt"),
-                        "billcommit:" + token + ":" + str(page),
+                        label[:64], "billcommit:" + token + ":" + str(page),
                     )])
                 rows.append([_button(
                     tr("⬅️ К счетам", "⬅️ Invoices"), f"billing:{page}",
                 )])
-                start_at = datetime.fromisoformat(
-                    str(item["period_start"]).replace("Z", "+00:00")
-                ).astimezone(ZoneInfo("Europe/Moscow"))
-                end_at = datetime.fromisoformat(
-                    str(item["period_end"]).replace("Z", "+00:00")
-                ).astimezone(ZoneInfo("Europe/Moscow"))
-                body = (
-                    tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay invoice</b>")
-                    + "\n<b>ID:</b> <code>" + escape(str(item["id"])) + "</code>"
-                    + "\n" + tr("Бизнес: ", "Merchant: ")
-                    + "<code>" + escape(str(item["merchant"])) + "</code>"
-                    + "\n" + tr("Владелец: ", "Owner: ")
-                    + "<code>" + escape(str(item["owner"])) + "</code>"
-                    + "\n" + tr("Тип: ", "Type: ")
-                    + escape(str(item["kind"]))
-                    + "\n" + tr("Бот: ", "Bot: ")
-                    + escape(str(item.get("bot") or "—"))
-                    + "\n" + tr("Период: ", "Period: ")
-                    + start_at.strftime("%d.%m.%Y") + " – "
-                    + end_at.strftime("%d.%m.%Y")
-                    + "\n" + tr("Сумма: ", "Amount: ")
-                    + "<b>" + escape(str(item["total_rub"])) + " ₽</b>"
-                    + "\n" + tr("Статус: ", "Status: ")
-                    + escape(str(item["status"]))
-                    + "\n\n" + tr(
-                        "Подтверждай только после проверки перевода по банку. "
-                        "ID и владелец должны совпадать с проверяемым счётом.",
-                        "Confirm only after checking the bank transfer. "
-                        "The invoice ID and owner must match your bank record.",
-                    )
+                context = (
+                    "<p>" + tr("Бизнес: ", "Merchant: ")
+                    + "<code>" + escape(str(item["merchant"])) + "</code></p>"
+                    + "<p>" + tr("Владелец: ", "Owner: ")
+                    + "<code>" + escape(str(item["owner"])) + "</code></p>"
                 )
-                await _render_platform_screen(
+                await send_owner_rich(
                     bot, chat_id=query.from_user.id,
-                    text=body, reply_markup=_keyboard(rows),
-                    message_id=message_id,
+                    rich_html=issued_invoice_rich(item, snapshot, credits) + context,
+                    classic_html=issued_invoice_classic(item, snapshot, credits)
+                    + "\n" + context.replace("<p>", "").replace("</p>", "\n")
+                    + tr(
+                        "\nПодтверждайте только фактическое поступление по банку.",
+                        "\nConfirm only after independently checking the bank receipt.",
+                    ),
+                    reply_markup=_keyboard(rows),
                 )
             elif len(tokens) == 4 and tokens[1] == "billcommit":
                 _, _, token, page_token = tokens
@@ -1291,11 +1293,25 @@ def create_platform_dashboard_router(
                 )
                 if not any(x["id"] == str(invoice_id) for x in report.invoices):
                     raise ValueError("Invoice no longer on this page")
-                await confirm_saas_receipt(
-                    factory, actor_user_id=actor_id,
-                    actor_telegram_id=query.from_user.id,
-                    invoice_id=invoice_id, settings=config,
+                snapshot = await saas_invoice_currency_snapshot(
+                    factory, actor_user_id=actor_id, invoice_id=invoice_id,
                 )
+                if snapshot.get("locked"):
+                    await confirm_saas_currency_receipt(
+                        factory, actor_user_id=actor_id,
+                        actor_telegram_id=query.from_user.id,
+                        invoice_id=invoice_id, settings=config,
+                        currency=str(snapshot["currency"]),
+                        amount=Decimal(str(snapshot["amount"])),
+                    )
+                else:
+                    # Legacy invoices without an explicit locked quote remain
+                    # payable only through the original RUB receipt path.
+                    await confirm_saas_receipt(
+                        factory, actor_user_id=actor_id,
+                        actor_telegram_id=query.from_user.id,
+                        invoice_id=invoice_id, settings=config,
+                    )
                 refreshed = await platform_saas_invoice_report(
                     factory, actor_user_id=actor_id,
                     actor_telegram_id=query.from_user.id, page=page,
