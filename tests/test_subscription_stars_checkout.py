@@ -1124,7 +1124,6 @@ async def test_delayed_stars_refund_repairs_manual_paid_renewal():
             method_id = method.id
         a_paid = (datetime.now(UTC) - timedelta(minutes=5)).replace(microsecond=0)
         a_refund = a_paid + timedelta(minutes=1)
-        m_approved = a_paid + timedelta(minutes=2)
         async with system_project_session_scope(factory, project_id) as session:
             order = await create_stars_subscription_order(
                 session, project_id=project_id, bot_id=bot_id,
@@ -1146,9 +1145,13 @@ async def test_delayed_stars_refund_repairs_manual_paid_renewal():
                 plan_id=plan.id, plan_price_id=usd_price_id,
                 payment_method_id=method_id,
             )
+            # The request is created NOW; only the original Stars receipt
+            # and its missed refund predate this approval.
+            submitted_at = datetime.now(UTC)
+            m_approved = submitted_at + timedelta(seconds=1)
             await mark_payment_request_submitted(
                 session, project_id=project_id, request_id=request.id,
-                submitted_at=m_approved - timedelta(seconds=1),
+                submitted_at=submitted_at,
             )
             result = await approve_payment_request(
                 session, project_id=project_id, request_id=request.id,

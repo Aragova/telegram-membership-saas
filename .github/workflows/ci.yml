@@ -165,6 +165,7 @@ jobs:
                       "platform_saas_star_project_refund_summary(uuid,date)",
                       "platform_saas_capture_new_subscription_stars(integer)",
                       "platform_saas_capture_subscription_star_refunds(integer)",
+                      "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
                           f"GRANT EXECUTE ON FUNCTION public.{function} "
