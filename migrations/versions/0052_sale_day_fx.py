@@ -36,8 +36,9 @@ def upgrade() -> None:
             server_default=sa.text("clock_timestamp()"), nullable=False,
         ),
         sa.CheckConstraint(
-            "currency_code IN ('USD','EUR','UAH','BYN')"
-            " AND rub_per_unit>0 AND rub_per_unit<=1000000000",
+            "currency_code IN ("
+            "'USD','EUR','UAH','BYN','GBP','KZT','GEL','AMD','AED'"
+            ") AND rub_per_unit>0 AND rub_per_unit<=1000000000",
             name="ck_daily_fx_fiat_rate",
         ),
         sa.CheckConstraint(
@@ -84,7 +85,9 @@ def upgrade() -> None:
           existing numeric;
         BEGIN
           actor:=public.platform_saas_require_owner();
-          IF p_day IS NULL OR p_currency NOT IN ('USD','EUR','UAH','BYN')
+          IF p_day IS NULL OR p_currency NOT IN (
+            'USD','EUR','UAH','BYN','GBP','KZT','GEL','AMD','AED'
+          )
              OR p_rate IS NULL OR p_rate<=0 OR p_rate>1000000000
              OR p_rate<>round(p_rate,18)
              OR p_source_day IS NULL OR p_source_day>p_day
