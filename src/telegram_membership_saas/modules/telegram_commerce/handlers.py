@@ -24,7 +24,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas import receipt_intents
-from telegram_membership_saas.customer_runtime import verify_resource_permissions
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import (
     current_language,
@@ -44,6 +43,7 @@ from telegram_membership_saas.modules.stars_subscription_recovery import (
 from telegram_membership_saas.modules.stars_subscription_service import (
     confirm_subscription_stars_payment,
     create_stars_subscription_order,
+    live_stars_subscription_permissions,
     mark_stars_precheckout_approved,
     stars_subscription_precheckout,
 )
@@ -864,8 +864,9 @@ def create_telegram_commerce_router(
                 # Recheck live channel membership before charging Stars;
                 # fail closed inside Bot API's pre-checkout deadline.
                 await asyncio.wait_for(
-                    verify_resource_permissions(
+                    live_stars_subscription_permissions(
                         session_factory, project_id=project_id, bot=bot,
+                        invoice_payload=query.invoice_payload,
                     ), timeout=5,
                 )
                 async with system_project_session_scope(
