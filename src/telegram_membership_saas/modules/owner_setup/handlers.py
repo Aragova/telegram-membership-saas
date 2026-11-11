@@ -262,90 +262,114 @@ def _statistics_amount(amount: Decimal) -> str:
 
 
 def _saas_preview_rich(preview: dict) -> str:
-    """Never present estimated commission as an issued/payable invoice."""
-    columns = (
-        tr("Валюта", "Currency"),
-        tr("Оборот", "Turnover"),
-        tr("Курс месяца, ₽", "Monthly rate, RUB"),
-        tr("5% в ₽", "5% in RUB"),
-    )
+    """One bilingual Rich card: sales, daily CBR quotes and fee preview."""
     lines = [
         "<h3>" + tr("🧾 ViMi Pay · Счёт", "🧾 ViMi Pay · Bill") + "</h3>",
-        "<p>" + tr("Месяц: ", "Month: ")
+        "<p>" + tr("Расчётный месяц: ", "Accounting month: ")
         + escape(str(preview["month"])) + "</p>",
-        "<table bordered compact>",
-        "<tr>" + "".join("<th>" + escape(title) + "</th>" for title in columns)
-        + "</tr>",
     ]
-    rows = preview.get("rows", [])
-    for record in rows:
-        currency = str(record["currency"])
-        amount = str(record["gross"])
-        missing = int(record.get("missing", 0))
-        minimum, maximum = record.get("min_rate"), record.get("max_rate")
-        rate = (
-            tr("Не задан", "Missing") if missing
-            else str(minimum) if minimum == maximum
-            else str(minimum) + "–" + str(maximum)
+    sales = preview.get("rows", [])
+    if sales:
+        columns = (
+            tr("Валюта", "Currency"),
+            tr("Оборот", "Turnover"),
+            tr("Курс продажи, ₽", "Sale FX, RUB"),
+            tr("5% в ₽", "5% in RUB"),
         )
-        fee = (
-            tr("Освобождён", "Exempt") if preview["is_platform_owner"]
-            else tr("Нет курса", "No rate") if missing
-            else str(record["fee_rub"])
-        )
-        if currency == "XTR" and not preview["is_platform_owner"]:
-            fee = fee + " " + tr("(предварительно)", "(provisional)")
-        lines.append(
-            "<tr><td>" + escape(currency) + "</td><td>"
-            + escape(amount) + "</td><td>" + escape(rate)
-            + "</td><td>" + escape(fee) + "</td></tr>"
-        )
-    if not rows:
-        lines.append("<tr><td>"
-                     + tr("Нет продаж", "No sales")
-                     + "</td><td>0</td><td>0</td><td>0</td></tr>")
-    lines.append("</table>")
-    today = preview.get("month_rates") or {}
-    lines.append("<p>" + tr(
-        "Курсы на месяц (опубликованные): ",
-        "Published monthly rates: ",
-    ) + (
-        ", ".join(
-            escape(str(code)) + " = " + escape(str(value)) + " ₽"
-            for code, value in sorted(today.items())
-        ) if today else tr("ещё нет", "not published yet")
-    ) + "</p>")
+        lines.extend([
+            "<h4>" + tr("📊 Продажи", "📊 Sales") + "</h4>",
+            "<table bordered compact>",
+            "<tr>" + "".join(
+                "<th>" + escape(title) + "</th>" for title in columns
+            ) + "</tr>",
+        ])
+        for record in sales:
+            currency = str(record["currency"])
+            amount = str(record["gross"])
+            missing = int(record.get("missing", 0))
+            minimum = record.get("min_rate")
+            maximum = record.get("max_rate")
+            rate = (
+                tr("Не хватает курса", "Rate missing") if missing
+                else tr("Отдельно", "Separate") if currency == "XTR"
+                else str(minimum) if minimum == maximum
+                else str(minimum) + "–" + str(maximum)
+            )
+            fee = (
+                tr("Освобождён", "Exempt")
+                if preview["is_platform_owner"]
+                else tr("Сверка", "Reconcile") if currency == "XTR"
+                else tr("Нет курса", "No FX") if missing
+                else str(record["fee_rub"])
+            )
+            lines.append(
+                "<tr><td>" + escape(currency) + "</td><td>"
+                + escape(amount) + "</td><td>" + escape(rate)
+                + "</td><td>" + escape(fee) + "</td></tr>"
+            )
+        lines.append("</table>")
+    else:
+        lines.append("<p>" + tr(
+            "📭 Подтверждённых продаж за этот месяц пока нет.",
+            "📭 No approved sales in this month yet.",
+        ) + "</p>")
 
-    lines.append("<p>" + tr(
-        "Комиссия с обычных оплат: ", "Fiat sales commission: "
-    ) + "<b>" + escape(str(preview["fiat_commission_rub"])) + " ₽</b></p>")
-    lines.append("<p>" + tr(
-        "Абонплата за следующий месяц: ", "Next month's bot fee: "
-    ) + "<b>" + escape(str(preview["next_bot_fee_rub"])) + " ₽</b></p>")
+    lines.extend([
+        "<h4>" + tr("💱 Официальные курсы на сегодня",
+                     "💱 Today's official exchange rates") + "</h4>",
+        "<p>" + tr("Дата: ", "Date: ")
+        + escape(str(preview.get("rate_date", "—"))) + "</p>",
+        "<table bordered compact>",
+        "<tr><th>" + tr("Валюта", "Currency") + "</th><th>"
+        + tr("1 единица, ₽", "RUB per unit") + "</th><th>"
+        + tr("Дата ЦБ", "CBR date") + "</th></tr>",
+    ])
+    today = preview.get("today_rates") or {}
+    for currency in ("USD", "EUR", "UAH", "BYN"):
+        datum = today.get(currency) or {}
+        value = str(datum.get("rate", "—"))
+        source_day = str(datum.get("source_date", "—"))
+        lines.append(
+            "<tr><td>" + currency + "</td><td>" + escape(value)
+            + "</td><td>" + escape(source_day) + "</td></tr>"
+        )
+    lines.append("</table>")
+    lines.append("<p><i>" + tr(
+        "Для комиссии каждой продажи применяется курс её даты. "
+        "Курс оплаты счёта определяется отдельно при выборе валюты.",
+        "Each sale uses its own date's rate. Invoice settlement "
+        "uses a separate quote when the currency is chosen.",
+    ) + "</i></p>")
+
+    lines.extend([
+        "<h4>" + tr("🧮 Расчёт платформы", "🧮 Platform calculation")
+        + "</h4>",
+        "<table bordered compact>",
+        "<tr><td>" + tr("Комиссия 5%", "5% commission") + "</td><td>"
+        + escape(str(preview["fiat_commission_rub"])) + " ₽</td></tr>",
+        "<tr><td>" + tr("Абонплата за следующий месяц",
+                        "Next month fee") + "</td><td>"
+        + escape(str(preview["next_bot_fee_rub"])) + " ₽</td></tr>",
+        "</table>",
+    ])
     if preview["is_platform_owner"]:
         lines.append("<p>" + tr(
-            "✅ Свой бот ViMi Pay: начисления не применяются.",
-            "✅ ViMi Pay's own bot: platform fees do not apply.",
+            "✅ Собственный бот ViMi Pay: сборы не начисляются.",
+            "✅ ViMi Pay's own bot: platform fees are waived.",
         ) + "</p>")
-    if int(preview["missing_monthly_rates"]):
+    if int(preview.get("missing_daily_rates", 0)):
         lines.append("<p>" + tr(
-            "⚠️ Не хватает курсов на расчётный месяц. "
-            "Итог к оплате не рассчитан.",
-            "⚠️ Some monthly exchange rates are missing. "
-            "No final amount can be calculated.",
+            "⚠️ Курсы на даты некоторых продаж отсутствуют. "
+            "Полная сумма не рассчитана.",
+            "⚠️ Some approved sale dates have no verified FX quote. "
+            "No complete amount can be calculated.",
         ) + "</p>")
     if preview["stars_need_reconciliation"]:
         lines.append("<p>" + tr(
-            "⭐ Продажи за Stars учтены отдельно. "
-            "Оценка комиссии: ",
-            "⭐ Stars sales are counted separately. "
-            "Provisional commission: ",
-        ) + "<b>" + escape(str(preview["stars_estimate_rub"]))
-        + " ₽</b>. " + tr(
-            "До сверки возвратов и реальной ставки выплат "
-            "сумма не входит в счёт.",
-            "Not included in a payable invoice until refunds and "
-            "actual reward value are reconciled.",
+            "⭐ Оборот Stars показан отдельно. До сверки выплат "
+            "и возвратов он не включается в итоговую комиссию.",
+            "⭐ Stars turnover is separate. Until payouts and refunds "
+            "are reconciled, it is excluded from the payable commission.",
         ) + "</p>")
     if preview["estimate_complete"] and not preview["is_platform_owner"]:
         total = Decimal(str(preview["fiat_commission_rub"])) + Decimal(
@@ -354,11 +378,11 @@ def _saas_preview_rich(preview: dict) -> str:
         lines.append("<p><b>" + tr("Предварительно: ", "Estimated total: ")
                      + escape(format(total, ".2f")) + " ₽</b></p>")
     lines.append("<p><i>" + (
-        tr("Биллинг пока выключен. Это расчёт, не выставленный счёт.",
-           "Billing is off. This is a preview, not an issued invoice.")
+        tr("Биллинг выключен. Это предпросмотр, не требование оплаты.",
+           "Billing is off. Preview only, not a payment request.")
         if not preview["billing_enabled"] else
-        tr("Итоговые суммы подтверждаются выставленными счетами ниже.",
-           "Only issued invoices below establish amounts payable.")
+        tr("Оплату определяет только официально выставленный счёт.",
+           "Only an issued invoice establishes a payable amount.")
     ) + "</i></p>")
     return "\n".join(lines)
 
@@ -423,7 +447,7 @@ def _saas_preview_classic(preview: dict) -> str:
         is_missing = int(item.get("missing", 0))
         minimum, maximum = item.get("min_rate"), item.get("max_rate")
         quote = (
-            tr("нет курса месяца", "monthly rate missing")
+            tr("нет курса даты продажи", "sale-date rate missing")
             if is_missing or minimum is None or maximum is None
             else escape(
                 str(minimum) if minimum == maximum
@@ -455,10 +479,10 @@ def _saas_preview_classic(preview: dict) -> str:
             "⭐ Stars: нужна сверка возвратов и стоимости вывода.",
             "⭐ Stars: refunds and reward value need reconciliation.",
         ))
-    if int(preview["missing_monthly_rates"]):
+    if int(preview["missing_daily_rates"]):
         lines.append(tr(
-            "⚠️ Курсы на месяц неполные. Итог не готов.",
-            "⚠️ Monthly rates incomplete. No final amount.",
+            "⚠️ Курсы на даты продаж неполные. Итог не готов.",
+            "⚠️ Sale-day rates incomplete. No final amount.",
         ))
     if not preview["billing_enabled"]:
         lines.append(tr(
