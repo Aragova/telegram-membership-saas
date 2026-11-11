@@ -147,6 +147,73 @@ def upgrade() -> None:
     """)
 
     op.execute("""
+        CREATE FUNCTION public.platform_saas_publish_cbr_fx_rate(
+            p_month date, p_currency text, p_rate numeric,
+            p_source_date date
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $cbr$
+        DECLARE
+          actor uuid;
+          found_rate numeric;
+        BEGIN
+          actor:=public.platform_saas_require_owner();
+          IF p_month IS NULL OR extract(day from p_month)<>1
+             OR p_currency NOT IN ('USD','EUR','UAH','BYN')
+             OR p_rate IS NULL OR p_rate<=0 OR p_rate>1000000000
+             OR p_source_date IS NULL OR p_source_date>p_month
+             OR p_source_date<p_month-interval '14 days'
+             OR p_rate<>round(p_rate,18) THEN
+            RAISE EXCEPTION 'Invalid verified monthly CBR rate'
+              USING ERRCODE='22023';
+          END IF;
+          PERFORM pg_advisory_xact_lock(hashtextextended(
+            'vimi-fx:'||to_char(p_month,'YYYY-MM-DD')
+            ||':'||p_currency,0
+          ));
+          SELECT rub_per_unit INTO found_rate
+          FROM public.platform_saas_fx_rates
+          WHERE billing_month=p_month AND currency_code=p_currency;
+          IF FOUND THEN
+            IF found_rate<>p_rate THEN
+              RAISE EXCEPTION 'Published monthly rate mismatch'
+                USING ERRCODE='23505';
+            END IF;
+          ELSE
+            INSERT INTO public.platform_saas_fx_rates(
+              billing_month,currency_code,rub_per_unit,published_by,
+              source_name,source_date
+            ) VALUES(
+              p_month,p_currency,p_rate,actor,'CBR',p_source_date
+            );
+          END IF;
+          RETURN jsonb_build_object(
+            'month',p_month,'currency',p_currency,
+            'rub_per_unit',p_rate,'source_name','CBR',
+            'source_date',p_source_date
+          );
+        END;
+        $cbr$
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION "
+        "public.platform_saas_publish_cbr_fx_rate(date,text,numeric,date) "
+        "FROM PUBLIC"
+    )
+    op.execute("""
+        DO $grant_cbr$
+        BEGIN
+          IF EXISTS(SELECT 1 FROM pg_roles
+                    WHERE rolname='membership_runtime') THEN
+            GRANT EXECUTE ON FUNCTION
+              public.platform_saas_publish_cbr_fx_rate(
+                date,text,numeric,date
+              ) TO membership_runtime;
+          END IF;
+        END $grant_cbr$
+    """)
+
+    op.execute("""
         CREATE FUNCTION public.platform_saas_monthly_fx(p_month date)
         RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
         SET search_path = pg_catalog, public
