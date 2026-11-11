@@ -464,6 +464,38 @@ def upgrade() -> None:
         END;
         $fn$
     """)
+    # A void invoice never created a payable commission. Do not leave an
+    # orphaned financial credit note by voiding its charged parent afterward.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_prevent_void_with_credits()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog,public AS $fn$
+        BEGIN
+          IF OLD.status='issued' AND NEW.status='void'
+             AND EXISTS (
+               SELECT 1 FROM public.platform_saas_invoice_lines l
+               JOIN public.platform_saas_refund_credits c
+                 ON c.invoice_line_id=l.id
+               WHERE l.invoice_id=OLD.id
+             )
+          THEN
+            RAISE EXCEPTION 'Invoice with immutable credits cannot be voided'
+              USING ERRCODE='42501';
+          END IF;
+          RETURN NEW;
+        END;
+        $fn$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_saas_prevent_void_with_credits
+        BEFORE UPDATE ON public.platform_saas_invoices
+        FOR EACH ROW EXECUTE FUNCTION
+          public.platform_saas_prevent_void_with_credits()
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION "
+        "public.platform_saas_prevent_void_with_credits() FROM PUBLIC"
+    )
     op.execute(
         "REVOKE ALL ON FUNCTION "
         "public.platform_saas_credit_entry_immutable() FROM PUBLIC"
