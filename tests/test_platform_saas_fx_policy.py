@@ -219,12 +219,21 @@ async def test_daily_cbr_fx_is_owner_only_immutable_and_date_specific():
                 )
                 assert (await publish(first_day, Decimal("80")))["rub_per_unit"] == 80
                 await publish(second_day, Decimal("90"), second_day)
+                await conn.execute(text(
+                    "SELECT public.platform_saas_publish_cbr_daily_fx("
+                    ":day,'GBP',:rate,:source_day)"
+                ), {
+                    "day": first_day,
+                    "rate": Decimal("107.50"),
+                    "source_day": first_day,
+                })
                 async def snapshot(day):
                     return (await conn.execute(text(
                         "SELECT public.platform_saas_daily_fx(:day) AS data"
                     ).columns(data=JSONB), {"day": day})).scalar_one()
 
                 assert (await snapshot(first_day))["rates"]["USD"]["rate"] == 80
+                assert (await snapshot(first_day))["rates"]["GBP"]["rate"] == 107.5
                 assert (await snapshot(second_day))["rates"]["USD"]["rate"] == 90
 
                 with pytest.raises(DBAPIError) as duplicate:
