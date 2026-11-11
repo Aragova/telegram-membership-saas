@@ -184,10 +184,38 @@ def upgrade() -> None:
         END;
         $fn$
     """)
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_owner_foreign_invoice_count()
+        RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog,public AS $fn$
+        DECLARE actor uuid; count_foreign integer;
+        BEGIN
+          actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+          IF actor IS NULL OR NOT EXISTS(
+             SELECT 1 FROM public.telegram_users WHERE id=actor
+          ) THEN
+            RAISE EXCEPTION 'Authenticated account owner required'
+              USING ERRCODE='42501';
+          END IF;
+          SELECT count(*) INTO count_foreign
+          FROM public.platform_saas_invoices i
+          JOIN public.platform_saas_currency_settlements s
+            ON s.invoice_id=i.id
+          WHERE i.owner_user_id=actor AND i.status='issued'
+            AND s.currency_code<>'RUB'
+            AND NOT EXISTS (
+              SELECT 1 FROM public.platform_saas_receipts r
+              WHERE r.invoice_id=i.id
+            );
+          RETURN count_foreign;
+        END;
+        $fn$
+    """)
     for signature in (
         "platform_saas_preview_invoice_currency(uuid,text)",
         "platform_saas_invoice_credit_history(uuid)",
         "platform_saas_lock_invoice_currency_expected(uuid,text,date,numeric,numeric)",
+        "platform_saas_owner_foreign_invoice_count()",
     ):
         op.execute(f"REVOKE ALL ON FUNCTION public.{signature} FROM PUBLIC")
     op.execute("""
@@ -200,7 +228,8 @@ def upgrade() -> None:
               public.platform_saas_invoice_credit_history(uuid),
               public.platform_saas_lock_invoice_currency_expected(
                 uuid,text,date,numeric,numeric
-              )
+              ),
+              public.platform_saas_owner_foreign_invoice_count()
             TO membership_runtime;
           END IF;
         END $grants$
@@ -208,6 +237,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP FUNCTION IF EXISTS public.platform_saas_owner_foreign_invoice_count()"
+    )
     op.execute(
         "DROP FUNCTION IF EXISTS "
         "public.platform_saas_lock_invoice_currency_expected("
