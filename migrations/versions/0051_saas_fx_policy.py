@@ -560,7 +560,8 @@ def upgrade() -> None:
           rub_total numeric;
           converted numeric;
           quote_ready boolean;
-          source_record record;
+          quote_source_name text;
+          quote_source_date date;
         BEGIN
           IF p_pay_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
              OR p_month IS NULL OR extract(day from p_month)<>1 THEN
@@ -576,10 +577,10 @@ def upgrade() -> None:
           IF p_pay_currency='RUB' THEN
             billing_rate:=1;
           ELSE
-            SELECT rub_per_unit,source_name,source_date INTO source_record
+            SELECT rub_per_unit,source_name,source_date
+              INTO billing_rate,quote_source_name,quote_source_date
             FROM public.platform_saas_fx_rates
             WHERE billing_month=p_month AND currency_code=p_pay_currency;
-            billing_rate:=source_record.rub_per_unit;
           END IF;
           quote_ready:=quote_ready AND billing_rate IS NOT NULL;
           IF quote_ready THEN
@@ -592,14 +593,14 @@ def upgrade() -> None:
             'total_rub',rub_total,'estimated_total',converted,
             'quote_ready',quote_ready,
             'source_name',CASE WHEN p_pay_currency='RUB' THEN 'fixed'
-                               ELSE source_record.source_name END,
+                               ELSE quote_source_name END,
             'source_date',CASE WHEN p_pay_currency='RUB' THEN NULL
-                               ELSE source_record.source_date END,
+                               ELSE quote_source_date END,
             'pending_stars',coalesce(
               (report->>'stars_need_reconciliation')::boolean,false
             ),
             'missing_rates',coalesce(
-              (report->>'missing_daily_rates')::integer,0
+              (report->>'missing_monthly_rates')::integer,0
             ),
             'billing_enabled',coalesce(
               (report->>'billing_enabled')::boolean,false
