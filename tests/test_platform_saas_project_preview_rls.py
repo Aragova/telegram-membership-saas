@@ -171,7 +171,8 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                     assert Decimal(str(rows["XTR"]["fee_rub"])) == 0
                     assert own["stars_need_reconciliation"] is True
                     assert own["estimate_complete"] is False
-                    assert own["missing_daily_rates"] == 1\n                    assert own["today_rates"]["USD"]["rate"] == 80
+                    assert own["missing_daily_rates"] == 1
+                    assert own["today_rates"]["USD"]["rate"] == 80
                     await _actor(conn, outsider)
                     with pytest.raises(DBAPIError) as denied:
                         async with conn.begin_nested():
