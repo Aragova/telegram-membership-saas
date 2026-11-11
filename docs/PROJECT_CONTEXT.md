@@ -31,6 +31,15 @@ RUB/unit and source day) and 5% + next-month fee. The chosen currency
 screen also uses Rich with standard HTML fallback and no duplicate
 navigation buttons. RU/EN complete.
 
+CBR importer additionally recognizes the other active fiat sales currencies
+GBP, KZT, GEL, AMD and AED (with the published nominal factor).
+An optional currency not published in the official daily XML is not
+invented and blocks only charges that use that currency. The four core
+fiat codes (USD/EUR/UAH/BYN) must be present to accept the response.
+Crypto sale currencies such as BTC/USDT/TON have **no CBR fiat quote**
+and remain a separate audited conversion integration gate before live
+commission billing. They must not be silently assigned a fiat FX rate.
+
 **Stars/XTR** turnover is shown separately; neither a CBR price nor a
 monthly guess can be used for its reward-value conversion. Stars remain
 excluded from payable totals until verified payout, refund and chargeback
