@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from json import dumps
 from uuid import UUID
 
 from sqlalchemy import text
@@ -116,25 +115,20 @@ async def issue_saas_monthly_commission(
 ) -> UUID | None:
     """Issue 5% on approved subscription and manual-file purchases only.
 
-    All conversion rates must be configured per currency for this month.
-    PostgreSQL verifies each purchase snapshot and immutable source bot.
+    Each foreign sale is converted using its published Moscow payment-day
+    rate. The legacy currency map must be empty; DB snapshots the FX.
+    PostgreSQL verifies every source and historical bot attribution.
     """
     _check_actor(actor_telegram_id, settings)
     if billing_month.day != 1:
         raise ValueError("The billing period must start on day one")
-    rates = {}
-    for currency, rate in rub_per_unit.items():
-        if not isinstance(rate, Decimal) or not rate.is_finite() or rate <= 0:
-            raise ValueError("FX rates must be positive finite Decimals")
-        if currency != currency.upper() or not currency.isalpha():
-            raise ValueError("Use uppercase currency codes")
-        rates[currency] = str(rate)
-    # Validate input in Python; SQL repeats authorization and source checks.
-    # jsonb numeric values are safe and exact for numeric conversions.
-    # Decimal values stay literal JSON numbers; do not round via float.
-    data = "{" + ",".join(
-        dumps(k) + ":" + str(Decimal(v)) for k, v in rates.items()
-    ) + "}"
+    if rub_per_unit:
+        # The old monthly override is deliberately unsupported. Publishing
+        # an immutable quote for each Moscow payment date is required.
+        raise ValueError(
+            "Monthly FX overrides are disabled; use published daily rates"
+        )
+    data = "{}"
     stmt = text(
         "SELECT public.platform_saas_issue_commission_invoice("
         ":merchant,:owner,:month,CAST(:fx AS jsonb))"

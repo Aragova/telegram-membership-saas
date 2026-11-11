@@ -6,6 +6,7 @@ functions; tenant clients never receive direct grants on platform ledger tables.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
@@ -78,6 +79,62 @@ async def configure_platform_saas_payment(
         )).scalar_one()
         if not updated:
             raise RuntimeError("Platform payment configuration unavailable")
+
+
+async def merchant_saas_project_preview(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, project_id: UUID, month: date,
+) -> dict:
+    """Read-only, owner-only preview of a connected bot's commercial sales.
+
+    This reports the original fiat/Stars turnovers using the locked
+    monthly conversion policy. No invoices, receipts or FX rows are changed.
+    """
+    if month.day != 1:
+        raise ValueError("The accounting month must start on day 1")
+    stmt = text(
+        "SELECT public.platform_saas_project_preview("
+        ":project,:month) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        result = (await session.execute(
+            stmt, {"project": project_id, "month": month},
+        )).scalar_one()
+    if not isinstance(result, dict) or not isinstance(result.get("rows"), list):
+        raise RuntimeError("Invalid ViMi Pay account preview")
+    return result
+
+
+async def merchant_saas_currency_quote(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, project_id: UUID, month: date,
+    payment_currency: str,
+) -> dict:
+    """Return a read-only conversion preview for one selected pay currency.
+
+    A real payable invoice must later snapshot this selection and currency
+    rate under a single immutable reference; this method never issues it.
+    """
+    if month.day != 1 or payment_currency not in (
+        "RUB", "USD", "EUR", "UAH", "BYN",
+    ):
+        raise ValueError("Invalid billing month or payment currency")
+    stmt = text(
+        "SELECT public.platform_saas_quote_project_bill("
+        ":project,:month,:currency) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        data = (await session.execute(stmt, {
+            "project": project_id, "month": month,
+            "currency": payment_currency,
+        })).scalar_one()
+    if not isinstance(data, dict) or data.get("chosen_currency") != payment_currency:
+        raise RuntimeError("Invalid payment currency quote")
+    return data
 
 
 async def merchant_saas_statements(
