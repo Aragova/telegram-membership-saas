@@ -1,3 +1,38 @@
+## PR #127 — issued-invoice Rich billing and credit audit UX (2026-11-11)
+
+Migration `0054_saas_billing_views` adds **read-only**, owner-scoped official
+currency preview for an existing issued SaaS invoice and a per-invoice
+audited commission-credit history. The preview never writes rates, claims
+payment or creates an invoice. The actual lock is the existing immutable
+0053 `platform_saas_select_invoice_currency` RPC.
+
+The connected admin's existing **🧾 ViMi Pay invoices** and the central
+historical account billing screen now list actual issued invoice references.
+Opening one shows a native Rich card (with safe HTML fallback) containing
+RUB baseline, payment status, final locked currency/amount/rate/source day
+and source-linked refund/chargeback evidence. **Unapplied** credits are
+shown separately, never deceptively subtracted from outstanding debt.
+Historical liable owners can open these bills even after transferring
+their last bot. A two-step currency flow is offered only on genuine unpaid,
+unlocked invoices: review today's official quote, then explicitly confirm
+the irreversible choice. Missing rates suppress the lock button. Ordinary
+monthly sales FX remains a **preview only**, with its existing buttons.
+
+The existing central owner **👑 Platform → 💼 Finances → 🧾 Invoices**
+detail uses the same native Rich/fallback card. An independently verified
+bank receipt is confirmed using the exact frozen currency/amount when an
+invoice was locked, preserving the RUB legacy receipt path only for old
+unlocked invoices. Foreign-currency bank details are NOT assumed to be
+configured: the UI tells users not to transfer into RUB-only instructions.
+
+**Still deliberately OFF:** scheduled SaaS invoicing, active trials, quotas,
+commercial holds and real charge enforcement. PR #127 does **not** apply
+credits to a later invoice, release a debt/hold, issue refunds or verify
+banking payments automatically. A separately reviewed credit-allocation
+policy must define liability, full/partial offsets, residual rounding and
+prepayment/commission attribution before activation. Preserve existing
+menus, `compose.light100.yaml`, buyer access and RU/EN.
+
 ## 7c. Immutable issued-invoice currency and refund audit (PR #126, 2026-11-11)
 
 Migration `0053_saas_settlement_credits` adds three FORCE-RLS tables:
