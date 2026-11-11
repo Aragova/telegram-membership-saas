@@ -82,14 +82,16 @@ async def recover_buyer_stars(
                     purchase_id,
                 )
                 continue
-            # StarTransaction.date is the authenticated Unix event time.
-            # Never substitute the later /myfiles recovery time.
-            if not isinstance(getattr(record, "date", None), int):
+            # Telegram serializes Unix time, but aiogram parses the
+            # authenticated StarTransaction.date into an aware datetime.
+            # Never substitute /myfiles recovery time or accept a naive date.
+            paid_at = getattr(record, "date", None)
+            if not isinstance(paid_at, datetime) or paid_at.tzinfo is None:
                 log.warning(
                     "Rejected Stars reconciliation without verified timestamp"
                 )
                 continue
-            matched_at = datetime.fromtimestamp(record.date, tz=UTC)
+            matched_at = paid_at.astimezone(UTC)
             matches[payload] = (record.id, stars, matched_at)
         if len(matches) == len(wanted) or len(transactions) < PAGE_SIZE:
             break
