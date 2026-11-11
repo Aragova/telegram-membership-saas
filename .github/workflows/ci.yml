@@ -147,6 +147,8 @@ jobs:
                       "platform_saas_project_preview(uuid,date)",
                       "platform_saas_quote_project_bill(uuid,date,text)",
                       "platform_saas_publish_cbr_fx_rate(date,text,numeric,date)",
+                      "platform_saas_publish_cbr_daily_fx(date,text,numeric,date)",
+                      "platform_saas_daily_fx(date)",
                   ):
                       await connection.execute(
                           f"GRANT EXECUTE ON FUNCTION public.{function} "

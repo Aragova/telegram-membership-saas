@@ -1,11 +1,9 @@
-"""Monthly official CBR FX ingestion for ViMi Pay billing, never payment activation.
+"""Verified official CBR FX per Moscow payment day, for dormant billing.
 
-The single process on supervisor shard 0 fetches one official XML quote
-for the first calendar day of the Moscow month, locking immutable nominal-
-normalized RUB rates for USD/EUR/UAH/BYN. Other shards never fetch.
-Transient failure leaves the month unpriced and any invoice blocked.
-Telegram Stars are intentionally excluded: they require a separate verified
-reward-value source, not a central-bank foreign-exchange rate.
+Only supervisor shard 0 runs this shared job. Backfill the current and
+previous Moscow months so a sale on any day retains its original rate.
+All output is immutable, owner-authenticated, and does not issue invoices.
+XTR requires Telegram reward reconciliation, never a CBR quote.
 """
 from __future__ import annotations
 
@@ -27,107 +25,126 @@ from telegram_membership_saas.tenant_context import TenantContext
 
 LOG = logging.getLogger(__name__)
 SOURCE_URL = "https://www.cbr.ru/scripts/XML_daily.asp"
-FIAT_CURRENCIES = ("USD", "EUR", "UAH", "BYN")
+CORE_FIAT = frozenset({"USD", "EUR", "UAH", "BYN"})
+# Other active fiat sale currencies in migration 0004. CBR quotes these
+# on the days when published; an unavailable optional code fails closed
+# for its sale, never silently converts it at a made-up rate.
+FIAT_CURRENCIES = CORE_FIAT | frozenset({
+    "GBP", "KZT", "GEL", "AMD", "AED",
+})
+# Never flood the public CBR endpoint or block a supervisor reconciliation.
+MAX_DAYS_PER_RUN = 7
 
 
 def parse_official_rates(
-    payload: bytes, *, month: date,
+    payload: bytes, *, day: date,
 ) -> tuple[date, dict[str, Decimal]]:
-    """Parse signed-host transport response, including CBR denomination.
-
-    No default, interpolated, cached-forever or guessed rates.
-    """
+    """Normalize official CBR nominal-based rates for a requested sale day."""
     if len(payload) > 256_000:
         raise ValueError("CBR response too large")
     root = ET.fromstring(payload)
     if root.tag != "ValCurs":
-        raise ValueError("Unexpected central-bank response")
-    quoted_on = datetime.strptime(root.attrib["Date"], "%d.%m.%Y").date()
-    if quoted_on > month or month - quoted_on > timedelta(days=14):
-        raise ValueError("Official FX quote is too stale/future dated")
+        raise ValueError("Unexpected central bank response")
+    actual = datetime.strptime(root.attrib["Date"], "%d.%m.%Y").date()
+    if actual > day or (day - actual).days > 14:
+        raise ValueError("Official CBR rate is future-dated or too stale")
     rates: dict[str, Decimal] = {}
     for item in root.findall("Valute"):
         code = (item.findtext("CharCode") or "").strip()
         if code not in FIAT_CURRENCIES:
             continue
         if code in rates:
-            raise ValueError("Duplicate official currency quote")
+            raise ValueError("Duplicate currency in CBR feed")
         try:
             nominal = Decimal((item.findtext("Nominal") or "").replace(",", "."))
-            quoted = Decimal((item.findtext("Value") or "").replace(",", "."))
-            if nominal <= 0 or quoted <= 0:
-                raise ValueError("Nonpositive official FX quotation")
-            rate = quoted / nominal
-            if not rate.is_finite() or rate <= 0 or rate > 1000000000:
-                raise ValueError("Unreasonable official FX quotation")
+            value = Decimal((item.findtext("Value") or "").replace(",", "."))
+            if not nominal.is_finite() or not value.is_finite():
+                raise ValueError("Invalid official currency numeric value")
+            if nominal <= 0 or value <= 0:
+                raise ValueError("Non-positive official currency quotation")
+            rate = value / nominal
+            if not rate.is_finite() or not (0 < rate <= 1000000000):
+                raise ValueError("Unreasonable official currency quotation")
             rates[code] = rate.quantize(Decimal("0.000000000000000001"))
-        except (InvalidOperation, ArithmeticError) as exc:
-            raise ValueError("Invalid official FX quotation") from exc
-    if set(rates) != set(FIAT_CURRENCIES):
-        raise ValueError("Official FX data missing a required currency")
-    return quoted_on, rates
+        except (ArithmeticError, InvalidOperation) as exc:
+            raise ValueError("Unusable official currency quotation") from exc
+    if not CORE_FIAT.issubset(rates):
+        raise ValueError("CBR feed is missing required currencies")
+    return actual, rates
 
 
-async def fetch_official_month_rates(
-    month: date,
+async def fetch_official_daily_rates(
+    client: httpx.AsyncClient, day: date,
 ) -> tuple[date, dict[str, Decimal]]:
-    if month.day != 1:
-        raise ValueError("Accounting month must start on day 1")
-    date_req = month.strftime("%d/%m/%Y")
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(12.0),
-        follow_redirects=False,
-        headers={"Accept": "application/xml"},
-    ) as client:
-        response = await client.get(SOURCE_URL, params={"date_req": date_req})
-        response.raise_for_status()
-        if response.url.host not in ("www.cbr.ru", "cbr.ru"):
-            raise ValueError("Unexpected currency provider")
-        return parse_official_rates(response.content, month=month)
+    response = await client.get(
+        SOURCE_URL, params={"date_req": day.strftime("%d/%m/%Y")},
+    )
+    response.raise_for_status()
+    if response.url.host not in ("www.cbr.ru", "cbr.ru"):
+        raise ValueError("Unexpected CBR provider host")
+    return parse_official_rates(response.content, day=day)
 
 
-async def sync_official_month_rates(
+def days_to_backfill(today: date) -> list[date]:
+    """Never rewrite historical quotes; cover prior billing month and today."""
+    first_this_month = today.replace(day=1)
+    previous_month = (first_this_month - timedelta(days=1)).replace(day=1)
+    return [
+        previous_month + timedelta(days=i)
+        for i in range((today - previous_month).days + 1)
+    ]
+
+
+async def sync_official_daily_rates(
     factory: async_sessionmaker[AsyncSession], settings: Settings,
     *, now: datetime | None = None,
-) -> bool:
-    """Idempotent importer, protected by platform owner database identity.
+) -> int:
+    """Fill up to seven missing CBR days without changing any historical rate.
 
-    Called at startup / periodically on exactly one supervisor shard.
-    No writes to invoice, subscription, payment or restrictions tables.
+    Returns number of days imported, so the supervisor can schedule a
+    short catch-up retry. Any missing / invalid day remains unpriced.
     """
     if settings.platform_owner_telegram_id is None:
-        return False
+        return 0
     when = now or datetime.now(UTC)
-    month = when.astimezone(ZoneInfo("Europe/Moscow")).date().replace(day=1)
+    today = when.astimezone(ZoneInfo("Europe/Moscow")).date()
     actor_id = await ensure_telegram_actor(
         factory, telegram_id=settings.platform_owner_telegram_id,
         username=None, first_name=None,
     )
+    missing: list[date] = []
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id),
     ) as session:
-        existing = (await session.execute(
-            text(
-                "SELECT public.platform_saas_monthly_fx(:month) AS data"
-            ).columns(data=JSONB), {"month": month},
-        )).scalar_one()
-    missing = set(FIAT_CURRENCIES) - set(existing.get("rates", {}))
+        for day in days_to_backfill(today):
+            existing = (await session.execute(text(
+                "SELECT public.platform_saas_daily_fx(:day) AS data"
+            ).columns(data=JSONB), {"day": day})).scalar_one()
+            if not CORE_FIAT.issubset(existing.get("rates", {})):
+                missing.append(day)
     if not missing:
-        return False
+        return 0
+    # UI must have today's quote first. Backfill old approval dates next.
+    missing.sort(reverse=True)
 
-    source_date, values = await fetch_official_month_rates(month)
-    # A CBR rate is immutable for this month, but the DB never accepts
-    # caller-provided "external" content without the operator's identity.
-    async with tenant_session_scope(
-        factory, TenantContext(user_id=actor_id),
-    ) as session:
-        for currency in sorted(missing):
-            await session.execute(text(
-                "SELECT public.platform_saas_publish_cbr_fx_rate("
-                ":month,:currency,:rate,:source_date)"
-            ), {
-                "month": month, "currency": currency,
-                "rate": values[currency], "source_date": source_date,
-            })
-    LOG.info("ViMi Pay monthly FX published for %s", month)
-    return True
+    count = 0
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(12.0), follow_redirects=False,
+        headers={"Accept": "application/xml"},
+    ) as client:
+        for day in missing[:MAX_DAYS_PER_RUN]:
+            source_date, quotes = await fetch_official_daily_rates(client, day)
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=actor_id),
+            ) as session:
+                for currency, rate in sorted(quotes.items()):
+                    await session.execute(text(
+                        "SELECT public.platform_saas_publish_cbr_daily_fx("
+                        ":day,:currency,:rate,:source_day)"
+                    ), {
+                        "day": day, "currency": currency,
+                        "rate": rate, "source_day": source_date,
+                    })
+            count += 1
+    LOG.info("Official CBR daily FX synchronized: %s date(s)", count)
+    return count

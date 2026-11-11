@@ -150,6 +150,13 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                     "SELECT public.platform_saas_publish_fx_rate("
                     ":month,'XTR',:rate)"
                 ), {"month": month, "rate": Decimal("1.04")})
+                await conn.execute(text(
+                    "SELECT public.platform_saas_publish_cbr_daily_fx("
+                    ":day,'USD',:rate,:source_day)"
+                ), {
+                    "day": local_date, "rate": Decimal("80"),
+                    "source_day": local_date,
+                })
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 try:
                     own = await _preview(conn, project, month)
@@ -161,10 +168,11 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                     # historical period, so it is not included.
                     assert Decimal(str(rows["USD"]["gross"])) == 50
                     assert Decimal(str(rows["USD"]["fee_rub"])) == 200
-                    assert Decimal(str(rows["XTR"]["fee_rub"])) == Decimal("10.4")
+                    assert Decimal(str(rows["XTR"]["fee_rub"])) == 0
                     assert own["stars_need_reconciliation"] is True
                     assert own["estimate_complete"] is False
-                    assert own["missing_monthly_rates"] == 0
+                    assert own["missing_daily_rates"] == 1
+                    assert own["today_rates"]["USD"]["rate"] == 80
                     await _actor(conn, outsider)
                     with pytest.raises(DBAPIError) as denied:
                         async with conn.begin_nested():

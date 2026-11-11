@@ -262,90 +262,114 @@ def _statistics_amount(amount: Decimal) -> str:
 
 
 def _saas_preview_rich(preview: dict) -> str:
-    """Never present estimated commission as an issued/payable invoice."""
-    columns = (
-        tr("Валюта", "Currency"),
-        tr("Оборот", "Turnover"),
-        tr("Курс месяца, ₽", "Monthly rate, RUB"),
-        tr("5% в ₽", "5% in RUB"),
-    )
+    """One bilingual Rich card: sales, daily CBR quotes and fee preview."""
     lines = [
         "<h3>" + tr("🧾 ViMi Pay · Счёт", "🧾 ViMi Pay · Bill") + "</h3>",
-        "<p>" + tr("Месяц: ", "Month: ")
+        "<p>" + tr("Расчётный месяц: ", "Accounting month: ")
         + escape(str(preview["month"])) + "</p>",
-        "<table bordered compact>",
-        "<tr>" + "".join("<th>" + escape(title) + "</th>" for title in columns)
-        + "</tr>",
     ]
-    rows = preview.get("rows", [])
-    for record in rows:
-        currency = str(record["currency"])
-        amount = str(record["gross"])
-        missing = int(record.get("missing", 0))
-        minimum, maximum = record.get("min_rate"), record.get("max_rate")
-        rate = (
-            tr("Не задан", "Missing") if missing
-            else str(minimum) if minimum == maximum
-            else str(minimum) + "–" + str(maximum)
+    sales = preview.get("rows", [])
+    if sales:
+        columns = (
+            tr("Валюта", "Currency"),
+            tr("Оборот", "Turnover"),
+            tr("Курс продажи, ₽", "Sale FX, RUB"),
+            tr("5% в ₽", "5% in RUB"),
         )
-        fee = (
-            tr("Освобождён", "Exempt") if preview["is_platform_owner"]
-            else tr("Нет курса", "No rate") if missing
-            else str(record["fee_rub"])
-        )
-        if currency == "XTR" and not preview["is_platform_owner"]:
-            fee = fee + " " + tr("(предварительно)", "(provisional)")
-        lines.append(
-            "<tr><td>" + escape(currency) + "</td><td>"
-            + escape(amount) + "</td><td>" + escape(rate)
-            + "</td><td>" + escape(fee) + "</td></tr>"
-        )
-    if not rows:
-        lines.append("<tr><td>"
-                     + tr("Нет продаж", "No sales")
-                     + "</td><td>0</td><td>0</td><td>0</td></tr>")
-    lines.append("</table>")
-    today = preview.get("month_rates") or {}
-    lines.append("<p>" + tr(
-        "Курсы на месяц (опубликованные): ",
-        "Published monthly rates: ",
-    ) + (
-        ", ".join(
-            escape(str(code)) + " = " + escape(str(value)) + " ₽"
-            for code, value in sorted(today.items())
-        ) if today else tr("ещё нет", "not published yet")
-    ) + "</p>")
+        lines.extend([
+            "<h4>" + tr("📊 Продажи", "📊 Sales") + "</h4>",
+            "<table bordered compact>",
+            "<tr>" + "".join(
+                "<th>" + escape(title) + "</th>" for title in columns
+            ) + "</tr>",
+        ])
+        for record in sales:
+            currency = str(record["currency"])
+            amount = str(record["gross"])
+            missing = int(record.get("missing", 0))
+            minimum = record.get("min_rate")
+            maximum = record.get("max_rate")
+            rate = (
+                tr("Не хватает курса", "Rate missing") if missing
+                else tr("Отдельно", "Separate") if currency == "XTR"
+                else str(minimum) if minimum == maximum
+                else str(minimum) + "–" + str(maximum)
+            )
+            fee = (
+                tr("Освобождён", "Exempt")
+                if preview["is_platform_owner"]
+                else tr("Сверка", "Reconcile") if currency == "XTR"
+                else tr("Нет курса", "No FX") if missing
+                else str(record["fee_rub"])
+            )
+            lines.append(
+                "<tr><td>" + escape(currency) + "</td><td>"
+                + escape(amount) + "</td><td>" + escape(rate)
+                + "</td><td>" + escape(fee) + "</td></tr>"
+            )
+        lines.append("</table>")
+    else:
+        lines.append("<p>" + tr(
+            "📭 Подтверждённых продаж за этот месяц пока нет.",
+            "📭 No approved sales in this month yet.",
+        ) + "</p>")
 
-    lines.append("<p>" + tr(
-        "Комиссия с обычных оплат: ", "Fiat sales commission: "
-    ) + "<b>" + escape(str(preview["fiat_commission_rub"])) + " ₽</b></p>")
-    lines.append("<p>" + tr(
-        "Абонплата за следующий месяц: ", "Next month's bot fee: "
-    ) + "<b>" + escape(str(preview["next_bot_fee_rub"])) + " ₽</b></p>")
+    lines.extend([
+        "<h4>" + tr("💱 Официальные курсы на сегодня",
+                     "💱 Today's official exchange rates") + "</h4>",
+        "<p>" + tr("Дата: ", "Date: ")
+        + escape(str(preview.get("rate_date", "—"))) + "</p>",
+        "<table bordered compact>",
+        "<tr><th>" + tr("Валюта", "Currency") + "</th><th>"
+        + tr("1 единица, ₽", "RUB per unit") + "</th><th>"
+        + tr("Дата ЦБ", "CBR date") + "</th></tr>",
+    ])
+    today = preview.get("today_rates") or {}
+    for currency in ("USD", "EUR", "UAH", "BYN"):
+        datum = today.get(currency) or {}
+        value = str(datum.get("rate", "—"))
+        source_day = str(datum.get("source_date", "—"))
+        lines.append(
+            "<tr><td>" + currency + "</td><td>" + escape(value)
+            + "</td><td>" + escape(source_day) + "</td></tr>"
+        )
+    lines.append("</table>")
+    lines.append("<p><i>" + tr(
+        "Для комиссии каждой продажи применяется курс её даты. "
+        "Курс оплаты счёта определяется отдельно при выборе валюты.",
+        "Each sale uses its own date's rate. Invoice settlement "
+        "uses a separate quote when the currency is chosen.",
+    ) + "</i></p>")
+
+    lines.extend([
+        "<h4>" + tr("🧮 Расчёт платформы", "🧮 Platform calculation")
+        + "</h4>",
+        "<table bordered compact>",
+        "<tr><td>" + tr("Комиссия 5%", "5% commission") + "</td><td>"
+        + escape(str(preview["fiat_commission_rub"])) + " ₽</td></tr>",
+        "<tr><td>" + tr("Абонплата за следующий месяц",
+                        "Next month fee") + "</td><td>"
+        + escape(str(preview["next_bot_fee_rub"])) + " ₽</td></tr>",
+        "</table>",
+    ])
     if preview["is_platform_owner"]:
         lines.append("<p>" + tr(
-            "✅ Свой бот ViMi Pay: начисления не применяются.",
-            "✅ ViMi Pay's own bot: platform fees do not apply.",
+            "✅ Собственный бот ViMi Pay: сборы не начисляются.",
+            "✅ ViMi Pay's own bot: platform fees are waived.",
         ) + "</p>")
-    if int(preview["missing_monthly_rates"]):
+    if int(preview.get("missing_daily_rates", 0)):
         lines.append("<p>" + tr(
-            "⚠️ Не хватает курсов на расчётный месяц. "
-            "Итог к оплате не рассчитан.",
-            "⚠️ Some monthly exchange rates are missing. "
-            "No final amount can be calculated.",
+            "⚠️ Курсы на даты некоторых продаж отсутствуют. "
+            "Полная сумма не рассчитана.",
+            "⚠️ Some approved sale dates have no verified FX quote. "
+            "No complete amount can be calculated.",
         ) + "</p>")
     if preview["stars_need_reconciliation"]:
         lines.append("<p>" + tr(
-            "⭐ Продажи за Stars учтены отдельно. "
-            "Оценка комиссии: ",
-            "⭐ Stars sales are counted separately. "
-            "Provisional commission: ",
-        ) + "<b>" + escape(str(preview["stars_estimate_rub"]))
-        + " ₽</b>. " + tr(
-            "До сверки возвратов и реальной ставки выплат "
-            "сумма не входит в счёт.",
-            "Not included in a payable invoice until refunds and "
-            "actual reward value are reconciled.",
+            "⭐ Оборот Stars показан отдельно. До сверки выплат "
+            "и возвратов он не включается в итоговую комиссию.",
+            "⭐ Stars turnover is separate. Until payouts and refunds "
+            "are reconciled, it is excluded from the payable commission.",
         ) + "</p>")
     if preview["estimate_complete"] and not preview["is_platform_owner"]:
         total = Decimal(str(preview["fiat_commission_rub"])) + Decimal(
@@ -354,11 +378,130 @@ def _saas_preview_rich(preview: dict) -> str:
         lines.append("<p><b>" + tr("Предварительно: ", "Estimated total: ")
                      + escape(format(total, ".2f")) + " ₽</b></p>")
     lines.append("<p><i>" + (
-        tr("Биллинг пока выключен. Это расчёт, не выставленный счёт.",
-           "Billing is off. This is a preview, not an issued invoice.")
+        tr("Биллинг выключен. Это предпросмотр, не требование оплаты.",
+           "Billing is off. Preview only, not a payment request.")
         if not preview["billing_enabled"] else
-        tr("Итоговые суммы подтверждаются выставленными счетами ниже.",
-           "Only issued invoices below establish amounts payable.")
+        tr("Оплату определяет только официально выставленный счёт.",
+           "Only an issued invoice establishes a payable amount.")
+    ) + "</i></p>")
+    return "\n".join(lines)
+
+
+def _saas_invoices_rich(report) -> str:
+    """Keep platform invoices a separate compact Rich section."""
+    items = [
+        "<h4>" + tr("📑 Счета платформы", "📑 Platform invoices") + "</h4>",
+        "<table bordered compact>",
+        "<tr><td>" + tr("Выставлено", "Issued") + "</td><td>"
+        + str(report.total) + "</td></tr>",
+        "<tr><td>" + tr("Не оплачено", "Unpaid") + "</td><td>"
+        + str(report.unpaid) + "</td></tr>",
+        "<tr><td>" + tr("Остаток", "Outstanding") + "</td><td>"
+        + escape(format(report.outstanding_rub, ".2f")) + " ₽</td></tr>",
+        "</table>",
+    ]
+    if not report.invoices:
+        items.append("<p>" + tr(
+            "Счетов к оплате пока нет.", "No platform invoices yet.",
+        ) + "</p>")
+    for inv in report.invoices:
+        title = (
+            tr("Обслуживание", "Service") if inv["kind"] == "prepayment"
+            else tr("Комиссия", "Commission")
+        )
+        state = (
+            tr("Оплачено", "Paid") if inv["status"] == "paid"
+            else tr("Ожидает подтверждения", "Pending confirmation")
+        )
+        items.append(
+            "<p><b>" + escape(title) + ": "
+            + escape(str(inv["amount_rub"])) + " ₽</b> · "
+            + escape(state) + "</p>"
+        )
+        items.append(
+            "<p>№ <code>" + escape(str(inv["id"])) + "</code> · "
+            + tr("Срок: ", "Due: ")
+            + escape(str(inv["due_at"])[:10]) + "</p>"
+        )
+    if report.unpaid:
+        if report.configured:
+            items.extend([
+                "<h4>" + tr("💳 Реквизиты платформы",
+                             "💳 Payment instructions") + "</h4>",
+                "<pre>" + escape(str(report.instructions)) + "</pre>",
+                "<p>" + tr(
+                    "Укажите номер счёта в платеже. Подтверждение "
+                    "поступления выполняет владелец ViMi Pay.",
+                    "Include the invoice ID. Only the ViMi Pay "
+                    "operator verifies receipt.",
+                ) + "</p>",
+            ])
+        else:
+            items.append("<p>" + tr(
+                "⚠️ Реквизиты не опубликованы. Не переводите деньги.",
+                "⚠️ No payment instructions. Do not send money.",
+            ) + "</p>")
+    items.append("<p><i>" + tr(
+        "Это счета ViMi Pay, не счета ваших покупателей. "
+        "Оплаченный доступ сохраняется.",
+        "ViMi Pay charges, not your customers' invoices. "
+        "Previously paid access is retained.",
+    ) + "</i></p>")
+    return "\n".join(items)
+
+
+def _saas_currency_quote_rich(quote: dict) -> str:
+    """Readable Rich quote with current settlement date, not a fake invoice."""
+    currency = escape(str(quote["chosen_currency"]))
+    lines = [
+        "<h3>" + tr("💳 ViMi Pay · Валюта счёта",
+                     "💳 ViMi Pay · Bill currency") + "</h3>",
+        "<p>" + tr("Расчётный период: ", "Accounting period: ")
+        + escape(str(quote["billing_month"])) + "</p>",
+        "<table bordered compact>",
+        "<tr><td>" + tr("Валюта оплаты", "Payment currency")
+        + "</td><td><b>" + currency + "</b></td></tr>",
+        "<tr><td>" + tr("Комиссия + абонплата (база)",
+                        "Commission + service fee (base)")
+        + "</td><td>" + escape(str(quote["total_rub"]))
+        + " ₽</td></tr>",
+    ]
+    if quote.get("quote_ready"):
+        lines.extend([
+            "<tr><td>" + tr("Курс оплаты", "Settlement rate")
+            + "</td><td>1 " + currency + " = "
+            + escape(str(quote["rate_rub_per_unit"])) + " ₽</td></tr>",
+            "<tr><td>" + tr("Дата расчёта", "Quote date")
+            + "</td><td>" + escape(str(quote.get("quote_day", "—")))
+            + "</td></tr>",
+            "<tr><td>" + tr("Источник", "Source")
+            + "</td><td>" + escape(str(quote.get("source_name") or "—"))
+            + "</td></tr>",
+        ])
+        if quote.get("source_date"):
+            lines.append(
+                "<tr><td>" + tr("Дата ЦБ", "CBR date")
+                + "</td><td>" + escape(str(quote["source_date"]))
+                + "</td></tr>"
+            )
+    lines.append("</table>")
+    if quote.get("quote_ready"):
+        lines.append("<p><b>" + tr("Предварительная сумма: ",
+                                     "Estimated total: ")
+                     + escape(str(quote["estimated_total"])) + " "
+                     + currency + "</b></p>")
+    else:
+        lines.append("<p>" + tr(
+            "⚠️ Нет курсов для всех продаж либо для выбранной "
+            "валюты на дату расчёта. Итоговая сумма не готова.",
+            "⚠️ Verified rates are missing for some sales or for "
+            "the chosen settlement currency today. No final total.",
+        ) + "</p>")
+    lines.append("<p><i>" + tr(
+        "Курс продажи фиксируется на дату её подтверждения. "
+        "Это предпросмотр, а не выставленный счёт.",
+        "Every sale retains its approval-date rate. "
+        "Preview only, not an issued invoice.",
     ) + "</i></p>")
     return "\n".join(lines)
 
@@ -372,6 +515,8 @@ def _saas_currency_quote_html(quote: dict) -> str:
            "<b>💳 ViMi Pay · Bill currency</b>"),
         tr("Расчётный месяц: ", "Billing month: ") + month,
         tr("Выбрано: ", "Selected: ") + currency,
+        tr("Дата курса оплаты: ", "Settlement quote date: ")
+        + escape(str(quote.get("quote_day", "—"))),
         "",
         tr("Комиссия и абонплата, база: ", "Commission and fee, base: ")
         + escape(str(quote["total_rub"])) + " ₽",
@@ -423,7 +568,7 @@ def _saas_preview_classic(preview: dict) -> str:
         is_missing = int(item.get("missing", 0))
         minimum, maximum = item.get("min_rate"), item.get("max_rate")
         quote = (
-            tr("нет курса месяца", "monthly rate missing")
+            tr("нет курса даты продажи", "sale-date rate missing")
             if is_missing or minimum is None or maximum is None
             else escape(
                 str(minimum) if minimum == maximum
@@ -455,10 +600,10 @@ def _saas_preview_classic(preview: dict) -> str:
             "⭐ Stars: нужна сверка возвратов и стоимости вывода.",
             "⭐ Stars: refunds and reward value need reconciliation.",
         ))
-    if int(preview["missing_monthly_rates"]):
+    if int(preview["missing_daily_rates"]):
         lines.append(tr(
-            "⚠️ Курсы на месяц неполные. Итог не готов.",
-            "⚠️ Monthly rates incomplete. No final amount.",
+            "⚠️ Курсы на даты продаж неполные. Итог не готов.",
+            "⚠️ Sale-day rates incomplete. No final amount.",
         ))
     if not preview["billing_enabled"]:
         lines.append(tr(
@@ -938,7 +1083,7 @@ def create_owner_setup_router(
             await send_owner_rich(
                 bot, chat_id=user_id,
                 rich_html=_saas_preview_rich(preview) + "\n"
-                + "\n".join(lines),
+                + _saas_invoices_rich(report),
                 classic_html=_saas_preview_classic(preview) + "\n"
                 + "\n".join(lines),
                 reply_markup=_markup(rows),
@@ -3573,11 +3718,13 @@ def create_owner_setup_router(
                     user_id,
                     tr(
                         "<b>💱 Выбери валюту оплаты счёта ViMi Pay</b>\n"
-                        "Курс фиксируется на расчётный месяц. "
-                        "Пока показан только предварительный расчёт.",
+                        "Продажи оцениваются по курсу их дат. "
+                        "Валюта оплаты пересчитывается по курсу сегодня. "
+                        "Пока показан предварительный расчёт.",
                         "<b>💱 Choose ViMi Pay bill currency</b>\n"
-                        "The exchange rate is locked for the billing month. "
-                        "This is a preview, not a payment request.",
+                        "Sales use their own approval-date rates. "
+                        "The settlement rate is today's quote. "
+                        "Preview only; no payment request.",
                     ),
                     parse_mode="HTML",
                     reply_markup=_markup([
@@ -3599,9 +3746,10 @@ def create_owner_setup_router(
                     project_id=project_id, month=month,
                     payment_currency=currency,
                 )
-                await bot.send_message(
-                    user_id, _saas_currency_quote_html(quote),
-                    parse_mode="HTML",
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=_saas_currency_quote_rich(quote),
+                    classic_html=_saas_currency_quote_html(quote),
                     reply_markup=_markup([
                         [_button(
                             tr("💱 Другая валюта", "💱 Another currency"),
