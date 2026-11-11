@@ -36,6 +36,9 @@ from telegram_membership_saas.modules.file_sales.payment_controls import (
 from telegram_membership_saas.modules.file_sales.recovery import (
     recover_buyer_stars,
 )
+from telegram_membership_saas.modules.file_sales.refunds import (
+    record_telegram_file_star_refund,
+)
 from telegram_membership_saas.modules.file_sales.rich_ui import (
     rich_admin_folders,
     rich_admin_product_detail,
@@ -139,7 +142,10 @@ class FileEditorFilter(BaseFilter):
             return False
         # A pending admin editor must never swallow a Stars successful_payment
         # update (nor other service messages) before the payment router sees it.
-        if getattr(message, "successful_payment", None) is not None:
+        if (
+            getattr(message, "successful_payment", None) is not None
+            or getattr(message, "refunded_payment", None) is not None
+        ):
             return False
         state = self.pending.get(message.from_user.id)
         if not state or state["expires"] <= monotonic():
@@ -1092,6 +1098,37 @@ def create_file_sales_router(
                 "This product or amount is no longer available.",
             ),
         )
+
+    @router.message(F.refunded_payment.invoice_payload.startswith("fs:"))
+    async def file_refund_notice(message: Message, bot: Bot) -> None:
+        """Only Telegram service updates can report a genuine refunded charge.
+
+        This never revokes buyer access or marks the original sale unpaid.
+        Matching/crediting the refund is delayed accounting, not a condition
+        for returning Stars or issuing buyer delivery.
+        """
+        if message.chat.type != "private":
+            return
+        refund = message.refunded_payment
+        if refund is None or not refund.invoice_payload.startswith("fs:"):
+            return
+        try:
+            await record_telegram_file_star_refund(
+                factory, project_id=project_id, bot_id=bot.id,
+                buyer_id=message.chat.id,
+                invoice_payload=refund.invoice_payload,
+                amount=refund.total_amount, currency=refund.currency,
+                charge_id=refund.telegram_payment_charge_id,
+                refunded_at=message.date,
+            )
+        except Exception:
+            # A transient DB issue cannot be allowed to interrupt Telegram
+            # payment updates or erase already-delivered buyer content.
+            # Owner accounting must treat unreconciled refunds as a blocker
+            # before issuing commercial commission invoices.
+            log.exception(
+                "CRITICAL: authenticated Stars refund not durably recorded"
+            )
 
     @router.message(F.successful_payment.invoice_payload.startswith("fs:"))
     async def file_payment_success(message: Message, bot: Bot) -> None:

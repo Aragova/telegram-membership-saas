@@ -126,6 +126,35 @@ def test_stars_price_grouped_table_without_file_names(lang):
     assert "<table bordered compact>" in html
 
 
+@pytest.mark.parametrize("lang,expected", [
+    ("ru", "Возвраты Stars"),
+    ("en", "Stars refunds"),
+])
+def test_real_stars_refunds_show_separate_unapplied_credits(lang, expected):
+    stars = {
+        "stars": 2000, "sold": 1, "reward_usd": "26",
+        "commission_usd": "1.3",
+        "rows": [{"source": "file_stars", "price_stars": 2000,
+                  "sold": 1, "total_stars": 2000}],
+        "refunds": 1, "refunded_stars": 2000,
+        "reward_credit_usd": "26",
+        "commission_credit_usd": "1.3",
+        "pending_refund_reconciliation": 0,
+        "pending_reconciliation": 0,
+    }
+    token = _language.set(lang)
+    try:
+        html = _saas_stars_rich(stars)
+    finally:
+        _language.reset(token)
+    assert expected in html
+    assert "$1.30" in html
+    assert "2000 ⭐" in html
+    assert "Credits are not yet applied" in html if lang == "en" else (
+        "Кредиты ещё не зачтены" in html
+    )
+
+
 def test_saas_invoice_counts_are_separate_from_turnover():
     report = SimpleNamespace(
         total=0, unpaid=0, outstanding_rub=Decimal("0"),

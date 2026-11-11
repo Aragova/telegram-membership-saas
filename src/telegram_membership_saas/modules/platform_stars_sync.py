@@ -29,6 +29,8 @@ class StarEvidenceResult:
     recorded: int
     unresolved: int
     billing_activated: bool
+    refunds_recorded: int = 0
+    refunds_pending_source: int = 0
 
 
 async def capture_paid_file_stars(
@@ -56,13 +58,19 @@ async def capture_paid_file_stars(
             "SELECT public.platform_saas_capture_new_file_stars("
             ":limit) AS data"
         ).columns(data=JSONB), {"limit": limit})).scalar_one()
-    if not isinstance(data, dict):
-        raise RuntimeError("Invalid Stars source evidence response")
+        refunds = (await session.execute(text(
+            "SELECT public.platform_saas_capture_star_refunds("
+            ":limit) AS data"
+        ).columns(data=JSONB), {"limit": limit})).scalar_one()
+    if not isinstance(data, dict) or not isinstance(refunds, dict):
+        raise RuntimeError("Invalid Stars source/refund evidence response")
     result = StarEvidenceResult(
         examined=int(data["examined"]),
         recorded=int(data["recorded"]),
         unresolved=int(data["unresolved"]),
         billing_activated=bool(data["billing_activated"]),
+        refunds_recorded=int(refunds["recorded"]),
+        refunds_pending_source=int(refunds["waiting_for_original_sale"]),
     )
     if result.unresolved:
         LOG.warning(
@@ -71,6 +79,16 @@ async def capture_paid_file_stars(
         )
     if result.recorded:
         LOG.info("Recorded %s paid-file Stars reward snapshots", result.recorded)
+    if result.refunds_recorded:
+        LOG.info(
+            "Recorded %s immutable Telegram Stars refund credits",
+            result.refunds_recorded,
+        )
+    if result.refunds_pending_source:
+        LOG.warning(
+            "Stars refund sources awaiting sale attribution: %s",
+            result.refunds_pending_source,
+        )
     return result
 
 
@@ -94,6 +112,16 @@ async def merchant_star_project_summary(
         ).columns(data=JSONB), {
             "project": project_id, "month": month,
         })).scalar_one()
-    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        credits = (await session.execute(text(
+            "SELECT public.platform_saas_star_project_refund_summary("
+            ":project,:month) AS data"
+        ).columns(data=JSONB), {
+            "project": project_id, "month": month,
+        })).scalar_one()
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("rows"), list)
+        or not isinstance(credits, dict)
+    ):
         raise RuntimeError("Invalid owner Stars settlement preview")
-    return data
+    return {**data, **credits}
