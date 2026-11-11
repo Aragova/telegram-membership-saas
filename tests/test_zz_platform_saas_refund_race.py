@@ -7,7 +7,6 @@ All routine SaaS tests remain rollback-only. No billing flags are changed.
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from uuid import uuid4
 
 import pytest
