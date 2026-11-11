@@ -491,6 +491,131 @@ def upgrade() -> None:
 
 
 
+    # Replace only the merchant read model: keep migration 0056 immutable.
+    # Both kinds of Stars refunds are summed by the Moscow refund month and
+    # *historical liable owner*, never the current owner of a transferred bot.
+    op.execute("""
+        CREATE OR REPLACE FUNCTION
+        public.platform_saas_star_project_refund_summary(
+            p_project uuid, p_month date
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog,public AS $f$
+        DECLARE
+          actor uuid;
+          period_start timestamptz;
+          period_end timestamptz;
+          count_refunds integer;
+          stars_refunded bigint;
+          reward numeric;
+          commission numeric;
+          pending integer;
+          sub_count integer;
+          file_count integer;
+        BEGIN
+          actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+          IF p_project IS NULL OR p_month IS NULL
+             OR extract(day from p_month)<>1 OR actor IS NULL
+             OR NOT EXISTS(
+               SELECT 1 FROM public.projects
+               WHERE id=p_project AND owner_user_id=actor
+             ) THEN
+            RAISE EXCEPTION 'Stars refund report requires project owner'
+              USING ERRCODE='42501';
+          END IF;
+          period_start:=p_month::timestamp AT TIME ZONE 'Europe/Moscow';
+          period_end:=(p_month::timestamp+interval '1 month')
+              AT TIME ZONE 'Europe/Moscow';
+          SELECT count(*),coalesce(sum(c.stars_amount),0),
+                 coalesce(sum(c.reward_credit_usd),0),
+                 coalesce(sum(c.commission_credit_usd),0)
+          INTO count_refunds,stars_refunded,reward,commission
+          FROM (
+            SELECT f.stars_amount,f.reward_credit_usd,
+                   f.commission_credit_usd
+            FROM public.platform_saas_star_refund_credits f
+            WHERE f.project_id=p_project AND f.owner_user_id=actor
+              AND f.refunded_at>=period_start AND f.refunded_at<period_end
+            UNION ALL
+            SELECT o.stars_amount,s.reward_credit_usd,
+                   s.commission_credit_usd
+            FROM public.platform_saas_star_subscription_credits s
+            JOIN public.subscription_star_refunds f ON f.id=s.refund_id
+            JOIN public.subscription_star_orders o ON o.id=f.order_id
+            WHERE s.project_id=p_project AND s.owner_user_id=actor
+              AND s.refunded_at>=period_start AND s.refunded_at<period_end
+          ) c;
+          SELECT count(*) INTO file_count
+          FROM public.file_sale_star_refunds f
+          JOIN public.file_sale_purchases p ON p.id=f.purchase_id
+          WHERE f.project_id=p_project
+            AND f.refunded_at>=period_start AND f.refunded_at<period_end
+            AND p.paid_at>=(
+              SELECT started_at FROM public.platform_saas_star_capture_control
+              WHERE id=1
+            )
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_star_refund_credits c
+              WHERE c.file_refund_id=f.id
+            )
+            AND EXISTS(
+              SELECT 1 FROM public.merchant_project_periods h
+              WHERE h.project_id=f.project_id
+                AND h.owner_user_id=actor
+                AND h.started_at<=p.paid_at
+                AND (h.ended_at IS NULL OR h.ended_at>p.paid_at)
+            );
+          SELECT count(*) INTO sub_count
+          FROM public.subscription_star_refunds f
+          JOIN public.subscription_star_orders o ON o.id=f.order_id
+          WHERE f.project_id=p_project
+            AND f.refunded_at>=period_start AND f.refunded_at<period_end
+            AND o.paid_at>=(
+              SELECT started_at FROM public.platform_saas_star_capture_control
+              WHERE id=1
+            )
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_star_subscription_credits c
+              WHERE c.refund_id=f.id
+            )
+            AND EXISTS(
+              SELECT 1 FROM public.merchant_project_periods h
+              WHERE h.project_id=f.project_id
+                AND h.owner_user_id=actor
+                AND h.started_at<=o.paid_at
+                AND (h.ended_at IS NULL OR h.ended_at>o.paid_at)
+            );
+          pending:=file_count+sub_count;
+          RETURN jsonb_build_object(
+              'refunds',count_refunds,
+              'refunded_stars',stars_refunded,
+              'reward_credit_usd',reward::text,
+              'commission_credit_usd',commission::text,
+              'pending_refund_reconciliation',pending,
+              'pending_subscription_refunds',sub_count,
+              'pending_file_refunds',file_count,
+              'applied_to_invoices',false
+          );
+        END;
+        $f$
+    """)
+    op.execute("""
+        REVOKE ALL ON FUNCTION
+        public.platform_saas_star_project_refund_summary(uuid,date)
+        FROM PUBLIC
+    """)
+    op.execute("""
+        DO $refund_summary$
+        BEGIN
+          IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+          THEN
+            GRANT EXECUTE ON FUNCTION
+            public.platform_saas_star_project_refund_summary(uuid,date)
+            TO membership_runtime;
+          END IF;
+        END $refund_summary$
+    """)
+
+
 def downgrade() -> None:
     raise RuntimeError(
         "Refuse to remove immutable Stars subscription sales and paid grants."
