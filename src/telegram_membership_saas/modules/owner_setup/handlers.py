@@ -374,9 +374,14 @@ def _saas_preview_classic(preview: dict) -> str:
         amount = escape(str(item["gross"]))
         currency = escape(str(item["currency"]))
         is_missing = int(item.get("missing", 0))
+        minimum, maximum = item.get("min_rate"), item.get("max_rate")
         quote = (
             tr("нет дневного курса", "payment-day rate missing")
-            if is_missing else escape(str(item.get("min_rate", "?"))) + " ₽"
+            if is_missing or minimum is None or maximum is None
+            else escape(
+                str(minimum) if minimum == maximum
+                else str(minimum) + "–" + str(maximum)
+            ) + " ₽"
         )
         fee = (
             tr("освобождён", "exempt") if preview["is_platform_owner"]
