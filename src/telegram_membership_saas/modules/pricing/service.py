@@ -106,6 +106,8 @@ async def replace_active_plan_price(
     code = currency_code.upper()
     precision = await _currency_precision(session, code)
     normalized_amount = _normalize_amount(amount, max_fractional_digits=precision)
+    if code == "XTR" and not 1 <= normalized_amount <= 250000:
+        raise ValueError("Telegram Stars plan price must be 1–250000 whole Stars")
 
     await _lock_plan(session, project_id=project_id, plan_id=plan_id)
 
