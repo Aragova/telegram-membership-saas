@@ -393,8 +393,14 @@ def _saas_stars_rich(stars: dict) -> str:
         "<p>⭐ " + str(int(stars["stars"])) + " · "
         + tr("Эквивалент вознаграждения: ", "Developer reward equivalent: ")
         + "$" + escape(format(Decimal(str(stars["reward_usd"])), ".2f"))
-        + " · 5%: $"
-        + escape(format(Decimal(str(stars["commission_usd"])), ".2f"))
+        + " · 5%: "
+        + (
+            tr("Освобождён", "Exempt")
+            if stars.get("platform_owner_exempt")
+            else "$" + escape(format(
+                Decimal(str(stars["commission_usd"])), ".2f",
+            ))
+        )
         + "</p>",
     ])
     if int(stars.get("pending_reconciliation", 0)):
@@ -1060,7 +1066,13 @@ def create_owner_setup_router(
                     tr("⭐ Продано: ", "⭐ Stars sold: ")
                     + str(stars["stars"]) + " ⭐ · "
                     + tr("5% в USD: ", "5% in USD: ")
-                    + "$" + str(stars["commission_usd"]) + "\n"
+                    + (
+                        tr("Освобождён", "Exempt")
+                        if stars.get("platform_owner_exempt")
+                        else "$" + format(
+                            Decimal(str(stars["commission_usd"])), ".2f",
+                        )
+                    ) + "\n"
                     if stars else ""
                 )
                 + "\n".join(lines),
