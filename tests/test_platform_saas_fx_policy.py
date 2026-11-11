@@ -77,6 +77,9 @@ async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
                 )
                 await _set_actor(conn, owner)
 
+                starting_invoices = (await conn.execute(text(
+                    "SELECT count(*) FROM platform_saas_invoices"
+                ))).scalar_one()
                 empty = await _snapshot(conn, month)
                 assert empty["rates"] == {}
 
@@ -143,9 +146,11 @@ async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
                     "SELECT enabled FROM platform_saas_billing_control WHERE id=1"
                 ))).scalar_one()
                 assert flags is False
+                # Shared CI database may already contain unrelated test
+                # invoices. FX publication itself must never create one.
                 assert (await conn.execute(text(
                     "SELECT count(*) FROM platform_saas_invoices"
-                ))).scalar_one() == 0
+                ))).scalar_one() == starting_invoices
 
                 func = (await conn.execute(text(
                     "SELECT pg_get_functiondef("
