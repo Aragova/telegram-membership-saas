@@ -33,6 +33,8 @@ class StarEvidenceResult:
     refunds_pending_source: int = 0
     subscriptions_recorded: int = 0
     subscriptions_unresolved: int = 0
+    subscription_refunds_recorded: int = 0
+    subscription_refunds_unresolved: int = 0
 
 
 async def capture_paid_file_stars(
@@ -64,11 +66,16 @@ async def capture_paid_file_stars(
             "SELECT public.platform_saas_capture_new_subscription_stars("
             ":limit) AS data"
         ).columns(data=JSONB), {"limit": limit})).scalar_one()
+        sub_refunds = (await session.execute(text(
+            "SELECT public.platform_saas_capture_subscription_star_refunds("
+            ":limit) AS data"
+        ).columns(data=JSONB), {"limit": limit})).scalar_one()
         refunds = (await session.execute(text(
             "SELECT public.platform_saas_capture_star_refunds("
             ":limit) AS data"
         ).columns(data=JSONB), {"limit": limit})).scalar_one()
-    if not all(isinstance(v, dict) for v in (data, refunds, subs)):
+    if not all(isinstance(v, dict)
+               for v in (data, refunds, subs, sub_refunds)):
         raise RuntimeError("Invalid Stars source/refund evidence response")
     result = StarEvidenceResult(
         examined=int(data["examined"]),
@@ -79,6 +86,10 @@ async def capture_paid_file_stars(
         refunds_pending_source=int(refunds["waiting_for_original_sale"]),
         subscriptions_recorded=int(subs["recorded"]),
         subscriptions_unresolved=int(subs["unresolved"]),
+        subscription_refunds_recorded=int(sub_refunds["recorded"]),
+        subscription_refunds_unresolved=int(
+            sub_refunds["waiting_for_original_sale"]
+        ),
     )
     if result.unresolved:
         LOG.warning(
