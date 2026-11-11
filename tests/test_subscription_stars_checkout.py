@@ -796,7 +796,8 @@ async def test_old_stars_charge_recovered_after_newer_paid_purchase():
 def test_manual_anchor_uses_payment_approval_not_future_grant_start():
     """A prepaid manual renewal remains an anchor for later Stars purchase."""
     from telegram_membership_saas.modules.stars_subscription_timeline import (
-        historical_stars_start, manual_anchor_end,
+        historical_stars_start,
+        manual_anchor_end,
     )
     now = datetime.now(UTC)
     manual_end = now + timedelta(days=32)

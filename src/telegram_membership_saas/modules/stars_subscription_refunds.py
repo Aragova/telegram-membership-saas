@@ -17,14 +17,15 @@ from telegram_membership_saas.modules.entitlements import (
     EntitlementSource,
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer
+from telegram_membership_saas.modules.stars_subscription_timeline import (
+    rebuild_stars_windows_after,
+    refresh_paid_subscription_summary,
+)
 from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
     SubscriptionStarRefund,
 )
 from telegram_membership_saas.modules.subscriptions import Subscription
-from telegram_membership_saas.modules.stars_subscription_timeline import (
-    rebuild_stars_windows_after, refresh_paid_subscription_summary,
-)
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
 

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.modules.access.service import reconcile_access_target
 from telegram_membership_saas.modules.bots.models import BotInstance
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
@@ -33,14 +34,15 @@ from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.stars_subscription_timeline import (
+    historical_stars_start,
+    load_surviving_paid_sources,
+    rebuild_stars_windows_after,
+    refresh_paid_subscription_summary,
+)
 from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
 )
-from telegram_membership_saas.modules.stars_subscription_timeline import (
-    historical_stars_start, load_surviving_paid_sources,
-    rebuild_stars_windows_after, refresh_paid_subscription_summary,
-)
-from telegram_membership_saas.modules.access.service import reconcile_access_target
 from telegram_membership_saas.modules.subscriptions import (
     Subscription,
     SubscriptionStatus,

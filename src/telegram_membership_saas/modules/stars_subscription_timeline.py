@@ -11,13 +11,17 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.modules.entitlements import (
-    EntitlementGrant, EntitlementGrantStatus, EntitlementSource,
+    EntitlementGrant,
+    EntitlementGrantStatus,
+    EntitlementSource,
 )
 from telegram_membership_saas.modules.payments import Payment
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import (
-    Subscription, SubscriptionStatus, calculate_period_end,
+    Subscription,
+    SubscriptionStatus,
+    calculate_period_end,
 )
 
 
@@ -119,11 +123,11 @@ async def rebuild_stars_windows_after(
     for order, grants in sorted(
         future.values(), key=lambda pair: (pair[0].paid_at, str(pair[0].id)),
     ):
-        prior_end = max((
-            *prior_stars,
-            *([manual_anchor_end(manual, order.paid_at)]
-              if manual_anchor_end(manual, order.paid_at) is not None else []),
-        ), default=None)
+        manual_end = manual_anchor_end(manual, order.paid_at)
+        prior_end = max(
+            [*prior_stars, *([manual_end] if manual_end is not None else [])],
+            default=None,
+        )
         start_at = max(order.paid_at, prior_end) if prior_end is not None else order.paid_at
         end_at = calculate_period_end(
             start_at, timezone_name=project.timezone,
