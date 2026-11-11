@@ -133,6 +133,194 @@ def upgrade() -> None:
         "source IN ('payment','stars_payment','manual','owner_service',"
         "'promocode','trial','referral','import','compensation')",
     )
+    op.create_table(
+        "subscription_star_refunds",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("project_id", sa.Uuid(), nullable=False),
+        sa.Column("order_id", sa.Uuid(), nullable=False),
+        sa.Column("telegram_bot_id", sa.BigInteger(), nullable=False),
+        sa.Column("telegram_user_id", sa.BigInteger(), nullable=False),
+        sa.Column("invoice_payload", sa.String(128), nullable=False),
+        sa.Column("telegram_charge_id", sa.String(256), nullable=False),
+        sa.Column("stars_amount", sa.Integer(), nullable=False),
+        sa.Column("refunded_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.text("clock_timestamp()")),
+        sa.ForeignKeyConstraint(
+            ["order_id", "project_id"],
+            ["subscription_star_orders.id", "subscription_star_orders.project_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.UniqueConstraint("order_id", name="uq_subscription_star_refund_order"),
+        sa.UniqueConstraint(
+            "telegram_bot_id", "telegram_charge_id",
+            name="uq_subscription_star_refund_charge",
+        ),
+        sa.CheckConstraint("stars_amount BETWEEN 1 AND 250000",
+                           name="ck_subscription_star_refund_amount"),
+    )
+    op.execute("""
+        ALTER TABLE public.subscription_star_refunds ENABLE ROW LEVEL SECURITY
+    """)
+    op.execute("""
+        ALTER TABLE public.subscription_star_refunds FORCE ROW LEVEL SECURITY
+    """)
+    op.execute("""
+        CREATE POLICY subscription_star_refunds_scope
+        ON public.subscription_star_refunds FOR ALL
+        USING (
+            project_id=NULLIF(current_setting('app.current_project_id',true),'')::uuid
+        ) WITH CHECK (
+            project_id=NULLIF(current_setting('app.current_project_id',true),'')::uuid
+        )
+    """)
+    op.execute("""
+        CREATE FUNCTION public.guard_subscription_star_refund()
+        RETURNS trigger LANGUAGE plpgsql
+        SET search_path=pg_catalog,public AS $f$
+        DECLARE o record;
+        BEGIN
+          IF TG_OP IN ('UPDATE','DELETE') THEN
+            RAISE EXCEPTION 'Stars refund evidence is immutable'
+              USING ERRCODE='42501';
+          END IF;
+          SELECT * INTO o FROM public.subscription_star_orders
+            WHERE id=NEW.order_id AND project_id=NEW.project_id FOR UPDATE;
+          IF o.id IS NULL OR o.status<>'paid'
+             OR o.telegram_bot_id<>NEW.telegram_bot_id
+             OR o.telegram_user_id<>NEW.telegram_user_id
+             OR o.invoice_payload<>NEW.invoice_payload
+             OR o.telegram_charge_id IS DISTINCT FROM NEW.telegram_charge_id
+             OR o.stars_amount<>NEW.stars_amount
+             OR o.paid_at IS NULL OR NEW.refunded_at<o.paid_at
+          THEN
+            RAISE EXCEPTION 'Refund does not match paid Stars order'
+              USING ERRCODE='23514';
+          END IF;
+          RETURN NEW;
+        END;
+        $f$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_subscription_star_refund_guard
+        BEFORE INSERT OR UPDATE OR DELETE ON public.subscription_star_refunds
+        FOR EACH ROW EXECUTE FUNCTION public.guard_subscription_star_refund()
+    """)
+    op.create_table(
+        "platform_saas_star_subscription_credits",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column("original_sale_id", sa.Uuid(), sa.ForeignKey(
+            "platform_saas_star_sales.id", ondelete="RESTRICT",
+        ), nullable=False),
+        sa.Column("refund_id", sa.Uuid(), sa.ForeignKey(
+            "subscription_star_refunds.id", ondelete="RESTRICT",
+        ), nullable=False),
+        sa.Column("project_id", sa.Uuid(), nullable=False),
+        sa.Column("owner_user_id", sa.Uuid(), sa.ForeignKey(
+            "telegram_users.id", ondelete="RESTRICT",
+        ), nullable=False),
+        sa.Column("reward_credit_usd", sa.Numeric(38,18), nullable=False),
+        sa.Column("commission_credit_usd", sa.Numeric(38,18), nullable=False),
+        sa.Column("refunded_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint(
+            "original_sale_id", name="uq_saas_star_sub_credit_source",
+        ),
+        sa.UniqueConstraint("refund_id", name="uq_saas_star_sub_credit_refund"),
+        sa.CheckConstraint(
+            "reward_credit_usd>0 "
+            "AND commission_credit_usd=reward_credit_usd*0.05",
+            name="ck_saas_star_sub_credit_math",
+        ),
+    )
+    op.execute("""
+        ALTER TABLE public.platform_saas_star_subscription_credits
+        ENABLE ROW LEVEL SECURITY
+    """)
+    op.execute("""
+        ALTER TABLE public.platform_saas_star_subscription_credits
+        FORCE ROW LEVEL SECURITY
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_saas_star_subscription_credit_immutable
+        BEFORE UPDATE OR DELETE ON public.platform_saas_star_subscription_credits
+        FOR EACH ROW EXECUTE FUNCTION
+        public.platform_saas_star_evidence_immutable()
+    """)
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_capture_subscription_star_refunds(
+          p_limit integer
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog,public AS $f$
+        DECLARE r record; recorded integer:=0; waiting integer:=0;
+                cutoff timestamptz;
+        BEGIN
+          PERFORM public.platform_saas_require_owner();
+          IF p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 200 THEN
+            RAISE EXCEPTION 'Invalid Stars refund limit' USING ERRCODE='22023';
+          END IF;
+          SELECT started_at INTO cutoff
+          FROM public.platform_saas_star_capture_control WHERE id=1;
+          FOR r IN
+            SELECT f.*,s.id AS sale_id,s.owner_user_id,s.project_id AS sale_project,
+                   s.reward_usd,s.commission_usd
+            FROM public.subscription_star_refunds f
+            JOIN public.subscription_star_orders o ON o.id=f.order_id
+            JOIN public.platform_saas_star_sales s
+              ON s.source_kind='subscription_stars' AND s.source_id=o.id
+              AND s.telegram_bot_id=f.telegram_bot_id
+              AND s.telegram_charge_id=f.telegram_charge_id
+              AND s.stars_amount=f.stars_amount
+            WHERE o.paid_at>=cutoff
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_star_subscription_credits c
+                WHERE c.refund_id=f.id
+              )
+            ORDER BY f.refunded_at,f.id LIMIT p_limit
+          LOOP
+            INSERT INTO public.platform_saas_star_subscription_credits(
+                id,original_sale_id,refund_id,project_id,owner_user_id,
+                reward_credit_usd,commission_credit_usd,refunded_at
+            ) VALUES(
+                gen_random_uuid(),r.sale_id,r.id,r.sale_project,r.owner_user_id,
+                r.reward_usd,r.commission_usd,r.refunded_at
+            ) ON CONFLICT(refund_id) DO NOTHING;
+            IF FOUND THEN recorded:=recorded+1; END IF;
+          END LOOP;
+          SELECT count(*) INTO waiting
+          FROM public.subscription_star_refunds f
+          JOIN public.subscription_star_orders o ON o.id=f.order_id
+          WHERE o.paid_at>=cutoff
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_star_subscription_credits c
+              WHERE c.refund_id=f.id
+            );
+          RETURN jsonb_build_object(
+            'recorded',recorded,'waiting_for_original_sale',waiting,
+            'applied_to_invoices',false
+          );
+        END;
+        $f$
+    """)
+    op.execute("""
+        REVOKE ALL ON FUNCTION
+        public.platform_saas_capture_subscription_star_refunds(integer)
+        FROM PUBLIC
+    """)
+    op.execute("""
+        DO $grants$
+        BEGIN
+          IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+          THEN
+            GRANT SELECT,INSERT ON public.subscription_star_refunds
+              TO membership_runtime;
+            GRANT EXECUTE ON FUNCTION
+              public.platform_saas_capture_subscription_star_refunds(integer)
+              TO membership_runtime;
+            REVOKE ALL ON public.platform_saas_star_subscription_credits
+              FROM membership_runtime;
+          END IF;
+        END $grants$
+    """)
     op.execute("""
         DO $grant$
         BEGIN
