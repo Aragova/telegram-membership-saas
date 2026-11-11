@@ -318,6 +318,26 @@ async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice(
                 assert credit_report["application_status"] == (
                     "pending_future_statement"
                 )
+                audit_sql = text(
+                    "SELECT public.platform_saas_invoice_credit_history("
+                    ":invoice) AS data"
+                ).columns(data=JSONB)
+                audit = (await conn.execute(
+                    audit_sql, {"invoice": invoice},
+                )).scalar_one()
+                assert audit["credit_count"] == 1
+                assert Decimal(str(audit["total_credited_rub"])) == Decimal("50")
+                assert audit["entries"][0]["reference"] == "refund:partial:1"
+                assert audit["application_status"] == "pending_future_statement"
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(merchant_owner)})
+                assert (await conn.execute(
+                    audit_sql, {"invoice": invoice},
+                )).scalar_one()["credit_count"] == 1
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(operator)})
                 with pytest.raises(DBAPIError) as credit_void:
                     async with conn.begin_nested():
                         await conn.execute(text(
