@@ -354,7 +354,7 @@ async def test_refund_newest_renewal_and_lost_ledger_refund_preserve_old_access(
             factory, bot=bot, project_id=project_id, buyer_id=buyer,
             pages=1,
         )
-        assert third_id in purchased
+        assert third_id not in purchased
         assert len(returned) == 1
         async with system_project_session_scope(factory, project_id) as session:
             sub = await session.scalar(select(Subscription).where(
@@ -462,7 +462,7 @@ async def test_replay_refund_before_next_purchase_does_not_delay_access():
             factory, bot=bot, project_id=project_id, buyer_id=buyer,
             pages=1,
         )
-        assert set(paid) == {payloads[0][0], payloads[1][0]}
+        assert set(paid) == {payloads[1][0]}
         assert len(returned) == 1
         async with system_project_session_scope(factory, project_id) as session:
             sub = await session.scalar(select(Subscription).where(
@@ -1323,6 +1323,23 @@ async def test_old_charge_shifts_virtual_refunded_anchor_and_later_stars():
                 EntitlementGrant.source_id == receipts[1][0],
             ))
             assert a_grant.status == "revoked"
+            assert b_grant.status == "active"
+            assert b_grant.valid_from == c_paid + timedelta(days=2)
+            assert b_grant.valid_until == c_paid + timedelta(days=3)
+        # A second delayed refund of C has a cutoff AFTER A's purchase.
+        # A's virtual expiry must remain C+2 days, not A's stale grant end.
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], currency="XTR",
+                amount=70, charge_id="virtual-0",
+                refunded_at=a_paid + timedelta(minutes=30),
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            b_grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[2][0],
+            ))
             assert b_grant.status == "active"
             assert b_grant.valid_from == c_paid + timedelta(days=2)
             assert b_grant.valid_until == c_paid + timedelta(days=3)

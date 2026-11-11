@@ -152,3 +152,11 @@ A's refund and B's delayed confirmation. The original revoked A grant
 remains immutable. Paid native Stars grants cannot be revoked using the
 noncommercial `revoke_owner_grant` action, either through UI or direct
 service invocation; terminate their shared paid Subscription instead.
+
+Historical refunded-source virtual periods are reconstructed also when the
+returned source was purchased **before** the latest refund's replay cutoff.
+A second late refund cannot reuse an obsolete revoked grant end and shorten
+a later prepaid renewal. After replaying a Telegram Stars ledger page,
+`/starsrecover` counts only newly recovered purchases that **still have
+an active entitlement at the end of all refund events**; previously paid
+or immediately refunded charges are not advertised as restored access.

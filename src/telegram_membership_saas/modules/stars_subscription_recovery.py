@@ -146,6 +146,14 @@ async def reconcile_subscription_star_ledger(
                 async with system_project_session_scope(
                     factory, project_id,
                 ) as session:
+                    previous_status = await session.scalar(
+                        select(SubscriptionStarOrder.status).where(
+                            SubscriptionStarOrder.project_id == project_id,
+                            SubscriptionStarOrder.telegram_bot_id == bot.id,
+                            SubscriptionStarOrder.telegram_user_id == user,
+                            SubscriptionStarOrder.invoice_payload == payload,
+                        )
+                    )
                     order, _ = await confirm_subscription_stars_payment(
                         session, project_id=project_id, bot_id=bot.id,
                         buyer_id=user, payload=payload, currency="XTR",
@@ -162,7 +170,7 @@ async def reconcile_subscription_star_ledger(
                             EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
                         ).limit(1)
                     )
-                    if usable_grant is not None:
+                    if previous_status == "pending" and usable_grant is not None:
                         payments.append(order.id)
             except (ValueError, PermissionError):
                 # Unrelated buyer/provider transactions must not block a
@@ -192,6 +200,20 @@ async def reconcile_subscription_star_ledger(
                     refunded_at=at,
                 )
                 refunds.append(refund_id)
+    if payments:
+        # An authenticated refund may follow the newly recovered charge
+        # in this same Telegram ledger scan. Count ONLY purchases whose
+        # entitlement still survives the complete replay.
+        async with system_project_session_scope(factory, project_id) as session:
+            surviving = (await session.scalars(select(
+                EntitlementGrant.source_id,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source == EntitlementSource.STARS_PAYMENT.value,
+                EntitlementGrant.source_id.in_(set(payments)),
+                EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+            ))).all()
+        payments = list(set(surviving))
     return tuple(set(payments)), tuple(set(refunds))
 
 
