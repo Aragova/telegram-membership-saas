@@ -22,11 +22,9 @@ def upgrade() -> None:
     op.create_table(
         "platform_saas_fx_rates",
         sa.Column("rate_date", sa.Date(), primary_key=True),
-        sa.Column(
-            "currency_code", sa.String(16),
-            sa.ForeignKey("currency_assets.code", ondelete="RESTRICT"),
-            primary_key=True,
-        ),
+        # XTR is Telegram's virtual reward unit, not a fiat/crypto
+        # asset in the existing CurrencyAsset checkout registry.
+        sa.Column("currency_code", sa.String(16), primary_key=True),
         sa.Column("rub_per_unit", sa.Numeric(38, 18), nullable=False),
         sa.Column(
             "published_by", sa.Uuid(),
@@ -96,9 +94,12 @@ def upgrade() -> None:
              OR length(p_currency)>16
              OR p_rate IS NULL OR p_rate<=0 OR p_rate>1000000000
              OR p_rate<>round(p_rate,18)
-             OR NOT EXISTS (
-               SELECT 1 FROM public.currency_assets
-               WHERE code=p_currency AND status='active'
+             OR (
+               p_currency <> 'XTR'
+               AND NOT EXISTS (
+                 SELECT 1 FROM public.currency_assets
+                 WHERE code=p_currency AND status='active'
+               )
              ) THEN
             RAISE EXCEPTION 'Invalid daily FX policy'
               USING ERRCODE='22023';
@@ -285,9 +286,8 @@ def upgrade() -> None:
             IF source.currency_code='RUB' THEN
               fx := 1;
             ELSE
-              -- Never trust one-off caller-supplied rates: all non-RUB
-              -- conversions come from immutable owner-published daily
-              -- FX records. The source line still snapshots the rate.
+              -- Rates are published for the exact Moscow sale date, NOT
+              -- for a month-end quote. The invoice line snapshots the FX.
               SELECT rate.rub_per_unit INTO fx
                 FROM public.platform_saas_fx_rates rate
                WHERE rate.rate_date=(source.paid_at AT TIME ZONE 'Europe/Moscow')::date
