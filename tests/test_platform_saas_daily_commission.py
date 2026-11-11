@@ -1,4 +1,4 @@
-"""Rollback-only PostgreSQL E2E of daily FX in the real commission issuer.
+"""Rollback-only PostgreSQL E2E of monthly FX in the real commission issuer.
 
 This closes the exact-HEAD reviewer concern: not merely inspecting SQL text.
 All commercial switch changes, FX and invoices exist only in one rolled-back
@@ -33,7 +33,7 @@ async def _commission(conn, merchant, owner, month, fx="{}"):
     ), {"m": merchant, "o": owner, "month": month, "fx": fx})).scalar_one()
 
 
-async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice():
+async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
     settings = Settings()
     engine = build_engine(settings)
     factory = build_session_factory(engine)
@@ -140,13 +140,10 @@ async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice():
                         await _commission(conn, merchant, merchant_owner, month)
                 assert getattr(missing.value.orig, "sqlstate", None) == "22023"
 
-                for day, rate in (
-                    (paid_day, Decimal("80")), (second_day, Decimal("90"))
-                ):
-                    await conn.execute(text(
-                        "SELECT public.platform_saas_publish_fx_rate("
-                        ":day,'USD',:rate)"
-                    ), {"day": day, "rate": rate})
+                await conn.execute(text(
+                    "SELECT public.platform_saas_publish_fx_rate("
+                    ":month,'USD',:rate)"
+                ), {"month": month, "rate": Decimal("80")})
                 with pytest.raises(DBAPIError) as override:
                     async with conn.begin_nested():
                         await _commission(
@@ -161,7 +158,7 @@ async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice():
                     " WHERE id=:invoice"
                 ), {"invoice": invoice})).one()
                 assert details.status == "issued"
-                assert Decimal(details.total_rub) == Decimal("335.00")
+                assert Decimal(details.total_rub) == Decimal("320.00")
                 lines = (await conn.execute(text(
                     "SELECT original_amount,rub_per_unit,charge_rub "
                     "FROM platform_saas_invoice_lines WHERE invoice_id=:id "
@@ -171,7 +168,7 @@ async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice():
                 assert [(Decimal(q.original_amount), Decimal(q.rub_per_unit),
                          Decimal(q.charge_rub)) for q in lines] == [
                     (Decimal("50"), Decimal("80"), Decimal("200")),
-                    (Decimal("30"), Decimal("90"), Decimal("135")),
+                    (Decimal("30"), Decimal("80"), Decimal("120")),
                 ]
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
