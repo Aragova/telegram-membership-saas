@@ -12,9 +12,9 @@ Status: product direction agreed; implementation phased, **all billing and restr
 - **Currencies:** preserve original sale amount and currency. For a RUB invoice use an explicitly published, versioned month-specific conversion rule, immutable rate snapshot on each charge, a deterministic rounding policy and reconciliation. No floating point money, no implicit exchange rates or cross-currency addition. If a rate is missing, stop invoicing and show an operator exception, not zero commission.
 - **Refunds:** only authenticated, audited refund/credit adjustments. Do not change the original payment or charge; a negative compensating entry refers to the original source and period. Duplicate sales/refunds may never be charged twice.
 - **Existing customers:** no retroactive trial claims, debt or sales charges; commercial activation must have a separately approved start date and explicit owner communication.
-- **ViMi Pay platform owner's own channels and bots: lifetime SaaS fee exemption.** All channels/bots **actually owned by the ViMi Pay platform owner** are excluded from the RUB 150 bot prepayment, 5% sales commission, SaaS invoice creation, SaaS trial consumption and debt-related commercial holds. Complimentary-access anti-abuse limits for paying merchants are inapplicable to this verified platform-owned scope. An exempt project must not acquire a fictitious zero-valued debt or a bill merely for bookkeeping; normal customer sales, access and their own financial analytics continue.
-- **Exemption identity and scope:** verify server-side using the DB-bootstrapped `platform_operators.role='owner'` identity matched to the **real project owner** and verified channel ownership. Being an admin/moderator of a third-party channel, having the platform operator role in a shared project, copying a bot token, or setting an input/callback flag does **not** qualify. A normal customer and any moderators remain billable. For the current one-bot/one-channel model, exempt only the individually owned bot/channel; never spread exemption to another merchant or tenant. Mixed-owned projects must be reviewed rather than silently exempting the entire bot.
-- **Auditable changes:** exemption is derived from authorized ownership records and persists across token rotation or bot replacement **only while ownership remains verified**. A legitimate transfer to a third party ends future exemption at the verified effective time. No retroactive charges for the platform-owner period, and no erasure of obligations incurred by another owner before a transfer. A second personal account or service channel may be exempted only after explicit operator-only identity linking and verified ownership, with a dated audit record. Never expose exemption toggle to tenant administrators.
+- **ViMi Pay's own bots are always exempt.** A bot/channel connected through the platform owner's **«👤 Мои боты»** is exempt from RUB 150 SaaS fees, the 5% ViMi Pay commission, the trial/complimentary quota and SaaS debt holds. No separate Telegram creator verification or proof collection is required.
+- **Identity comes from the database:** `projects.owner_user_id` and the historical `merchant_project_periods` owner must match the database-provisioned `platform_operators.role='owner'` account, and the bot must belong to that project. Membership as an administrator/moderator in another customer's project never establishes ownership. Callback data, token usernames, and Telegram group permissions never decide platform billing exemptions.
+- **Transfers are prospective:** a transferred project stops being owner-exempt once it belongs to a non-platform account; previous owner periods must not be billed retroactively. Existing customer entitlements and financial history remain unchanged. No admin-facing toggle, extra “verify” screen or manual owner exemption record is necessary for operator-owned projects.
 
 
 ## 2. Protecting the paid event boundary
@@ -63,7 +63,7 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 
 ## 7. Acceptance gates
 
-- ViMi Pay's own verified channels/bots never receive SaaS invoices or fee/commission charges, consume trial, or become blocked for SaaS debt; another channel where the operator is only admin is still billed. Transferring a channel changes exemption only prospectively.\n- One verified owner cannot claim a second trial through a new bot/project/merchant.
+- ViMi Pay owner-account My Bots never receive SaaS invoices or fee/commission charges, consume trial or become blocked for SaaS debt; another customer's bot where the operator is only admin is still billable. Transferring a channel changes exemption only prospectively.\n- One verified owner cannot claim a second trial through a new bot/project/merchant.
 - Two concurrent free grants cannot bypass quota; staff cannot issue free paid plans; OWNER_SERVICE remains privileged.
 - One approved Payment or approved FileManualOrder generates one billable event, by frozen price, and remains one event after retries, deletions and reconnections.
 - FX and ruble rounding explicit; missing rate blocks invoice creation; refunds are compensating entries.
@@ -71,62 +71,19 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 - Overdue account cannot start **new** checkout but old purchases and entitlements continue to completion and expiry.
 - No runtime effect until new billing policy is deliberately enabled; preserve compose.light100.yaml and existing staging consumers.
 
-## 7a. Read-only launch audit (PR #119 candidate, 2026-11-10)
+## 7a. Simplified owner exemption (2026-11-11)
 
-The existing **👑 Platform → Finance → Invoices** menu has two distinct
-functions: **Payment instructions** shows only banking details and their
-edit/clear actions; **Exemption audit** shows the registered bots attached
-to the authenticated platform operator, the verified exemption count, and
-unverified bots across compact pages of eight. These are sibling screens
-inside the same finance menu, not new top-level features or duplicate buttons.
-The read-only SQL function `platform_saas_exemption_preflight_page(page,size)`
-enforces operator-only access and scopes the list to the authenticated owner.
-Earlier aggregate-only `platform_saas_exemption_preflight()` remains compatible
-but is no longer mixed into the bank editor.
+Migration `0050_platform_owner_my_bots_exempt` replaces the earlier
+creator-proof checks with the project's genuine owner account. It removes
+the unused read-only exemption/preflight RPCs. The central **Finance →
+Invoices** panel retains only invoices and payment instructions. No extra
+preflight buttons, bot-by-bot checking, creator verification, additional
+settings or duplicated panels.
 
-Do not label every connected bot a Telegram creator-owned channel; the
-registered account's role is not creator verification. The audit has no
-self-service waiver button. It **does not write data**, issue bills, or
-enable billing, trials or holds.
-
-These counts are **not proof of Telegram creator status**. Verification
-requires trustworthy Telegram creator evidence and a separate controlled
-operator process that creates the existing immutable
-`platform_saas_owner_exemptions` record. Do not add a self-service toggle,
-auto-exempt every bot attached to a platform administrator or treat lack of
-an exemption record as authorization to charge that administrator.
-Project owner identity and single-channel history must still match; transfers
-and multiple-channel ambiguity remain review blockers.
-
-Before explicit commercial activation also require:
-
-- ViMi Pay payment instructions genuinely saved and reviewed through the
-  existing owner-only screen, with only the owner confirming actual receipts;
-- outstanding creator-owned exceptions resolved; **zero pending** does not
-  itself mean platform-wide billing is approved;
-- month-specific, approved FX rates for every non-RUB commission currency,
-  refund/credit and dispute process, and a merchant communications plan;
-- isolated staged dry-run with billing flags OFF; no retroactive invoices,
-  customer freezes, or interruption of already paid access;
-- separate explicit owner authorization for each rollout switch and date.
-
-Avoid new top-level monitoring/finance sections or duplicate buttons.
-Use native Rich UI for financial summaries in RU/EN.
-
-### Read-only live Telegram verification (2026-11-11)
-
-The `Exemption audit` page supports a single deliberate Telegram
-**Check this page** action (maximum 8 connected bots). This action queries
-Telegram with each registered customer bot's encrypted credential after
-strict on-server owner/project/channel validation. The bot must be channel
-administrator and its ID must match the registered bot. The platform
-owner's Telegram member status must be exactly `creator`, not
-`administrator`. All errors fail closed; tokens and raw Bot API errors are
-never displayed or logged. This step is **read-only**: it does not issue
-creator-exemption proof records, enable policies, raise invoices, or modify
-channels. The check is ephemeral and must not be described as a permanent
-exemption. Separate approval and transactional provisioning are required
-before commercial launch.
+Before commercial activation, still verify payment instructions, supported
+currency conversion policy, refunds/disputes and staged billing OFF-mode.
+No retroactive invoices, no interruptions to existing subscribers, and no
+automatic enabling of billing/holds/grants quotas.
 
 ## 8. Dormant invoice ledger — PR #113
 
