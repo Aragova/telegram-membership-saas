@@ -1,3 +1,28 @@
+## PR #127 follow-up hardening — FX/receipt snapshot binding and bank safety
+
+The **final** currency-lock action is guarded by migration 0054's
+`platform_saas_lock_invoice_currency_expected`: it holds the invoice row
+lock, compares the exact reviewed Moscow quote day, official CBR rate and
+payable currency amount, then delegates to immutable 0053 settlement
+within the same transaction. A stale callback is rejected, not repriced.
+The preview serializes Decimal rates/amounts as strings to preserve
+official precision. No quote or invoice is written by merely viewing.
+
+Likewise the platform operator's receipt-confirmation button is tied
+to the invoice status and exact currency/amount/rate displayed in the
+card. If the merchant changes or locks settlement afterward, the old
+button refuses and requires a fresh invoice review. Old unbound payment
+callbacks are no longer accepted.
+
+The account invoice list itself displays the actual frozen payment
+currency/amount and shows the original RUB amount only as reference.
+A SECURITY DEFINER count across **all** account invoices/pages ensures
+that any unpaid foreign-locked invoice suppresses shared RUB bank
+instructions even when the foreign bill is not on the current page.
+Currency-specific bank instructions and credit allocation are separate
+prelaunch gates. This is safer than directing foreign payers to RUB
+bank details or silently confirming the wrong currency.
+
 ## PR #127 — issued-invoice Rich billing and credit audit UX (2026-11-11)
 
 Migration `0054_saas_billing_views` adds **read-only**, owner-scoped official
