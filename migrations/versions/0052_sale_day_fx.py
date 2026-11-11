@@ -477,7 +477,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_project_preview(
             'fiat_commission_rub',CASE WHEN own_platform THEN 0 ELSE fiat_fee END,
             'stars_estimate_rub',CASE WHEN own_platform THEN 0 ELSE stars_fee END,
             'stars_need_reconciliation',star_count>0,
-            'missing_sale_day_rates',unrated_count,
+            'missing_daily_rates',unrated_count,
             'next_bot_fee_rub',CASE WHEN own_platform THEN 0 ELSE 150 END,
             'is_platform_owner',own_platform,
             'billing_enabled',coalesce(billing_on,false),
