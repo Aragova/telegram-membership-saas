@@ -2575,15 +2575,17 @@ def create_owner_setup_router(
             lines.append(tr("Цена ещё не указана.", "No price has been set yet."))
         for price in data.prices:
             lines.append(
-                ("✅ " if price.method_count else "⚠️ ")
+                ("✅ " if price.method_count or price.currency == "XTR" else "⚠️ ")
                 + escape(
                     format_amount(price.amount, price.precision)
                     + " " + price.currency
                 )
                 + (
+                    tr(" · ⭐ Telegram Stars", " · ⭐ Telegram Stars")
+                    if price.currency == "XTR" else
                     tr(" · оплата настроена", " · payment ready")
-                    if price.method_count
-                    else tr(" · нужен способ оплаты", " · payment method required")
+                    if price.method_count else
+                    tr(" · нужен способ оплаты", " · payment method required")
                 )
             )
         rows.extend([
@@ -2594,7 +2596,8 @@ def create_owner_setup_router(
             tr("➕ Другая валюта", "➕ Another currency"),
             "currencyadd:price:" + plan_id.hex,
         )])
-        if any(not price.method_count for price in data.prices):
+        if any(not price.method_count and price.currency != "XTR"
+               for price in data.prices):
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
             ])
