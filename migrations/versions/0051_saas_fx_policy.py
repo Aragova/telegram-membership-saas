@@ -47,6 +47,13 @@ def upgrade() -> None:
             "AND rub_per_unit<=1000000000",
             name="ck_saas_fx_rate_valid",
         ),
+        sa.CheckConstraint(
+            "currency_code NOT IN ('USD','EUR','UAH','BYN') "
+            "OR (source_name='CBR' AND source_date IS NOT NULL "
+            "AND source_date<=billing_month "
+            "AND source_date>=billing_month - interval '14 days')",
+            name="ck_saas_fx_cbr_provenance",
+        ),
     )
     op.execute(
         "ALTER TABLE public.platform_saas_fx_rates "
@@ -96,7 +103,8 @@ def upgrade() -> None:
         BEGIN
           actor:=public.platform_saas_require_owner();
           IF p_month IS NULL OR extract(day FROM p_month)<>1
-             OR p_currency IS NULL OR p_currency='RUB'
+             OR p_currency IS NULL
+             OR p_currency IN ('RUB','USD','EUR','UAH','BYN')
              OR p_currency<>upper(btrim(p_currency))
              OR length(p_currency)>16
              OR p_rate IS NULL OR p_rate<=0 OR p_rate>1000000000
@@ -229,7 +237,13 @@ def upgrade() -> None:
             currency_code,rub_per_unit ORDER BY currency_code
           ),'{}'::jsonb) INTO rates
           FROM public.platform_saas_fx_rates
-          WHERE billing_month=p_month;
+          WHERE billing_month=p_month AND (
+            currency_code NOT IN ('USD','EUR','UAH','BYN') OR (
+              source_name='CBR'
+              AND source_date<=p_month
+              AND source_date>=p_month-interval '14 days'
+            )
+          );
           RETURN jsonb_build_object('month',p_month,'rates',rates);
         END;
         $f$
@@ -365,7 +379,14 @@ def upgrade() -> None:
               SELECT rate.rub_per_unit INTO fx
                 FROM public.platform_saas_fx_rates rate
                WHERE rate.billing_month=p_month
-                 AND rate.currency_code=source.currency_code;
+                 AND rate.currency_code=source.currency_code
+                 AND (
+                   rate.currency_code NOT IN ('USD','EUR','UAH','BYN') OR (
+                     rate.source_name='CBR'
+                     AND rate.source_date<=p_month
+                     AND rate.source_date>=p_month-interval '14 days'
+                   )
+                 );
               IF fx IS NULL THEN
                 RAISE EXCEPTION 'Missing published monthly FX rate for %',
                   source.currency_code USING ERRCODE='22023';
@@ -477,6 +498,13 @@ def upgrade() -> None:
             LEFT JOIN public.platform_saas_fx_rates fx
               ON fx.billing_month=p_month
              AND fx.currency_code=s.currency
+             AND (
+               fx.currency_code NOT IN ('USD','EUR','UAH','BYN') OR (
+                 fx.source_name='CBR'
+                 AND fx.source_date<=p_month
+                 AND fx.source_date>=p_month-interval '14 days'
+               )
+             )
             WHERE s.paid_at >= (p_month::timestamp AT TIME ZONE 'Europe/Moscow')
               AND s.paid_at < ((p_month::timestamp + interval '1 month')
                                AT TIME ZONE 'Europe/Moscow')
@@ -580,7 +608,10 @@ def upgrade() -> None:
             SELECT rub_per_unit,source_name,source_date
               INTO billing_rate,quote_source_name,quote_source_date
             FROM public.platform_saas_fx_rates
-            WHERE billing_month=p_month AND currency_code=p_pay_currency;
+            WHERE billing_month=p_month AND currency_code=p_pay_currency
+              AND source_name='CBR'
+              AND source_date<=p_month
+              AND source_date>=p_month-interval '14 days';
           END IF;
           quote_ready:=quote_ready AND billing_rate IS NOT NULL;
           IF quote_ready THEN
