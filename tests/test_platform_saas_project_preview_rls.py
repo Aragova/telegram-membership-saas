@@ -4,7 +4,7 @@ All source/FX writes happen inside one privileged rollback-only test transaction
 The Bill preview never creates invoices or enables monetization.
 """
 import os
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -65,6 +65,16 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                     text("SELECT telegram_bot_id FROM bot_instances WHERE id=:id"),
                     {"id": bot_uuid},
                 )).scalar_one()
+                # This project's current owner period starts mid-day.
+                # Earlier sales (as under a transfer) must not be included
+                # in the new owner's turnover/commission preview.
+                await conn.execute(text(
+                    "UPDATE merchant_project_periods SET started_at=:start "
+                    "WHERE project_id=:project AND ended_at IS NULL"
+                ), {
+                    "project": project,
+                    "start": paid_at - timedelta(hours=1),
+                })
                 folder, file, sale, star = (
                     uuid4(), uuid4(), uuid4(), uuid4(),
                 )
@@ -95,6 +105,20 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                     "id": sale, "project": project, "product": file,
                     "bot": bot_telegram_id, "method": uuid4(),
                     "paid": paid_at,
+                })
+                await conn.execute(text(
+                    "INSERT INTO file_sale_manual_orders "
+                    "(id,project_id,product_id,telegram_bot_id,"
+                    "telegram_user_id,product_name,amount,currency_code,"
+                    "payment_method_id,payment_method_name,instruction,status,"
+                    "paid_at) VALUES "
+                    "(:id,:project,:product,:bot,123987,'Prior owner sale',"
+                    "999,'USD',:method,'Bank','Test',"
+                    "'approved',:paid)"
+                ), {
+                    "id": uuid4(), "project": project, "product": file,
+                    "bot": bot_telegram_id, "method": uuid4(),
+                    "paid": paid_at - timedelta(hours=2),
                 })
                 await conn.execute(text(
                     "INSERT INTO file_sale_purchases "
@@ -133,6 +157,8 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                     assert own["next_bot_fee_rub"] == 0
                     assert own["fiat_commission_rub"] == 0
                     rows = {r["currency"]: r for r in own["rows"]}
+                    # 999 USD belongs before the current owner's
+                    # historical period, so it is not included.
                     assert Decimal(str(rows["USD"]["gross"])) == 50
                     assert Decimal(str(rows["USD"]["fee_rub"])) == 200
                     assert Decimal(str(rows["XTR"]["fee_rub"])) == Decimal("10.4")
