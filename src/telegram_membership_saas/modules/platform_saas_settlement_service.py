@@ -1,6 +1,7 @@
 """Dormant, narrow RPC access for issued-currency quotes and refund evidence.
 
-These methods are not wired to a new Telegram menu or automated billing.
+Only issued-invoice choices and audit reads are exposed in existing billing menus.
+No scheduled billing, automatic refunds or credit application is enabled.
 PostgreSQL re-checks the actual liable account and platform-owner identity.
 """
 from __future__ import annotations
@@ -162,4 +163,48 @@ async def saas_refund_credit_report(
         )).scalar_one()
     if not isinstance(data, dict):
         raise RuntimeError("Invalid credit report")
+    return data
+
+
+async def preview_saas_invoice_currency(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID,
+    invoice_id: UUID,
+    currency: str,
+) -> dict:
+    """Read-only official CBR quote before the irreversible currency lock."""
+    if currency not in SETTLEMENT_CURRENCIES:
+        raise ValueError("Unsupported settlement currency")
+    stmt = text(
+        "SELECT public.platform_saas_preview_invoice_currency("
+        ":invoice,:currency) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id),
+    ) as session:
+        data = (await session.execute(stmt, {
+            "invoice": invoice_id, "currency": currency,
+        })).scalar_one()
+    if not isinstance(data, dict) or data.get("currency") != currency:
+        raise RuntimeError("Invalid settlement quote")
+    return data
+
+
+async def saas_invoice_credit_history(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID,
+    invoice_id: UUID,
+) -> dict:
+    """Read-only per-invoice refund evidence; tenant owner or platform owner."""
+    stmt = text(
+        "SELECT public.platform_saas_invoice_credit_history(:invoice) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id),
+    ) as session:
+        data = (await session.execute(stmt, {
+            "invoice": invoice_id,
+        })).scalar_one()
+    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+        raise RuntimeError("Invalid invoice credit history")
     return data
