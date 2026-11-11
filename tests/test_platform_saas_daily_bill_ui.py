@@ -1,5 +1,4 @@
 """Connected-bot admin Bill preview, one existing navigation path and Rich fallback."""
-from decimal import Decimal
 
 import pytest
 
