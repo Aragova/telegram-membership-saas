@@ -6,9 +6,35 @@ separately reviewed financial allocation policy exists.
 from __future__ import annotations
 
 from decimal import Decimal
+from hashlib import sha256
 from html import escape
 
 from telegram_membership_saas.localization import tr
+
+
+def _fingerprint(parts: tuple[object, ...]) -> str:
+    """Short stable token for Telegram callbacks, never an authorization grant."""
+    return sha256("|".join(str(part) for part in parts).encode("utf-8")).hexdigest()[:12]
+
+
+def quote_fingerprint(quote: dict) -> str:
+    """A stale rate/date/amount changes the token and blocks a final FX lock."""
+    return _fingerprint((
+        quote["invoice_id"], quote["currency"], quote["quote_day"],
+        quote.get("source_day"), quote.get("rub_per_unit"),
+        quote.get("amount"), quote["total_rub"],
+    ))
+
+
+def receipt_fingerprint(invoice_id: object, invoice: dict, snapshot: dict) -> str:
+    """Binds operator's confirmation to exactly what the card displayed."""
+    return _fingerprint((
+        invoice_id, invoice["status"],
+        invoice.get("amount_rub", invoice.get("total_rub")),
+        snapshot.get("locked", False), snapshot.get("currency"),
+        snapshot.get("quote_day"), snapshot.get("rub_per_unit"),
+        snapshot.get("amount"),
+    ))
 
 
 def _safe(value: object) -> str:
