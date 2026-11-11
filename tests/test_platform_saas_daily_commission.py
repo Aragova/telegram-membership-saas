@@ -35,7 +35,7 @@ async def _commission(conn, merchant, owner, month, fx="{}"):
 
 
 @pytest.mark.parametrize("cutoff_case", ["normal", "rollout", "trial"])
-async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice(
+async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice(
     cutoff_case: str,
 ):
     settings = Settings()
@@ -45,7 +45,7 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice(
     operator_tg = _tid()
     moscow = ZoneInfo("Europe/Moscow")
     now = datetime.now(UTC)
-    # Previous Moscow month has ended: the real issuer refuses current month.
+    # The real issuer invoices only a closed Moscow accounting month.
     current_month = now.astimezone(moscow).date().replace(day=1)
     last_day_previous = current_month - timedelta(days=1)
     month = last_day_previous.replace(day=1)
@@ -61,7 +61,7 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice(
     trial_at = (
         paid_at - timedelta(hours=48) if cutoff_case == "trial" else start
     )
-    expected_commission = Decimal("320" if cutoff_case == "normal" else "120")
+    expected_commission = Decimal("335" if cutoff_case == "normal" else "135")
     expected_total = expected_commission + Decimal("150")
     try:
         operator = await ensure_telegram_actor(
@@ -153,19 +153,40 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice(
                         await _commission(conn, merchant, merchant_owner, month)
                 assert getattr(missing.value.orig, "sqlstate", None) == "22023"
 
+                # The old monthly table is present, but is no longer used
+                # to price sales. Only the exact original sale day counts.
                 await conn.execute(text(
                     "SELECT public.platform_saas_publish_cbr_fx_rate("
                     ":month,'USD',:rate,:source_date)"
-                ), {"month": month, "rate": Decimal("80"), "source_date": month})
-                for currency, rate in (
-                    ("EUR", "90"), ("UAH", "2"), ("BYN", "27"),
+                ), {
+                    "month": month, "rate": Decimal("80"),
+                    "source_date": month,
+                })
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await _commission(conn, merchant, merchant_owner, month)
+
+                for sale_day, rate in (
+                    (paid_day, Decimal("80")),
+                    (second_day, Decimal("90")),
                 ):
                     await conn.execute(text(
-                        "SELECT public.platform_saas_publish_cbr_fx_rate("
-                        ":month,:currency,:rate,:source_date)"
+                        "SELECT public.platform_saas_publish_cbr_daily_fx("
+                        ":day,'USD',:rate,:source_day)"
                     ), {
-                        "month": month, "currency": currency,
-                        "rate": Decimal(rate), "source_date": month,
+                        "day": sale_day, "rate": rate, "source_day": sale_day,
+                    })
+                quote_day = now.astimezone(moscow).date()
+                for currency, rate in (
+                    ("USD", "80"), ("EUR", "90"),
+                    ("UAH", "2"), ("BYN", "27"),
+                ):
+                    await conn.execute(text(
+                        "SELECT public.platform_saas_publish_cbr_daily_fx("
+                        ":day,:currency,:rate,:source_day)"
+                    ), {
+                        "day": quote_day, "currency": currency,
+                        "rate": Decimal(rate), "source_day": quote_day,
                     })
                 # Do not mutate immutable trial claims. Each parametrized
                 # scenario provisions the original claim/rollout in its
@@ -223,7 +244,7 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice(
                     "ORDER BY original_amount DESC"
                 ), {"id": invoice})).all()
                 expected_lines = [
-                    (Decimal("30"), Decimal("80"), Decimal("120")),
+                    (Decimal("30"), Decimal("90"), Decimal("135")),
                 ]
                 if cutoff_case == "normal":
                     expected_lines.insert(
@@ -267,6 +288,7 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice(
                     assert Decimal(str(quote["total_rub"])) == expected_total
                     assert Decimal(str(quote["estimated_total"])) == expected
                     assert quote["preview_only"] is True
+                    assert quote["quote_day"] == quote_day.isoformat()
                 assert (await conn.execute(text(
                     "SELECT count(*) FROM platform_saas_invoices "
                     "WHERE kind='commission' AND merchant_id=:merchant"
