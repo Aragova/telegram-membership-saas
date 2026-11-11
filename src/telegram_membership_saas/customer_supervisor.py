@@ -32,6 +32,9 @@ from telegram_membership_saas.modules.bots.health_service import (
     claim_bot_health,
     write_bot_health,
 )
+from telegram_membership_saas.modules.platform_monthly_fx_sync import (
+    sync_official_month_rates,
+)
 from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
     SharedProjectLeaseManager,
@@ -298,6 +301,9 @@ class CustomerBotSupervisor:
         self.workers: dict[UUID, RunningTarget] = {}
         self.retry_after: dict[UUID, float] = {}
         self._supervisor_id = uuid4()
+        # Only shard zero runs official FX ingestion. No per-bot timers.
+        self._fx_task: asyncio.Task[None] | None = None
+        self._next_fx_sync_at = 0.0
         # Shared-mode admission cursor ensures a handful of busy legacy
         # projects cannot consume every five-worker startup batch forever.
         self._admission_cursor: UUID | None = None
@@ -413,9 +419,28 @@ class CustomerBotSupervisor:
                     "Bot retirement will be retried for project %s", project_id
                 )
 
+    async def _sync_monthly_fx_safe(self) -> None:
+        try:
+            await sync_official_month_rates(self.factory, self.settings)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # No raw provider payload or URL in error logs. Rates remain
+            # missing, and all foreign-currency invoices fail closed.
+            logger.warning("Official monthly FX unavailable; retry on schedule")
+
     async def run(self) -> None:
         try:
             while True:
+                # One shared fetch for the platform, never for each bot.
+                if (self.settings.customer_supervisor_shard_id == 0
+                    and self.settings.platform_owner_telegram_id is not None
+                    and monotonic() >= self._next_fx_sync_at
+                    and (self._fx_task is None or self._fx_task.done())):
+                    self._next_fx_sync_at = monotonic() + 6 * 60 * 60
+                    self._fx_task = asyncio.create_task(
+                        self._sync_monthly_fx_safe()
+                    )
                 try:
                     await self.reconcile_once()
                 except asyncio.CancelledError:
@@ -434,6 +459,11 @@ class CustomerBotSupervisor:
                 await asyncio.sleep(SCAN_SECONDS)
         finally:
             async def shutdown() -> None:
+                if self._fx_task is not None:
+                    cancel_once(self._fx_task)
+                    await asyncio.gather(
+                        self._fx_task, return_exceptions=True,
+                    )
                 for worker in self.workers.values():
                     cancel_once(worker.task)
                 await asyncio.gather(
