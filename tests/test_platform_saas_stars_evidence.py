@@ -4,7 +4,7 @@ All inserted source purchases and snapshots roll back. No buyer access,
 existing platform invoice, balance or commercial feature flag is modified.
 """
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -179,6 +179,36 @@ async def test_file_stars_official_reward_and_idempotent_rated_evidence():
                     invalid_refund.value.orig, "sqlstate", None
                 ) == "23514"
                 await conn.execute(refund_sql, refund_args)
+                # The original 0055 capture cutoff forbids backbilling old
+                # Stars sales. A later refund of such a sale must stay in
+                # Telegram history, NOT appear as an impossible pending fee.
+                capture_cutoff = (await conn.execute(text(
+                    "SELECT started_at FROM "
+                    "platform_saas_star_capture_control WHERE id=1"
+                ))).scalar_one()
+                legacy_purchase = uuid4()
+                legacy_payload = "fs:" + uuid4().hex
+                legacy_charge = "old-charge-" + uuid4().hex
+                await conn.execute(text(
+                    "INSERT INTO file_sale_purchases "
+                    "(id,project_id,product_id,telegram_bot_id,"
+                    "telegram_user_id,stars_amount,product_name,"
+                    "invoice_payload,telegram_charge_id,status,paid_at) "
+                    "VALUES (:id,:project,:product,:bot,7171,2000,"
+                    "'Stars old',:payload,:charge,'paid',:paid)"
+                ), {
+                    "id": legacy_purchase, "project": project,
+                    "product": product, "bot": bot_tg,
+                    "payload": legacy_payload, "charge": legacy_charge,
+                    "paid": capture_cutoff - timedelta(days=1),
+                })
+                legacy_refund_id = uuid4()
+                await conn.execute(refund_sql, {
+                    "id": legacy_refund_id, "project": project,
+                    "purchase": legacy_purchase, "bot": bot_tg,
+                    "payload": legacy_payload, "charge": legacy_charge,
+                    "amount": 2000, "at": paid_at,
+                })
                 await _actor(conn, operator)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 refund_rpc = text(
@@ -210,6 +240,10 @@ async def test_file_stars_official_reward_and_idempotent_rated_evidence():
                 assert Decimal(history["commission_credit_usd"]) == Decimal("1.30")
                 assert history["pending_refund_reconciliation"] == 0
                 await conn.execute(text("RESET ROLE"))
+                assert (await conn.execute(text(
+                    "SELECT count(*) FROM platform_saas_star_refund_credits "
+                    "WHERE file_refund_id=:id"
+                ), {"id": legacy_refund_id})).scalar_one() == 0
                 assert (await conn.execute(text(
                     "SELECT status FROM file_sale_purchases WHERE id=:id"
                 ), {"id": purchase})).scalar_one() == "paid"
