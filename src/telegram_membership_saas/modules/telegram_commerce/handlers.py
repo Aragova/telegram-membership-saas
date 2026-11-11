@@ -40,6 +40,9 @@ from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.stars_subscription_recovery import (
     recover_subscription_stars,
 )
+from telegram_membership_saas.modules.stars_subscription_refunds import (
+    record_verified_subscription_star_refund,
+)
 from telegram_membership_saas.modules.stars_subscription_service import (
     confirm_subscription_stars_payment,
     create_stars_subscription_order,
@@ -885,6 +888,44 @@ def create_telegram_commerce_router(
             error_message=None if allowed else tr(
                 "Счёт устарел или тариф недоступен. Откройте /plans заново.",
                 "Invoice expired or plan unavailable. Reopen /plans.",
+            ),
+        )
+
+    @router.message(F.refunded_payment.invoice_payload.startswith("sp:"))
+    async def stars_subscription_refund_handler(
+        message: Message, bot: Bot,
+    ) -> None:
+        refund = message.refunded_payment
+        if (
+            message.chat.type != "private" or refund is None
+            or message.from_user is None
+            or message.from_user.id != message.chat.id
+        ):
+            return
+        try:
+            async with system_project_session_scope(
+                session_factory, project_id,
+            ) as session:
+                await record_verified_subscription_star_refund(
+                    session, project_id=project_id, bot_id=bot.id,
+                    buyer_id=message.from_user.id,
+                    payload=refund.invoice_payload,
+                    currency=refund.currency, amount=refund.total_amount,
+                    charge_id=refund.telegram_payment_charge_id,
+                    refunded_at=message.date,
+                )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "CRITICAL: paid Stars subscription refund not recorded"
+            )
+            return
+        await bot.send_message(
+            message.chat.id,
+            tr(
+                "↩️ Возврат Stars подтверждён Telegram. Доступ по этой "
+                "покупке аннулирован; другие ваши подписки сохраняются.",
+                "↩️ Telegram confirmed your Stars refund. Access granted by "
+                "this purchase was revoked; other purchases remain intact.",
             ),
         )
 
