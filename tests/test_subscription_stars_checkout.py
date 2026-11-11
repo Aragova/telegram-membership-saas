@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
+from test_platform_saas_invoice_rls import _project, _tid
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
     build_engine,
@@ -28,7 +29,6 @@ from telegram_membership_saas.modules.stars_subscription_service import (
 )
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.tenant_context import TenantContext
-from test_platform_saas_invoice_rls import _project, _tid
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL")
