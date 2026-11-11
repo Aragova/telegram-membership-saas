@@ -110,36 +110,6 @@ async def merchant_saas_project_preview(
     return result
 
 
-async def merchant_saas_currency_quote(
-    factory: async_sessionmaker[AsyncSession], *,
-    actor_user_id: UUID, project_id: UUID, month: date,
-    payment_currency: str,
-) -> dict:
-    """Return a read-only conversion preview for one selected pay currency.
-
-    A real payable invoice must later snapshot this selection and currency
-    rate under a single immutable reference; this method never issues it.
-    """
-    if month.day != 1 or payment_currency not in (
-        "RUB", "USD", "EUR", "UAH", "BYN",
-    ):
-        raise ValueError("Invalid billing month or payment currency")
-    stmt = text(
-        "SELECT public.platform_saas_quote_project_bill("
-        ":project,:month,:currency) AS data"
-    ).columns(data=JSONB)
-    async with tenant_session_scope(
-        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
-    ) as session:
-        data = (await session.execute(stmt, {
-            "project": project_id, "month": month,
-            "currency": payment_currency,
-        })).scalar_one()
-    if not isinstance(data, dict) or data.get("chosen_currency") != payment_currency:
-        raise RuntimeError("Invalid payment currency quote")
-    return data
-
-
 async def merchant_saas_statements(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID,
