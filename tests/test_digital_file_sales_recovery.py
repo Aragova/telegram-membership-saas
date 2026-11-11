@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from aiogram.types import StarTransaction
+
 from telegram_membership_saas.modules.file_sales import recovery as svc
 
 
@@ -26,14 +28,20 @@ async def test_bot_ledger_recovery_requires_payer_payload_and_amount(monkeypatch
     monkeypatch.setattr(svc, "system_project_session_scope", scoped)
     verified = AsyncMock(return_value=SimpleNamespace(id=pending.id))
     monkeypatch.setattr(svc, "confirm_stars_payment", verified)
-    valid = SimpleNamespace(
-        id="charge_abc", amount=99, date=1761000000,
-        source=SimpleNamespace(
-            type="user", transaction_type="invoice_payment",
-            user=SimpleNamespace(id=buyer_id),
-            invoice_payload=payload,
-        ),
-    )
+    # Use the real aiogram model, not a fake int-dated transaction:
+    # Bot API's Unix timestamp is parsed by aiogram into a datetime.
+    valid = StarTransaction.model_validate({
+        "id": "charge_abc", "amount": 99, "date": 1761000000,
+        "source": {
+            "type": "user", "transaction_type": "invoice_payment",
+            "user": {
+                "id": buyer_id, "is_bot": False, "first_name": "Buyer",
+            },
+            "invoice_payload": payload,
+        },
+    })
+    assert isinstance(valid.date, datetime)
+    assert valid.date.tzinfo is not None
     invalid = [
         SimpleNamespace(
             id="wrong_user", amount=99,
