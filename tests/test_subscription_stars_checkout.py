@@ -1328,3 +1328,165 @@ async def test_old_charge_shifts_virtual_refunded_anchor_and_later_stars():
             assert b_grant.valid_until == c_paid + timedelta(days=3)
     finally:
         await engine.dispose()
+
+
+async def test_stars_refund_same_second_repairs_later_purchase():
+    """Refund A sorts before B at identical timestamps regardless of delivery."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Same-second Stars refund",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        receipts = []
+        for _ in range(2):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                receipts.append((order.id, order.invoice_payload))
+        a_paid = (datetime.now(UTC) - timedelta(minutes=3)).replace(microsecond=0)
+        same_second = a_paid + timedelta(minutes=1)
+        for index, paid_at in ((0, a_paid), (1, same_second)):
+            async with system_project_session_scope(factory, project_id) as session:
+                await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, payload=receipts[index][1],
+                    amount=70, currency="XTR",
+                    charge_id=f"same-second-{index}", paid_at=paid_at,
+                )
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], amount=70,
+                currency="XTR", charge_id="same-second-0",
+                refunded_at=same_second,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            b = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+            ))
+            assert b.valid_from == same_second
+            assert b.valid_until == same_second + timedelta(days=1)
+    finally:
+        await engine.dispose()
+
+
+async def test_stars_sales_appear_in_owner_daily_and_channel_without_duplication():
+    """Native XTR purchases must count once, without a synthetic Payment row."""
+    from telegram_membership_saas.modules.owner_daily import (
+        read_daily_financial_snapshot,
+    )
+    from telegram_membership_saas.modules.owner_setup.channel_management import (
+        read_channel_insights,
+        remove_channel_without_paid_purchases,
+    )
+    from telegram_membership_saas.modules.owner_setup.statistics import (
+        read_owner_statistics,
+    )
+    from telegram_membership_saas.modules.projects import Project
+
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Owner revenue Stars",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        paid_at = datetime.now(UTC) - timedelta(minutes=1)
+        async with system_project_session_scope(factory, project_id) as session:
+            order = await create_stars_subscription_order(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, username=None, first_name="Buyer",
+                plan_price_id=price_id,
+            )
+            payload = order.invoice_payload
+            # Also create a pending invoice; it must not be reported as sales.
+            await create_stars_subscription_order(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, username=None, first_name="Buyer",
+                plan_price_id=price_id,
+            )
+        for _ in range(2):
+            async with system_project_session_scope(factory, project_id) as session:
+                await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, payload=payload, amount=70,
+                    currency="XTR", charge_id="gross-70", paid_at=paid_at,
+                )
+        now = datetime.now(UTC)
+        stats = await read_owner_statistics(
+            factory, actor_id=owner, project_id=project_id, period="7", now=now,
+        )
+        assert stats.payment_count == 1
+        assert stats.currency_totals == (("XTR", Decimal("70"), 1),)
+        insights = await read_channel_insights(
+            factory, actor_id=owner, project_id=project_id,
+            resource_id=resource_id, now=now,
+        )
+        assert insights.paid_orders == 1
+        assert insights.paid_customers == 1
+        assert insights.sales_by_currency == (("XTR", Decimal("70"), 1),)
+        async with system_project_session_scope(factory, project_id) as session:
+            project = await session.scalar(select(Project).where(
+                Project.id == project_id,
+            ))
+            local_day = paid_at.astimezone(ZoneInfo(project.timezone)).date()
+            snapshot = await read_daily_financial_snapshot(
+                session, project=project, report_date=local_day, now=now,
+            )
+        assert snapshot.approved_count == 1
+        assert snapshot.approved_totals == (("XTR", Decimal("70"), 1),)
+        with pytest.raises(ValueError, match="подтверждённые покупки"):
+            await remove_channel_without_paid_purchases(
+                factory, actor_id=owner,
+                project_id=project_id, resource_id=resource_id,
+            )
+    finally:
+        await engine.dispose()

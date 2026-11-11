@@ -133,3 +133,15 @@ that refunded source. It anchors renewals purchased before its true refund
 timestamp without editing the revoked grant or financial evidence. Later
 surviving manual/Stars grants therefore keep their full paid durations even
 when an older missed charge is reconstructed.
+
+Native XTR sales appear in the same owner statistics, channel insights,
+and project-local daily financial summary as manual sales. The shared
+project-scoped merchant read model UNION ALLs original manual Payments
+with authenticated paid subscription Stars orders (no synthetic manual
+Payment). Amounts and counts remain **XTR** without any invented fiat
+conversion. Refunded original charges remain gross historical sales;
+refunds/commission credits are reported in their dedicated refund ledger.
+An actual paid Stars purchase also prevents destructive channel removal.
+When refund and unrelated purchase share the same Telegram second, a late
+refund replay includes equal-time renewals instead of leaving a delayed
+future-dated access window.

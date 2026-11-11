@@ -119,6 +119,7 @@ async def record_verified_subscription_star_refund(
     targets.update(await rebuild_paid_windows_after(
         session, project_id=project_id, customer_id=order.customer_id,
         plan_id=order.plan_id, after=moment, termination_times=terminations,
+        include_equal=True,
     ))
     await refresh_paid_subscription_summary(
         session, project_id=project_id, customer_id=order.customer_id,

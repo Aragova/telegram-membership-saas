@@ -15,9 +15,10 @@ from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.merchant_revenue import merchant_confirmed_sales
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.identity import ProjectCustomer
-from telegram_membership_saas.modules.payments import Payment, PaymentRequest
+from telegram_membership_saas.modules.payments import PaymentRequest
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
@@ -62,7 +63,7 @@ async def read_owner_statistics(
     actor_id: UUID, project_id: UUID, period: str = "7",
     now: datetime | None = None,
 ) -> OwnerStatistics:
-    """Aggregates actual confirmed sales by their original currencies only."""
+    """Aggregates confirmed manual + Stars sales in original currencies."""
     if period not in PERIOD_DAYS:
         raise ValueError("Неизвестный период статистики")
     moment = now or datetime.now(UTC)
@@ -80,14 +81,15 @@ async def read_owner_statistics(
             period, now=moment, timezone=project.timezone,
         )
 
+        sales = merchant_confirmed_sales(project_id)
         payment_query = select(
-            Payment.currency_code, func.sum(Payment.final_amount),
-            func.count(Payment.id),
-        ).where(Payment.project_id == project_id)
+            sales.c.currency_code, func.sum(sales.c.amount),
+            func.count(),
+        )
         if cutoff is not None:
-            payment_query = payment_query.where(Payment.approved_at >= cutoff)
-        payment_query = payment_query.group_by(Payment.currency_code).order_by(
-            Payment.currency_code,
+            payment_query = payment_query.where(sales.c.paid_at >= cutoff)
+        payment_query = payment_query.group_by(sales.c.currency_code).order_by(
+            sales.c.currency_code,
         )
         totals = tuple(
             (currency, Decimal(amount), int(count))

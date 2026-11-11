@@ -162,6 +162,7 @@ async def rebuild_paid_windows_after(
     session: AsyncSession, *, project_id: UUID, customer_id: UUID,
     plan_id: UUID, after: datetime,
     termination_times: tuple[datetime, ...] = (),
+    include_equal: bool = False,
 ) -> set[UUID]:
     """Replay later still-paid manual AND Stars renewals after backfill/refund.
 
@@ -183,7 +184,7 @@ async def rebuild_paid_windows_after(
     anchors: list[tuple[datetime, datetime, datetime | None]] = []
     for grant, payment in manual:
         at = payment.approved_at
-        if at <= after:
+        if at < after or (at == after and not include_equal):
             if grant.valid_until is not None:
                 anchors.append((at, grant.valid_until, None))
         else:
@@ -197,7 +198,7 @@ async def rebuild_paid_windows_after(
         if order.paid_at is None:
             continue
         at = order.paid_at
-        if at <= after:
+        if at < after or (at == after and not include_equal):
             if grant.valid_until is not None:
                 anchors.append((at, grant.valid_until, None))
         else:
@@ -217,7 +218,7 @@ async def rebuild_paid_windows_after(
         if order.paid_at is None:
             continue
         at = order.paid_at
-        if at <= after:
+        if at < after or (at == after and not include_equal):
             if grant.valid_until is not None:
                 anchors.append((at, grant.valid_until, returned.refunded_at))
         else:
