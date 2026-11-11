@@ -188,7 +188,7 @@ async def merchant_saas_statements(
                     "SELECT public.platform_saas_invoice_currency_snapshot("
                     ":invoice) AS snapshot"
                 ).columns(snapshot=JSONB),
-                {"invoice": item["id"]},
+                {"invoice": UUID(str(item["id"]))},
             )).scalar_one()
             if not isinstance(snapshot, dict):
                 raise RuntimeError("Invalid account invoice currency snapshot")
