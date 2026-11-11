@@ -424,12 +424,24 @@ class CustomerBotSupervisor:
             await sync_official_month_rates(self.factory, self.settings)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            # No raw provider payload or URL in error logs. Rates remain
-            # missing, and all foreign-currency invoices fail closed.
-            logger.warning("Official monthly FX unavailable; retry on schedule")
+        except Exception as exc:
+            # No raw provider payload or URLs in logs. Keep sales and
+            # invoicing unchanged and retry FX in five minutes, not six hours.
+            self._next_fx_sync_at = monotonic() + 5 * 60
+            logger.warning(
+                "Official monthly FX sync failed (%s); retry in 5 minutes",
+                type(exc).__name__,
+            )
 
     async def run(self) -> None:
+        if (
+            self.settings.customer_supervisor_shard_id == 0
+            and self.settings.platform_owner_telegram_id is None
+        ):
+            logger.warning(
+                "Monthly FX sync disabled: customer supervisor lacks "
+                "TMS_PLATFORM_OWNER_TELEGRAM_ID"
+            )
         try:
             while True:
                 # One shared fetch for the platform, never for each bot.
