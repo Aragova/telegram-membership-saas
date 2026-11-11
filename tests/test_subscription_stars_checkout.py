@@ -4,7 +4,7 @@ Every buyer action is under a real project scope. Same charge retries grant
 exactly once; wrong buyer/amount/bot cannot deliver. Manual settlement remains.
 """
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -354,5 +354,110 @@ async def test_refund_newest_renewal_and_lost_ledger_refund_preserve_old_access(
             assert (await session.scalar(select(func.count()).select_from(
                 SubscriptionStarRefund,
             ).where(SubscriptionStarRefund.project_id == project_id))) == 2
+    finally:
+        await engine.dispose()
+
+
+async def test_replay_refund_before_next_purchase_does_not_delay_access():
+    """Telegram returns latest first: A paid, A refunded, B paid is replayed
+    chronologically, so B starts from its own purchase date, not refunded A.
+    """
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Chronological Stars",
+                status="active", duration_value=1, duration_unit="month",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id,
+                resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id,
+                plan_id=plan.id, currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        payloads = []
+        for _ in range(2):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                payloads.append((order.id, order.invoice_payload))
+        t0 = datetime.now(UTC) - timedelta(minutes=3)
+        refund_at = t0 + timedelta(minutes=1)
+        b_paid_at = t0 + timedelta(minutes=2)
+
+        def _paid(payload, charge, moment):
+            return SimpleNamespace(
+                id=charge, amount=70, date=moment, receiver=None,
+                source=SimpleNamespace(
+                    type="user", transaction_type="invoice_payment",
+                    user=SimpleNamespace(id=buyer), invoice_payload=payload,
+                ),
+            )
+
+        def _refund(payload, charge, moment):
+            return SimpleNamespace(
+                id=charge, amount=-70, date=moment, source=None,
+                receiver=SimpleNamespace(
+                    type="user", transaction_type="invoice_payment",
+                    user=SimpleNamespace(id=buyer), invoice_payload=payload,
+                ),
+            )
+
+        # Telegram ledger is newest-first. A naive two-pass "all incoming,
+        # then all outgoing" collector would wrongly extend B after A.
+        bot = SimpleNamespace(
+            id=bot_id,
+            get_star_transactions=AsyncMock(return_value=SimpleNamespace(
+                transactions=[
+                    _paid(payloads[1][1], "charge-B", b_paid_at),
+                    _refund(payloads[0][1], "charge-A", refund_at),
+                    _paid(payloads[0][1], "charge-A", t0),
+                ],
+            )),
+        )
+        paid, returned = await reconcile_subscription_star_ledger(
+            factory, bot=bot, project_id=project_id, buyer_id=buyer,
+            pages=1,
+        )
+        assert set(paid) == {payloads[0][0], payloads[1][0]}
+        assert len(returned) == 1
+        async with system_project_session_scope(factory, project_id) as session:
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project_id,
+                Subscription.plan_id == plan.id,
+            ))
+            assert sub.status == "active"
+            assert sub.last_star_order_id == payloads[1][0]
+            assert sub.current_period_start == b_paid_at
+            assert (await session.scalar(select(EntitlementGrant.valid_from).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == payloads[1][0],
+            ))) == b_paid_at
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == payloads[0][0],
+                EntitlementGrant.status == "active",
+            ))) == 0
     finally:
         await engine.dispose()
