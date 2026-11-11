@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from aiogram.types import StarTransaction
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -409,7 +410,9 @@ async def test_replay_refund_before_next_purchase_does_not_delay_access():
                     plan_price_id=price_id,
                 )
                 payloads.append((order.id, order.invoice_payload))
-        t0 = datetime.now(UTC) - timedelta(minutes=3)
+        t0 = (datetime.now(UTC) - timedelta(minutes=3)).replace(
+            microsecond=0
+        )
         refund_at = t0 + timedelta(minutes=1)
         b_paid_at = t0 + timedelta(minutes=2)
 
@@ -423,13 +426,21 @@ async def test_replay_refund_before_next_purchase_does_not_delay_access():
             )
 
         def _refund(payload, charge, moment):
-            return SimpleNamespace(
-                id=charge, amount=70, date=moment, source=None,
-                receiver=SimpleNamespace(
-                    type="user", transaction_type="invoice_payment",
-                    user=SimpleNamespace(id=buyer), invoice_payload=payload,
-                ),
-            )
+            # Parse the real Bot API object through aiogram. The outgoing
+            # refund carries a POSITIVE amount and receiver, no source.
+            return StarTransaction.model_validate({
+                "id": charge, "amount": 70,
+                "date": int(moment.timestamp()),
+                "receiver": {
+                    "type": "user",
+                    "transaction_type": "invoice_payment",
+                    "user": {
+                        "id": buyer, "is_bot": False,
+                        "first_name": "Buyer",
+                    },
+                    "invoice_payload": payload,
+                },
+            })
 
         # Telegram ledger can be newest-first. The real Bot API serializes
         # a positive refund amount with receiver and no source. A naive
