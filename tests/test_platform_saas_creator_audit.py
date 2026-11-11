@@ -126,18 +126,33 @@ async def test_missing_or_ambiguous_channels_never_trigger_telegram_calls(
     monkeypatch.setattr(audit, "_telegram_creator_status", remote)
 
     class FakeSession:
-        async def execute(self, statement):
-            return SimpleNamespace(all=lambda: [(instance, project)])
+        def __init__(self, scope):
+            self.scope = scope
+            self.scoped_reads = 0
+
         async def scalars(self, statement):
+            if self.scope.project_id is None:
+                return SimpleNamespace(all=lambda: [project_id])
+            assert self.scope.project_id == project_id
+            self.scoped_reads += 1
+            if self.scoped_reads == 1:
+                return SimpleNamespace(all=lambda: [instance])
             return SimpleNamespace(all=lambda: [])
 
     class FakeScope:
+        def __init__(self, context):
+            self.context = context
+
         async def __aenter__(self):
-            return FakeSession()
+            return FakeSession(self.context)
+
         async def __aexit__(self, *args):
             return None
 
-    monkeypatch.setattr(audit, "tenant_session_scope", lambda *a: FakeScope())
+    monkeypatch.setattr(
+        audit, "tenant_session_scope",
+        lambda factory, context: FakeScope(context),
+    )
     result = await audit.audit_creator_page(
         AsyncMock(), actor_user_id=actor,
         actor_telegram_id=7777, page=0,
