@@ -1131,9 +1131,7 @@ async def test_delayed_stars_refund_repairs_manual_paid_renewal():
                 buyer_id=buyer, username=None, first_name="Buyer",
                 plan_price_id=stars_price_id,
             )
-            order_id, payload, customer_id = (
-                order.id, order.invoice_payload, order.customer_id,
-            )
+            payload, customer_id = order.invoice_payload, order.customer_id
         async with system_project_session_scope(factory, project_id) as session:
             await confirm_subscription_stars_payment(
                 session, project_id=project_id, bot_id=bot_id,
@@ -1242,7 +1240,7 @@ async def test_owner_termination_reader_rejects_wrong_project_scope():
             ) == ()
             with pytest.raises(DBAPIError):
                 await session.scalar(select(func.public.subscription_owner_end_times(
-                    project_id, UUID(int=1),
+                    project_id, project_id,
                 )))
     finally:
         await engine.dispose()
