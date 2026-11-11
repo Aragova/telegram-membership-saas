@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -70,3 +72,28 @@ async def capture_paid_file_stars(
     if result.recorded:
         LOG.info("Recorded %s paid-file Stars reward snapshots", result.recorded)
     return result
+
+
+async def merchant_star_project_summary(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, project_id: UUID, month: date,
+) -> dict:
+    """Tenant owner's read-only priced Stars sales (never an invoice).
+
+    Results include the outstanding reconciliation count. Missing rows
+    cannot be silently interpreted as 'no Stars sold'.
+    """
+    if month.day != 1:
+        raise ValueError("Stars accounting month must start on day 1")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        data = (await session.execute(text(
+            "SELECT public.platform_saas_star_project_summary("
+            ":project,:month) AS data"
+        ).columns(data=JSONB), {
+            "project": project_id, "month": month,
+        })).scalar_one()
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        raise RuntimeError("Invalid owner Stars settlement preview")
+    return data
