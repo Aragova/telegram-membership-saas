@@ -726,7 +726,7 @@ def create_owner_setup_router(
                 [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview"),
                  _button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
                 [
-                    _button(tr("🧾 Счёт", "🧾 Bill"), "saasinvoices:0"),
+                    _button(tr("🧾 Счёт", "🧾 Bill"), "saasinvoices:0", "success"),
                     InlineKeyboardButton(
                         text="🌐 Language / Язык", callback_data="lng:menu",
                         style="success",
