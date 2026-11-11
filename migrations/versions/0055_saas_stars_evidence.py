@@ -63,8 +63,8 @@ def upgrade() -> None:
         sa.Column("telegram_charge_id", sa.String(256), nullable=False),
         sa.Column("stars_amount", sa.Integer(), nullable=False),
         sa.Column("usd_per_star", sa.Numeric(18, 9), nullable=False),
-        sa.Column("reward_usd", sa.Numeric(38, 9), nullable=False),
-        sa.Column("commission_usd", sa.Numeric(38, 9), nullable=False),
+        sa.Column("reward_usd", sa.Numeric(38, 18), nullable=False),
+        sa.Column("commission_usd", sa.Numeric(38, 18), nullable=False),
         sa.Column("rate_effective_on", sa.Date(), sa.ForeignKey(
             "platform_saas_star_reward_rates.effective_on", ondelete="RESTRICT",
         ), nullable=False),
