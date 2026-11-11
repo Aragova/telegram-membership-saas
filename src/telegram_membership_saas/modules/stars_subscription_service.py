@@ -300,6 +300,9 @@ async def confirm_subscription_stars_payment(
         session.add(subscription)
     else:
         subscription.status = SubscriptionStatus.ACTIVE.value
+        # A missed historical charge may predate the first locally processed
+        # payment. Preserve the DB invariant started_at <= period_start.
+        subscription.started_at = min(subscription.started_at, start_at)
         subscription.current_period_start = start_at
         subscription.current_period_end = end_at
         subscription.last_payment_id = None

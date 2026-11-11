@@ -166,6 +166,7 @@ async def refresh_paid_subscription_summary(
         grant.valid_until or floor,
         grant.valid_from,
     ))
+    subscription.started_at = min(subscription.started_at, winning.valid_from)
     subscription.current_period_start = winning.valid_from
     subscription.current_period_end = winning.valid_until
     subscription.status = (
