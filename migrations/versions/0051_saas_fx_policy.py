@@ -456,6 +456,8 @@ def upgrade() -> None:
           star_count integer;
           today_rates jsonb;
           billing_on boolean;
+          first_charge timestamptz;
+          trial_started timestamptz;
         BEGIN
           actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
           SELECT owner_user_id INTO owner_id FROM public.projects
@@ -473,8 +475,12 @@ def upgrade() -> None:
               ON po.telegram_user_id=u.telegram_user_id
             WHERE u.id=owner_id AND po.role='owner'
           ) INTO own_platform;
-          SELECT enabled INTO billing_on
+          SELECT enabled,effective_from INTO billing_on,first_charge
             FROM public.platform_saas_billing_control WHERE id=1;
+          SELECT min(t.claimed_at) INTO trial_started
+          FROM public.merchant_platform_trial_claims t
+          WHERE t.owner_user_id=owner_id
+            AND t.scope='owner' AND t.policy_key='vimi-saas-72h-v1';
 
           WITH sales AS (
             SELECT p.final_amount AS amount,p.currency_code AS currency,
@@ -493,7 +499,13 @@ def upgrade() -> None:
           rated AS (
             SELECT s.amount,s.currency,s.kind,
                    CASE WHEN s.currency='RUB' THEN 1::numeric
-                        ELSE fx.rub_per_unit END AS monthly_rate
+                        ELSE fx.rub_per_unit END AS monthly_rate,
+                   (NOT coalesce(billing_on,false)
+                    OR (first_charge IS NOT NULL
+                        AND trial_started IS NOT NULL
+                        AND s.paid_at>=greatest(
+                          first_charge,trial_started+interval '72 hours'
+                        ))) AS commission_eligible
             FROM sales s
             LEFT JOIN public.platform_saas_fx_rates fx
               ON fx.billing_month=p_month
@@ -519,10 +531,16 @@ def upgrade() -> None:
           aggregates AS (
             SELECT currency,count(*) AS operations,
                    sum(amount) AS gross,
-                   count(*) FILTER (WHERE monthly_rate IS NULL) AS missing_count,
+                   count(*) FILTER (
+                     WHERE monthly_rate IS NULL AND commission_eligible
+                   ) AS missing_count,
+                   count(*) FILTER (
+                     WHERE commission_eligible
+                   ) AS chargeable_operations,
                    min(monthly_rate) AS min_rate,max(monthly_rate) AS max_rate,
                    coalesce(sum(
                      CASE WHEN monthly_rate IS NOT NULL
+                            AND commission_eligible
                           THEN round(amount*monthly_rate*0.05,2)
                           ELSE 0 END
                    ),0) AS fee
@@ -538,7 +556,9 @@ def upgrade() -> None:
             coalesce(sum(fee) FILTER (WHERE currency<>'XTR'),0),
             coalesce(sum(fee) FILTER (WHERE currency='XTR'),0),
             coalesce(sum(a.missing_count),0),
-            coalesce(sum(operations) FILTER (WHERE currency='XTR'),0)
+            coalesce(sum(chargeable_operations) FILTER (
+              WHERE currency='XTR'
+            ),0)
           INTO rows,fiat_fee,stars_fee,unrated_count,star_count
           FROM aggregates a;
 
@@ -560,6 +580,9 @@ def upgrade() -> None:
             'billing_enabled',coalesce(billing_on,false),
             'month_rates',today_rates,
             'estimate_complete',unrated_count=0 AND star_count=0
+              AND (NOT coalesce(billing_on,false) OR (
+                first_charge IS NOT NULL AND trial_started IS NOT NULL
+              ))
           );
         END;
         $preview$
