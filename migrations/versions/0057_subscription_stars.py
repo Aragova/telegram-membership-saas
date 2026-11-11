@@ -41,6 +41,8 @@ def upgrade() -> None:
                   server_default="pending"),
         sa.Column("telegram_charge_id", sa.String(256), nullable=True),
         sa.Column("paid_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("precheckout_approved_at",
+                  sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False,
                   server_default=sa.text("clock_timestamp()")),
         sa.ForeignKeyConstraint(
