@@ -18,6 +18,7 @@ from telegram_membership_saas.modules.entitlements import (
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments import Payment
+from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
     SubscriptionStarRefund,
@@ -25,6 +26,7 @@ from telegram_membership_saas.modules.stars_subscriptions import (
 from telegram_membership_saas.modules.subscriptions import (
     Subscription,
     SubscriptionStatus,
+    calculate_period_end,
 )
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
@@ -127,8 +129,8 @@ async def record_verified_subscription_star_refund(
             Payment.plan_id == order.plan_id,
         )
     )).all()
-    stars = (await session.scalars(
-        select(EntitlementGrant)
+    star_rows = (await session.execute(
+        select(EntitlementGrant, SubscriptionStarOrder)
         .join(SubscriptionStarOrder, and_(
             SubscriptionStarOrder.id == EntitlementGrant.source_id,
             SubscriptionStarOrder.project_id == EntitlementGrant.project_id,
@@ -141,7 +143,57 @@ async def record_verified_subscription_star_refund(
             SubscriptionStarOrder.customer_id == order.customer_id,
             SubscriptionStarOrder.plan_id == order.plan_id,
         )
+        .with_for_update(of=EntitlementGrant)
     )).all()
+    # A late Telegram refund may arrive AFTER a later payment was already
+    # confirmed. B's grant may have been scheduled from refunded A's expiry,
+    # despite A having actually been returned BEFORE B was purchased.
+    # Rebuild the subsequent Stars periods from original paid_at snapshots,
+    # without altering any independent/manual payment or the sale ledger.
+    subsequent: dict[UUID, tuple[SubscriptionStarOrder, list[EntitlementGrant]]] = {}
+    for grant, paid_order in star_rows:
+        if paid_order.paid_at is not None and paid_order.paid_at > moment:
+            if paid_order.id not in subsequent:
+                subsequent[paid_order.id] = (paid_order, [])
+            subsequent[paid_order.id][1].append(grant)
+    if subsequent:
+        project = await session.scalar(select(Project).where(
+            Project.id == project_id,
+        ))
+        if project is None:
+            raise RuntimeError("Refund project disappeared")
+        # Keep paid periods created before the verified refund as anchors.
+        # Later grants must not inherit the expiry of the returned purchase.
+        anchor_ends = [
+            grant.valid_until for grant in manual
+            if grant.valid_until is not None and grant.valid_from <= moment
+        ] + [
+            grant.valid_until for grant, paid_order in star_rows
+            if paid_order.paid_at is not None and paid_order.paid_at <= moment
+            and grant.valid_until is not None
+        ]
+        prior_end = max(anchor_ends, default=None)
+        for paid_order, paid_grants in sorted(
+            subsequent.values(),
+            key=lambda pair: (pair[0].paid_at, str(pair[0].id)),
+        ):
+            actual_start = (
+                max(paid_order.paid_at, prior_end)
+                if prior_end is not None else paid_order.paid_at
+            )
+            actual_end = calculate_period_end(
+                actual_start, timezone_name=project.timezone,
+                duration_value=paid_order.duration_value,
+                duration_unit=paid_order.duration_unit,
+            )
+            for grant in paid_grants:
+                if grant.valid_from != actual_start or grant.valid_until != actual_end:
+                    grant.valid_from = actual_start
+                    grant.valid_until = actual_end
+                    targets.add(grant.resource_id)
+            prior_end = actual_end
+        await session.flush()
+    stars = [grant for grant, _ in star_rows]
     survivors = (*manual, *stars)
     if survivors:
         # Lifetime entitlements outrank finite grants; otherwise preserve
