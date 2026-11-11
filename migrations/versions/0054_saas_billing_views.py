@@ -132,9 +132,62 @@ def upgrade() -> None:
         END;
         $fn$
     """)
+    # The displayed pre-confirmation quote must match the value frozen
+    # atomically under the invoice row lock. No rate from a later Moscow day
+    # or newly imported CBR quote may silently replace the confirmed amount.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_lock_invoice_currency_expected(
+            p_invoice uuid, p_currency text, p_day date,
+            p_rate numeric, p_amount numeric
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog,public AS $fn$
+        DECLARE
+          owner_id uuid;
+          actor uuid;
+          report jsonb;
+          result jsonb;
+        BEGIN
+          actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+          IF p_invoice IS NULL OR p_day IS NULL
+             OR p_rate IS NULL OR p_amount IS NULL THEN
+            RAISE EXCEPTION 'Missing expected settlement quote'
+              USING ERRCODE='22023';
+          END IF;
+          SELECT owner_user_id INTO owner_id
+          FROM public.platform_saas_invoices
+          WHERE id=p_invoice AND status='issued' FOR UPDATE;
+          IF owner_id IS NULL OR actor IS DISTINCT FROM owner_id THEN
+            RAISE EXCEPTION 'Invoice not visible to liable owner'
+              USING ERRCODE='42501';
+          END IF;
+          report:=public.platform_saas_preview_invoice_currency(
+              p_invoice,p_currency
+          );
+          IF NOT coalesce((report->>'quote_ready')::boolean,false)
+             OR (report->>'quote_day')::date IS DISTINCT FROM p_day
+             OR (report->>'rub_per_unit')::numeric IS DISTINCT FROM p_rate
+             OR (report->>'amount')::numeric IS DISTINCT FROM p_amount THEN
+            RAISE EXCEPTION 'Displayed FX terms changed, review again'
+              USING ERRCODE='22023';
+          END IF;
+          result:=public.platform_saas_select_invoice_currency(
+              p_invoice,p_currency
+          );
+          IF (result->>'quote_day')::date IS DISTINCT FROM p_day
+             OR (result->>'rub_per_unit')::numeric IS DISTINCT FROM p_rate
+             OR (result->>'amount')::numeric IS DISTINCT FROM p_amount THEN
+            -- Any insert made by the delegated function rolls back.
+            RAISE EXCEPTION 'Settlement changed during currency lock'
+              USING ERRCODE='22023';
+          END IF;
+          RETURN result;
+        END;
+        $fn$
+    """)
     for signature in (
         "platform_saas_preview_invoice_currency(uuid,text)",
         "platform_saas_invoice_credit_history(uuid)",
+        "platform_saas_lock_invoice_currency_expected(uuid,text,date,numeric,numeric)",
     ):
         op.execute(f"REVOKE ALL ON FUNCTION public.{signature} FROM PUBLIC")
     op.execute("""
@@ -144,7 +197,10 @@ def upgrade() -> None:
                     WHERE rolname='membership_runtime') THEN
             GRANT EXECUTE ON FUNCTION
               public.platform_saas_preview_invoice_currency(uuid,text),
-              public.platform_saas_invoice_credit_history(uuid)
+              public.platform_saas_invoice_credit_history(uuid),
+              public.platform_saas_lock_invoice_currency_expected(
+                uuid,text,date,numeric,numeric
+              )
             TO membership_runtime;
           END IF;
         END $grants$
@@ -152,6 +208,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "DROP FUNCTION IF EXISTS "
+        "public.platform_saas_lock_invoice_currency_expected("
+        "uuid,text,date,numeric,numeric)"
+    )
     op.execute(
         "DROP FUNCTION IF EXISTS public.platform_saas_invoice_credit_history(uuid)"
     )
