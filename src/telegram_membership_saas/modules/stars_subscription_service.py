@@ -180,10 +180,16 @@ async def stars_subscription_precheckout(
         BotInstance.telegram_bot_id == bot_id,
         BotInstance.status == "registered",
     ))
-    return bool(
+    allowed = bool(
         project and plan and price and bot_exists and linked and customer
         and not customer.is_banned
     )
+    if allowed:
+        # A precheckout approval can precede delivery of successful_payment.
+        # Keep the bot credentials around for delayed updates/recovery.
+        order.precheckout_approved_at = datetime.now(UTC)
+        await session.flush()
+    return allowed
 
 
 async def confirm_subscription_stars_payment(
