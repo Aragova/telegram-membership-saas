@@ -100,3 +100,42 @@ class SubscriptionStarOrder(Base):
         DateTime(timezone=True), server_default=func.clock_timestamp(),
         nullable=False,
     )
+
+
+class SubscriptionStarRefund(Base):
+    """One authenticated, immutable Telegram refund of a Stars subscription."""
+
+    __tablename__ = "subscription_star_refunds"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["order_id", "project_id"],
+            ["subscription_star_orders.id", "subscription_star_orders.project_id"],
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("order_id", name="uq_subscription_star_refund_order"),
+        UniqueConstraint(
+            "telegram_bot_id", "telegram_charge_id",
+            name="uq_subscription_star_refund_charge",
+        ),
+        CheckConstraint(
+            "stars_amount BETWEEN 1 AND 250000",
+            name="ck_subscription_star_refund_amount",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    order_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    invoice_payload: Mapped[str] = mapped_column(String(128), nullable=False)
+    telegram_charge_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    stars_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    refunded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=func.clock_timestamp(),
+    )
