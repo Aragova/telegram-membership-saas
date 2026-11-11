@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint,
-    Integer, String, UniqueConstraint, Uuid, func,
+    Index, Integer, String, UniqueConstraint, Uuid, func, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,6 +15,14 @@ class SubscriptionStarOrder(Base):
     __tablename__ = "subscription_star_orders"
     __table_args__ = (
         UniqueConstraint("id", "project_id", name="uq_subscription_star_order_project"),
+        Index(
+            "ix_subscription_star_order_paid", "paid_at", "id",
+            postgresql_where=text("status='paid'"),
+        ),
+        Index(
+            "ix_subscription_star_order_customer",
+            "project_id", "customer_id", "created_at",
+        ),
         UniqueConstraint("invoice_payload", name="uq_subscription_star_payload"),
         UniqueConstraint(
             "telegram_bot_id", "telegram_charge_id",
