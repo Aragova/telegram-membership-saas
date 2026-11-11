@@ -4,8 +4,7 @@ Every buyer action is under a real project scope. Same charge retries grant
 exactly once; wrong buyer/amount/bot cannot deliver. Manual settlement remains.
 """
 import os
-from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
@@ -27,7 +26,6 @@ from telegram_membership_saas.modules.stars_subscription_service import (
     create_stars_subscription_order,
     stars_subscription_precheckout,
 )
-from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.tenant_context import TenantContext
 
