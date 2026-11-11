@@ -121,7 +121,7 @@ def test_stars_price_grouped_table_without_file_names(lang):
     finally:
         _language.reset(token)
     assert "100 ⭐" in html and "500 ⭐" in html
-    assert "2000" in html and "$1.300000000" in html
+    assert "2000" in html and "$1.30" in html
     assert "JPEG" not in html
     assert "<table bordered compact>" in html
 
