@@ -44,6 +44,7 @@ from telegram_membership_saas.modules.stars_subscription_recovery import (
 from telegram_membership_saas.modules.stars_subscription_service import (
     confirm_subscription_stars_payment,
     create_stars_subscription_order,
+    mark_stars_precheckout_approved,
     stars_subscription_precheckout,
 )
 from telegram_membership_saas.modules.telegram_commerce.account import (
@@ -867,6 +868,15 @@ def create_telegram_commerce_router(
                         session_factory, project_id=project_id, bot=bot,
                     ), timeout=5,
                 )
+                async with system_project_session_scope(
+                    session_factory, project_id,
+                ) as session:
+                    allowed = await mark_stars_precheckout_approved(
+                        session, project_id=project_id, bot_id=bot.id,
+                        buyer_id=query.from_user.id,
+                        payload=query.invoice_payload,
+                        amount=query.total_amount,
+                    )
         except Exception:
             allowed = False
         await bot.answer_pre_checkout_query(
