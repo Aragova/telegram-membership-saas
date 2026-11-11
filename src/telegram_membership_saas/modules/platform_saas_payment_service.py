@@ -34,6 +34,7 @@ class MerchantSaasStatements:
     page: int
     pending_credit_rub: Decimal = Decimal("0")
     pending_credit_count: int = 0
+    foreign_unpaid_count: int = 0
 
 
 async def platform_saas_payment_details(
@@ -174,6 +175,24 @@ async def merchant_saas_statements(
                 .columns(data=JSONB),
             {"owner": actor_user_id},
         )).scalar_one()
+        foreign_count = (await session.execute(
+            text("SELECT public.platform_saas_owner_foreign_invoice_count()")
+        )).scalar_one()
+        # Runtime cannot read financial tables directly. Each invoice's
+        # settlement is owner-scoped by the same audited SECURITY DEFINER RPC
+        # used for its detail card.
+        invoices = []
+        for item in data.get("invoices", []):
+            snapshot = (await session.execute(
+                text(
+                    "SELECT public.platform_saas_invoice_currency_snapshot("
+                    ":invoice) AS snapshot"
+                ).columns(snapshot=JSONB),
+                {"invoice": item["id"]},
+            )).scalar_one()
+            if not isinstance(snapshot, dict):
+                raise RuntimeError("Invalid account invoice currency snapshot")
+            invoices.append({**item, "settlement": snapshot})
     if not isinstance(data, dict) or not isinstance(data.get("invoices"), list):
         raise RuntimeError("Invalid merchant billing snapshot")
     if not isinstance(credits, dict):
@@ -184,8 +203,9 @@ async def merchant_saas_statements(
         outstanding_rub=Decimal(str(data["outstanding_rub"])),
         configured=bool(data["details_configured"]),
         instructions=data["instructions"],
-        invoices=tuple(data["invoices"]),
+        invoices=tuple(invoices),
         page=page,
         pending_credit_rub=Decimal(str(credits["total_credited_rub"])),
         pending_credit_count=int(credits["credit_count"]),
+        foreign_unpaid_count=int(foreign_count),
     )
