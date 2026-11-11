@@ -8,10 +8,15 @@ commit. A missed update can be recovered from the bot's authenticated
 Stars ledger via `/starsrecover`. A verified subscription charge is
 also visible to the existing USD developer-reward snapshot and 5% evidence
 collector, without live SaaS fees. Manual checkout is preserved.
-**Draft PR #130 is unmerged and not staging-deployed.** Crypto Bot for
-files and subscriptions and subscription Stars refunds remain required
-follow-on gates; never enable live commercial billing or holds from this
-PR alone.
+**Draft PR #130 is unmerged and not staging-deployed.** Authenticated
+subscription Stars refunds now create original-rate 5% credits and
+revoke only returned-purchase grants. A remaining paid term is preserved
+when a renewal is refunded; the connected bot periodically reconciles
+missed incoming/outgoing Stars transactions from its own official ledger,
+with buyer-triggered recovery. Crypto Bot for files and subscriptions,
+broader chargeback accounting and live commission issuance remain future
+independent gates. Never enable live commercial billing or holds from
+this PR alone.
 
 ---
 
