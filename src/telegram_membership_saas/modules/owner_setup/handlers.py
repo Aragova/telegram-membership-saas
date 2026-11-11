@@ -265,6 +265,7 @@ def _saas_preview_rich(preview: dict) -> str:
     columns = (
         tr("Валюта", "Currency"),
         tr("Оборот", "Turnover"),
+        tr("Курс, ₽", "Rate, RUB"),
         tr("5% в ₽", "5% in RUB"),
     )
     lines = [
@@ -280,21 +281,39 @@ def _saas_preview_rich(preview: dict) -> str:
         currency = str(record["currency"])
         amount = str(record["gross"])
         missing = int(record.get("missing", 0))
-        fee = (
-            tr("Нет курса", "No rate")
-            if missing else str(record["fee_rub"])
+        minimum, maximum = record.get("min_rate"), record.get("max_rate")
+        rate = (
+            tr("Не задан", "Missing") if missing
+            else str(minimum) if minimum == maximum
+            else str(minimum) + "–" + str(maximum)
         )
-        if currency == "XTR":
+        fee = (
+            tr("Освобождён", "Exempt") if preview["is_platform_owner"]
+            else tr("Нет курса", "No rate") if missing
+            else str(record["fee_rub"])
+        )
+        if currency == "XTR" and not preview["is_platform_owner"]:
             fee = fee + " " + tr("(предварительно)", "(provisional)")
         lines.append(
             "<tr><td>" + escape(currency) + "</td><td>"
-            + escape(amount) + "</td><td>" + escape(fee) + "</td></tr>"
+            + escape(amount) + "</td><td>" + escape(rate)
+            + "</td><td>" + escape(fee) + "</td></tr>"
         )
     if not rows:
         lines.append("<tr><td>"
                      + tr("Нет продаж", "No sales")
-                     + "</td><td>0</td><td>0</td></tr>")
+                     + "</td><td>0</td><td>0</td><td>0</td></tr>")
     lines.append("</table>")
+    today = preview.get("today_rates") or {}
+    lines.append("<p>" + tr(
+        "Курсы на сегодня (опубликованные): ",
+        "Today's published rates: ",
+    ) + (
+        ", ".join(
+            escape(str(code)) + " = " + escape(str(value)) + " ₽"
+            for code, value in sorted(today.items())
+        ) if today else tr("ещё нет", "not published yet")
+    ) + "</p>")
 
     lines.append("<p>" + tr(
         "Комиссия с обычных оплат: ", "Fiat sales commission: "
@@ -354,10 +373,21 @@ def _saas_preview_classic(preview: dict) -> str:
     for item in preview.get("rows", []):
         amount = escape(str(item["gross"]))
         currency = escape(str(item["currency"]))
-        quote = tr("нет дневного курса", "payment-day rate missing") if (
-            int(item.get("missing", 0))
-        ) else escape(str(item["fee_rub"]) + " ₽")
-        lines.append("• " + amount + " " + currency + " · 5%: " + quote)
+        is_missing = int(item.get("missing", 0))
+        quote = (
+            tr("нет дневного курса", "payment-day rate missing")
+            if is_missing else escape(str(item.get("min_rate", "?"))) + " ₽"
+        )
+        fee = (
+            tr("освобождён", "exempt") if preview["is_platform_owner"]
+            else tr("нет курса", "no rate") if is_missing
+            else escape(str(item["fee_rub"])) + " ₽"
+        )
+        lines.append(
+            "• " + amount + " " + currency
+            + " · " + tr("курс: ", "rate: ") + quote
+            + " · 5%: " + fee
+        )
     if not preview.get("rows"):
         lines.append(tr("Подтверждённых продаж пока нет.",
                         "No confirmed sales yet."))
