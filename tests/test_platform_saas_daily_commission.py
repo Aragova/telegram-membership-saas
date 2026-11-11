@@ -142,18 +142,18 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                 assert getattr(missing.value.orig, "sqlstate", None) == "22023"
 
                 await conn.execute(text(
-                    "SELECT public.platform_saas_publish_fx_rate("
-                    ":month,'USD',:rate)"
-                ), {"month": month, "rate": Decimal("80")})
+                    "SELECT public.platform_saas_publish_cbr_fx_rate("
+                    ":month,'USD',:rate,:source_date)"
+                ), {"month": month, "rate": Decimal("80"), "source_date": month})
                 for currency, rate in (
                     ("EUR", "90"), ("UAH", "2"), ("BYN", "27"),
                 ):
                     await conn.execute(text(
-                        "SELECT public.platform_saas_publish_fx_rate("
-                        ":month,:currency,:rate)"
+                        "SELECT public.platform_saas_publish_cbr_fx_rate("
+                        ":month,:currency,:rate,:source_date)"
                     ), {
                         "month": month, "currency": currency,
-                        "rate": Decimal(rate),
+                        "rate": Decimal(rate), "source_date": month,
                     })
                 with pytest.raises(DBAPIError) as override:
                     async with conn.begin_nested():
