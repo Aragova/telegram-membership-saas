@@ -8,6 +8,7 @@ import pytest
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
+from telegram_membership_saas.modules.platform_saas_invoice_ui import quote_fingerprint
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     MerchantSaasStatements,
 )
@@ -130,4 +131,9 @@ async def test_currency_preview_is_read_only_until_confirm(monkeypatch):
         ].inline_keyboard
         for b in row
     ]
-    assert ("own:saasbilllock:" + encode_uuid(invoice_id) + ":0:EUR") in buttons
+    expected = (
+        "own:sl:" + encode_uuid(invoice_id) + ":0:EUR:20261111:"
+        + quote_fingerprint(preview.return_value)
+    )
+    assert expected in buttons
+    assert len(expected.encode("utf-8")) <= 64
