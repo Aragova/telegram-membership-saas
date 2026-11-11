@@ -33,7 +33,10 @@ def test_bill_preview_shows_original_currencies_and_estimate_not_invoice(lang):
     finally:
         _language.reset(token)
     assert rich.count("<table bordered compact>") >= 2
-    assert "Официальные курсы на сегодня" in rich if lang == "ru" else "Today's official exchange rates" in rich
+    if lang == "ru":
+        assert "Официальные курсы на сегодня" in rich
+    else:
+        assert "Today's official exchange rates" in rich
     assert "1000" in rich and "50" in rich and "30" in rich
     assert "535.00" in rich
     assert "535.00" not in classic  # simplified safe HTML fallback
