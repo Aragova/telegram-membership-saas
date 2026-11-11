@@ -149,6 +149,11 @@ jobs:
                       "platform_saas_publish_cbr_fx_rate(date,text,numeric,date)",
                       "platform_saas_publish_cbr_daily_fx(date,text,numeric,date)",
                       "platform_saas_daily_fx(date)",
+                      "platform_saas_select_invoice_currency(uuid,text)",
+                      "platform_saas_invoice_currency_snapshot(uuid)",
+                      "platform_saas_confirm_currency_receipt(uuid,text,numeric,text)",
+                      "platform_saas_record_refund_credit(uuid,text,numeric,text)",
+                      "platform_saas_refund_credit_report(uuid)",
                   ):
                       await connection.execute(
                           f"GRANT EXECUTE ON FUNCTION public.{function} "
@@ -156,7 +161,11 @@ jobs:
                       )
                   await connection.execute(
                       "REVOKE ALL ON public.platform_saas_payment_details, "
-                      "public.platform_saas_notice_outbox FROM membership_runtime"
+                      "public.platform_saas_notice_outbox, "
+                      "public.platform_saas_currency_settlements, "
+                      "public.platform_saas_currency_receipts, "
+                      "public.platform_saas_refund_credits "
+                      "FROM membership_runtime"
                   )
 
                   # Match production: migration 0029 explicitly denies

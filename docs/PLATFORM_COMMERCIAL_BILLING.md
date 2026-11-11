@@ -1,3 +1,43 @@
+## 7c. Immutable issued-invoice currency and refund audit (PR #126, 2026-11-11)
+
+Migration `0053_saas_settlement_credits` adds three FORCE-RLS tables:
+`platform_saas_currency_settlements` (one locked official quote per issued
+RUB-denominated invoice), `platform_saas_currency_receipts` (the platform
+owner's independently verified foreign-currency bank receipt linked atomically
+to the original RUB receipt), and `platform_saas_refund_credits` (audited
+source-linked compensating credits). These rows cannot be edited or deleted.
+No tenant role receives table privileges.
+
+A liable owner can lock RUB/USD/EUR/UAH/BYN once on their **real issued
+invoice**, never merely by browsing the monthly preview. RUB base is never
+recalculated at selection. Foreign settlement quotes use the official CBR
+quote for the Moscow day of choice, including the last official published
+source day for holidays. The quote date, CBR source date, rate and rounded
+settlement amount are frozen. Missing FX rejects selection. Choosing a
+different currency later is forbidden; an idempotent repeat reads the original
+selection. Old RUB receipt confirmation is barred for a foreign-locked quote.
+The platform owner alone may verify the actual exact currency and amount
+received and atomically link that receipt to the existing RUB ledger.
+
+Only a separately audited platform-owner action may record a genuine refund,
+chargeback or correction against an **issued paid-purchase commission line**.
+Credits have unique independent references, can be partial, are limited in
+aggregate to the charged RUB commission and never erase source events. They
+are not themselves proof of a customer's banking refund: the operator must
+verify the external reference. The initial implementation only records and
+reports credits as `pending_future_statement`. No automatic offset against
+debts, grace periods or future invoices is permitted until a subsequent
+explicitly reviewed allocation policy. Existing invoices, entitlements,
+receipts and holds remain untouched.
+
+**This is a dormant domain/DB slice**, not commercial activation or a new
+tenant menu. Merchant-facing currency selection and operator-facing currency
+bank reconciliation must be wired into the existing single billing screens
+with Rich RU/EN and HTML fallback, and credits must be allocated safely,
+before permitting real non-RUB payment instructions. Continue preserving
+`compose.light100.yaml`; no billing, access or hold flags enabled.
+
+
 # ViMi Pay — approved commercial concept v1 (2026-11-09)
 
 Status: product direction agreed; implementation phased, **all billing and restrictions DISABLED until separately approved rollout**. This document supplements VIMI_PAY_V2.md and MERCHANT_CONTINUITY.md.
