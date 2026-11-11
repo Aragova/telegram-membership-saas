@@ -1,38 +1,43 @@
-## Monthly official FX and customer-chosen bill currency (2026-11-11)
+## Sale-date FX and Rich admin billing (2026-11-11, supersedes monthly FX)
 
-User-approved rule: **one official monthly exchange-rate snapshot** for the
-entire platform, never 80/90 example values hardcoded, never daily conversion.
-Supervisor shard 0 requests the Central Bank of Russia official XML for the
-first Moscow calendar day of the month (including denomination, e.g. ten
-hryvnias), stores immutable RUB-per-unit USD/EUR/UAH/BYN rates together with
-the source publication date, and retries safely if a source is unavailable.
-If the provider omits a currency or a rate is stale/invalid, invoicing
-**fails closed**. Existing rates are never overwritten or silently changed.
-No new bot-specific schedulers, no added FX button in platform settings.
+**Controlling rule:** approved subscription or manually approved file sale
+uses the **official RUB-per-unit CBR quote for its exact Moscow approval
+date**; weekends/holidays use the latest officially available quote on
+that date. Never use a uniform month-start rate for historic sales, never
+rewrite a saved quotation and never treat example exchange rates as real.
+Migration `0052_sale_day_fx` creates an immutable private per-day RUB
+quote ledger, and switches commission issuer and the project preview to the
+sale's original payment date. The old `0051` monthly table is retained for
+audit/schema compatibility, not reused to calculate 5% for a new invoice.
 
-Inside a connected bot's main Admin menu, the existing **🧾 Счёт / Bill**
-button shows confirmed turnover by native currency, Stars separately, and
-the preview of 5% commission plus next-month RUB 150 bot service fee. After
-**💱 Choose bill currency**, the owner selects **RUB, USD, EUR, UAH, BYN**.
-One read-only owner-scoped DB quote converts the same RUB reference total
-into the selected currency using the stored accounting-month quote
-(amount/one-currency-unit), preserving two-decimal rounding and publishing
-source metadata. There are not five separate invoices; the chosen currency
-must become part of **one** immutable invoice/settlement snapshot in the
-future commercial activation workflow. A quote is not a payable invoice,
-and it cannot be paid before a real invoice is issued and verified by
-the ViMi Pay platform owner.
+The platform-wide customer-supervisor shard 0 downloads official CBR
+quotes once per missing day, processing at most seven dates in a pass and
+catching up automatically. It covers the **current and previous Moscow
+months**, keeps source dates, respects the provider's denomination and
+never invents a rate. Missing or invalid official quotes block the
+affected invoice; paid customer entitlements are unaffected.
 
-Telegram Stars (XTR) are counted as separate confirmed turnover. They are
-**not** fiat and are not converted via CBR. They require an independently
-verified Stars reward-value source, withdrawal/refund/chargeback reconciliation
-and a fixed-rate payout snapshot. Until then, any Stars-inclusive quote is
-explicitly incomplete: no final payable total or invented exchange rate.
-This PR does not issue a live consolidated invoice, enable billing/holds/
-trials, send payment instructions, or interrupt any customer bot. Preserve
-ViMi Pay's own My Bots fee exemption without Telegram creator checks.
-Follow-up: Stars reconciliation, correction/credit ledger, durable
-single-invoice currency selection and payment confirmation.
+**Settlement is a separate step.** In the connected bot's one
+**🧾 Счёт → 💱 Выбрать валюту** menu, RUB/USD/EUR/UAH/BYN quote
+converts the *already calculated RUB commission + next bot service fee*
+using the official rate on the **date the quote is requested**, not the
+old sale date and not the 1st of the month. The screen displays both
+the quote day and official CBR source day. The quote is read-only,
+not an issued invoice and never a payment request.
+
+**Rich UX:** no one-line FX string. The connected admin Bill has separate
+compact Rich tables for approved sales, today's CBR quotes (currency,
+RUB/unit and source day) and 5% + next-month fee. The chosen currency
+screen also uses Rich with standard HTML fallback and no duplicate
+navigation buttons. RU/EN complete.
+
+**Stars/XTR** turnover is shown separately; neither a CBR price nor a
+monthly guess can be used for its reward-value conversion. Stars remain
+excluded from payable totals until verified payout, refund and chargeback
+reconciliation. The platform owner's own My Bots remain completely
+fee-exempt by database ownership. No trial, billing or hold toggles are
+activated by this PR. Refund/credit policy and issuance of one immutable
+currency-selected invoice still require another explicit stage.
 
 ## Permanent ViMi Pay owner rule (2026-11-11, supersedes PR #119-#121)
 
