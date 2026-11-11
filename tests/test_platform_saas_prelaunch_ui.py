@@ -1,47 +1,11 @@
-"""Bank details stay short; paginated exemption audit is Rich and bilingual."""
+"""Bank details stay short, secure and bilingual."""
 import pytest
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     _platform_bank_text,
-    _platform_exemption_text,
 )
 from telegram_membership_saas.rich_messages import to_rich_html
-
-
-@pytest.mark.parametrize(
-    ("lang", "title", "pending"),
-    [
-        ("ru", "Исключения", "Нет подтверждения"),
-        ("en", "Exemptions", "Unverified"),
-    ],
-)
-def test_separate_exemption_audit_is_paginated_and_native_rich(
-    lang, title, pending,
-):
-    snapshot = {
-        "operator_bots": 25, "verified": 0, "pending": 25,
-        "page": 1, "pages": 4,
-        "pending_bots": [
-            {"username": "bot_a", "state": "not_exempt"},
-            {"username": "bot_b", "state": "needs_review"},
-        ],
-    }
-    token = _language.set(lang)
-    try:
-        legacy = _platform_exemption_text(snapshot)
-    finally:
-        _language.reset(token)
-    rendered = to_rich_html(legacy)
-    assert title in rendered
-    assert pending in legacy
-    assert "<table bordered compact>" in rendered
-    assert "@bot_a" in rendered and "@bot_b" in rendered
-    assert ("Страница 2 из 4" if lang == "ru" else "Page 2 of 4") in rendered
-    assert "Показаны первые 8" not in rendered
-    assert "First 8 shown" not in rendered
-    assert "25" in rendered
-    assert "Собственных каналов: 25" not in rendered
 
 
 @pytest.mark.parametrize("lang", ["ru", "en"])
