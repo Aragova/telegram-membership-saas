@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from decimal import Decimal
 from html import escape
 from secrets import randbelow
@@ -205,6 +206,7 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.platform_saas_payment_service import (
+    merchant_saas_project_preview,
     merchant_saas_statements,
 )
 from telegram_membership_saas.modules.projects.models import Project
@@ -256,6 +258,89 @@ def _statistics_amount(amount: Decimal) -> str:
     """Preserve integer trailing zeroes while trimming fractional padding."""
     value = format(amount, "f")
     return value.rstrip("0").rstrip(".") if "." in value else value
+
+
+def _saas_preview_rich(preview: dict) -> str:
+    """Never present estimated commission as an issued/payable invoice."""
+    columns = (
+        tr("Валюта", "Currency"),
+        tr("Оборот", "Turnover"),
+        tr("5% в ₽", "5% in RUB"),
+    )
+    lines = [
+        "<h3>" + tr("🧾 ViMi Pay · Счёт", "🧾 ViMi Pay · Bill") + "</h3>",
+        "<p>" + tr("Месяц: ", "Month: ")
+        + escape(str(preview["month"])) + "</p>",
+        "<table bordered compact>",
+        "<tr>" + "".join("<th>" + escape(title) + "</th>" for title in columns)
+        + "</tr>",
+    ]
+    rows = preview.get("rows", [])
+    for record in rows:
+        currency = str(record["currency"])
+        amount = str(record["gross"])
+        missing = int(record.get("missing", 0))
+        fee = (
+            tr("Нет курса", "No rate")
+            if missing else str(record["fee_rub"])
+        )
+        if currency == "XTR":
+            fee = fee + " " + tr("(предварительно)", "(provisional)")
+        lines.append(
+            "<tr><td>" + escape(currency) + "</td><td>"
+            + escape(amount) + "</td><td>" + escape(fee) + "</td></tr>"
+        )
+    if not rows:
+        lines.append("<tr><td colspan='3'>"
+                     + tr("Нет подтверждённых продаж", "No confirmed sales")
+                     + "</td></tr>")
+    lines.append("</table>")
+
+    lines.append("<p>" + tr(
+        "Комиссия с обычных оплат: ", "Fiat sales commission: "
+    ) + "<b>" + escape(str(preview["fiat_commission_rub"])) + " ₽</b></p>")
+    lines.append("<p>" + tr(
+        "Абонплата за следующий месяц: ", "Next month's bot fee: "
+    ) + "<b>" + escape(str(preview["next_bot_fee_rub"])) + " ₽</b></p>")
+    if preview["is_platform_owner"]:
+        lines.append("<p>" + tr(
+            "✅ Свой бот ViMi Pay: начисления не применяются.",
+            "✅ ViMi Pay's own bot: platform fees do not apply.",
+        ) + "</p>")
+    if int(preview["missing_daily_rates"]):
+        lines.append("<p>" + tr(
+            "⚠️ Не хватает курсов на даты отдельных оплат. "
+            "Итог к оплате не рассчитан.",
+            "⚠️ Some payment-day FX rates are missing. "
+            "No final amount can be calculated.",
+        ) + "</p>")
+    if preview["stars_need_reconciliation"]:
+        lines.append("<p>" + tr(
+            "⭐ Продажи за Stars учтены отдельно. "
+            "Оценка комиссии: ",
+            "⭐ Stars sales are counted separately. "
+            "Provisional commission: ",
+        ) + "<b>" + escape(str(preview["stars_estimate_rub"]))
+        + " ₽</b>. " + tr(
+            "До сверки возвратов и реальной ставки выплат "
+            "сумма не входит в счёт.",
+            "Not included in a payable invoice until refunds and "
+            "actual reward value are reconciled.",
+        ) + "</p>")
+    if preview["estimate_complete"] and not preview["is_platform_owner"]:
+        total = Decimal(str(preview["fiat_commission_rub"])) + Decimal(
+            str(preview["next_bot_fee_rub"])
+        )
+        lines.append("<p><b>" + tr("Предварительно: ", "Estimated total: ")
+                     + escape(format(total, ".2f")) + " ₽</b></p>")
+    lines.append("<p><i>" + (
+        tr("Биллинг пока выключен. Это расчёт, не выставленный счёт.",
+           "Billing is off. This is a preview, not an issued invoice.")
+        if not preview["billing_enabled"] else
+        tr("Итоговые суммы подтверждаются выставленными счетами ниже.",
+           "Only issued invoices below establish amounts payable.")
+    ) + "</i></p>")
+    return "\n".join(lines)
 
 
 def _status(value: str) -> str:
@@ -597,10 +682,13 @@ def create_owner_setup_router(
                 )],
                 [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview"),
                  _button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
-                [InlineKeyboardButton(
-                    text="🌐 Language / Язык", callback_data="lng:menu",
-                    style="success",
-                )],
+                [
+                    _button(tr("🧾 Счёт", "🧾 Bill"), "saasinvoices:0"),
+                    InlineKeyboardButton(
+                        text="🌐 Language / Язык", callback_data="lng:menu",
+                        style="success",
+                    ),
+                ],
             ])
         await bot.send_message(
             user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
@@ -622,7 +710,6 @@ def create_owner_setup_router(
                 [_button(tr("📋 Готовность", "📋 Readiness"), "readiness"),
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
-                [_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"), "saasinvoices:0")],
                 [_button(tr("🛡 Модераторы", "🛡 Moderators"), "modmanage")],
                 [_button(tr("🔁 Передать бота", "🔁 Transfer bot"), "transfer")],
                 [_button(tr("❔ Помощь", "❔ Help"), "help")],
@@ -639,6 +726,13 @@ def create_owner_setup_router(
             factory, actor_user_id=actor_id, project_id=project_id,
             page=page,
         )
+        preview = None
+        if project_id is not None:
+            month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
+            preview = await merchant_saas_project_preview(
+                factory, actor_user_id=actor_id,
+                project_id=project_id, month=month,
+            )
         lines = [
             tr("🧾 <b>ViMi Pay · Счета платформы</b>",
                "🧾 <b>ViMi Pay · Platform invoices</b>"),
@@ -710,10 +804,20 @@ def create_owner_setup_router(
             else tr("⬅️ Настройки", "⬅️ Settings"),
             "projects" if project_id is None else "settings",
         )])
-        await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
-            reply_markup=_markup(rows),
-        )
+        if preview is not None:
+            await send_owner_rich(
+                bot, chat_id=user_id,
+                rich_html=_saas_preview_rich(preview) + "\n"
+                + "\n".join(lines),
+                classic_html=_saas_preview_rich(preview) + "\n"
+                + "\n".join(lines),
+                reply_markup=_markup(rows),
+            )
+        else:
+            await bot.send_message(
+                user_id, "\n".join(lines), parse_mode="HTML",
+                reply_markup=_markup(rows),
+            )
 
     async def show_moderators(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
