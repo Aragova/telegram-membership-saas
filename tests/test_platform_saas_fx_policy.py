@@ -32,12 +32,20 @@ async def _set_actor(conn, actor):
 
 
 async def _publish(conn, month, currency, rate):
+    is_stars = currency == "XTR"
+    function = (
+        "public.platform_saas_publish_fx_rate" if is_stars
+        else "public.platform_saas_publish_cbr_fx_rate"
+    )
+    parameters = ":month,:currency,:rate" + (
+        "" if is_stars else ",:source_date"
+    )
     return (await conn.execute(
-        text(
-            "SELECT public.platform_saas_publish_fx_rate("
-            ":month,:currency,:rate) AS data"
-        ).columns(data=JSONB),
-        {"month": month, "currency": currency, "rate": rate},
+        text(f"SELECT {function}({parameters}) AS data").columns(data=JSONB),
+        {
+            "month": month, "currency": currency, "rate": rate,
+            **({} if is_stars else {"source_date": month}),
+        },
     )).scalar_one()
 
 
@@ -83,6 +91,15 @@ async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
                 empty = await _snapshot(conn, month)
                 assert empty["rates"] == {}
 
+                # Owner cannot insert an arbitrary/manual fiat rate:
+                # only the authenticated official CBR publication RPC.
+                with pytest.raises(DBAPIError) as refused:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "SELECT public.platform_saas_publish_fx_rate("
+                            ":month,'USD',70)"
+                        ), {"month": month})
+                assert getattr(refused.value.orig, "sqlstate", None) == "22023"
                 first = await _publish(conn, month, "USD", Decimal("70.00"))
                 assert first["currency"] == "USD"
                 again = await _publish(conn, month, "USD", Decimal("70"))
