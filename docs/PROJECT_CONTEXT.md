@@ -1,3 +1,57 @@
+## PR #129 — Native Stars refunds without subscription-access regressions (2026-11-11)
+
+Migration `0056_saas_star_refunds` adds an immutable, tenant-scoped record
+of a verified **Telegram `refunded_payment` event** tied to an original
+paid-file charge ID, connected bot, original invoice payload, buyer,
+project and exact Stars amount. A database trigger independently checks
+that all fields match an original **paid** purchase; duplicate Telegram
+updates are idempotent. The file editor cannot swallow refund service
+messages. The original paid purchase and previously granted file delivery
+history are preserved; there is no automatic revocation, double refund,
+invoice mutation or access blocking.
+
+Existing shard-zero supervisor processes the original paid sale and any
+matching refund into **separate immutable** central financial events. The
+return uses the **original developer-reward USD-per-Star rate** sealed on
+the sale (not a future/current rate): refund credit equals the original
+USD reward and 5% original commission. Historical liable owner, bot and
+project remain fixed even after transfers. Monthly sale and monthly
+refund statistics are distinct events by Moscow sale/refund date. Their
+auditable counts and unapplied credit are displayed within the existing
+RU/EN Rich **🧾 Счёт**, with HTML fallback. Underlying refund credits
+do **not** silently reduce an issued bill, clear a commercial hold or
+refund a customer twice.
+
+A refund event received after a sale but before its financial capture
+waits until the original paid source is reconciled, so no unjustified
+negative commission entry is created. Source evidence may be delayed by
+Telegram update delivery or a database outage. **A subsequent stage must
+poll each connected bot's authenticated `getStarTransactions` ledger**
+to reconcile missed refunds/chargebacks and independent app-store
+reversals before live commercial billing. Never rely solely on Telegram
+service messages to assert all refunds are complete.
+
+### Next product gate: Stars subscription checkout
+
+Current subscription purchases use the original manual approval →
+Payment → Subscription → Entitlement pathway. Enabling a Stars payment
+button without an atomic verified **Stars charge → Subscription →
+Entitlement** transaction would take money without providing access.
+Implement native XTR plan-pricing, authenticated Bot API pre-checkout,
+durable first/renewal successful_payment, retry recovery, unique charge
+source, cancellation/expiry, refunds, native RU/EN buttons and real
+membership outbox in a separate full checkout slice. Do not insert
+inert payment methods or dead Stars buttons merely to pretend the
+feature exists. The 0055 financial source_kind `subscription_stars`
+is reserved until that **verified delivery** source is implemented.
+No live commission is issued from these preliminary events.
+
+**Rollout controls:** existing SaaS billing/holds/trial switches remain
+OFF, no fee backfill for old buyers, no production activation, preserve
+`compose.light100.yaml`. No merge without exact-HEAD CI, Codex,
+zero open review threads and explicit owner permission.
+
+
 ## CURRENT APPROVED COMMERCIAL BILLING CONTRACT (2026-11-11)
 
 **Read [PLATFORM_COMMERCIAL_BILLING_V2.md](PLATFORM_COMMERCIAL_BILLING_V2.md) first.** This supersedes prior proposals wherever they conflict. ViMi Pay merchant payment flow uses the connected bot's single **🧾 Счёт** and the platform owner's central **👑 Финансы**. Central operator configures currency-specific payment methods for all connected bots, reviews proof, and authorizes each partial/full receipt. 72h trial, RUB 150 or USD 3 per bot by billing PRICE PROFILE (not UI language), 5% sales commission including Telegram Stars. Telegram's official 0.013 USD per Star developer-reward quote is versioned and captured per successful payment; 0.02 USD advertising price is unrelated. Commissions tracked by closed Moscow sales month; monthly service prepaid by calendar anniversary. Preserve immutable legacy financial evidence but migrate all active payment UI toward multi-attempt/partial allocation. Remove obsolete tenant FX-rates screen and dead handlers, keep internal daily CBR ledger. No existing user is charged retroactively. **Real billing, trial/quotas and holds remain disabled until separately approved.**
