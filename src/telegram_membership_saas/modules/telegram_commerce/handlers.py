@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from contextlib import nullcontext
 from datetime import datetime
 from html import escape
@@ -552,7 +553,9 @@ def create_telegram_commerce_router(
                 buyer_id=message.from_user.id,
             )
         except Exception:
-            logger.exception("Stars subscription transaction recovery unavailable")
+            logging.getLogger(__name__).exception(
+                "Stars subscription transaction recovery unavailable"
+            )
             await bot.send_message(
                 message.chat.id, tr(
                     "⚠️ Не удалось проверить журнал Stars. Не платите повторно. "
@@ -891,7 +894,9 @@ def create_telegram_commerce_router(
             # Telegram has already charged Stars. Never ask this buyer to
             # pay again or declare an unsuccessful transaction. The buyer
             # must have a recovery path if PostgreSQL is briefly unavailable.
-            logger.exception("CRITICAL: paid Stars subscription grant pending")
+            logging.getLogger(__name__).exception(
+                "CRITICAL: paid Stars subscription grant pending"
+            )
             await bot.send_message(
                 message.chat.id,
                 tr(
