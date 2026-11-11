@@ -22,12 +22,12 @@ from telegram_membership_saas.modules.entitlements import (
     EntitlementSource,
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer
-from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
     OutboxEventStatus,
     OutboxEventType,
 )
+from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments.request_service import (
     get_or_create_project_customer,
 )
