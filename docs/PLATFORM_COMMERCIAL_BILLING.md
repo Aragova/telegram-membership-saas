@@ -72,29 +72,43 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 - Overdue account cannot start **new** checkout but old purchases and entitlements continue to completion and expiry.
 - No runtime effect until new billing policy is deliberately enabled; preserve compose.light100.yaml and existing staging consumers.
 
-## 7b. Immutable monthly FX policy (2026-11-11)
+## 7b. Daily sale-date FX and connected-bot Bill (2026-11-11)
 
-Migration `0051_saas_fx_policy` creates one owner-published
-`platform_saas_fx_rates` row per `(Moscow month, non-RUB currency)`.
-The rate is RUB per one unit of the original sale currency, stored as
-`NUMERIC(38,18)`, with publisher and timestamp. Updates, deletes and
-attempts to republish a conflicting value are refused; a retry using the
-same rate is idempotent. There is **no preloaded or automatic exchange
-rate**. Only the authenticated platform owner can publish/read rates via
-restricted SECURITY DEFINER functions.
+The administrator sees exactly one **🧾 Счёт / Bill** action in the main
+menu of each connected bot (removed from Settings, not duplicated).
+It displays owner-scoped turnover for the current Moscow month by original
+currency, 5% provisional commission for confirmed RUB/fiat transactions,
+and an estimate of next month's 150 RUB service fee. This is a **preview,
+not an issued invoice** while billing is off. The existing separate legal
+ledger invoices and bank instructions are still shown below. We never mix
+multiple merchants' customers' sales into an individual bot's turnover.
 
-The existing monthly commission invoice issuer still takes its historical
-JSON parameter for compatibility. However it **reads the published database
-policy as its source of truth**, and any supplied FX override must match
-that policy exactly. Missing rates stop invoice generation, not silently
-drop a currency or treat it as zero. RUB uses 1; individual invoice-line
-FX snapshots remain immutable.
+Migration `0051_saas_fx_policy` stores immutable operator-published FX
+snapshots for **each Moscow payment date and currency**, not one uniform
+exchange rate for the entire month. For every confirmed payment the SQL
+issuer looks up the published rate of that original approval date, copies
+it into the invoice-line snapshot and applies 5% per source with
+kopeck rounding. Missing day-rates abort invoice issuance; month-wide FX
+override JSON is rejected. RUB uses 1. Duplicate publication of the same
+quote is idempotent, conflicting publication/update/delete is forbidden.
+No rates are pre-filled; verified daily import is a later stage. The quote
+source must be independently verified before publication. Historical
+corrective adjustments must not mutate prior exchange rates.
 
-This stage creates **no invoices, scheduled tasks, rate-setting Telegram
-buttons, customer access effects, trial claims or holds**. Billing remains
-disabled. Historical rate corrections after issuance must use separately
-audited financial adjustments rather than mutating existing FX rows;
-refund/credit and dispute handling are still launch blockers.
+The connected-bot preview also counts successful Telegram Stars payments
+as `XTR` turnover. A separately published XTR/RUB reward-value quote can
+produce a **provisional** commission estimate. Because rewards and refunds
+can differ from buyer purchase prices and because Telegram may reverse
+transactions, XTR is excluded from payable invoices until the refund/
+chargeback reconciliation step is complete. We do not invent a constant
+Stars value. See Telegram Bot API for charge IDs and refund transactions.
+
+Still needed before launch: verified CBR daily rates ingestion; Telegram
+Stars reward-price and refund sync; a reconciled consolidated
+commission + next-month service invoice with one payment reference;
+refund/credit and dispute workflows. Commercial switches stay OFF.
+No retroactive obligations or interruption of 48 bots.
+
 
 ## 7a. Simplified owner exemption (2026-11-11)
 
