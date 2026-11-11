@@ -155,6 +155,10 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                         ))
                 await conn.execute(text("RESET ROLE"))
                 assert quote["locked"] is True
+                count_foreign = text(
+                    "SELECT public.platform_saas_owner_foreign_invoice_count()"
+                )
+                assert (await conn.execute(count_foreign)).scalar_one() == 1
                 with pytest.raises(DBAPIError) as quote_already_locked:
                     async with conn.begin_nested():
                         await conn.execute(preview_sql, {"id": invoice})
@@ -215,6 +219,9 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                 await _actor(conn, operator)
                 receipt = await _confirm(conn, invoice, Decimal("2"))
                 assert await _confirm(conn, invoice, Decimal("2")) == receipt
+                await _actor(conn, owner)
+                assert (await conn.execute(count_foreign)).scalar_one() == 0
+                await _actor(conn, operator)
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await _confirm(
