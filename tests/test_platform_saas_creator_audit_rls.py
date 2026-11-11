@@ -60,6 +60,6 @@ async def test_creator_audit_reads_only_owner_projects_with_real_rls(monkeypatch
         # Both projects created the same mock username, but the restricted
         # query is bound to the operator's own project and cannot use
         # the unrelated other owner's bot credential.
-        assert remote.await_args.kwargs["token"] == "test-only-token-in-memory"
+        assert remote.await_args.args[0] == "test-only-token-in-memory"
     finally:
         await engine.dispose()
