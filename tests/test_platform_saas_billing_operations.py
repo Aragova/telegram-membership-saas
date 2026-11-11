@@ -183,28 +183,8 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                 })).scalar_one()
                 assert again_empty is None
                 await admin.execute(text("SET LOCAL DateStyle = 'ISO, MDY'"))
-                # Being the ViMi Pay platform owner alone is not proof
-                # of Telegram creator status for a third-party channel.
-                with pytest.raises(DBAPIError) as error:
-                    async with admin.begin_nested():
-                        await admin.execute(text(
-                            "SELECT public.platform_saas_issue_bot_invoice("
-                            ":bot,:start,:end)"
-                        ), {
-                            "bot": own_bot, "start": start, "end": end,
-                        })
-                assert getattr(error.value.orig, "sqlstate", None) == "42501"
-                await admin.execute(text("""
-                    INSERT INTO platform_saas_owner_exemptions
-                    (id,merchant_id,project_id,bot_instance_id,channel_chat_id,
-                     owner_user_id,verified_by,proof_kind)
-                    VALUES (:id,:merchant,:project,:bot,:chat,:owner,:owner,
-                            'telegram_creator_verified')
-                """), {
-                    "id": uuid4(), "merchant": own_merchant,
-                    "project": own_project, "bot": own_bot,
-                    "chat": own_chat, "owner": operator,
-                })
+                # My Bots registered under the platform operator are
+                # exempt immediately, without any manual creator record.
                 own = (await admin.execute(text(
                     "SELECT public.platform_saas_issue_bot_invoice("
                     ":bot,:start,:end)"
