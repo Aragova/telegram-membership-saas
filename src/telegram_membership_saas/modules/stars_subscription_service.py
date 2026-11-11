@@ -14,7 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
-
 from telegram_membership_saas.modules.bots.models import BotInstance
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
