@@ -342,6 +342,133 @@ def upgrade() -> None:
         END;
         $f$
     """)
+    # One owner-only, READ-ONLY account-scope card in the connected bot.
+    # No invoice creation or claims that Stars reward amounts are settled.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_project_preview(
+            p_project uuid, p_month date
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $preview$
+        DECLARE
+          actor uuid;
+          owner_id uuid;
+          own_platform boolean;
+          rows jsonb;
+          fiat_fee numeric;
+          stars_fee numeric;
+          missing integer;
+          star_count integer;
+          today_rates jsonb;
+          billing_on boolean;
+        BEGIN
+          actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+          SELECT owner_user_id INTO owner_id FROM public.projects
+            WHERE id=p_project;
+          IF actor IS NULL OR owner_id IS DISTINCT FROM actor THEN
+            RAISE EXCEPTION 'Project owner only'
+              USING ERRCODE='42501';
+          END IF;
+          IF p_month IS NULL OR extract(day from p_month)<>1 THEN
+            RAISE EXCEPTION 'Invalid month' USING ERRCODE='22023';
+          END IF;
+          SELECT EXISTS (
+            SELECT 1 FROM public.telegram_users u
+            JOIN public.platform_operators po
+              ON po.telegram_user_id=u.telegram_user_id
+            WHERE u.id=owner_id AND po.role='owner'
+          ) INTO own_platform;
+          SELECT enabled INTO billing_on
+            FROM public.platform_saas_billing_control WHERE id=1;
+
+          WITH sales AS (
+            SELECT p.final_amount AS amount,p.currency_code AS currency,
+                   p.approved_at AS paid_at, 'subscription'::text AS kind
+              FROM public.payments p WHERE p.project_id=p_project
+            UNION ALL
+            SELECT o.amount,o.currency_code,o.paid_at,'file_manual'::text
+              FROM public.file_sale_manual_orders o
+             WHERE o.project_id=p_project AND o.status='approved'
+            UNION ALL
+            SELECT f.stars_amount::numeric,'XTR'::text,f.paid_at,'stars'::text
+              FROM public.file_sale_purchases f
+             WHERE f.project_id=p_project AND f.status='paid'
+               AND f.telegram_charge_id IS NOT NULL
+          ),
+          rated AS (
+            SELECT s.amount,s.currency,s.kind,
+                   CASE WHEN s.currency='RUB' THEN 1::numeric
+                        ELSE fx.rub_per_unit END AS daily_rate
+            FROM sales s
+            LEFT JOIN public.platform_saas_fx_rates fx
+              ON fx.rate_date=(s.paid_at AT TIME ZONE 'Europe/Moscow')::date
+             AND fx.currency_code=s.currency
+            WHERE s.paid_at >= (p_month::timestamp AT TIME ZONE 'Europe/Moscow')
+              AND s.paid_at < ((p_month::timestamp + interval '1 month')
+                               AT TIME ZONE 'Europe/Moscow')
+          ),
+          aggregates AS (
+            SELECT currency,count(*) AS operations,
+                   sum(amount) AS gross,
+                   count(*) FILTER (WHERE daily_rate IS NULL) AS missing,
+                   min(daily_rate) AS min_rate,max(daily_rate) AS max_rate,
+                   coalesce(sum(
+                     CASE WHEN daily_rate IS NOT NULL
+                          THEN round(amount*daily_rate*0.05,2)
+                          ELSE 0 END
+                   ),0) AS fee
+            FROM rated GROUP BY currency
+          )
+          SELECT
+            coalesce(jsonb_agg(jsonb_build_object(
+              'currency',currency,'gross',gross,
+              'operations',operations,'missing',missing,
+              'min_rate',min_rate,'max_rate',max_rate,
+              'fee_rub',fee
+            ) ORDER BY currency),'[]'::jsonb),
+            coalesce(sum(fee) FILTER (WHERE currency<>'XTR'),0),
+            coalesce(sum(fee) FILTER (WHERE currency='XTR'),0),
+            coalesce(sum(missing),0),
+            coalesce(sum(operations) FILTER (WHERE currency='XTR'),0)
+          INTO rows,fiat_fee,stars_fee,missing,star_count
+          FROM aggregates;
+
+          SELECT coalesce(jsonb_object_agg(currency_code,rub_per_unit),
+                          '{}'::jsonb) INTO today_rates
+          FROM public.platform_saas_fx_rates
+          WHERE rate_date=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
+
+          RETURN jsonb_build_object(
+            'month',p_month,'rows',rows,
+            'fiat_commission_rub',CASE WHEN own_platform THEN 0 ELSE fiat_fee END,
+            'stars_estimate_rub',CASE WHEN own_platform THEN 0 ELSE stars_fee END,
+            'stars_need_reconciliation',star_count>0,
+            'missing_daily_rates',missing,
+            'next_bot_fee_rub',CASE WHEN own_platform THEN 0 ELSE 150 END,
+            'is_platform_owner',own_platform,
+            'billing_enabled',coalesce(billing_on,false),
+            'today_rates',today_rates,
+            'estimate_complete',missing=0 AND star_count=0
+          );
+        END;
+        $preview$
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION "
+        "public.platform_saas_project_preview(uuid,date) FROM PUBLIC"
+    )
+    op.execute("""
+        DO $grants$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM pg_roles
+                     WHERE rolname='membership_runtime') THEN
+            GRANT EXECUTE ON FUNCTION
+              public.platform_saas_project_preview(uuid,date)
+              TO membership_runtime;
+          END IF;
+        END $grants$
+    """)
+
     for signature in (
         "platform_saas_publish_fx_rate(date,text,numeric)",
         "platform_saas_day_fx(date)",
