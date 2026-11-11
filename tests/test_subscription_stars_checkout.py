@@ -18,17 +18,10 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance
-from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.bots.deletion_service import (
     count_retirement_blockers,
 )
-from telegram_membership_saas.modules.stars_subscription_refunds import (
-    record_verified_subscription_star_refund,
-)
-from telegram_membership_saas.modules.stars_subscriptions import (
-    SubscriptionStarOrder,
-    SubscriptionStarRefund,
-)
+from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.outbox import OutboxEvent
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import replace_active_plan_price
