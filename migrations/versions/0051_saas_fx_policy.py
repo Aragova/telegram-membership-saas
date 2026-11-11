@@ -125,7 +125,7 @@ def upgrade() -> None:
           END IF;
           INSERT INTO public.platform_saas_fx_rates(
             rate_date,currency_code,rub_per_unit,published_by
-          ) VALUES(p_month,p_currency,p_rate,actor);
+          ) VALUES(p_day,p_currency,p_rate,actor);
           RETURN jsonb_build_object(
             'day',p_day,'currency',p_currency,
             'rub_per_unit',p_rate,
@@ -221,7 +221,7 @@ def upgrade() -> None:
               USING ERRCODE='42501';
           END IF;
           v_invoice_key := 'commission:'||p_merchant::text||':'||
-                         p_owner::text||':'||to_char(p_day,'YYYY-MM-DD');
+                         p_owner::text||':'||to_char(p_month,'YYYY-MM-DD');
           PERFORM pg_advisory_xact_lock(
             hashtextextended('saas:'||v_invoice_key,0)
           );
@@ -286,7 +286,7 @@ def upgrade() -> None:
               fx := 1;
             ELSE
               -- Never trust one-off caller-supplied rates: all non-RUB
-              -- conversions come from immutable owner-published monthly
+              -- conversions come from immutable owner-published daily
               -- FX records. The source line still snapshots the rate.
               SELECT rate.rub_per_unit INTO fx
                 FROM public.platform_saas_fx_rates rate
@@ -301,7 +301,7 @@ def upgrade() -> None:
 
             END IF;
             IF fx<=0 OR fx>1000000000 THEN
-              RAISE EXCEPTION 'Invalid monthly conversion rate'
+              RAISE EXCEPTION 'Invalid daily conversion rate'
                 USING ERRCODE='22023';
             END IF;
             amount_rub := round(source.amount*fx*0.05,2);
