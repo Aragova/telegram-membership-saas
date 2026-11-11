@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules import platform_saas_creator_check as audit
 from telegram_membership_saas.modules.platform_dashboard_handlers import (
     _platform_creator_check_text,
@@ -146,3 +147,23 @@ async def test_missing_or_ambiguous_channels_never_trigger_telegram_calls(
     )
     assert result.rows[0].status == "channel_ambiguous"
     remote.assert_not_awaited()
+
+
+def test_live_check_english_rich_screen_preserves_status_distinctions():
+    token = _language.set("en")
+    try:
+        data = audit.CreatorAuditResult(
+            page=0, pages=1,
+            rows=(
+                audit.CreatorAuditRow("owner_bot", "creator"),
+                audit.CreatorAuditRow("admin_bot", "admin_only"),
+            ),
+        )
+        formatted = to_rich_html(_platform_creator_check_text(data))
+    finally:
+        _language.reset(token)
+    assert "<table bordered compact>" in formatted
+    assert "✅ creator" in formatted
+    assert "administrator only" in formatted
+    assert "No exemption records or invoices changed" in formatted
+    assert data.creators == 1
