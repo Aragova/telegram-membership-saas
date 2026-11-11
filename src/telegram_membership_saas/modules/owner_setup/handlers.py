@@ -410,8 +410,16 @@ def _saas_invoices_rich(report) -> str:
         + str(report.unpaid) + "</td></tr>",
         "<tr><td>" + tr("Остаток", "Outstanding") + "</td><td>"
         + escape(format(report.outstanding_rub, ".2f")) + " ₽</td></tr>",
-        "</table>",
     ]
+    pending_count = getattr(report, "pending_credit_count", 0)
+    if pending_count:
+        items.append(
+            "<tr><td>" + tr("↩️ Возвраты без зачёта",
+                              "↩️ Credits not allocated") + "</td><td>"
+            + escape(format(report.pending_credit_rub, ".2f"))
+            + " ₽ · " + str(pending_count) + "</td></tr>"
+        )
+    items.append("</table>")
     if not report.invoices:
         items.append("<p>" + tr(
             "Счетов к оплате пока нет.", "No platform invoices yet.",
@@ -1024,7 +1032,7 @@ def create_owner_setup_router(
             + escape(format(report.outstanding_rub, ".2f")) + " ₽",
             "",
         ]
-        if report.pending_credit_count:
+        if getattr(report, "pending_credit_count", 0):
             lines.append(
                 tr("↩️ Возвраты в ожидании зачёта: ",
                    "↩️ Refund credits pending allocation: ")
