@@ -1,6 +1,6 @@
 """Platform operator's My Bots are always SaaS-exempt. Remove redundant audit RPCs.
 
-Revision ID: 0050_platform_owner_my_bots_exempt
+Revision ID: 0050_my_bots_exempt
 Revises: 0049_saas_exemption_pages
 
 No billing activation, invoices, tenant access changes or backfill.
@@ -9,7 +9,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0050_platform_owner_my_bots_exempt"
+revision: str = "0050_my_bots_exempt"
 down_revision: str | None = "0049_saas_exemption_pages"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
