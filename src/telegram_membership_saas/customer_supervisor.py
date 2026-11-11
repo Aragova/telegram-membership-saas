@@ -33,7 +33,7 @@ from telegram_membership_saas.modules.bots.health_service import (
     write_bot_health,
 )
 from telegram_membership_saas.modules.platform_monthly_fx_sync import (
-    sync_official_month_rates,
+    sync_official_daily_rates,
 )
 from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
@@ -419,7 +419,7 @@ class CustomerBotSupervisor:
                     "Bot retirement will be retried for project %s", project_id
                 )
 
-    async def _sync_monthly_fx_safe(self) -> None:
+    async def _sync_daily_fx_safe(self) -> None:
         try:
             await sync_official_month_rates(self.factory, self.settings)
         except asyncio.CancelledError:
@@ -429,7 +429,7 @@ class CustomerBotSupervisor:
             # invoicing unchanged and retry FX in five minutes, not six hours.
             self._next_fx_sync_at = monotonic() + 5 * 60
             logger.warning(
-                "Official monthly FX sync failed (%s); retry in 5 minutes",
+                "Official daily FX sync failed (%s); retry in 5 minutes",
                 type(exc).__name__,
             )
 
@@ -439,7 +439,7 @@ class CustomerBotSupervisor:
             and self.settings.platform_owner_telegram_id is None
         ):
             logger.warning(
-                "Monthly FX sync disabled: customer supervisor lacks "
+                "Daily FX sync disabled: customer supervisor lacks "
                 "TMS_PLATFORM_OWNER_TELEGRAM_ID"
             )
         try:
@@ -451,7 +451,7 @@ class CustomerBotSupervisor:
                     and (self._fx_task is None or self._fx_task.done())):
                     self._next_fx_sync_at = monotonic() + 6 * 60 * 60
                     self._fx_task = asyncio.create_task(
-                        self._sync_monthly_fx_safe()
+                        self._sync_daily_fx_safe()
                     )
                 try:
                     await self.reconcile_once()
