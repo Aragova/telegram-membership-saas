@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from json import dumps
 from uuid import UUID
 
 from sqlalchemy import text
