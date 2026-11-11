@@ -212,3 +212,26 @@ def test_currency_quote_rich_uses_separate_settlement_day(lang):
     assert "<h3>" in html and "<table bordered compact>" in html
     assert "89.6603" in html and "2026-11-11" in html
     assert "1.67 EUR" in html
+
+
+def test_platform_invoice_counts_form_separate_rich_table_not_inline_dump():
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from telegram_membership_saas.modules.owner_setup.handlers import (
+        _saas_invoices_rich,
+    )
+
+    report = SimpleNamespace(
+        total=0, unpaid=0, outstanding_rub=Decimal("0"),
+        invoices=[], configured=False, instructions=None,
+    )
+    token = _language.set("ru")
+    try:
+        html = _saas_invoices_rich(report)
+    finally:
+        _language.reset(token)
+    assert "<h4>📑 Счета платформы</h4>" in html
+    assert "<table bordered compact>" in html
+    assert "<tr><td>Не оплачено</td><td>0</td></tr>" in html
+    assert "Счетов к оплате пока нет." in html
