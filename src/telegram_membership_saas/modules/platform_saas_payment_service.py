@@ -32,6 +32,8 @@ class MerchantSaasStatements:
     instructions: str | None
     invoices: tuple[dict, ...]
     page: int
+    pending_credit_rub: Decimal = Decimal("0")
+    pending_credit_count: int = 0
 
 
 async def platform_saas_payment_details(
@@ -167,8 +169,15 @@ async def merchant_saas_statements(
         # Central /billing works even after a user transferred out their
         # final project. Liability follows historical account, not the bot.
         data = (await session.execute(stmt, {"page": page})).scalar_one()
+        credits = (await session.execute(
+            text("SELECT public.platform_saas_refund_credit_report(:owner) AS data")
+                .columns(data=JSONB),
+            {"owner": actor_user_id},
+        )).scalar_one()
     if not isinstance(data, dict) or not isinstance(data.get("invoices"), list):
         raise RuntimeError("Invalid merchant billing snapshot")
+    if not isinstance(credits, dict):
+        raise RuntimeError("Invalid merchant credit report")
     return MerchantSaasStatements(
         total=int(data["total"]),
         unpaid=int(data["unpaid"]),
@@ -177,4 +186,6 @@ async def merchant_saas_statements(
         instructions=data["instructions"],
         invoices=tuple(data["invoices"]),
         page=page,
+        pending_credit_rub=Decimal(str(credits["total_credited_rub"])),
+        pending_credit_count=int(credits["credit_count"]),
     )
