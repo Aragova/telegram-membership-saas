@@ -9,8 +9,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from aiogram import Bot
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from telegram_membership_saas.db import system_project_session_scope
 
 from telegram_membership_saas.modules.bots.models import BotInstance
 from telegram_membership_saas.modules.entitlements import (
@@ -340,3 +343,52 @@ async def confirm_subscription_stars_payment(
     ])
     await session.flush()
     return order, subscription
+
+
+async def live_stars_subscription_permissions(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    invoice_payload: str, bot: Bot,
+) -> None:
+    """Fail closed at precheckout if Telegram bot cannot issue live access.
+
+    This is deliberately independent from customer_runtime to avoid a
+    dispatcher/runtime circular import. Check exactly the resources attached
+    to the order's priced plan, not just an unrelated channel.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        order = await session.scalar(select(SubscriptionStarOrder).where(
+            SubscriptionStarOrder.project_id == project_id,
+            SubscriptionStarOrder.telegram_bot_id == bot.id,
+            SubscriptionStarOrder.invoice_payload == invoice_payload,
+            SubscriptionStarOrder.status == "pending",
+        ))
+        if order is None:
+            raise PermissionError("Stars order is not available")
+        external_ids = (await session.scalars(
+            select(Resource.external_id)
+            .join(PlanResource,
+                  (PlanResource.resource_id == Resource.id)
+                  & (PlanResource.project_id == Resource.project_id))
+            .where(
+                PlanResource.project_id == project_id,
+                PlanResource.plan_id == order.plan_id,
+                Resource.status == "active",
+                Resource.removed_at.is_(None),
+            )
+        )).all()
+    if not external_ids:
+        raise PermissionError("No deliverable channel for paid Stars plan")
+    for chat_id in external_ids:
+        try:
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=bot.id)
+            status = getattr(member.status, "value", member.status)
+            if status != "creator" and (
+                status != "administrator"
+                or not member.can_invite_users
+                or not member.can_restrict_members
+            ):
+                raise ValueError("Insufficient Telegram permissions")
+        except Exception:
+            raise RuntimeError(
+                "Connected bot cannot issue or revoke live channel access"
+            ) from None
