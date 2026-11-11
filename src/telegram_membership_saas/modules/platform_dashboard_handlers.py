@@ -1246,19 +1246,30 @@ def create_platform_dashboard_router(
                 # Telegram can require several remote API requests. Acknowledge
                 # the callback BEFORE the checks, not after a network delay.
                 await query.answer()
-                actor_id = await ensure_telegram_actor(
-                    factory, telegram_id=query.from_user.id,
-                    username=query.from_user.username,
-                    first_name=query.from_user.first_name,
-                )
-                result = await audit_creator_page(
-                    factory, actor_user_id=actor_id,
-                    actor_telegram_id=query.from_user.id, page=page,
-                    settings=config,
-                )
+                try:
+                    actor_id = await ensure_telegram_actor(
+                        factory, telegram_id=query.from_user.id,
+                        username=query.from_user.username,
+                        first_name=query.from_user.first_name,
+                    )
+                    result = await audit_creator_page(
+                        factory, actor_user_id=actor_id,
+                        actor_telegram_id=query.from_user.id, page=page,
+                        settings=config,
+                    )
+                    checked_text = _platform_creator_check_text(result)
+                except Exception:
+                    # The callback is already acknowledged. Do not answer it
+                    # twice, leak provider errors or present a false success.
+                    checked_text = tr(
+                        "⚠️ Проверка Telegram временно недоступна. "
+                        "Исключения не изменены.",
+                        "⚠️ Telegram verification is temporarily unavailable. "
+                        "Exemptions remain unchanged.",
+                    )
                 await _render_platform_screen(
                     bot, chat_id=query.from_user.id,
-                    text=_platform_creator_check_text(result),
+                    text=checked_text,
                     reply_markup=_keyboard([[
                         _button(
                             tr("⬅️ К исключениям", "⬅️ Exemptions"),
