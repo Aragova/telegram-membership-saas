@@ -1107,6 +1107,7 @@ def create_file_sales_router(
                 invoice_payload=payment.invoice_payload,
                 amount=payment.total_amount, currency=payment.currency,
                 charge_id=payment.telegram_payment_charge_id,
+                payment_at=message.date,
             )
         except Exception:
             # Telegram charged the user, but DB confirmation is NOT durable.
