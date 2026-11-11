@@ -392,8 +392,10 @@ def _saas_stars_rich(stars: dict) -> str:
     lines.extend([
         "<p>⭐ " + str(int(stars["stars"])) + " · "
         + tr("Эквивалент вознаграждения: ", "Developer reward equivalent: ")
-        + "$" + escape(str(stars["reward_usd"]))
-        + " · 5%: $" + escape(str(stars["commission_usd"])) + "</p>",
+        + "$" + escape(format(Decimal(str(stars["reward_usd"])), ".2f"))
+        + " · 5%: $"
+        + escape(format(Decimal(str(stars["commission_usd"])), ".2f"))
+        + "</p>",
     ])
     if int(stars.get("pending_reconciliation", 0)):
         lines.append("<p>⚠️ " + tr(
