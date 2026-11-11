@@ -22,7 +22,7 @@ def test_bill_preview_shows_original_currencies_and_estimate_not_invoice(lang):
              "missing": 0, "operations": 1},
         ],
         "fiat_commission_rub": "385", "stars_estimate_rub": "0",
-        "stars_need_reconciliation": False, "missing_monthly_rates": 0,
+        "stars_need_reconciliation": False, "missing_daily_rates": 0,
         "next_bot_fee_rub": "150", "is_platform_owner": False,
         "billing_enabled": False, "estimate_complete": True,
     }
@@ -32,7 +32,8 @@ def test_bill_preview_shows_original_currencies_and_estimate_not_invoice(lang):
         classic = _saas_preview_classic(data)
     finally:
         _language.reset(token)
-    assert "<table bordered compact>" in rich
+    assert rich.count("<table bordered compact>") >= 2
+    assert "Официальные курсы на сегодня" in rich if lang == "ru" else "Today's official exchange rates" in rich
     assert "1000" in rich and "50" in rich and "30" in rich
     assert "535.00" in rich
     assert "535.00" not in classic  # simplified safe HTML fallback
@@ -51,7 +52,7 @@ def test_stars_requires_refunds_and_reward_value_before_invoicing():
         ],
         "fiat_commission_rub": 0, "stars_estimate_rub": "30",
         "stars_need_reconciliation": True,
-        "missing_monthly_rates": 0, "next_bot_fee_rub": 150,
+        "missing_daily_rates": 0, "next_bot_fee_rub": 150,
         "billing_enabled": False, "is_platform_owner": False,
         "estimate_complete": False,
     }
@@ -66,13 +67,13 @@ def test_stars_requires_refunds_and_reward_value_before_invoicing():
     assert "Предварительно:" not in result
 
 
-def test_missing_monthly_rate_never_claims_a_payable_total():
+def test_missing_sale_day_rate_never_claims_a_payable_total():
     data = {
         "month": "2026-11-01",
         "rows": [{"currency": "USD", "gross": 50, "fee_rub": 0,
                   "missing": 1, "operations": 1}],
         "fiat_commission_rub": 0, "stars_estimate_rub": 0,
-        "stars_need_reconciliation": False, "missing_monthly_rates": 1,
+        "stars_need_reconciliation": False, "missing_daily_rates": 1,
         "next_bot_fee_rub": 150, "billing_enabled": False,
         "is_platform_owner": False, "estimate_complete": False,
     }
@@ -82,7 +83,7 @@ def test_missing_monthly_rate_never_claims_a_payable_total():
     finally:
         _language.reset(token)
     assert "Нет курса" in text
-    assert "Итог к оплате не рассчитан" in text
+    assert "Полная сумма не рассчитана" in text
     assert "Предварительно:" not in text
 
 
@@ -104,7 +105,7 @@ def test_classic_bill_preserves_rate_range_for_old_or_ambiguous_data(
         "fiat_commission_rub": "470",
         "stars_estimate_rub": 0,
         "stars_need_reconciliation": False,
-        "missing_monthly_rates": 0,
+        "missing_daily_rates": 0,
         "next_bot_fee_rub": 150,
         "billing_enabled": False,
         "is_platform_owner": False,
@@ -123,7 +124,7 @@ def test_classic_bill_preserves_rate_range_for_old_or_ambiguous_data(
 
 
 @pytest.mark.parametrize("lang,missing_text", [
-    ("ru", "нет курса месяца"), ("en", "monthly rate missing"),
+    ("ru", "нет курса даты продажи"), ("en", "sale-date rate missing"),
 ])
 def test_classic_bill_does_not_invent_rate_when_one_day_unrated(
     lang, missing_text,
@@ -137,7 +138,7 @@ def test_classic_bill_does_not_invent_rate_when_one_day_unrated(
         "fiat_commission_rub": 200,
         "stars_estimate_rub": 0,
         "stars_need_reconciliation": False,
-        "missing_monthly_rates": 1,
+        "missing_daily_rates": 1,
         "next_bot_fee_rub": 150,
         "billing_enabled": False,
         "is_platform_owner": False,
@@ -150,3 +151,61 @@ def test_classic_bill_does_not_invent_rate_when_one_day_unrated(
         _language.reset(token)
     assert missing_text in classic
     assert ("Итог не готов" if lang == "ru" else "No final amount") in classic
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_daily_rich_cbr_rates_are_a_table_with_dates_not_one_inline_dump(lang):
+    data = {
+        "month": "2026-11-01",
+        "rows": [],
+        "fiat_commission_rub": 0,
+        "next_bot_fee_rub": 150,
+        "stars_need_reconciliation": False,
+        "stars_estimate_rub": 0,
+        "missing_daily_rates": 0,
+        "estimate_complete": True,
+        "billing_enabled": False,
+        "is_platform_owner": False,
+        "rate_date": "2026-11-11",
+        "today_rates": {
+            "USD": {"rate": "80.5573", "source_date": "2026-11-11"},
+            "EUR": {"rate": "89.6603", "source_date": "2026-11-11"},
+            "UAH": {"rate": "1.76935", "source_date": "2026-11-11"},
+            "BYN": {"rate": "27.3446", "source_date": "2026-11-11"},
+        },
+    }
+    token = _language.set(lang)
+    try:
+        html = _saas_preview_rich(data)
+    finally:
+        _language.reset(token)
+    assert "<table bordered compact>" in html
+    assert "USD</td><td>80.5573</td>" in html
+    assert "EUR</td><td>89.6603</td>" in html
+    assert "BYN</td><td>27.3446</td>" in html
+    assert html.count("<tr><td>") >= 6
+    assert "Нет продаж" not in html
+    assert "80.5573 ₽, EUR" not in html
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_currency_quote_rich_uses_separate_settlement_day(lang):
+    from telegram_membership_saas.modules.owner_setup.handlers import (
+        _saas_currency_quote_rich,
+    )
+
+    quote = {
+        "chosen_currency": "EUR", "billing_month": "2026-11-01",
+        "quote_day": "2026-11-11", "rate_rub_per_unit": "89.6603",
+        "total_rub": 150, "estimated_total": "1.67",
+        "quote_ready": True, "source_name": "CBR",
+        "source_date": "2026-11-11",
+    }
+    token = _language.set(lang)
+    try:
+        html = _saas_currency_quote_rich(quote)
+    finally:
+        _language.reset(token)
+    assert "<h3>" in html and "<table bordered compact>" in html
+    assert "89.6603" in html and "2026-11-11" in html
+    assert "1.67 EUR" in html
