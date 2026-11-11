@@ -101,7 +101,7 @@ async def test_currency_preview_is_read_only_until_confirm(monkeypatch):
     })
     lock = AsyncMock(side_effect=AssertionError("Preview must not lock funds"))
     monkeypatch.setattr(ui, "preview_saas_invoice_currency", preview)
-    monkeypatch.setattr(ui, "select_saas_invoice_currency", lock)
+    monkeypatch.setattr(ui, "lock_saas_invoice_currency_expected", lock)
     router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=None)
     callback_handler = next(
         h.callback for h in router.callback_query.handlers
