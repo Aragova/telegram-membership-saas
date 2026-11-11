@@ -1,5 +1,6 @@
 """A charged-but-unrecorded buyer can recover from authentic Bot API records."""
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -26,7 +27,7 @@ async def test_bot_ledger_recovery_requires_payer_payload_and_amount(monkeypatch
     verified = AsyncMock(return_value=SimpleNamespace(id=pending.id))
     monkeypatch.setattr(svc, "confirm_stars_payment", verified)
     valid = SimpleNamespace(
-        id="charge_abc", amount=99,
+        id="charge_abc", amount=99, date=1761000000,
         source=SimpleNamespace(
             type="user", transaction_type="invoice_payment",
             user=SimpleNamespace(id=buyer_id),
@@ -74,6 +75,7 @@ async def test_bot_ledger_recovery_requires_payer_payload_and_amount(monkeypatch
         "project_id": project, "bot_id": 9988, "buyer_id": buyer_id,
         "invoice_payload": payload, "amount": 99, "currency": "XTR",
         "charge_id": "charge_abc",
+        "payment_at": datetime.fromtimestamp(1761000000, tz=UTC),
     }
     assert bot.get_star_transactions.await_args.kwargs == {
         "offset": 0, "limit": 100,
