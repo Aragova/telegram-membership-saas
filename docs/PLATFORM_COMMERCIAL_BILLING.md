@@ -1,3 +1,7 @@
+**ARCHIVED v1 DESIGN — DO NOT IMPLEMENT AS-IS.** The approved current commercial contract is [PLATFORM_COMMERCIAL_BILLING_V2.md](PLATFORM_COMMERCIAL_BILLING_V2.md) (2026-11-11): two-bot finance UX, 72h trial, per-bot 150 RUB / $3 billing-price profiles independent of language, Stars reward valuation, account-wide partial payments, central reusable payment methods, safe holds and finance UI cleanup. The v1 text below is retained only as historical implementation rationale. Financial migrations remain audit-compatible. Billing and holds stay OFF.
+
+---
+
 ## PR #127 follow-up hardening — FX/receipt snapshot binding and bank safety
 
 The **final** currency-lock action is guarded by migration 0054's
