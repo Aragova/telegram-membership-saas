@@ -210,6 +210,7 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_invoice_rich,
     issued_quote_classic,
     issued_quote_rich,
+    quote_fingerprint,
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_currency_quote,
@@ -217,10 +218,10 @@ from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_statements,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
+    lock_saas_invoice_currency_expected,
     preview_saas_invoice_currency,
     saas_invoice_credit_history,
     saas_invoice_currency_snapshot,
-    select_saas_invoice_currency,
 )
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
@@ -3517,7 +3518,7 @@ def create_owner_setup_router(
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasinvoices:",
-                "saasbill:", "saasbillchoose:", "saasbillquote:", "saasbilllock:",
+                "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -3787,15 +3788,74 @@ def create_owner_setup_router(
                 )
                 await query.answer()
                 return
+            if action.startswith("sl:"):
+                # Short callback binds the displayed day/rate/amount to this
+                # one invoice. PostgreSQL revalidates under the invoice lock.
+                fields = action.split(":")
+                if len(fields) != 6:
+                    raise ValueError("Invalid guarded invoice settlement")
+                _, token, page_text, currency, day_token, fingerprint = fields
+                if (
+                    not page_text.isascii() or not page_text.isdecimal()
+                    or int(page_text) > 100000
+                    or currency not in ("RUB", "USD", "EUR", "UAH", "BYN")
+                    or len(day_token) != 8 or not day_token.isascii()
+                    or not day_token.isdecimal()
+                    or len(fingerprint) != 12
+                    or any(ch not in "0123456789abcdef" for ch in fingerprint)
+                ):
+                    raise ValueError("Invalid settlement callback")
+                invoice_id = decode_uuid(token)
+                invoice_page = int(page_text)
+                suffix = token + ":" + page_text
+                try:
+                    quoted = await preview_saas_invoice_currency(
+                        factory, actor_user_id=actor_id,
+                        invoice_id=invoice_id, currency=currency,
+                    )
+                    if (
+                        not quoted["quote_ready"]
+                        or quoted["quote_day"].replace("-", "") != day_token
+                        or quote_fingerprint(quoted) != fingerprint
+                    ):
+                        raise ValueError("Displayed quote expired")
+                    await lock_saas_invoice_currency_expected(
+                        factory, actor_user_id=actor_id,
+                        invoice_id=invoice_id, currency=currency,
+                        quote_day=datetime.strptime(day_token, "%Y%m%d").date(),
+                        rub_per_unit=Decimal(str(quoted["rub_per_unit"])),
+                        expected_amount=Decimal(str(quoted["amount"])),
+                    )
+                except Exception:
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⚠️ Условия расчёта изменились или счёт недоступен. "
+                            "Откройте его снова и проверьте актуальный курс "
+                            "перед фиксацией.",
+                            "⚠️ Settlement terms changed or the invoice is "
+                            "unavailable. Reopen it and review the updated "
+                            "rate before locking.",
+                        ),
+                        reply_markup=_markup([[_button(
+                            tr("⬅️ К счёту", "⬅️ Invoice"),
+                            "saasbill:" + suffix,
+                        )]]),
+                    )
+                else:
+                    await show_saas_issued_invoice(
+                        bot, user_id, actor_id, invoice_id, page=invoice_page,
+                    )
+                await query.answer()
+                return
             if action.startswith((
-                "saasbill:", "saasbillchoose:",
-                "saasbillquote:", "saasbilllock:",
+                "saasbill:", "saasbillchoose:", "saasbillquote:",
             )):
                 parts = action.split(":")
                 kind = parts[0]
                 if len(parts) not in (3, 4):
                     raise ValueError("Invalid billing action")
-                if kind in ("saasbillquote", "saasbilllock") and len(parts) != 4:
+                if kind == "saasbillquote" and len(parts) != 4:
                     raise ValueError("Invalid settlement action")
                 if kind in ("saasbill", "saasbillchoose") and len(parts) != 3:
                     raise ValueError("Invalid invoice action")
@@ -3843,55 +3903,35 @@ def create_owner_setup_router(
                     if currency not in ("RUB", "USD", "EUR", "UAH", "BYN"):
                         raise ValueError("Invalid payment currency")
                     suffix = encode_uuid(invoice_id) + ":" + str(invoice_page)
-                    if kind == "saasbillquote":
-                        quote = await preview_saas_invoice_currency(
-                            factory, actor_user_id=actor_id,
-                            invoice_id=invoice_id, currency=currency,
+                    quote = await preview_saas_invoice_currency(
+                        factory, actor_user_id=actor_id,
+                        invoice_id=invoice_id, currency=currency,
+                    )
+                    rows = []
+                    if quote["quote_ready"]:
+                        # Keep under Telegram's 64-byte callback limit.
+                        # The 12-hex token covers the exact rate and amount
+                        # shown on the Rich card, not merely its currency.
+                        lock_data = (
+                            "sl:" + suffix + ":" + currency + ":"
+                            + quote["quote_day"].replace("-", "") + ":"
+                            + quote_fingerprint(quote)
                         )
-                        rows = []
-                        if quote["quote_ready"]:
-                            rows.append([_button(
-                                tr("🔒 Подтвердить и зафиксировать",
-                                   "🔒 Confirm and lock"),
-                                "saasbilllock:" + suffix + ":" + currency,
-                                "success",
-                            )])
                         rows.append([_button(
-                            tr("⬅️ Валюты", "⬅️ Currencies"),
-                            "saasbillchoose:" + suffix,
+                            tr("🔒 Подтвердить и зафиксировать",
+                               "🔒 Confirm and lock"),
+                            lock_data, "success",
                         )])
-                        await send_owner_rich(
-                            bot, chat_id=user_id,
-                            rich_html=issued_quote_rich(quote),
-                            classic_html=issued_quote_classic(quote),
-                            reply_markup=_markup(rows),
-                        )
-                    else:
-                        try:
-                            await select_saas_invoice_currency(
-                                factory, actor_user_id=actor_id,
-                                invoice_id=invoice_id, currency=currency,
-                            )
-                        except Exception:
-                            await bot.send_message(
-                                user_id, tr(
-                                    "⚠️ Не удалось зафиксировать валюту. "
-                                    "Возможно, курс изменился или счёт уже оплачен. "
-                                    "Обновите карточку счёта.",
-                                    "⚠️ Cannot lock currency. The quote may "
-                                    "have changed or the invoice is paid. "
-                                    "Refresh the invoice card.",
-                                ),
-                                reply_markup=_markup([[_button(
-                                    tr("⬅️ Счёт", "⬅️ Invoice"),
-                                    "saasbill:" + suffix,
-                                )]]),
-                            )
-                        else:
-                            await show_saas_issued_invoice(
-                                bot, user_id, actor_id, invoice_id,
-                                page=invoice_page,
-                            )
+                    rows.append([_button(
+                        tr("⬅️ Валюты", "⬅️ Currencies"),
+                        "saasbillchoose:" + suffix,
+                    )])
+                    await send_owner_rich(
+                        bot, chat_id=user_id,
+                        rich_html=issued_quote_rich(quote),
+                        classic_html=issued_quote_classic(quote),
+                        reply_markup=_markup(rows),
+                    )
                 await query.answer()
                 return
             project_id = await get_selected_project(
