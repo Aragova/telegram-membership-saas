@@ -145,3 +145,10 @@ An actual paid Stars purchase also prevents destructive channel removal.
 When refund and unrelated purchase share the same Telegram second, a late
 refund replay includes equal-time renewals instead of leaving a delayed
 future-dated access window.
+
+A late successful_payment for B must also derive its start from the
+**virtual reconstructed history** of refunded A if C was recovered between
+A's refund and B's delayed confirmation. The original revoked A grant
+remains immutable. Paid native Stars grants cannot be revoked using the
+noncommercial `revoke_owner_grant` action, either through UI or direct
+service invocation; terminate their shared paid Subscription instead.

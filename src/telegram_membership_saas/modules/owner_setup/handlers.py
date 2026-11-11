@@ -1925,6 +1925,7 @@ def create_owner_setup_router(
         for grant in data.grants[:8]:
             label = {
                 "payment": tr("Оплата", "Paid"),
+                "stars_payment": tr("Оплата Stars", "Stars paid"),
                 "manual": tr("Ручной", "Manual"),
                 "owner_service": tr("Служебный", "Service"),
             }.get(grant.source, grant.source)
@@ -2276,7 +2277,7 @@ def create_owner_setup_router(
                 + (":" + str(page) if page else ""), "danger",
             )])
         for item in snapshot.grants:
-            if item.source == "payment":
+            if item.source in ("payment", "stars_payment"):
                 continue
             lines.append(
                 "🔑 " + escape(item.source) + " · " + str(item.telegram_user_id)
@@ -4976,7 +4977,8 @@ def create_owner_setup_router(
                 active_ids = {
                     "pay": {item.id for item in snapshot.payments},
                     "sub": {item.id for item in snapshot.subscriptions},
-                    "grant": {item.id for item in snapshot.grants if item.source != "payment"},
+                    "grant": {item.id for item in snapshot.grants
+                              if item.source not in ("payment", "stars_payment")},
                     "sync": {item.id for item in snapshot.access},
                 }
                 if verb == "ob":

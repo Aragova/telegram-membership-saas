@@ -355,7 +355,10 @@ async def revoke_owner_grant(
             raise ValueError("Право доступа не найдено")
         if grant.status == EntitlementGrantStatus.REVOKED.value:
             return OwnerChange(False, None, "Право уже отозвано")
-        if grant.source == EntitlementSource.PAYMENT.value:
+        if grant.source in (
+            EntitlementSource.PAYMENT.value,
+            EntitlementSource.STARS_PAYMENT.value,
+        ):
             raise ValueError("Оплаченный доступ закрывается через завершение подписки")
         grant.status = EntitlementGrantStatus.REVOKED.value
         grant.revoked_at = max(datetime.now(UTC), grant.valid_from)

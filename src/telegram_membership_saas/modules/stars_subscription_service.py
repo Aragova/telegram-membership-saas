@@ -298,7 +298,8 @@ async def confirm_subscription_stars_payment(
         plan_id=order.plan_id,
     )
     start_at = historical_stars_start(
-        moment, earlier_manual, earlier_stars, earlier_refunds, terminations,
+        moment, earlier_manual, earlier_stars, earlier_refunds,
+        terminations, project.timezone,
     )
     end_at = calculate_period_end(
         start_at, timezone_name=project.timezone,
