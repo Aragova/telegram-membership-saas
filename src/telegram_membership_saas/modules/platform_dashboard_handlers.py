@@ -43,6 +43,7 @@ from telegram_membership_saas.modules.platform_saas_billing_service import (
 from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_invoice_classic,
     issued_invoice_rich,
+    receipt_fingerprint,
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     configure_platform_saas_payment,
@@ -1253,7 +1254,8 @@ def create_platform_dashboard_router(
                             snapshot["currency"]
                         )
                     rows.append([_button(
-                        label[:64], "billcommit:" + token + ":" + str(page),
+                        label[:64], "billcommit:" + token + ":" + str(page)
+                        + ":" + receipt_fingerprint(invoice_id, item, snapshot),
                     )])
                 rows.append([_button(
                     tr("⬅️ К счетам", "⬅️ Invoices"), f"billing:{page}",
@@ -1275,8 +1277,8 @@ def create_platform_dashboard_router(
                     ),
                     reply_markup=_keyboard(rows),
                 )
-            elif len(tokens) == 4 and tokens[1] == "billcommit":
-                _, _, token, page_token = tokens
+            elif len(tokens) == 5 and tokens[1] == "billcommit":
+                _, _, token, page_token, reviewed_token = tokens
                 if not page_token.isascii() or not page_token.isdecimal():
                     raise ValueError("Invalid invoice page")
                 page = int(page_token)
@@ -1291,11 +1293,37 @@ def create_platform_dashboard_router(
                     actor_telegram_id=query.from_user.id, page=page,
                     settings=config,
                 )
-                if not any(x["id"] == str(invoice_id) for x in report.invoices):
+                item = next((
+                    x for x in report.invoices if x["id"] == str(invoice_id)
+                ), None)
+                if item is None:
                     raise ValueError("Invoice no longer on this page")
                 snapshot = await saas_invoice_currency_snapshot(
                     factory, actor_user_id=actor_id, invoice_id=invoice_id,
                 )
+                if (
+                    item["status"] != "unpaid"
+                    or reviewed_token != receipt_fingerprint(
+                        invoice_id, item, snapshot,
+                    )
+                ):
+                    await _render_platform_screen(
+                        bot, chat_id=query.from_user.id,
+                        text=tr(
+                            "⚠️ Условия счёта изменились с момента просмотра. "
+                            "Проверьте валюту и сумму заново, прежде чем "
+                            "подтверждать поступление.",
+                            "⚠️ Invoice terms changed since the last view. "
+                            "Review the currency and amount again before "
+                            "confirming bank receipt.",
+                        ),
+                        reply_markup=_keyboard([[_button(
+                            tr("⬅️ Обновить счёт", "⬅️ Refresh invoice"),
+                            "billcheck:" + token + ":" + str(page),
+                        )]]), message_id=message_id,
+                    )
+                    await query.answer()
+                    return
                 if snapshot.get("locked"):
                     await confirm_saas_currency_receipt(
                         factory, actor_user_id=actor_id,
