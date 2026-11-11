@@ -224,6 +224,18 @@ def upgrade() -> None:
                 SELECT 1 FROM public.platform_saas_star_sales e
                 WHERE e.source_kind='file_stars' AND e.source_id=f.id
               )
+              -- Invalid old owner periods/rates must not indefinitely
+              -- occupy the first 200 rows and starve newer paid buyers.
+              AND (SELECT count(*)
+                   FROM public.merchant_project_periods h
+                   WHERE h.project_id=f.project_id
+                     AND h.started_at<=f.paid_at
+                     AND (h.ended_at IS NULL OR h.ended_at>f.paid_at))=1
+              AND EXISTS(
+                SELECT 1 FROM public.platform_saas_star_reward_rates q
+                WHERE q.effective_on<=
+                   (f.paid_at AT TIME ZONE 'Europe/Moscow')::date
+              )
             ORDER BY f.paid_at,f.id LIMIT p_limit
           LOOP
             examined:=examined+1;
@@ -281,6 +293,27 @@ def upgrade() -> None:
             ) ON CONFLICT (source_kind,source_id) DO NOTHING;
             IF FOUND THEN inserted:=inserted+1; END IF;
           END LOOP;
+          -- Expose stalled historical attribution/rate cases separately
+          -- without making paid buyer access depend on billing evidence.
+          SELECT count(*) INTO unresolved
+          FROM public.file_sale_purchases f
+          WHERE f.status='paid' AND f.paid_at>=control.started_at
+            AND f.telegram_charge_id IS NOT NULL
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_star_sales e
+              WHERE e.source_kind='file_stars' AND e.source_id=f.id
+            )
+            AND (
+              (SELECT count(*) FROM public.merchant_project_periods h
+                WHERE h.project_id=f.project_id
+                AND h.started_at<=f.paid_at
+                AND (h.ended_at IS NULL OR h.ended_at>f.paid_at))<>1
+              OR NOT EXISTS (
+                SELECT 1 FROM public.platform_saas_star_reward_rates q
+                WHERE q.effective_on<=
+                  (f.paid_at AT TIME ZONE 'Europe/Moscow')::date
+              )
+            );
           RETURN jsonb_build_object(
               'examined',examined,'recorded',inserted,
               'unresolved',unresolved,'billing_activated',EXISTS(
