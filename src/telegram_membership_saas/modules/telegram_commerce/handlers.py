@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from contextlib import nullcontext
@@ -23,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas import receipt_intents
+from telegram_membership_saas.customer_runtime import verify_resource_permissions
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import (
     current_language,
@@ -855,6 +857,15 @@ def create_telegram_commerce_router(
                     buyer_id=query.from_user.id,
                     payload=query.invoice_payload, currency=query.currency,
                     amount=query.total_amount,
+                )
+            if allowed:
+                # Telegram permissions can be lost after worker startup.
+                # Recheck live channel membership before charging Stars;
+                # fail closed inside Bot API's pre-checkout deadline.
+                await asyncio.wait_for(
+                    verify_resource_permissions(
+                        session_factory, project_id=project_id, bot=bot,
+                    ), timeout=5,
                 )
         except Exception:
             allowed = False
