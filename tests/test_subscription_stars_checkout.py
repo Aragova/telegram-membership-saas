@@ -1606,3 +1606,78 @@ async def test_delayed_confirmation_after_virtual_refund_reconstruction():
             assert grant.valid_until == c_paid + timedelta(days=3)
     finally:
         await engine.dispose()
+
+
+async def test_same_second_stars_tie_does_not_extend_refunded_predecessor():
+    """Earlier invoice A cannot inherit later B's expiry at equal paid_at."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Same-second ordered invoices",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        receipts = []
+        for _ in range(3):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                receipts.append((order.id, order.invoice_payload))
+        shared_at = (datetime.now(UTC) - timedelta(days=4)).replace(microsecond=0)
+        c_paid = shared_at + timedelta(hours=1)
+        a_refund = shared_at + timedelta(hours=2)
+        for index in (0, 1):
+            async with system_project_session_scope(factory, project_id) as session:
+                await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, payload=receipts[index][1],
+                    currency="XTR", amount=70,
+                    charge_id=f"tie-{index}", paid_at=shared_at,
+                )
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1],
+                currency="XTR", amount=70, charge_id="tie-0",
+                refunded_at=a_refund,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[2][1],
+                currency="XTR", amount=70, charge_id="tie-2",
+                paid_at=c_paid,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[2][0],
+            ))
+            assert grant.valid_from == shared_at + timedelta(days=2)
+            assert grant.valid_until == shared_at + timedelta(days=3)
+    finally:
+        await engine.dispose()

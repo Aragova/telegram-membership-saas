@@ -160,3 +160,10 @@ a later prepaid renewal. After replaying a Telegram Stars ledger page,
 `/starsrecover` counts only newly recovered purchases that **still have
 an active entitlement at the end of all refund events**; previously paid
 or immediately refunded charges are not advertised as restored access.
+
+For multiple Stars invoices sharing Telegram's one-second paid_at,
+invoice creation timestamp plus immutable UUID provides deterministic
+earlier/later ordering. A later-created paid invoice is never allowed
+to extend its own earlier refunded predecessor when deriving virtual
+periods. Confirmation replays all same-second purchases chronologically,
+without double-counting the newly authenticated charge.

@@ -124,6 +124,24 @@ def manual_anchor_end(
     ), default=None)
 
 
+def _star_before(
+    earlier: SubscriptionStarOrder, at: datetime,
+    current: SubscriptionStarOrder | None,
+) -> bool:
+    """Total order for charges sharing a Telegram-second receipt timestamp.
+
+    Stars invoices have immutable creation timestamps. A same-second charge
+    cannot use a later-created invoice as its own renewal anchor.
+    """
+    if earlier.paid_at is None or earlier.paid_at > at:
+        return False
+    if earlier.paid_at < at or current is None:
+        return True
+    return (earlier.created_at, str(earlier.id)) < (
+        current.created_at, str(current.id),
+    )
+
+
 def _virtual_refunded_anchors(
     manual: list[tuple[EntitlementGrant, Payment]],
     stars: list[tuple[EntitlementGrant, SubscriptionStarOrder]],
@@ -132,20 +150,25 @@ def _virtual_refunded_anchors(
     ]],
     termination_times: tuple[datetime, ...],
     timezone_name: str,
-) -> list[tuple[UUID, datetime, datetime, datetime]]:
+) -> list[tuple[UUID, datetime, datetime, datetime, datetime]]:
     """Virtual original periods for ALL returned purchases in event time.
 
     This includes refunded sources paid before a later reconciliation cutoff;
     stale revoked grant expiry must NEVER override a reconstructed earlier
     source in a subsequent refund or delayed payment confirmation.
     """
-    prior_returned: list[tuple[UUID, datetime, datetime, datetime]] = []
+    prior_returned: list[
+        tuple[UUID, datetime, datetime, datetime, datetime]
+    ] = []
     unique: dict[UUID, tuple[SubscriptionStarOrder, SubscriptionStarRefund]] = {}
     for _, order, returned in refunded:
         if order.paid_at is not None:
             unique[order.id] = (order, returned)
     for order, returned in sorted(
-        unique.values(), key=lambda pair: (pair[0].paid_at, str(pair[0].id)),
+        unique.values(),
+        key=lambda pair: (
+            pair[0].paid_at, pair[0].created_at, str(pair[0].id),
+        ),
     ):
         paid_at = order.paid_at
         if paid_at is None:
@@ -159,15 +182,25 @@ def _virtual_refunded_anchors(
         ]
         source_ends.extend(
             grant.valid_until for grant, paid_order in stars
-            if paid_order.paid_at is not None
-            and paid_order.paid_at <= paid_at and grant.valid_until is not None
+            if _star_before(paid_order, paid_at, order)
+            and grant.valid_until is not None
             and not _terminated_between(
                 termination_times, paid_order.paid_at, paid_at,
             )
         )
         source_ends.extend(
-            valid_end for _, prior_paid, valid_end, returned_at in prior_returned
-            if prior_paid <= paid_at and returned_at > paid_at
+            valid_end
+            for prior_id, prior_paid, valid_end, returned_at, prior_created
+            in prior_returned
+            if (
+                prior_paid < paid_at
+                or (
+                    prior_paid == paid_at
+                    and (prior_created, str(prior_id))
+                    < (order.created_at, str(order.id))
+                )
+            )
+            and returned_at > paid_at
             and not _terminated_between(termination_times, prior_paid, paid_at)
         )
         virtual_start = max([paid_at, *source_ends])
@@ -178,6 +211,7 @@ def _virtual_refunded_anchors(
         if virtual_end is not None:
             prior_returned.append((
                 order.id, paid_at, virtual_end, returned.refunded_at,
+                order.created_at,
             ))
     return prior_returned
 
@@ -191,6 +225,7 @@ def historical_stars_start(
     ]] = (),
     termination_times: tuple[datetime, ...] = (),
     timezone_name: str = "UTC",
+    current_order: SubscriptionStarOrder | None = None,
 ) -> datetime:
     """Place an old charge using fully replayed historical refunded anchors.
 
@@ -201,7 +236,7 @@ def historical_stars_start(
     """
     anchors = [
         grant.valid_until for grant, order in stars
-        if order.paid_at is not None and order.paid_at <= at
+        if _star_before(order, at, current_order)
         and grant.valid_until is not None
         and not _terminated_between(termination_times, order.paid_at, at)
     ]
@@ -210,11 +245,22 @@ def historical_stars_start(
         anchors.append(manual_end)
 
     anchors.extend(
-        valid_end for _, original_paid, valid_end, returned_at
+        valid_end
+        for _, original_paid, valid_end, returned_at, created
         in _virtual_refunded_anchors(
             manual, stars, refunded, termination_times, timezone_name,
         )
-        if original_paid <= at and returned_at > at
+        if (
+            original_paid < at
+            or (
+                original_paid == at
+                and (
+                    current_order is None
+                    or created < current_order.created_at
+                )
+            )
+        )
+        and returned_at > at
         and not _terminated_between(termination_times, original_paid, at)
     )
     return max([at, *anchors])
@@ -241,7 +287,8 @@ async def rebuild_paid_windows_after(
     # period too, rather than using a stale grant end after an old charge
     # is backfilled. No revoked grant or financial source is mutated.
     events: dict[tuple[str, UUID], tuple[
-        datetime, int | None, str, list[EntitlementGrant], datetime | None
+        datetime, int | None, str, list[EntitlementGrant],
+        datetime | None, datetime
     ]] = {}
     anchors: list[tuple[datetime, datetime, datetime | None]] = []
     for grant, payment in manual:
@@ -253,7 +300,8 @@ async def rebuild_paid_windows_after(
             key = ("manual", payment.id)
             if key not in events:
                 events[key] = (
-                    at, payment.duration_value, payment.duration_unit, [], None,
+                    at, payment.duration_value, payment.duration_unit, [],
+                    None, payment.created_at,
                 )
             events[key][3].append(grant)
     for grant, order in stars:
@@ -267,7 +315,8 @@ async def rebuild_paid_windows_after(
             key = ("stars", order.id)
             if key not in events:
                 events[key] = (
-                    at, order.duration_value, order.duration_unit, [], None,
+                    at, order.duration_value, order.duration_unit, [],
+                    None, order.created_at,
                 )
             events[key][3].append(grant)
     if not events:
@@ -280,7 +329,7 @@ async def rebuild_paid_windows_after(
     if project is None:
         raise RuntimeError("Paid subscription project disappeared")
     virtual_ends = {
-        order_id: end for order_id, _, end, _ in _virtual_refunded_anchors(
+        order_id: end for order_id, _, end, _, _ in _virtual_refunded_anchors(
             manual, stars, refunded, termination_times, project.timezone,
         )
     }
@@ -297,11 +346,12 @@ async def rebuild_paid_windows_after(
             if key not in events:
                 events[key] = (
                     at, order.duration_value, order.duration_unit, [],
-                    returned.refunded_at,
+                    returned.refunded_at, order.created_at,
                 )
     targets: set[UUID] = set()
-    for _, (paid_at, value, unit, grants, refunded_at) in sorted(
-        events.items(), key=lambda item: (item[1][0], item[0][0], str(item[0][1])),
+    for _, (paid_at, value, unit, grants, refunded_at, _) in sorted(
+        events.items(),
+        key=lambda item: (item[1][0], item[1][5], str(item[0][1])),
     ):
         ends = [
             period_end for original_at, period_end, returned_at in anchors
