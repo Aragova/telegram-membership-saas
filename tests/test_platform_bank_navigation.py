@@ -170,7 +170,8 @@ async def test_exemption_pages_navigate_inside_invoices_without_bank_editor(
     buttons = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
     actions = [button.callback_data for row in buttons for button in row]
     assert actions == [
-        "plat:exemptions:0", "plat:exemptions:2", "plat:billing:0",
+        "plat:exemptcheck:1", "plat:exemptions:0",
+        "plat:exemptions:2", "plat:billing:0",
     ]
     assert "plat:bankedit" not in actions
     assert answer.await_count == 1
