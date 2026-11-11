@@ -119,3 +119,61 @@ def test_missing_quote_does_not_display_fabricated_amount():
     assert "Фиксация недоступна" in rich
     assert "Подтверждение недоступно" in classic
     assert "None" not in rich + classic
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_mixed_currency_account_hides_shared_rub_payment_instructions(lang):
+    from types import SimpleNamespace
+
+    from telegram_membership_saas.modules.owner_setup.handlers import (
+        _saas_invoices_rich,
+    )
+
+    report = SimpleNamespace(
+        total=2, unpaid=2, outstanding_rub=Decimal("300.00"),
+        configured=True, instructions="RUB BANK 123456789",
+        foreign_unpaid_count=1,  # Even if foreign invoice is on another page.
+        pending_credit_count=0,
+        invoices=[{
+            "id": INVOICE["id"], "kind": "prepayment",
+            "status": "unpaid", "amount_rub": "150.00",
+            "due_at": INVOICE["due_at"],
+            "settlement": {"locked": False},
+        }],
+    )
+    token = _language.set(lang)
+    try:
+        rich = _saas_invoices_rich(report)
+    finally:
+        _language.reset(token)
+    assert "RUB BANK" not in rich
+    assert ("рублёвые реквизиты" if lang == "ru" else
+            "RUB payment details") in rich
+    assert "150.00 ₽" in rich
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_invoice_list_uses_real_locked_foreign_amount(lang):
+    from types import SimpleNamespace
+
+    from telegram_membership_saas.modules.owner_setup.handlers import (
+        _saas_invoices_rich,
+    )
+
+    report = SimpleNamespace(
+        total=1, unpaid=1, outstanding_rub=Decimal("150.00"),
+        configured=False, instructions=None,
+        foreign_unpaid_count=1, pending_credit_count=0,
+        invoices=[{
+            "id": INVOICE["id"], "kind": "prepayment",
+            "status": "unpaid", "amount_rub": "150.00",
+            "due_at": INVOICE["due_at"], "settlement": SNAPSHOT,
+        }],
+    )
+    token = _language.set(lang)
+    try:
+        rich = _saas_invoices_rich(report)
+    finally:
+        _language.reset(token)
+    assert "1.67 EUR" in rich
+    assert "150.00 ₽" in rich  # Reference only, not payment amount.
