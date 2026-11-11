@@ -62,6 +62,9 @@ services:
       TMS_ENVIRONMENT: development
       TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
+      # Same configured owner identity as the central bot. Required for
+      # owner-only monthly CBR publication in the customer supervisor.
+      TMS_PLATFORM_OWNER_TELEGRAM_ID: ${TMS_PLATFORM_OWNER_TELEGRAM_ID:-}
       TMS_RICH_MESSAGES_ENABLED: ${TMS_RICH_MESSAGES_ENABLED:-true}
       TMS_BOT_TOKEN_ENCRYPTION_KEY: ${TMS_BOT_TOKEN_ENCRYPTION_KEY:-}
       TMS_TELEGRAM_CENTRAL_ACCESS_ENABLED: "false"
