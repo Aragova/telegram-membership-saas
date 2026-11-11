@@ -174,3 +174,39 @@ async def test_exemption_pages_navigate_inside_invoices_without_bank_editor(
     ]
     assert "plat:bankedit" not in actions
     assert answer.await_count == 1
+
+
+async def test_creator_page_check_acks_once_and_never_issues_billing(monkeypatch):
+    navigation = ui.PlatformBankNavigationMiddleware()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    from telegram_membership_saas.modules.platform_saas_creator_check import (
+        CreatorAuditResult,
+        CreatorAuditRow,
+    )
+
+    check = AsyncMock(return_value=CreatorAuditResult(
+        page=0, pages=4,
+        rows=(CreatorAuditRow("owner_bot", "creator"),),
+    ))
+    monkeypatch.setattr(ui, "audit_creator_page", check)
+    router = ui.create_platform_dashboard_router(
+        MagicMock(), settings=Settings(platform_owner_telegram_id=7777),
+        bank_navigation=navigation,
+    )
+    handler = next(
+        entry.callback for entry in router.callback_query.handlers
+        if entry.callback.__name__ == "platform_callback"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    answer = AsyncMock()
+    monkeypatch.setattr(CallbackQuery, "answer", answer)
+    await handler(_callback("plat:exemptcheck:0"), bot)
+    assert answer.await_count == 1
+    check.assert_awaited_once()
+    text = bot.send_message.await_args.args[1]
+    assert "owner_bot" in text
+    assert "счета не изменены" in text
+    buttons = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    actions = [button.callback_data for row in buttons for button in row]
+    assert actions == ["plat:exemptions:0"]
