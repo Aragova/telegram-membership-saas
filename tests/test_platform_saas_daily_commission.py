@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_platform_saas_invoice_rls import _project, _tid
@@ -144,6 +145,16 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                     "SELECT public.platform_saas_publish_fx_rate("
                     ":month,'USD',:rate)"
                 ), {"month": month, "rate": Decimal("80")})
+                for currency, rate in (
+                    ("EUR", "90"), ("UAH", "2"), ("BYN", "27"),
+                ):
+                    await conn.execute(text(
+                        "SELECT public.platform_saas_publish_fx_rate("
+                        ":month,:currency,:rate)"
+                    ), {
+                        "month": month, "currency": currency,
+                        "rate": Decimal(rate),
+                    })
                 with pytest.raises(DBAPIError) as override:
                     async with conn.begin_nested():
                         await _commission(
@@ -176,6 +187,36 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                             "UPDATE platform_saas_invoice_lines "
                             "SET rub_per_unit=100 WHERE invoice_id=:id"
                         ), {"id": invoice})
+                # One USD/RUB reference total, convertible into any
+                # administrator-selected settlement currency. No extra
+                # invoice is created just by checking a quote.
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(merchant_owner)})
+                for currency, expected in (
+                    ("RUB", Decimal("470.00")),
+                    ("USD", Decimal("5.88")),
+                    ("EUR", Decimal("5.22")),
+                    ("UAH", Decimal("235.00")),
+                    ("BYN", Decimal("17.41")),
+                ):
+                    quote = (await conn.execute(text(
+                        "SELECT public.platform_saas_quote_project_bill("
+                        ":project,:month,:currency) AS data"
+                    ).columns(data=JSONB), {
+                        "project": project,
+                        "month": month,
+                        "currency": currency,
+                    })).scalar_one()
+                    assert quote["quote_ready"] is True
+                    assert quote["chosen_currency"] == currency
+                    assert Decimal(str(quote["total_rub"])) == Decimal("470")
+                    assert Decimal(str(quote["estimated_total"])) == expected
+                    assert quote["preview_only"] is True
+                assert (await conn.execute(text(
+                    "SELECT count(*) FROM platform_saas_invoices "
+                    "WHERE kind='commission' AND merchant_id=:merchant"
+                ), {"merchant": merchant})).scalar_one() == 1
                 assert (await conn.execute(text(
                     "SELECT enabled FROM platform_saas_billing_control "
                     "WHERE id=1"
