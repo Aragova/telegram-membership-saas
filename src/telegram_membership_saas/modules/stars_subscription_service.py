@@ -164,13 +164,24 @@ async def stars_subscription_precheckout(
         ProjectCustomer.id == order.customer_id,
         ProjectCustomer.project_id == project_id,
     ))
+    linked = await session.scalar(
+        select(PlanResource.resource_id).join(
+            Resource, (Resource.id == PlanResource.resource_id)
+            & (Resource.project_id == PlanResource.project_id),
+        ).where(
+            PlanResource.project_id == project_id,
+            PlanResource.plan_id == order.plan_id,
+            Resource.status == "active",
+            Resource.removed_at.is_(None),
+        ).limit(1)
+    )
     bot_exists = await session.scalar(select(BotInstance.id).where(
         BotInstance.project_id == project_id,
         BotInstance.telegram_bot_id == bot_id,
         BotInstance.status == "registered",
     ))
     return bool(
-        project and plan and price and bot_exists and customer
+        project and plan and price and bot_exists and linked and customer
         and not customer.is_banned
     )
 
