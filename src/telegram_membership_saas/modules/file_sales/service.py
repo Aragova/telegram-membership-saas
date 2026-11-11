@@ -6,7 +6,7 @@ existing manual-settlement Payment/PaymentRequest/Entitlement ledger.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from uuid import UUID, uuid4
 
@@ -864,6 +864,7 @@ async def confirm_stars_payment(
     project_id: UUID, bot_id: int, buyer_id: int,
     invoice_payload: str, amount: int, currency: str,
     charge_id: str,
+    payment_at: datetime | None = None,
 ) -> FilePurchase:
     if currency != "XTR" or not charge_id or not invoice_payload.startswith("fs:"):
         raise ValueError(tr(
@@ -891,9 +892,20 @@ async def confirm_stars_payment(
             return purchase
         if purchase.status != "pending":
             raise ValueError(tr("Неверное состояние заказа", "Invalid order status"))
+        # Only the authenticated Telegram successful_payment message or
+        # bot-owned StarTransaction ledger supplies payment_at. Preserve that
+        # actual charge time for the 0055 non-retroactive billing cutoff,
+        # historical owner identity and reward rate. Recovery time is NOT
+        # the purchase time.
+        if payment_at is not None and payment_at.tzinfo is None:
+            raise ValueError("Telegram Stars payment time must include timezone")
+        now = datetime.now(UTC)
+        event_time = payment_at.astimezone(UTC) if payment_at else now
+        if event_time > now + timedelta(minutes=5):
+            raise ValueError("Future-dated Telegram Stars payment")
         purchase.telegram_charge_id = charge_id
         purchase.status = "paid"
-        purchase.paid_at = datetime.now(UTC)
+        purchase.paid_at = event_time
         await session.flush()
         return purchase
 
