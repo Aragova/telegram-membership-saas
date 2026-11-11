@@ -154,6 +154,8 @@ jobs:
                       "platform_saas_confirm_currency_receipt(uuid,text,numeric,text)",
                       "platform_saas_record_refund_credit(uuid,text,numeric,text)",
                       "platform_saas_refund_credit_report(uuid)",
+                      "platform_saas_preview_invoice_currency(uuid,text)",
+                      "platform_saas_invoice_credit_history(uuid)",
                   ):
                       await connection.execute(
                           f"GRANT EXECUTE ON FUNCTION public.{function} "
