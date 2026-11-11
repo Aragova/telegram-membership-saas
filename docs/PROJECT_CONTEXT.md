@@ -1,3 +1,25 @@
+## SaaS monthly FX safety gate (2026-11-11)
+
+Migration `0051_saas_fx_policy` creates a **private, immutable** monthly
+conversion policy for non-RUB commissions. The provisioned platform owner
+must publish a `(Moscow billing month, currency, RUB-per-unit)` snapshot
+using the owner-only `platform_saas_publish_fx_rate(date,text,numeric)` RPC;
+the owner-only `platform_saas_monthly_fx(date)` reads it. Duplicate
+publication of the same exact rate is idempotent; changing or deleting a
+published rate is forbidden to avoid silently rewriting liability.
+No exchange rates are prepopulated, guessed or auto-fetched.
+
+`platform_saas_issue_commission_invoice` uses **published database rates**
+rather than arbitrary caller-supplied FX JSON, keeps the existing signature
+for compatibility, and rejects any supplied override that disagrees.
+Missing foreign currency rate aborts the entire invoice; RUB uses 1.
+Invoice lines still snapshot their original amounts, currency and FX.
+No new Telegram buttons, no new top-level sections, no tenant/consumer
+changes, and **all billing, access-policy and hold switches remain OFF**.
+Real rates must be reviewed and deliberately published before ever
+considering a commercial activation. Refund/credit adjustment workflows
+and full controlled rollout remain future gates.
+
 ## Permanent ViMi Pay owner rule (2026-11-11, supersedes PR #119-#121)
 
 **A bot/channel added via the platform owner's "👤 Мои боты" belongs to
