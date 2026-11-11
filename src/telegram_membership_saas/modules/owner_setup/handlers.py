@@ -291,9 +291,9 @@ def _saas_preview_rich(preview: dict) -> str:
             + escape(amount) + "</td><td>" + escape(fee) + "</td></tr>"
         )
     if not rows:
-        lines.append("<tr><td colspan='3'>"
-                     + tr("Нет подтверждённых продаж", "No confirmed sales")
-                     + "</td></tr>")
+        lines.append("<tr><td>"
+                     + tr("Нет продаж", "No sales")
+                     + "</td><td>0</td><td>0</td></tr>")
     lines.append("</table>")
 
     lines.append("<p>" + tr(
@@ -340,6 +340,49 @@ def _saas_preview_rich(preview: dict) -> str:
         tr("Итоговые суммы подтверждаются выставленными счетами ниже.",
            "Only issued invoices below establish amounts payable.")
     ) + "</i></p>")
+    return "\n".join(lines)
+
+
+def _saas_preview_classic(preview: dict) -> str:
+    """Telegram standard HTML fallback: no Rich-only table tags."""
+    lines = [
+        tr("🧾 <b>Счёт · оборот за месяц</b>",
+           "🧾 <b>Bill · monthly turnover</b>"),
+        escape(str(preview["month"])),
+        "",
+    ]
+    for item in preview.get("rows", []):
+        amount = escape(str(item["gross"]))
+        currency = escape(str(item["currency"]))
+        quote = tr("нет дневного курса", "payment-day rate missing") if (
+            int(item.get("missing", 0))
+        ) else escape(str(item["fee_rub"]) + " ₽")
+        lines.append("• " + amount + " " + currency + " · 5%: " + quote)
+    if not preview.get("rows"):
+        lines.append(tr("Подтверждённых продаж пока нет.",
+                        "No confirmed sales yet."))
+    lines.extend([
+        "",
+        tr("Комиссия: ", "Commission: ")
+        + escape(str(preview["fiat_commission_rub"])) + " ₽",
+        tr("Абонплата за следующий месяц: ", "Next month fee: ")
+        + escape(str(preview["next_bot_fee_rub"])) + " ₽",
+    ])
+    if preview["stars_need_reconciliation"]:
+        lines.append(tr(
+            "⭐ Stars: нужна сверка возвратов и стоимости вывода.",
+            "⭐ Stars: refunds and reward value need reconciliation.",
+        ))
+    if int(preview["missing_daily_rates"]):
+        lines.append(tr(
+            "⚠️ Курсы на даты оплат неполные. Итог не готов.",
+            "⚠️ Payment-day rates incomplete. No final amount.",
+        ))
+    if not preview["billing_enabled"]:
+        lines.append(tr(
+            "🔒 Начисления выключены. Это предварительная информация.",
+            "🔒 Billing disabled. Preview only.",
+        ))
     return "\n".join(lines)
 
 
@@ -809,7 +852,7 @@ def create_owner_setup_router(
                 bot, chat_id=user_id,
                 rich_html=_saas_preview_rich(preview) + "\n"
                 + "\n".join(lines),
-                classic_html=_saas_preview_rich(preview) + "\n"
+                classic_html=_saas_preview_classic(preview) + "\n"
                 + "\n".join(lines),
                 reply_markup=_markup(rows),
             )
