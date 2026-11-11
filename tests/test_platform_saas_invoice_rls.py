@@ -120,128 +120,80 @@ async def _receipt(admin, invoice_id, actor, amount="150.00"):
     })
 
 
-async def test_own_verified_channel_is_exempt_but_unverified_is_billable():
+async def test_platform_my_bots_are_exempt_without_creator_proof():
+    """The actual My Bots project owner is enough; a stranger stays billable."""
     settings = Settings()
     engine = build_engine(settings)
     admin_engine = create_async_engine(settings.migration_database_url)
     factory = build_session_factory(engine)
     owner_tg, stranger_tg = _tid(), _tid()
     try:
-        owner, own_merchant, own_project, own_bot, chat = await _project(
+        owner, own_merchant, own_project, own_bot, _ = await _project(
             factory, owner_tg,
         )
-        stranger, other_merchant, other_project, other_bot, other_chat = (
+        # Adding another bot through the same account is automatically exempt.
+        _, other_my_merchant, other_my_project, second_bot, _ = await _project(
+            factory, owner_tg,
+        )
+        stranger, other_merchant, other_project, other_bot, _ = (
             await _project(factory, stranger_tg)
         )
         async with admin_engine.connect() as admin:
             tx = await admin.begin()
             try:
-                await admin.execute(text("""
-                    INSERT INTO platform_operators (telegram_user_id,role)
-                    VALUES (:id,'owner')
-                """), {"id": owner_tg})
-                await admin.execute(text("""
-                    INSERT INTO platform_saas_owner_exemptions
-                    (id,merchant_id,project_id,bot_instance_id,channel_chat_id,
-                     owner_user_id,verified_by,proof_kind)
-                    VALUES (:id,:merchant,:project,:bot,:chat,:owner,:owner,
-                            'telegram_creator_verified')
-                """), {
-                    "id": uuid4(), "merchant": own_merchant,
-                    "project": own_project, "bot": own_bot,
-                    "chat": chat, "owner": owner,
-                })
+                await admin.execute(text(
+                    "INSERT INTO platform_operators (telegram_user_id,role) "
+                    "VALUES (:id,'owner')"
+                ), {"id": owner_tg})
+                at = datetime.now(UTC) + timedelta(minutes=2)
+                for bot, project, merchant in (
+                    (own_bot, own_project, own_merchant),
+                    (second_bot, other_my_project, other_my_merchant),
+                ):
+                    exemption = (await admin.execute(text(
+                        "SELECT public.platform_saas_exemption_state("
+                        ":project,:bot,:merchant,:owner,:at)"
+                    ), {
+                        "project": project, "bot": bot,
+                        "merchant": merchant, "owner": owner, "at": at,
+                    })).scalar_one()
+                    assert exemption == "exempt"
+                    invoice = await _invoice(
+                        admin, owner, merchant, bot, period_start=at,
+                    )
+                    with pytest.raises(DBAPIError) as error:
+                        async with admin.begin_nested():
+                            await _line(admin, invoice, project, "bot_fee", bot)
+                    assert getattr(error.value.orig, "sqlstate", None) == "42501"
 
-                own_invoice = await _invoice(admin, owner, own_merchant, own_bot)
-                with pytest.raises(DBAPIError) as error:
-                    async with admin.begin_nested():
-                        await _line(
-                            admin, own_invoice, own_project,
-                            "bot_fee", own_bot,
-                        )
-                assert getattr(error.value.orig, "sqlstate", None) == "42501"
-
-                # A new bot in this same project must NOT inherit the
-                # first bot's creator-verified exemption.
-                replacement = uuid4()
-                await admin.execute(text("""
-                    INSERT INTO bot_instances
-                    (id,project_id,telegram_bot_id,username,
-                     display_name,token_ciphertext,status)
-                    VALUES (:id,:project,:telegram_id,'new_test_bot',
-                            'Replacement','test-only-placeholder','registered')
-                """), {
-                    "id": replacement, "project": own_project,
-                    "telegram_id": _tid(),
-                })
-                replaced_invoice = await _invoice(
-                    admin, owner, own_merchant, replacement,
-                )
-                await _line(
-                    admin, replaced_invoice, own_project, "bot_fee", replacement,
-                )
-
-                # Ending the old bot's exemption cannot make a formerly
-                # exempt service period retroactively billable.
-                (verified_at,) = (await admin.execute(text("""
-                    SELECT verified_at FROM platform_saas_owner_exemptions
-                    WHERE project_id=:p
-                """), {"p": own_project})).one()
-                exemption_end = verified_at + timedelta(minutes=10)
-                await admin.execute(text("""
-                    UPDATE platform_saas_owner_exemptions SET ended_at=:ended
-                    WHERE project_id=:p
-                """), {"ended": exemption_end, "p": own_project})
-                with pytest.raises(DBAPIError) as error:
-                    async with admin.begin_nested():
-                        await _line(
-                            admin, own_invoice, own_project, "bot_fee", own_bot,
-                        )
-                assert getattr(error.value.orig, "sqlstate", None) == "42501"
-
-                # Future periods after the exemption ends can be charged.
-                later_invoice = await _invoice(
-                    admin, owner, own_merchant, own_bot,
-                    period_start=exemption_end + timedelta(days=1),
-                )
-                await _line(
-                    admin, later_invoice, own_project, "bot_fee", own_bot,
-                )
-
-                # A channel owned by another project owner does not inherit
-                # the platform owner's exemption, even if he is an admin.
-                with pytest.raises(DBAPIError) as error:
-                    async with admin.begin_nested():
-                        await admin.execute(text("""
-                            INSERT INTO platform_saas_owner_exemptions
-                            (id,merchant_id,project_id,bot_instance_id,
-                             channel_chat_id,owner_user_id,verified_by,proof_kind)
-                            VALUES (:id,:merchant,:project,:bot,:chat,:owner,
-                                    :verifier,'telegram_creator_verified')
-                        """), {
-                            "id": uuid4(), "merchant": other_merchant,
-                            "project": other_project, "bot": other_bot,
-                            "chat": other_chat, "owner": stranger,
-                            "verifier": owner,
-                        })
-                assert getattr(error.value.orig, "sqlstate", None) == "42501"
+                stranger_exemption = (await admin.execute(text(
+                    "SELECT public.platform_saas_exemption_state("
+                    ":project,:bot,:merchant,:owner,:at)"
+                ), {
+                    "project": other_project, "bot": other_bot,
+                    "merchant": other_merchant, "owner": stranger, "at": at,
+                })).scalar_one()
+                assert stranger_exemption == "not_exempt"
 
                 external = await _invoice(
-                    admin, stranger, other_merchant, other_bot,
+                    admin, stranger, other_merchant, other_bot, period_start=at,
                 )
                 await _line(
                     admin, external, other_project, "bot_fee", other_bot,
                 )
-                await admin.execute(text("""
-                    UPDATE platform_saas_invoices SET status='issued'
-                    WHERE id=:id
-                """), {"id": external})
-                stored = (await admin.execute(text("""
-                    SELECT status,total_rub FROM platform_saas_invoices
-                    WHERE id=:id
-                """), {"id": external})).one()
+                await admin.execute(text(
+                    "UPDATE platform_saas_invoices SET status='issued' "
+                    "WHERE id=:id"
+                ), {"id": external})
+                stored = (await admin.execute(text(
+                    "SELECT status,total_rub FROM platform_saas_invoices "
+                    "WHERE id=:id"
+                ), {"id": external})).one()
                 assert stored.status == "issued"
                 assert stored.total_rub == Decimal("150.00")
+                assert (await admin.execute(text(
+                    "SELECT count(*) FROM platform_saas_owner_exemptions"
+                ))).scalar_one() == 0
             finally:
                 await tx.rollback()
     finally:
