@@ -232,6 +232,7 @@ async def approve_payment_request(
         )
         subscription.status = SubscriptionStatus.ACTIVE.value
         subscription.last_payment_id = payment.id
+        subscription.last_star_order_id = None
     else:
         grant_start = renewal_period_start(subscription, moment)
         grant_end = calculate_period_end(
@@ -258,6 +259,7 @@ async def approve_payment_request(
             subscription.current_period_start = grant_start
             subscription.current_period_end = grant_end
             subscription.last_payment_id = payment.id
+            subscription.last_star_order_id = None
 
     resource_ids = tuple(
         (
