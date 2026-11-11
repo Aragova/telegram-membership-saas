@@ -6,6 +6,7 @@ PostgreSQL re-checks the actual liable account and platform-owner identity.
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
@@ -207,4 +208,35 @@ async def saas_invoice_credit_history(
         })).scalar_one()
     if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
         raise RuntimeError("Invalid invoice credit history")
+    return data
+
+
+async def lock_saas_invoice_currency_expected(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID,
+    invoice_id: UUID,
+    currency: str,
+    quote_day: date,
+    rub_per_unit: Decimal,
+    expected_amount: Decimal,
+) -> dict:
+    """Lock exactly the previewed terms or roll back without issuing a quote."""
+    if currency not in SETTLEMENT_CURRENCIES:
+        raise ValueError("Unsupported settlement currency")
+    if not rub_per_unit.is_finite() or not expected_amount.is_finite():
+        raise ValueError("Invalid expected currency quote")
+    stmt = text(
+        "SELECT public.platform_saas_lock_invoice_currency_expected("
+        ":invoice,:currency,:day,:rate,:amount) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id),
+    ) as session:
+        data = (await session.execute(stmt, {
+            "invoice": invoice_id, "currency": currency,
+            "day": quote_day, "rate": rub_per_unit,
+            "amount": expected_amount,
+        })).scalar_one()
+    if not isinstance(data, dict) or data.get("currency") != currency:
+        raise RuntimeError("Invalid locked quote")
     return data
