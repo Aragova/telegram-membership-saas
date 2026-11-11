@@ -8,6 +8,7 @@ matched by invoice payload, payer ID, Stars amount and bot scope.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from aiogram import Bot
@@ -50,7 +51,7 @@ async def recover_buyer_stars(
         }
     if not wanted:
         return ()
-    matches: dict[str, tuple[str, int]] = {}
+    matches: dict[str, tuple[str, int, datetime]] = {}
     for page in range(MAX_SCAN_PAGES):
         # offset/limit refer to *this bot's* ledger. Never use another bot's
         # credentials or trust a copied buyer receipt.
@@ -81,15 +82,24 @@ async def recover_buyer_stars(
                     purchase_id,
                 )
                 continue
-            matches[payload] = (record.id, stars)
+            # StarTransaction.date is the authenticated Unix event time.
+            # Never substitute the later /myfiles recovery time.
+            if not isinstance(getattr(record, "date", None), int):
+                log.warning(
+                    "Rejected Stars reconciliation without verified timestamp"
+                )
+                continue
+            matched_at = datetime.fromtimestamp(record.date, tz=UTC)
+            matches[payload] = (record.id, stars, matched_at)
         if len(matches) == len(wanted) or len(transactions) < PAGE_SIZE:
             break
     recovered = []
-    for payload, (charge_id, amount) in matches.items():
+    for payload, (charge_id, amount, paid_at) in matches.items():
         purchase = await confirm_stars_payment(
             factory, project_id=project_id, bot_id=bot.id,
             buyer_id=buyer_id, invoice_payload=payload,
             amount=amount, currency="XTR", charge_id=charge_id,
+            payment_at=paid_at,
         )
         recovered.append(purchase.id)
     return tuple(recovered)
