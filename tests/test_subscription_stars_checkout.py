@@ -5,6 +5,8 @@ exactly once; wrong buyer/amount/bot cannot deliver. Manual settlement remains.
 """
 import os
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import func, select
@@ -26,6 +28,9 @@ from telegram_membership_saas.modules.outbox import OutboxEvent
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import replace_active_plan_price
 from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.stars_subscription_recovery import (
+    reconcile_subscription_star_ledger,
+)
 from telegram_membership_saas.modules.stars_subscription_refunds import (
     record_verified_subscription_star_refund,
 )
@@ -201,5 +206,153 @@ async def test_native_stars_charge_grants_one_subscription_and_access():
                 SubscriptionStarOrder.project_id == project_id,
                 SubscriptionStarOrder.id == order_id,
             ))) == "paid"
+    finally:
+        await engine.dispose()
+
+
+async def test_refund_newest_renewal_and_lost_ledger_refund_preserve_old_access():
+    """An earlier paid grant survives the latest renewal's refund."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Test renewal",
+                status="active", duration_value=1, duration_unit="month",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id,
+                resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id,
+                plan_id=plan.id, currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        moment = datetime.now(UTC)
+        ids = []
+        for index in range(2):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                payload, order_id = order.invoice_payload, order.id
+            async with system_project_session_scope(factory, project_id) as session:
+                _, sub = await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, payload=payload, currency="XTR",
+                    amount=70, charge_id=f"renewal-{index}",
+                    paid_at=moment,
+                )
+                ids.append((payload, order_id, sub.current_period_end))
+        assert ids[1][2] > ids[0][2]
+
+        refund = SimpleNamespace(
+            id="renewal-1",
+            amount=-70,
+            date=moment,
+            source=None,
+            receiver=SimpleNamespace(
+                type="user", transaction_type="invoice_payment",
+                user=SimpleNamespace(id=buyer),
+                invoice_payload=ids[1][0],
+            ),
+        )
+        bot = SimpleNamespace(
+            id=bot_id,
+            get_star_transactions=AsyncMock(return_value=SimpleNamespace(
+                transactions=[refund],
+            )),
+        )
+        purchased, returned = await reconcile_subscription_star_ledger(
+            factory, bot=bot, project_id=project_id, buyer_id=buyer,
+            pages=1,
+        )
+        assert not purchased and len(returned) == 1
+        async with system_project_session_scope(factory, project_id) as session:
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project_id,
+                Subscription.plan_id == plan.id,
+            ))
+            assert sub.status == "active"
+            assert sub.current_period_end == ids[0][2]
+            assert sub.last_star_order_id == ids[0][1]
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == ids[0][1],
+                EntitlementGrant.status == "active",
+            ))) == 1
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == ids[1][1],
+                EntitlementGrant.status == "active",
+            ))) == 0
+
+        # Telegram's outgoing refund and the original incoming Stars payment
+        # may both arrive while PostgreSQL is unavailable. Replay both from
+        # Telegram's own ledger, not user text or a screenshot.
+        async with system_project_session_scope(factory, project_id) as session:
+            order3 = await create_stars_subscription_order(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, username=None, first_name="Buyer",
+                plan_price_id=price_id,
+            )
+            third_id, third_payload = order3.id, order3.invoice_payload
+        source = SimpleNamespace(
+            type="user", transaction_type="invoice_payment",
+            user=SimpleNamespace(id=buyer),
+            invoice_payload=third_payload,
+        )
+        positive = SimpleNamespace(
+            id="renewal-2", amount=70, date=moment,
+            source=source, receiver=None,
+        )
+        negative = SimpleNamespace(
+            id="renewal-2", amount=-70, date=moment,
+            source=None,
+            receiver=SimpleNamespace(
+                type="user", transaction_type="invoice_payment",
+                user=SimpleNamespace(id=buyer),
+                invoice_payload=third_payload,
+            ),
+        )
+        bot.get_star_transactions.return_value = SimpleNamespace(
+            transactions=[positive, negative],
+        )
+        purchased, returned = await reconcile_subscription_star_ledger(
+            factory, bot=bot, project_id=project_id, buyer_id=buyer,
+            pages=1,
+        )
+        assert third_id in purchased
+        assert len(returned) == 1
+        async with system_project_session_scope(factory, project_id) as session:
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project_id,
+                Subscription.plan_id == plan.id,
+            ))
+            assert sub.status == "active"
+            assert sub.current_period_end == ids[0][2]
+            assert sub.last_star_order_id == ids[0][1]
+            assert (await session.scalar(select(func.count()).select_from(
+                SubscriptionStarRefund,
+            ).where(SubscriptionStarRefund.project_id == project_id))) == 2
     finally:
         await engine.dispose()
