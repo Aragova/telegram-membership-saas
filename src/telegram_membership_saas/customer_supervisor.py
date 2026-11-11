@@ -421,7 +421,9 @@ class CustomerBotSupervisor:
 
     async def _sync_daily_fx_safe(self) -> None:
         try:
-            await sync_official_month_rates(self.factory, self.settings)
+            loaded = await sync_official_daily_rates(self.factory, self.settings)
+            if loaded:
+                self._next_fx_sync_at = monotonic() + 60
         except asyncio.CancelledError:
             raise
         except Exception as exc:
