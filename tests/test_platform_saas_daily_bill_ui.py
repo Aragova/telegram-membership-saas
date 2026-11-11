@@ -66,7 +66,7 @@ def test_stars_requires_refunds_and_reward_value_before_invoicing():
     assert "Предварительно:" not in result
 
 
-def test_missing_daily_rate_never_claims_a_payable_total():
+def test_missing_monthly_rate_never_claims_a_payable_total():
     data = {
         "month": "2026-11-01",
         "rows": [{"currency": "USD", "gross": 50, "fee_rub": 0,
@@ -89,7 +89,7 @@ def test_missing_daily_rate_never_claims_a_payable_total():
 @pytest.mark.parametrize("lang,rate_label", [
     ("ru", "курс: "), ("en", "rate: "),
 ])
-def test_classic_bill_shows_full_daily_fx_range_not_only_minimum(
+def test_classic_bill_preserves_rate_range_for_old_or_ambiguous_data(
     lang, rate_label,
 ):
     """Two approved payment days cannot be represented by the first rate."""
@@ -123,7 +123,7 @@ def test_classic_bill_shows_full_daily_fx_range_not_only_minimum(
 
 
 @pytest.mark.parametrize("lang,missing_text", [
-    ("ru", "нет дневного курса"), ("en", "payment-day rate missing"),
+    ("ru", "нет курса месяца"), ("en", "monthly rate missing"),
 ])
 def test_classic_bill_does_not_invent_rate_when_one_day_unrated(
     lang, missing_text,
