@@ -115,7 +115,6 @@ async def test_missing_or_ambiguous_channels_never_trigger_telegram_calls(
         id=bot_id, project_id=project_id, username="demo_bot",
         telegram_bot_id=555, token_ciphertext="secret-ciphertext",
     )
-    project = SimpleNamespace(id=project_id, owner_user_id=actor)
     awaiter = AsyncMock(return_value={
         "page": 0, "pages": 1, "pending_bots": [
             {"username": "demo_bot", "state": "not_exempt"},
