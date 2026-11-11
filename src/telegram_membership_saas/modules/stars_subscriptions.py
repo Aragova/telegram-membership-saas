@@ -3,8 +3,18 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint,
-    Index, Integer, String, UniqueConstraint, Uuid, func, text,
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
