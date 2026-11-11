@@ -30,6 +30,9 @@ from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.broadcasts.worker import run_broadcast_loop
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
+from telegram_membership_saas.modules.stars_subscription_recovery import (
+    run_subscription_stars_ledger_loop,
+)
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
 from telegram_membership_saas.project_worker_lock import project_worker_lock
 from telegram_membership_saas.rich_messages import RichUiBot
@@ -172,6 +175,7 @@ async def run_customer_bot_instance(
     bot: Bot | None = None
     worker: asyncio.Task[None] | None = None
     broadcast_worker: asyncio.Task[None] | None = None
+    stars_reconciliation: asyncio.Task[None] | None = None
     polling: asyncio.Task[None] | None = None
     dispatcher = None
     try:
@@ -206,6 +210,11 @@ async def run_customer_bot_instance(
             run_broadcast_loop(
                 session_factory, project_id=project_id,
                 telegram_bot_id=telegram_bot_id, bot=bot,
+            )
+        )
+        stars_reconciliation = asyncio.create_task(
+            run_subscription_stars_ledger_loop(
+                session_factory, bot=bot, project_id=project_id,
             )
         )
         if on_started is not None:
@@ -252,6 +261,11 @@ async def run_customer_bot_instance(
                         cancel_once(broadcast_worker)
                         await asyncio.gather(
                             broadcast_worker, return_exceptions=True,
+                        )
+                    if stars_reconciliation is not None:
+                        cancel_once(stars_reconciliation)
+                        await asyncio.gather(
+                            stars_reconciliation, return_exceptions=True,
                         )
                     if bot is not None:
                         await bot.session.close()
