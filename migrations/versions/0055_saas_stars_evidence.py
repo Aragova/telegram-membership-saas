@@ -387,6 +387,15 @@ def upgrade() -> None:
             AND NOT EXISTS(
               SELECT 1 FROM public.platform_saas_star_sales s
               WHERE s.source_kind='file_stars' AND s.source_id=f.id
+            )
+            -- A new project owner cannot see the previous owner's
+            -- pending original Stars payments after a transfer.
+            AND EXISTS(
+              SELECT 1 FROM public.merchant_project_periods h
+              WHERE h.project_id=f.project_id
+                AND h.owner_user_id=actor
+                AND h.started_at<=f.paid_at
+                AND (h.ended_at IS NULL OR h.ended_at>f.paid_at)
             );
           RETURN jsonb_build_object(
             'project_id',p_project,'month',p_month,
@@ -394,7 +403,13 @@ def upgrade() -> None:
             'reward_usd',reward::text,
             'commission_usd',commission::text,
             'pending_reconciliation',unpriced,'rows',rows,
-            'preview_only',true
+            'preview_only',true,
+            'platform_owner_exempt',EXISTS(
+              SELECT 1 FROM public.telegram_users u
+              JOIN public.platform_operators po
+                ON po.telegram_user_id=u.telegram_user_id
+              WHERE u.id=actor AND po.role='owner'
+            )
           );
         END;
         $f$
