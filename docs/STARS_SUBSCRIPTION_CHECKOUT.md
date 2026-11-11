@@ -61,7 +61,7 @@ lock to avoid deadlocks.
 
 A lost `successful_payment` or `refunded_payment` is independently
 reconciled using the *connected bot's* official `getStarTransactions`
-ledger: outgoing refund transactions have a negative Stars amount and
+ledger: outgoing refunds have a positive amount in Bot API JSON and
 reuse the original incoming charge ID. An in-process task scans up to
 500 recent transactions per connected bot about every 15–18 minutes;
 `/starsrecover` checks up to 2000 for the specific buyer. These bounds
