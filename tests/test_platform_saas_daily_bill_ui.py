@@ -84,3 +84,69 @@ def test_missing_daily_rate_never_claims_a_payable_total():
     assert "Нет курса" in text
     assert "Итог к оплате не рассчитан" in text
     assert "Предварительно:" not in text
+
+
+@pytest.mark.parametrize("lang,rate_label", [
+    ("ru", "курс: "), ("en", "rate: "),
+])
+def test_classic_bill_shows_full_daily_fx_range_not_only_minimum(
+    lang, rate_label,
+):
+    """Two approved payment days cannot be represented by the first rate."""
+    data = {
+        "month": "2026-11-01",
+        "rows": [
+            {"currency": "USD", "gross": "80", "fee_rub": "335",
+             "min_rate": 80, "max_rate": 90, "missing": 0, "operations": 2},
+            {"currency": "EUR", "gross": "30", "fee_rub": "135",
+             "min_rate": 90, "max_rate": 90, "missing": 0, "operations": 1},
+        ],
+        "fiat_commission_rub": "470",
+        "stars_estimate_rub": 0,
+        "stars_need_reconciliation": False,
+        "missing_daily_rates": 0,
+        "next_bot_fee_rub": 150,
+        "billing_enabled": False,
+        "is_platform_owner": False,
+        "estimate_complete": True,
+    }
+    token = _language.set(lang)
+    try:
+        classic = _saas_preview_classic(data)
+    finally:
+        _language.reset(token)
+    assert "80 USD" in classic
+    assert rate_label + "80–90 ₽" in classic
+    assert "5%: 335 ₽" in classic
+    assert rate_label + "90 ₽" in classic
+    assert "<table" not in classic
+
+
+@pytest.mark.parametrize("lang,missing_text", [
+    ("ru", "нет дневного курса"), ("en", "payment-day rate missing"),
+])
+def test_classic_bill_does_not_invent_rate_when_one_day_unrated(
+    lang, missing_text,
+):
+    data = {
+        "month": "2026-11-01",
+        "rows": [
+            {"currency": "USD", "gross": "80", "fee_rub": 200,
+             "min_rate": 80, "max_rate": 80, "missing": 1, "operations": 2},
+        ],
+        "fiat_commission_rub": 200,
+        "stars_estimate_rub": 0,
+        "stars_need_reconciliation": False,
+        "missing_daily_rates": 1,
+        "next_bot_fee_rub": 150,
+        "billing_enabled": False,
+        "is_platform_owner": False,
+        "estimate_complete": False,
+    }
+    token = _language.set(lang)
+    try:
+        classic = _saas_preview_classic(data)
+    finally:
+        _language.reset(token)
+    assert missing_text in classic
+    assert ("Итог не готов" if lang == "ru" else "No final amount") in classic
