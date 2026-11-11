@@ -35,6 +35,11 @@ from telegram_membership_saas.manual_checkout_ui import (
     retire_cancelled_checkout,
     send_manual_checkout,
 )
+from telegram_membership_saas.modules.entitlements import (
+    EntitlementGrant,
+    EntitlementGrantStatus,
+    EntitlementSource,
+)
 from telegram_membership_saas.modules.platform_saas_hold_errors import CommercialHoldError
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.stars_subscription_recovery import (
@@ -940,7 +945,7 @@ def create_telegram_commerce_router(
             async with system_project_session_scope(
                 session_factory, project_id,
             ) as session:
-                _, subscription = await confirm_subscription_stars_payment(
+                order, _ = await confirm_subscription_stars_payment(
                     session, project_id=project_id, bot_id=bot.id,
                     buyer_id=message.from_user.id,
                     payload=payment.invoice_payload,
@@ -949,6 +954,12 @@ def create_telegram_commerce_router(
                     charge_id=payment.telegram_payment_charge_id,
                     paid_at=message.date,
                 )
+                granted = await session.scalar(select(EntitlementGrant.id).where(
+                    EntitlementGrant.project_id == project_id,
+                    EntitlementGrant.source == EntitlementSource.STARS_PAYMENT.value,
+                    EntitlementGrant.source_id == order.id,
+                    EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+                ).limit(1))
         except Exception:
             # Telegram has already charged Stars. Never ask this buyer to
             # pay again or declare an unsuccessful transaction. The buyer
@@ -964,6 +975,19 @@ def create_telegram_commerce_router(
                     "или /support.",
                     "⚠️ ⭐ Telegram confirmed your payment but access is "
                     "not ready. Do not pay twice. Use /starsrecover or /support.",
+                ),
+            )
+            return
+        if granted is None:
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ ⭐ Оплата Stars записана, но доступ по этой покупке "
+                    "не действует: подписка была завершена или возвращена. "
+                    "Не платите повторно. Свяжитесь с /support для урегулирования.",
+                    "⚠️ ⭐ Your Stars payment was recorded, but this purchase "
+                    "does not grant access because the subscription was ended "
+                    "or refunded. Do not pay twice. Contact /support.",
                 ),
             )
             return

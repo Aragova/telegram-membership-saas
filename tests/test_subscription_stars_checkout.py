@@ -30,6 +30,9 @@ from telegram_membership_saas.modules.bots.deletion_service import (
 )
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.outbox import OutboxEvent
+from telegram_membership_saas.modules.owner_setup.obligations import (
+    end_owner_subscription,
+)
 from telegram_membership_saas.modules.owner_setup.service import (
     ensure_telegram_actor,
 )
@@ -898,5 +901,103 @@ async def test_historical_refund_anchor_survives_late_unrelated_charge():
             assert sub.last_star_order_id == receipts[2][0]
             assert sub.current_period_end == later.valid_until
             assert sub.status == "active"
+    finally:
+        await engine.dispose()
+
+
+async def test_late_stars_charge_cannot_undo_owner_subscription_termination():
+    """A paid-before-termination charge remains in history, not in access."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Owner ended before delayed charge",
+                status="active", duration_value=1, duration_unit="month",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id,
+                resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        receipts = []
+        for _ in range(3):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                receipts.append((order.id, order.invoice_payload))
+        earlier = datetime.now(UTC) - timedelta(minutes=3)
+        # B is locally confirmed; A was charged just before owner ended B.
+        async with system_project_session_scope(factory, project_id) as session:
+            _, sub = await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[1][1], amount=70,
+                currency="XTR", charge_id="termination-b", paid_at=earlier,
+            )
+            subscription_id = sub.id
+        ended = await end_owner_subscription(
+            factory, actor_id=owner, project_id=project_id,
+            subscription_id=subscription_id,
+        )
+        assert ended.changed
+        async with system_project_session_scope(factory, project_id) as session:
+            a, sub = await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], amount=70,
+                currency="XTR", charge_id="termination-a",
+                paid_at=earlier + timedelta(minutes=1),
+            )
+            assert a.status == "paid"
+            assert sub.status == "cancelled"
+        async with system_project_session_scope(factory, project_id) as session:
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[0][0],
+            ))) == 0
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+                EntitlementGrant.status == "active",
+            ))) == 0
+        # A genuinely new post-termination charge can reactivate the plan.
+        now = datetime.now(UTC)
+        async with system_project_session_scope(factory, project_id) as session:
+            _, sub = await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[2][1], amount=70,
+                currency="XTR", charge_id="termination-c", paid_at=now,
+            )
+            assert sub.status == "active"
+        async with system_project_session_scope(factory, project_id) as session:
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[2][0],
+                EntitlementGrant.status == "active",
+            ))) == 1
     finally:
         await engine.dispose()

@@ -18,6 +18,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.modules.entitlements import (
+    EntitlementGrant,
+    EntitlementGrantStatus,
+    EntitlementSource,
+)
 from telegram_membership_saas.modules.stars_subscription_refunds import (
     record_verified_subscription_star_refund,
 )
@@ -146,7 +151,19 @@ async def reconcile_subscription_star_ledger(
                         buyer_id=user, payload=payload, currency="XTR",
                         amount=amount, charge_id=charge_id, paid_at=at,
                     )
-                    payments.append(order.id)
+                    # Historical paid evidence must be saved even after
+                    # the owner ended the subscription. Do not report such
+                    # non-entitling charges as recovered customer access.
+                    usable_grant = await session.scalar(
+                        select(EntitlementGrant.id).where(
+                            EntitlementGrant.project_id == project_id,
+                            EntitlementGrant.source == EntitlementSource.STARS_PAYMENT.value,
+                            EntitlementGrant.source_id == order.id,
+                            EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+                        ).limit(1)
+                    )
+                    if usable_grant is not None:
+                        payments.append(order.id)
             except (ValueError, PermissionError):
                 # Unrelated buyer/provider transactions must not block a
                 # valid event in the same independently verified batch.

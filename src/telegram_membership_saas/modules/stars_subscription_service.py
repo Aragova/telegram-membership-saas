@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.entitlements import (
     EntitlementSource,
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer
+from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
     OutboxEventStatus,
@@ -272,6 +273,26 @@ async def confirm_subscription_stars_payment(
     project = await session.scalar(select(Project).where(Project.id == project_id))
     if project is None:
         raise RuntimeError("Paid project disappeared")
+    if subscription is not None:
+        # The charge may have succeeded BEFORE the owner explicitly ended
+        # this subscription, although its Telegram update arrived afterward.
+        # Record the real charge for refund/accounting, but never silently
+        # undo a later owner termination. New charges AFTER termination
+        # remain eligible to create a fresh period.
+        ended_after_charge = await session.scalar(
+            select(OwnerObligationAudit.created_at).where(
+                OwnerObligationAudit.project_id == project_id,
+                OwnerObligationAudit.target_id == subscription.id,
+                OwnerObligationAudit.action == "subscription_end",
+                OwnerObligationAudit.created_at >= moment,
+            ).order_by(OwnerObligationAudit.created_at.desc()).limit(1)
+        )
+        if ended_after_charge is not None:
+            order.status = "paid"
+            order.telegram_charge_id = charge_id
+            order.paid_at = moment
+            await session.flush()
+            return order, subscription
     # A verified ledger receipt can arrive after a newer paid renewal.
     # Determine the interval from payment chronology, not the latest
     # subscription summary, which may belong to that newer purchase.

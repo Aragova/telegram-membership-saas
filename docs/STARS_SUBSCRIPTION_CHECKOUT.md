@@ -101,3 +101,11 @@ silently shorten that already-prepaid interval. Orders bought after the
 refund do not inherit the returned period. This is covered by a real
 PostgreSQL regression with A purchased, B prepaid, A refunded, and older
 C recovered afterward.
+
+If an authenticated successful Stars charge predates an explicit, audited
+owner `subscription_end` decision but its delivery is delayed, recovery
+persists the original charge as paid financial evidence without reactivating
+access or reversing the owner termination. A truly new charge following
+the termination can start a new subscription period. The buyer does not
+receive a false "access activated" success message for a charge whose grant
+was already superseded; they are directed to support for refund resolution.
