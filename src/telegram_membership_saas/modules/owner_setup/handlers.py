@@ -327,7 +327,7 @@ def _saas_preview_rich(preview: dict) -> str:
             "✅ Свой бот ViMi Pay: начисления не применяются.",
             "✅ ViMi Pay's own bot: platform fees do not apply.",
         ) + "</p>")
-    if int(preview["missing_daily_rates"]):
+    if int(preview["missing_monthly_rates"]):
         lines.append("<p>" + tr(
             "⚠️ Не хватает курсов на расчётный месяц. "
             "Итог к оплате не рассчитан.",
@@ -455,7 +455,7 @@ def _saas_preview_classic(preview: dict) -> str:
             "⭐ Stars: нужна сверка возвратов и стоимости вывода.",
             "⭐ Stars: refunds and reward value need reconciliation.",
         ))
-    if int(preview["missing_daily_rates"]):
+    if int(preview["missing_monthly_rates"]):
         lines.append(tr(
             "⚠️ Курсы на месяц неполные. Итог не готов.",
             "⚠️ Monthly rates incomplete. No final amount.",
