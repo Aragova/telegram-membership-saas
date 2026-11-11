@@ -476,6 +476,89 @@ def upgrade() -> None:
         END $grants$
     """)
 
+    # Currency choice is a read-only, owner-scoped quote. No payment is
+    # created while commercial rollout is disabled. Real issuance must
+    # snapshot the chosen FX, currency and one unified invoice reference.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_quote_project_bill(
+            p_project uuid, p_month date, p_pay_currency text
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $quote$
+        DECLARE
+          report jsonb;
+          billing_rate numeric;
+          rub_total numeric;
+          converted numeric;
+          quote_ready boolean;
+          source_record record;
+        BEGIN
+          IF p_pay_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
+             OR p_month IS NULL OR extract(day from p_month)<>1 THEN
+            RAISE EXCEPTION 'Invalid billing currency/month'
+              USING ERRCODE='22023';
+          END IF;
+          report:=public.platform_saas_project_preview(p_project,p_month);
+          rub_total:=round(
+            (report->>'fiat_commission_rub')::numeric
+            +(report->>'next_bot_fee_rub')::numeric,2
+          );
+          quote_ready:=coalesce((report->>'estimate_complete')::boolean,false);
+          IF p_pay_currency='RUB' THEN
+            billing_rate:=1;
+          ELSE
+            SELECT rub_per_unit,source_name,source_date INTO source_record
+            FROM public.platform_saas_fx_rates
+            WHERE billing_month=p_month AND currency_code=p_pay_currency;
+            billing_rate:=source_record.rub_per_unit;
+          END IF;
+          quote_ready:=quote_ready AND billing_rate IS NOT NULL;
+          IF quote_ready THEN
+            converted:=round(rub_total/billing_rate,2);
+          END IF;
+          RETURN jsonb_build_object(
+            'project_id',p_project,'billing_month',p_month,
+            'chosen_currency',p_pay_currency,
+            'rate_rub_per_unit',billing_rate,
+            'total_rub',rub_total,'estimated_total',converted,
+            'quote_ready',quote_ready,
+            'source_name',CASE WHEN p_pay_currency='RUB' THEN 'fixed'
+                               ELSE source_record.source_name END,
+            'source_date',CASE WHEN p_pay_currency='RUB' THEN NULL
+                               ELSE source_record.source_date END,
+            'pending_stars',coalesce(
+              (report->>'stars_need_reconciliation')::boolean,false
+            ),
+            'missing_rates',coalesce(
+              (report->>'missing_daily_rates')::integer,0
+            ),
+            'billing_enabled',coalesce(
+              (report->>'billing_enabled')::boolean,false
+            ),
+            'is_platform_owner',coalesce(
+              (report->>'is_platform_owner')::boolean,false
+            ),
+            'preview_only',true
+          );
+        END;
+        $quote$
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION "
+        "public.platform_saas_quote_project_bill(uuid,date,text) FROM PUBLIC"
+    )
+    op.execute("""
+        DO $grant_quote$
+        BEGIN
+          IF EXISTS(SELECT 1 FROM pg_roles
+                    WHERE rolname='membership_runtime') THEN
+            GRANT EXECUTE ON FUNCTION
+              public.platform_saas_quote_project_bill(uuid,date,text)
+            TO membership_runtime;
+          END IF;
+        END $grant_quote$
+    """)
+
     for signature in (
         "platform_saas_publish_fx_rate(date,text,numeric)",
         "platform_saas_monthly_fx(date)",
