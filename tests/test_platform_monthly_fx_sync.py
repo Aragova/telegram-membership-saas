@@ -54,3 +54,52 @@ def test_monthly_cbr_parser_honors_nominals_and_decimal_comma():
 def test_monthly_cbr_parser_fails_closed_on_incomplete_or_untrusted_data(payload):
     with pytest.raises((ValueError, Exception)):
         parse_official_rates(payload, month=date(2026, 11, 1))
+
+
+def test_supervisor_receives_same_owner_identity_as_central_bot():
+    """CI regression: Compose must not silently disable official FX sync."""
+    from pathlib import Path
+
+    compose = (Path(__file__).resolve().parents[1] / "compose.yaml").read_text(
+        encoding="utf-8",
+    )
+    central = compose.split("\n  bot:\n", 1)[1].split(
+        "\n  customer-supervisor:\n", 1,
+    )[0]
+    supervisor = compose.split("\n  customer-supervisor:\n", 1)[1].split(
+        "\n  customer-bot:\n", 1,
+    )[0]
+    expected = (
+        "TMS_PLATFORM_OWNER_TELEGRAM_ID: "
+        "${TMS_PLATFORM_OWNER_TELEGRAM_ID:-}"
+    )
+    assert expected in central
+    assert expected in supervisor
+
+
+async def test_supervisor_monthly_fx_failure_retries_quickly_without_leaking(
+    monkeypatch, caplog,
+):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from telegram_membership_saas import customer_supervisor as runtime
+    from telegram_membership_saas.config import Settings
+    from telegram_membership_saas.customer_supervisor import CustomerBotSupervisor
+
+    simulated_secret = "private-provider-token-must-not-appear"
+    fetch = AsyncMock(side_effect=RuntimeError(simulated_secret))
+    monkeypatch.setattr(runtime, "sync_official_month_rates", fetch)
+    monkeypatch.setattr(runtime, "monotonic", lambda: 1000.0)
+    supervisor = CustomerBotSupervisor(
+        MagicMock(), MagicMock(),
+        Settings(
+            platform_owner_telegram_id=123456789,
+            telegram_central_access_enabled=False,
+            _env_file=None,
+        ),
+    )
+    await supervisor._sync_monthly_fx_safe()
+    fetch.assert_awaited_once()
+    assert 1290 <= supervisor._next_fx_sync_at <= 1310
+    assert "FX sync failed (RuntimeError)" in caplog.text
+    assert simulated_secret not in caplog.text
