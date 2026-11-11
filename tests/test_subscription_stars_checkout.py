@@ -1247,3 +1247,84 @@ async def test_owner_termination_reader_rejects_wrong_project_scope():
                 )))
     finally:
         await engine.dispose()
+
+
+async def test_old_charge_shifts_virtual_refunded_anchor_and_later_stars():
+    """C recovered last must shift refunded A virtually and paid renewal B."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Virtual returned anchor",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        receipts = []
+        for _ in range(3):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                receipts.append((order.id, order.invoice_payload))
+        # C is 12 h earlier than A, which was confirmed before C reached DB.
+        a_paid = (datetime.now(UTC) - timedelta(days=4)).replace(microsecond=0)
+        c_paid = a_paid - timedelta(hours=12)
+        b_paid = a_paid + timedelta(hours=1)
+        a_refund = a_paid + timedelta(hours=2)
+        for index, paid_at in ((1, a_paid), (2, b_paid)):
+            async with system_project_session_scope(factory, project_id) as session:
+                await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, payload=receipts[index][1],
+                    currency="XTR", amount=70,
+                    charge_id=f"virtual-{index}", paid_at=paid_at,
+                )
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[1][1], currency="XTR",
+                amount=70, charge_id="virtual-1", refunded_at=a_refund,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], currency="XTR",
+                amount=70, charge_id="virtual-0", paid_at=c_paid,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            b_grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[2][0],
+            ))
+            a_grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+            ))
+            assert a_grant.status == "revoked"
+            assert b_grant.status == "active"
+            assert b_grant.valid_from == c_paid + timedelta(days=2)
+            assert b_grant.valid_until == c_paid + timedelta(days=3)
+    finally:
+        await engine.dispose()

@@ -126,3 +126,10 @@ considered the real owner termination time because future-dated grants
 clamp that timestamp. A late Telegram refund repairs later manually approved
 renewals as well as Stars renewals, preserving manual Payment records and
 the original financial ledger while correcting access windows.
+
+When a previously refunded order was itself scheduled from a late-recovered
+earlier charge, replay also calculates a **virtual historical** interval for
+that refunded source. It anchors renewals purchased before its true refund
+timestamp without editing the revoked grant or financial evidence. Later
+surviving manual/Stars grants therefore keep their full paid durations even
+when an older missed charge is reconstructed.
