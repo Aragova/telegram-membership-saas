@@ -98,6 +98,15 @@ rate/source dates and platform fees. Rich selected-currency preview
 includes RUB basis, date, quote, source and estimated amount. RU/EN and
 standard fallback are required, without buttons duplicated in Settings.
 
+CBR importer additionally recognizes the other active fiat sales currencies
+GBP, KZT, GEL, AMD and AED (with the published nominal factor).
+An optional currency not published in the official daily XML is not
+invented and blocks only charges that use that currency. The four core
+fiat codes (USD/EUR/UAH/BYN) must be present to accept the response.
+Crypto sale currencies such as BTC/USDT/TON have **no CBR fiat quote**
+and remain a separate audited conversion integration gate before live
+commission billing. They must not be silently assigned a fiat FX rate.
+
 Telegram Stars (XTR) are not fiat and never use the CBR conversion;
 reconciled reward value, refunds and chargebacks require a separate
 audited source. Do not include XTR in payable totals before that step.
