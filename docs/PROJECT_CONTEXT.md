@@ -1,24 +1,35 @@
-## SaaS monthly FX safety gate (2026-11-11)
+## SaaS daily FX and connected-bot Bill (2026-11-11)
 
-Migration `0051_saas_fx_policy` creates a **private, immutable** monthly
-conversion policy for non-RUB commissions. The provisioned platform owner
-must publish a `(Moscow billing month, currency, RUB-per-unit)` snapshot
-using the owner-only `platform_saas_publish_fx_rate(date,text,numeric)` RPC;
-the owner-only `platform_saas_monthly_fx(date)` reads it. Duplicate
-publication of the same exact rate is idempotent; changing or deleting a
-published rate is forbidden to avoid silently rewriting liability.
-No exchange rates are prepopulated, guessed or auto-fetched.
+**The connected customer bot's main Admin menu has one "🧾 Счёт / Bill"
+button** (moved from Settings; no duplicate). The existing account invoice
+history remains available, including `/billing` after bot transfer.
+The connected-bot Bill now includes a read-only Rich turnover breakdown:
+approved subscriptions, manually approved file sales, and successful file
+purchases via Stars. Each native currency appears independently. Commission
+for fiat purchases is previewed in RUB, using the rate **for each sale's
+Moscow calendar approval date**. A missing published day-rate is shown as
+missing and prevents a final total. The preview adds RUB 150 for next month's
+service period, except for platform-owned "My Bots"; actual payable invoices
+remain controlled by the disabled billing switch and owner confirmation.
 
-`platform_saas_issue_commission_invoice` uses **published database rates**
-rather than arbitrary caller-supplied FX JSON, keeps the existing signature
-for compatibility, and rejects any supplied override that disagrees.
-Missing foreign currency rate aborts the entire invoice; RUB uses 1.
-Invoice lines still snapshot their original amounts, currency and FX.
-No new Telegram buttons, no new top-level sections, no tenant/consumer
-changes, and **all billing, access-policy and hold switches remain OFF**.
-Real rates must be reviewed and deliberately published before ever
-considering a commercial activation. Refund/credit adjustment workflows
-and full controlled rollout remain future gates.
+Migration `0051_saas_fx_policy` adds private immutable `(rate_date,
+currency)` exchange snapshots with owner-only publication, including optional
+`XTR` payout-value quotes. It intentionally publishes **no rate by default**
+and never changes a historical FX quote. The old monthly invoice issuer
+now reads the matching day-rate for every approved sale and refuses
+the old monthly override. RUB always uses 1. The connected-bot preview reads
+owner-scoped SQL; no tenant may publish rates or read foreign projects.
+
+**Important limits:** automatic verified CBR daily import is not yet
+connected; the quote must be published with a trusted source before an
+invoice can be issued. Stars are shown as provisional turnover until
+reward-value quotes and Telegram refund/chargeback reconciliation are added.
+Stars are not yet inserted into payable commission invoices. No
+billing/trial/holds activation, no additional buttons, no customer flow
+changes. Do not mistake Stars purchase price or advertising credit value
+for merchant payout value. Follow-up PR: verified daily FX ingestion,
+Star reconciliation, refund/credit ledger, one unified invoice/settlement.
+
 
 ## Permanent ViMi Pay owner rule (2026-11-11, supersedes PR #119-#121)
 
