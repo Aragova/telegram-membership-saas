@@ -50,10 +50,26 @@ after the prelaunch cutoff; no retrobilling, no new SaaS invoices.
 
 Commercial holds use the same 0046 owner/bot exemption validation as other
 purchases. Do NOT turn on commercial billing, holds or quotas in this PR.
-Platform financial settlement remains disabled. Native Stars refunds and
-crypto checkout are separate required safety stages before turning on
-live commission issuance. Keep current tenant/buyer menu compact; no FX
-screen, manual receipts or duplicate bank settings for Stars.
+Platform financial settlement remains disabled. For Stars subscriptions
+the bot also verifies official `refunded_payment` notifications against
+the exact original buyer/bot/charge/Stars amount; it preserves immutable
+paid evidence, records a separate original-rate USD and 5% commission
+credit, revokes only returned-purchase grants and recomputes the remaining
+paid subscription period from surviving manual/Stars entitlements.
+Owner-initiated cancellation and refunds use the same project checkout
+lock to avoid deadlocks.
+
+A lost `successful_payment` or `refunded_payment` is independently
+reconciled using the *connected bot's* official `getStarTransactions`
+ledger: outgoing refund transactions have a negative Stars amount and
+reuse the original incoming charge ID. An in-process task scans up to
+500 recent transactions per connected bot about every 15–18 minutes;
+`/starsrecover` checks up to 2000 for the specific buyer. These bounds
+are operational protections, **not a claim that no older unmatched
+chargeback can exist**. Broader reconciliation and independent app-store
+chargebacks remain a pre-live-billing requirement. Crypto Bot remains
+a separate payment-provider stage. Keep the tenant/buyer menu compact;
+no FX screen, manual receipts or duplicate bank settings for Stars.
 
 ## Next rail: Crypto Bot / Crypto Pay
 
