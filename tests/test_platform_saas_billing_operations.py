@@ -126,7 +126,7 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
     admin_engine = create_async_engine(settings.migration_database_url)
     operator_tg = _tid()
     try:
-        operator, own_merchant, own_project, own_bot, own_chat = (
+        operator, own_merchant, own_project, own_bot, _ = (
             await _project(factory, operator_tg)
         )
         merchant, merchant_id, project, bot, _ = await _project(factory, _tid())
