@@ -17,7 +17,7 @@ remain historically attributed. Other customers are unchanged and billable
 under separately activated commercial policy. Billing, trial/quotas and
 holds remain OFF until explicitly approved. There is only the existing
 "🧾 Счета → 💳 Реквизиты" billing UI, no "Проверка исключений" button.
-Migration `0050_platform_owner_my_bots_exempt` applies the rule in the
+Migration `0050_my_bots_exempt` applies the rule in the
 central DB function, grant quota and hold calculation and removes unused
 audit functions; it creates no new invoices.
 
