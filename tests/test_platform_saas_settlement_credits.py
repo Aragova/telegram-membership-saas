@@ -142,10 +142,11 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                                 guarded, {**quote_args, **changed},
                             )
                     assert getattr(stale.value.orig, "sqlstate", None) == "22023"
-                    assert (await conn.execute(text(
-                        "SELECT count(*) FROM platform_saas_currency_settlements "
-                        "WHERE invoice_id=:invoice"
-                    ), {"invoice": invoice})).scalar_one() == 0
+                    unlocked = (await conn.execute(text(
+                        "SELECT public.platform_saas_invoice_currency_snapshot("
+                        ":invoice) AS data"
+                    ).columns(data=JSONB), {"invoice": invoice})).scalar_one()
+                    assert unlocked["locked"] is False
                 quote = (await conn.execute(guarded, quote_args)).scalar_one()
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
