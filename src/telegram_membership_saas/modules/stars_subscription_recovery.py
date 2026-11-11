@@ -38,8 +38,9 @@ async def reconcile_subscription_star_ledger(
     bot: Bot, project_id: UUID, buyer_id: int | None = None,
     pages: int = PERIODIC_SCAN_PAGES,
 ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
-    """Process independently verified positive charges then negative refunds.
+    """Replay verified charges and reversals in event time order.
 
+    A returned prior period must not push a later purchase into the future.
     Exact charge ID, buyer, bot, XTR amount and optional refund payload are
     checked against project-scoped DB orders. Do not trust a screenshot,
     callback, balance total, or a loosely matched transaction.
@@ -111,42 +112,63 @@ async def reconcile_subscription_star_ledger(
         if len(transactions) < PAGE_SIZE:
             break
 
-    payments: list[UUID] = []
+    # Telegram lists newest first, but fulfilling all positive charges
+    # before refunds is WRONG when a refunded A preceded a paid B.
+    # Replay chronologically and keep the positive half of a same-second
+    # charge before its refund. With equal Unix seconds, resolve paired
+    # charge/refunds before unrelated new purchases to avoid gaps.
+    refund_keys = set(outgoing)
+    events: list[tuple[datetime, int, str, tuple]] = []
     for (payload, user), (amount, charge_id, at) in incoming.items():
-        try:
-            async with system_project_session_scope(factory, project_id) as session:
-                order, _ = await confirm_subscription_stars_payment(
-                    session, project_id=project_id, bot_id=bot.id,
-                    buyer_id=user, payload=payload, currency="XTR",
-                    amount=amount, charge_id=charge_id, paid_at=at,
-                )
-                payments.append(order.id)
-        except (ValueError, PermissionError):
-            # Unrelated buyer/provider transactions are not ViMi Pay orders.
-            # A bad match must not block valid refunds in the same batch.
-            log.debug("Unmatched subscription Stars ledger charge, ignoring")
-    refunds: list[UUID] = []
+        priority = 0 if (charge_id, user) in refund_keys else 2
+        events.append((at, priority, "paid", (payload, user, amount, charge_id)))
     for (charge_id, user), (amount, payload, at) in outgoing.items():
-        async with system_project_session_scope(factory, project_id) as session:
-            order = await session.scalar(select(SubscriptionStarOrder).where(
-                SubscriptionStarOrder.project_id == project_id,
-                SubscriptionStarOrder.telegram_bot_id == bot.id,
-                SubscriptionStarOrder.telegram_user_id == user,
-                SubscriptionStarOrder.telegram_charge_id == charge_id,
-                SubscriptionStarOrder.stars_amount == amount,
-                SubscriptionStarOrder.status == "paid",
-            ))
-            if order is None or (
-                payload is not None and payload != order.invoice_payload
-            ):
-                continue
-            refund_id = await record_verified_subscription_star_refund(
-                session, project_id=project_id, bot_id=bot.id,
-                buyer_id=user, payload=order.invoice_payload,
-                amount=amount, currency="XTR", charge_id=charge_id,
-                refunded_at=at,
-            )
-            refunds.append(refund_id)
+        events.append((at, 1, "refund", (charge_id, user, amount, payload)))
+    events.sort(key=lambda event: (event[0], event[1], str(event[3])))
+
+    payments: list[UUID] = []
+    refunds: list[UUID] = []
+    for at, _, kind, entry in events:
+        if kind == "paid":
+            payload, user, amount, charge_id = entry
+            try:
+                async with system_project_session_scope(
+                    factory, project_id,
+                ) as session:
+                    order, _ = await confirm_subscription_stars_payment(
+                        session, project_id=project_id, bot_id=bot.id,
+                        buyer_id=user, payload=payload, currency="XTR",
+                        amount=amount, charge_id=charge_id, paid_at=at,
+                    )
+                    payments.append(order.id)
+            except (ValueError, PermissionError):
+                # Unrelated buyer/provider transactions must not block a
+                # valid event in the same independently verified batch.
+                log.debug("Unmatched Stars subscription charge, ignoring")
+        else:
+            charge_id, user, amount, payload = entry
+            async with system_project_session_scope(
+                factory, project_id,
+            ) as session:
+                order = await session.scalar(select(SubscriptionStarOrder).where(
+                    SubscriptionStarOrder.project_id == project_id,
+                    SubscriptionStarOrder.telegram_bot_id == bot.id,
+                    SubscriptionStarOrder.telegram_user_id == user,
+                    SubscriptionStarOrder.telegram_charge_id == charge_id,
+                    SubscriptionStarOrder.stars_amount == amount,
+                    SubscriptionStarOrder.status == "paid",
+                ))
+                if order is None or (
+                    payload is not None and payload != order.invoice_payload
+                ):
+                    continue
+                refund_id = await record_verified_subscription_star_refund(
+                    session, project_id=project_id, bot_id=bot.id,
+                    buyer_id=user, payload=order.invoice_payload,
+                    amount=amount, currency="XTR", charge_id=charge_id,
+                    refunded_at=at,
+                )
+                refunds.append(refund_id)
     return tuple(set(payments)), tuple(set(refunds))
 
 
