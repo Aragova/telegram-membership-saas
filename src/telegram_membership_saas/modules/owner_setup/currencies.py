@@ -25,7 +25,7 @@ from telegram_membership_saas.modules.telegram_admin.service import _require_pro
 from telegram_membership_saas.tenant_context import TenantContext
 
 PRIMARY_CURRENCIES = (
-    "RUB", "USD", "EUR", "UAH", "BYN", "KZT", "AED", "USDT", "TON",
+    "RUB", "USD", "EUR", "UAH", "BYN", "KZT", "AED", "USDT", "TON", "XTR",
 )
 CODE_PATTERN = re.compile(r"[A-Z]{3,5}\Z", re.ASCII)
 MAX_EXTRA_CURRENCIES = 24
