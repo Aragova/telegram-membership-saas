@@ -158,6 +158,9 @@ jobs:
                       "platform_saas_invoice_credit_history(uuid)",
                       "platform_saas_lock_invoice_currency_expected(uuid,text,date,numeric,numeric)",
                       "platform_saas_owner_foreign_invoice_count()",
+                      "platform_saas_publish_star_reward_rate(date,numeric,text)",
+                      "platform_saas_capture_new_file_stars(integer)",
+                      "platform_saas_star_project_summary(uuid,date)",
                   ):
                       await connection.execute(
                           f"GRANT EXECUTE ON FUNCTION public.{function} "
@@ -168,7 +171,10 @@ jobs:
                       "public.platform_saas_notice_outbox, "
                       "public.platform_saas_currency_settlements, "
                       "public.platform_saas_currency_receipts, "
-                      "public.platform_saas_refund_credits "
+                      "public.platform_saas_refund_credits, "
+                      "public.platform_saas_star_reward_rates, "
+                      "public.platform_saas_star_capture_control, "
+                      "public.platform_saas_star_sales "
                       "FROM membership_runtime"
                   )
 
