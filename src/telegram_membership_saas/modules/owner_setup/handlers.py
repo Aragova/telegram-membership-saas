@@ -434,18 +434,37 @@ def _saas_invoices_rich(report) -> str:
             tr("Оплачено", "Paid") if inv["status"] == "paid"
             else tr("Ожидает подтверждения", "Pending confirmation")
         )
+        settlement = inv.get("settlement") or {}
+        amount = (
+            str(settlement["amount"]) + " " + str(settlement["currency"])
+            if settlement.get("locked") else str(inv["amount_rub"]) + " ₽"
+        )
         items.append(
             "<p><b>" + escape(title) + ": "
-            + escape(str(inv["amount_rub"])) + " ₽</b> · "
+            + escape(amount) + "</b> · "
             + escape(state) + "</p>"
         )
+        if settlement.get("locked") and settlement.get("currency") != "RUB":
+            items.append("<p><i>" + tr("Рублёвая база: ",
+                                    "RUB reference: ")
+                         + escape(str(inv["amount_rub"])) + " ₽</i></p>")
         items.append(
             "<p>№ <code>" + escape(str(inv["id"])) + "</code> · "
             + tr("Срок: ", "Due: ")
             + escape(str(inv["due_at"])[:10]) + "</p>"
         )
+    foreign_locked = getattr(report, "foreign_unpaid_count", 0) > 0
     if report.unpaid:
-        if report.configured:
+        if foreign_locked:
+            items.append("<p>⚠️ " + tr(
+                "Есть неоплаченные счета с зафиксированной иностранной "
+                "валютой. Общие рублёвые реквизиты здесь скрыты. "
+                "Откройте нужный счёт и проверьте валюту.",
+                "Some unpaid invoices are locked to a foreign currency. "
+                "Shared RUB payment details are hidden. Open the individual "
+                "invoice to verify its payment currency.",
+            ) + "</p>")
+        elif report.configured:
             items.extend([
                 "<h4>" + tr("💳 Реквизиты платформы",
                              "💳 Payment instructions") + "</h4>",
@@ -1052,9 +1071,15 @@ def create_owner_setup_router(
                 tr("Обслуживание бота", "Bot service") if item["kind"] == "prepayment"
                 else tr("Комиссия с продаж", "Sales commission")
             )
+            settlement = item.get("settlement") or {}
+            display_amount = (
+                str(settlement["amount"]) + " " + str(settlement["currency"])
+                if settlement.get("locked")
+                else str(item["amount_rub"]) + " ₽"
+            )
             lines.extend([
                 ("✅ " if is_paid else "⏳ ") + "<b>"
-                + escape(str(item["amount_rub"])) + " ₽</b> · "
+                + escape(display_amount) + "</b> · "
                 + escape(kind),
                 "  № <code>" + escape(str(item["id"])) + "</code>",
                 "  " + tr("Срок: ", "Due: ")
@@ -1062,7 +1087,14 @@ def create_owner_setup_router(
             ])
         if report.unpaid:
             lines.append("")
-            if report.configured:
+            if getattr(report, "foreign_unpaid_count", 0):
+                lines.append(tr(
+                    "⚠️ Есть неоплаченные валютные счета. Общие рублёвые "
+                    "реквизиты скрыты: откройте карточку нужного счёта.",
+                    "⚠️ Unpaid foreign-currency invoices exist. Shared RUB "
+                    "bank details are hidden; open the individual invoice.",
+                ))
+            elif report.configured:
                 lines.append(tr("💳 <b>Реквизиты ViMi Pay</b>",
                                 "💳 <b>ViMi Pay bank instructions</b>"))
                 lines.append("<pre>" + escape(str(report.instructions)) + "</pre>")
@@ -1100,7 +1132,12 @@ def create_owner_setup_router(
             rows.append([_button(
                 ("✅ " if item["status"] == "paid" else "🧾 ")
                 + str(item["id"])[:8] + " · "
-                + escape(str(item["amount_rub"])) + " ₽",
+                + (
+                    str(item["settlement"]["amount"]) + " "
+                    + str(item["settlement"]["currency"])
+                    if (item.get("settlement") or {}).get("locked")
+                    else str(item["amount_rub"]) + " ₽"
+                ),
                 "saasbill:" + encode_uuid(UUID(str(item["id"])))
                 + ":" + str(page),
             )])
