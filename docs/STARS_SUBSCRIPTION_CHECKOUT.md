@@ -94,3 +94,10 @@ EntitlementGrant.valid_from is in the future. No duplicate sale, grant, invoice,
 UI action, or new supervisor is introduced. Regression coverage includes
 a missed old Stars charge, a later confirmed purchase, and a manual prepayment
 anchor. Live commercial billing and staging rollout remain OFF.
+
+A returned Stars order remains a *historical* anchor for a renewal that
+was purchased before the verified refund time. Later backfills may not
+silently shorten that already-prepaid interval. Orders bought after the
+refund do not inherit the returned period. This is covered by a real
+PostgreSQL regression with A purchased, B prepaid, A refunded, and older
+C recovered afterward.

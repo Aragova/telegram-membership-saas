@@ -808,3 +808,95 @@ def test_manual_anchor_uses_payment_approval_not_future_grant_start():
     assert manual_anchor_end(manual, now) == manual_end
     assert historical_stars_start(now, manual, []) == manual_end
     assert manual_anchor_end(manual, now - timedelta(minutes=2)) is None
+
+
+async def test_historical_refund_anchor_survives_late_unrelated_charge():
+    """B prepaid while A was still paid. A's *later* refund must not
+    shorten B when an older unrelated charge C is recovered afterward.
+    """
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Keep historical refund anchor",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        receipts = []
+        for _ in range(3):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                receipts.append((order.id, order.invoice_payload))
+        # 0=C (old), 1=A, 2=B. B was approved before A was refunded.
+        paid_a = (datetime.now(UTC) - timedelta(minutes=5)).replace(microsecond=0)
+        paid_b = paid_a + timedelta(minutes=1)
+        refunded_a = paid_a + timedelta(minutes=2)
+        paid_c = paid_a - timedelta(days=3)
+        for index, paid_at in ((1, paid_a), (2, paid_b)):
+            async with system_project_session_scope(factory, project_id) as session:
+                await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, payload=receipts[index][1],
+                    currency="XTR", amount=70, charge_id=f"history-{index}",
+                    paid_at=paid_at,
+                )
+        expected_b_start = paid_a + timedelta(days=1)
+        async with system_project_session_scope(factory, project_id) as session:
+            before = await session.scalar(select(EntitlementGrant.valid_from).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[2][0],
+            ))
+            assert before == expected_b_start
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[1][1], amount=70,
+                currency="XTR", charge_id="history-1", refunded_at=refunded_a,
+            )
+        # C's old charge arrives from Telegram only after A was refunded.
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], amount=70,
+                currency="XTR", charge_id="history-0", paid_at=paid_c,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            later = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[2][0],
+            ))
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project_id, Subscription.plan_id == plan.id,
+            ))
+            assert later.status == "active"
+            assert later.valid_from == expected_b_start
+            assert later.valid_until == expected_b_start + timedelta(days=1)
+            assert sub.last_star_order_id == receipts[2][0]
+            assert sub.current_period_end == later.valid_until
+            assert sub.status == "active"
+    finally:
+        await engine.dispose()

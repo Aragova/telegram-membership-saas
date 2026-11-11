@@ -17,7 +17,10 @@ from telegram_membership_saas.modules.entitlements import (
 )
 from telegram_membership_saas.modules.payments import Payment
 from telegram_membership_saas.modules.projects import Project
-from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
+from telegram_membership_saas.modules.stars_subscriptions import (
+    SubscriptionStarOrder,
+    SubscriptionStarRefund,
+)
 from telegram_membership_saas.modules.subscriptions import (
     Subscription,
     SubscriptionStatus,
@@ -114,6 +117,31 @@ async def rebuild_stars_windows_after(
             future[order.id][1].append(grant)
     if not future:
         return set()
+    # Previously refunded Stars periods can remain historical renewal
+    # anchors. If B was purchased BEFORE A's refund, B prepaid against
+    # A's original expiry and must not lose that term when an unrelated
+    # older charge is discovered later. Conversely, a refund BEFORE B's
+    # purchase must not be used to extend B.
+    historical_refunds = (await session.execute(
+        select(EntitlementGrant, SubscriptionStarOrder, SubscriptionStarRefund)
+        .join(SubscriptionStarOrder, and_(
+            SubscriptionStarOrder.id == EntitlementGrant.source_id,
+            SubscriptionStarOrder.project_id == EntitlementGrant.project_id,
+        ))
+        .join(SubscriptionStarRefund, and_(
+            SubscriptionStarRefund.order_id == SubscriptionStarOrder.id,
+            SubscriptionStarRefund.project_id == SubscriptionStarOrder.project_id,
+        ))
+        .where(
+            EntitlementGrant.project_id == project_id,
+            EntitlementGrant.customer_id == customer_id,
+            EntitlementGrant.source == EntitlementSource.STARS_PAYMENT.value,
+            EntitlementGrant.status == EntitlementGrantStatus.REVOKED.value,
+            EntitlementGrant.valid_until.is_not(None),
+            SubscriptionStarOrder.customer_id == customer_id,
+            SubscriptionStarOrder.plan_id == plan_id,
+        )
+    )).all()
     project = await session.scalar(select(Project).where(
         Project.id == project_id,
     ))
@@ -124,8 +152,17 @@ async def rebuild_stars_windows_after(
         future.values(), key=lambda pair: (pair[0].paid_at, str(pair[0].id)),
     ):
         manual_end = manual_anchor_end(manual, order.paid_at)
+        refunded_anchors = [
+            grant.valid_until
+            for grant, old_order, refund in historical_refunds
+            if old_order.paid_at is not None
+            and old_order.paid_at <= order.paid_at
+            and refund.refunded_at > order.paid_at
+            and (grant.revoked_at is None or grant.revoked_at > order.paid_at)
+        ]
         prior_end = max(
-            [*prior_stars, *([manual_end] if manual_end is not None else [])],
+            [*prior_stars, *refunded_anchors,
+             *([manual_end] if manual_end is not None else [])],
             default=None,
         )
         start_at = max(order.paid_at, prior_end) if prior_end is not None else order.paid_at
