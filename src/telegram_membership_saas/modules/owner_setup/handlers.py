@@ -266,7 +266,7 @@ def _saas_preview_rich(preview: dict) -> str:
     columns = (
         tr("Валюта", "Currency"),
         tr("Оборот", "Turnover"),
-        tr("Курс, ₽", "Rate, RUB"),
+        tr("Курс месяца, ₽", "Monthly rate, RUB"),
         tr("5% в ₽", "5% in RUB"),
     )
     lines = [
@@ -329,9 +329,9 @@ def _saas_preview_rich(preview: dict) -> str:
         ) + "</p>")
     if int(preview["missing_daily_rates"]):
         lines.append("<p>" + tr(
-            "⚠️ Не хватает курсов на даты отдельных оплат. "
+            "⚠️ Не хватает курсов на расчётный месяц. "
             "Итог к оплате не рассчитан.",
-            "⚠️ Some payment-day FX rates are missing. "
+            "⚠️ Some monthly exchange rates are missing. "
             "No final amount can be calculated.",
         ) + "</p>")
     if preview["stars_need_reconciliation"]:
@@ -423,7 +423,7 @@ def _saas_preview_classic(preview: dict) -> str:
         is_missing = int(item.get("missing", 0))
         minimum, maximum = item.get("min_rate"), item.get("max_rate")
         quote = (
-            tr("нет дневного курса", "payment-day rate missing")
+            tr("нет курса месяца", "monthly rate missing")
             if is_missing or minimum is None or maximum is None
             else escape(
                 str(minimum) if minimum == maximum
@@ -457,8 +457,8 @@ def _saas_preview_classic(preview: dict) -> str:
         ))
     if int(preview["missing_daily_rates"]):
         lines.append(tr(
-            "⚠️ Курсы на даты оплат неполные. Итог не готов.",
-            "⚠️ Payment-day rates incomplete. No final amount.",
+            "⚠️ Курсы на месяц неполные. Итог не готов.",
+            "⚠️ Monthly rates incomplete. No final amount.",
         ))
     if not preview["billing_enabled"]:
         lines.append(tr(
