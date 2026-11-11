@@ -113,6 +113,21 @@ Before explicit commercial activation also require:
 Avoid new top-level monitoring/finance sections or duplicate buttons.
 Use native Rich UI for financial summaries in RU/EN.
 
+### Read-only live Telegram verification (2026-11-11)
+
+The `Exemption audit` page supports a single deliberate Telegram
+**Check this page** action (maximum 8 connected bots). This action queries
+Telegram with each registered customer bot's encrypted credential after
+strict on-server owner/project/channel validation. The bot must be channel
+administrator and its ID must match the registered bot. The platform
+owner's Telegram member status must be exactly `creator`, not
+`administrator`. All errors fail closed; tokens and raw Bot API errors are
+never displayed or logged. This step is **read-only**: it does not issue
+creator-exemption proof records, enable policies, raise invoices, or modify
+channels. The check is ephemeral and must not be described as a permanent
+exemption. Separate approval and transactional provisioning are required
+before commercial launch.
+
 ## 8. Dormant invoice ledger — PR #113
 
 Migration `0043_platform_saas_invoices` adds four private, non-tenant-editable tables:
