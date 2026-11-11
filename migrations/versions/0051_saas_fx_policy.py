@@ -357,7 +357,7 @@ def upgrade() -> None:
           rows jsonb;
           fiat_fee numeric;
           stars_fee numeric;
-          missing integer;
+          unrated_count integer;
           star_count integer;
           today_rates jsonb;
           billing_on boolean;
@@ -410,7 +410,7 @@ def upgrade() -> None:
           aggregates AS (
             SELECT currency,count(*) AS operations,
                    sum(amount) AS gross,
-                   count(*) FILTER (WHERE daily_rate IS NULL) AS missing,
+                   count(*) FILTER (WHERE daily_rate IS NULL) AS missing_count,
                    min(daily_rate) AS min_rate,max(daily_rate) AS max_rate,
                    coalesce(sum(
                      CASE WHEN daily_rate IS NOT NULL
@@ -422,16 +422,16 @@ def upgrade() -> None:
           SELECT
             coalesce(jsonb_agg(jsonb_build_object(
               'currency',currency,'gross',gross,
-              'operations',operations,'missing',missing,
+              'operations',operations,'missing',a.missing_count,
               'min_rate',min_rate,'max_rate',max_rate,
               'fee_rub',fee
             ) ORDER BY currency),'[]'::jsonb),
             coalesce(sum(fee) FILTER (WHERE currency<>'XTR'),0),
             coalesce(sum(fee) FILTER (WHERE currency='XTR'),0),
-            coalesce(sum(missing),0),
+            coalesce(sum(a.missing_count),0),
             coalesce(sum(operations) FILTER (WHERE currency='XTR'),0)
-          INTO rows,fiat_fee,stars_fee,missing,star_count
-          FROM aggregates;
+          INTO rows,fiat_fee,stars_fee,unrated_count,star_count
+          FROM aggregates a;
 
           SELECT coalesce(jsonb_object_agg(currency_code,rub_per_unit),
                           '{}'::jsonb) INTO today_rates
@@ -443,12 +443,12 @@ def upgrade() -> None:
             'fiat_commission_rub',CASE WHEN own_platform THEN 0 ELSE fiat_fee END,
             'stars_estimate_rub',CASE WHEN own_platform THEN 0 ELSE stars_fee END,
             'stars_need_reconciliation',star_count>0,
-            'missing_daily_rates',missing,
+            'missing_daily_rates',unrated_count,
             'next_bot_fee_rub',CASE WHEN own_platform THEN 0 ELSE 150 END,
             'is_platform_owner',own_platform,
             'billing_enabled',coalesce(billing_on,false),
             'today_rates',today_rates,
-            'estimate_complete',missing=0 AND star_count=0
+            'estimate_complete',unrated_count=0 AND star_count=0
           );
         END;
         $preview$
