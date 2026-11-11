@@ -72,10 +72,10 @@ def upgrade() -> None:
           END IF;
           RETURN jsonb_build_object(
             'invoice_id',p_invoice,'currency',p_currency,
-            'total_rub',bill.total_rub,'quote_day',quote_day,
+            'total_rub',bill.total_rub::text,'quote_day',quote_day,
             'source_day',source_day,
             'source',CASE WHEN p_currency='RUB' THEN 'RUB' ELSE 'CBR' END,
-            'rub_per_unit',quote_rate,'amount',amount,
+            'rub_per_unit',quote_rate::text,'amount',amount::text,
             'quote_ready',quote_rate IS NOT NULL,
             'preview_only',true
           );
