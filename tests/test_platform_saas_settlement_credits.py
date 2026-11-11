@@ -5,7 +5,6 @@ No production billing is enabled and every financial test insert rolls back.
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
