@@ -94,6 +94,13 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
+        "ix_file_purchases_paid_stars_capture",
+        "file_sale_purchases", ["paid_at", "id"],
+        postgresql_where=sa.text(
+            "status='paid' AND telegram_charge_id IS NOT NULL"
+        ),
+    )
+    op.create_index(
         "ix_saas_star_sales_owner", "platform_saas_star_sales",
         ["owner_user_id", "paid_at"],
     )
