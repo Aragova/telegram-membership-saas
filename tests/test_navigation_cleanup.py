@@ -103,6 +103,7 @@ async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sec
             (["own:subscribers", "own:statistics:7"], "primary"),
             (["bc:home", "fs:home"], "success"),
             (["own:preview", "own:settings"], "primary"),
+            (["own:saasinvoices:0", "lng:menu"], "success"),
         ]
         for callbacks, style in expected_rows:
             matches = [
@@ -124,12 +125,12 @@ async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sec
         assert settings_actions == {
             "own:notifications", "own:readiness", "own:timezone",
             "own:network", "own:modmanage", "own:transfer",
-            "own:saasinvoices:0", "own:help", "own:dashboard",
+            "own:help", "own:dashboard",
         }
         assert next(
             b.text for b in settings_buttons if b.callback_data == "own:dashboard"
         ) == back_label
-        assert len(bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard) == 8
+        assert len(bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard) == 7
     finally:
         _language.reset(token)
 
