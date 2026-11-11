@@ -163,6 +163,7 @@ jobs:
                       "platform_saas_star_project_summary(uuid,date)",
                       "platform_saas_capture_star_refunds(integer)",
                       "platform_saas_star_project_refund_summary(uuid,date)",
+                      "platform_saas_capture_new_subscription_stars(integer)",
                   ):
                       await connection.execute(
                           f"GRANT EXECUTE ON FUNCTION public.{function} "
