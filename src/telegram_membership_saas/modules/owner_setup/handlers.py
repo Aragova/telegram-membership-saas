@@ -403,16 +403,34 @@ def _saas_stars_rich(stars: dict) -> str:
         )
         + "</p>",
     ])
+    refunds = int(stars.get("refunds", 0))
+    if refunds:
+        lines.append(
+            "<p>↩️ " + tr("Возвраты Stars: ", "Stars refunds: ")
+            + str(refunds) + " · "
+            + str(int(stars["refunded_stars"])) + " ⭐ · "
+            + tr("Кредит по комиссии: ", "Commission credit: ")
+            + "$" + escape(format(
+                Decimal(str(stars["commission_credit_usd"])), ".2f",
+            )) + "</p>"
+        )
+    if int(stars.get("pending_refund_reconciliation", 0)):
+        lines.append(
+            "<p>⚠️ " + tr(
+                "Возвраты ожидают финансовой сверки: ",
+                "Refunds pending financial reconciliation: ",
+            ) + str(int(stars["pending_refund_reconciliation"])) + "</p>"
+        )
     if int(stars.get("pending_reconciliation", 0)):
         lines.append("<p>⚠️ " + tr(
             "Есть оплаты Stars, ожидающие учёта: ",
             "Stars purchases awaiting reconciliation: ",
         ) + str(int(stars["pending_reconciliation"])) + "</p>")
     lines.append("<p><i>" + tr(
-        "Звёзды учитываются по официальному вознаграждению Telegram. "
-        "Денежный счёт пока не выставляется.",
-        "Stars use Telegram's official developer reward rate. "
-        "This is not a payable invoice.",
+        "Продажи и возвраты сохраняются отдельно по официальному "
+        "вознаграждению Telegram. Кредиты ещё не зачтены в счёт.",
+        "Sales and refunds use Telegram's official developer reward rate. "
+        "Credits are not yet applied to any invoice.",
     ) + "</i></p>")
     return "\n".join(lines)
 
@@ -1065,6 +1083,12 @@ def create_owner_setup_router(
                 + (
                     tr("⭐ Продано: ", "⭐ Stars sold: ")
                     + str(stars["stars"]) + " ⭐ · "
+                    + tr("Возвратов: ", "Refunds: ")
+                    + str(int(stars.get("refunds", 0))) + " · "
+                    + tr("Кредит: ", "Credit: ")
+                    + "$" + format(Decimal(str(
+                        stars.get("commission_credit_usd", "0")
+                    )), ".2f") + " · "
                     + tr("5% в USD: ", "5% in USD: ")
                     + (
                         tr("Освобождён", "Exempt")
