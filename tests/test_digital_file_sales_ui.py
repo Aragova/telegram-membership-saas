@@ -1,4 +1,5 @@
 """Connected file shop must invoice Stars and never unlock unpaid media."""
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -70,6 +71,7 @@ async def test_confirmed_charge_only_unlocks_files_to_actual_buyer(monkeypatch):
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=123),
         chat=SimpleNamespace(type="private", id=123),
+        date=datetime.now(UTC),
         successful_payment=payment,
     )
     confirmed = AsyncMock(return_value=SimpleNamespace(id=purchase))
@@ -90,6 +92,7 @@ async def test_confirmed_charge_only_unlocks_files_to_actual_buyer(monkeypatch):
     confirmed.assert_awaited_once()
     assert confirmed.await_args.kwargs["buyer_id"] == 123
     assert confirmed.await_args.kwargs["charge_id"] == "t_charge_id"
+    assert confirmed.await_args.kwargs["payment_at"] == message.date
     bot.send_document.assert_awaited_once_with(123, "secret_doc")
     delivered.assert_awaited_once()
     assert delivered.await_args.kwargs["purchase_id"] == purchase

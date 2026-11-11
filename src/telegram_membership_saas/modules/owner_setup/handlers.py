@@ -213,7 +213,6 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     quote_fingerprint,
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
-    merchant_saas_currency_quote,
     merchant_saas_project_preview,
     merchant_saas_statements,
 )
@@ -222,6 +221,9 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
     preview_saas_invoice_currency,
     saas_invoice_credit_history,
     saas_invoice_currency_snapshot,
+)
+from telegram_membership_saas.modules.platform_stars_sync import (
+    merchant_star_project_summary,
 )
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
@@ -286,8 +288,8 @@ def _saas_preview_rich(preview: dict) -> str:
         columns = (
             tr("Валюта", "Currency"),
             tr("Оборот", "Turnover"),
-            tr("Курс продажи, ₽", "Sale FX, RUB"),
-            tr("5% в ₽", "5% in RUB"),
+            tr("Продаж", "Sold"),
+            tr("Комиссия 5%, ₽", "5% commission, RUB"),
         )
         lines.extend([
             "<h4>" + tr("📊 Продажи", "📊 Sales") + "</h4>",
@@ -300,25 +302,19 @@ def _saas_preview_rich(preview: dict) -> str:
             currency = str(record["currency"])
             amount = str(record["gross"])
             missing = int(record.get("missing", 0))
-            minimum = record.get("min_rate")
-            maximum = record.get("max_rate")
-            rate = (
-                tr("Не хватает курса", "Rate missing") if missing
-                else tr("Отдельно", "Separate") if currency == "XTR"
-                else str(minimum) if minimum == maximum
-                else str(minimum) + "–" + str(maximum)
-            )
             fee = (
                 tr("Освобождён", "Exempt")
                 if preview["is_platform_owner"]
-                else tr("Сверка", "Reconcile") if currency == "XTR"
+                else tr("В отдельной таблице", "Separate Stars table")
+                if currency == "XTR"
                 else tr("Нет курса", "No FX") if missing
                 else str(record["fee_rub"])
             )
             lines.append(
                 "<tr><td>" + escape(currency) + "</td><td>"
-                + escape(amount) + "</td><td>" + escape(rate)
-                + "</td><td>" + escape(fee) + "</td></tr>"
+                + escape(amount) + "</td><td>"
+                + str(int(record.get("operations", 0))) + "</td><td>"
+                + escape(fee) + "</td></tr>"
             )
         lines.append("</table>")
     else:
@@ -326,33 +322,6 @@ def _saas_preview_rich(preview: dict) -> str:
             "📭 Подтверждённых продаж за этот месяц пока нет.",
             "📭 No approved sales in this month yet.",
         ) + "</p>")
-
-    lines.extend([
-        "<h4>" + tr("💱 Официальные курсы на сегодня",
-                     "💱 Today's official exchange rates") + "</h4>",
-        "<p>" + tr("Дата: ", "Date: ")
-        + escape(str(preview.get("rate_date", "—"))) + "</p>",
-        "<table bordered compact>",
-        "<tr><th>" + tr("Валюта", "Currency") + "</th><th>"
-        + tr("1 единица, ₽", "RUB per unit") + "</th><th>"
-        + tr("Дата ЦБ", "CBR date") + "</th></tr>",
-    ])
-    today = preview.get("today_rates") or {}
-    for currency in ("USD", "EUR", "UAH", "BYN"):
-        datum = today.get(currency) or {}
-        value = str(datum.get("rate", "—"))
-        source_day = str(datum.get("source_date", "—"))
-        lines.append(
-            "<tr><td>" + currency + "</td><td>" + escape(value)
-            + "</td><td>" + escape(source_day) + "</td></tr>"
-        )
-    lines.append("</table>")
-    lines.append("<p><i>" + tr(
-        "Для комиссии каждой продажи применяется курс её даты. "
-        "Курс оплаты счёта определяется отдельно при выборе валюты.",
-        "Each sale uses its own date's rate. Invoice settlement "
-        "uses a separate quote when the currency is chosen.",
-    ) + "</i></p>")
 
     lines.extend([
         "<h4>" + tr("🧮 Расчёт платформы", "🧮 Platform calculation")
@@ -396,6 +365,54 @@ def _saas_preview_rich(preview: dict) -> str:
         if not preview["billing_enabled"] else
         tr("Оплату определяет только официально выставленный счёт.",
            "Only an issued invoice establishes a payable amount.")
+    ) + "</i></p>")
+    return "\n".join(lines)
+
+
+def _saas_stars_rich(stars: dict) -> str:
+    """Price-grouped Stars sales; no visible CBR rates or duplicated menus."""
+    lines = [
+        "<h4>" + tr("⭐ Продажи за Stars", "⭐ Telegram Stars sales") + "</h4>",
+        "<table bordered compact>",
+        "<tr><th>" + tr("Источник", "Source") + "</th><th>"
+        + tr("Цена", "Price") + "</th><th>"
+        + tr("Продано", "Sold") + "</th><th>"
+        + tr("Всего", "Total") + "</th></tr>",
+    ]
+    for entry in stars.get("rows", []):
+        lines.append(
+            "<tr><td>" + tr(
+                "Файлы" if entry["source"] == "file_stars" else "Подписки",
+                "Files" if entry["source"] == "file_stars" else "Subscriptions",
+            ) + "</td><td>" + str(int(entry["price_stars"]))
+            + " ⭐</td><td>" + str(int(entry["sold"])) + "</td><td>"
+            + str(int(entry["total_stars"])) + " ⭐</td></tr>"
+        )
+    lines.append("</table>")
+    lines.extend([
+        "<p>⭐ " + str(int(stars["stars"])) + " · "
+        + tr("Эквивалент вознаграждения: ", "Developer reward equivalent: ")
+        + "$" + escape(format(Decimal(str(stars["reward_usd"])), ".2f"))
+        + " · 5%: "
+        + (
+            tr("Освобождён", "Exempt")
+            if stars.get("platform_owner_exempt")
+            else "$" + escape(format(
+                Decimal(str(stars["commission_usd"])), ".2f",
+            ))
+        )
+        + "</p>",
+    ])
+    if int(stars.get("pending_reconciliation", 0)):
+        lines.append("<p>⚠️ " + tr(
+            "Есть оплаты Stars, ожидающие учёта: ",
+            "Stars purchases awaiting reconciliation: ",
+        ) + str(int(stars["pending_reconciliation"])) + "</p>")
+    lines.append("<p><i>" + tr(
+        "Звёзды учитываются по официальному вознаграждению Telegram. "
+        "Денежный счёт пока не выставляется.",
+        "Stars use Telegram's official developer reward rate. "
+        "This is not a payable invoice.",
     ) + "</i></p>")
     return "\n".join(lines)
 
@@ -490,110 +507,6 @@ def _saas_invoices_rich(report) -> str:
     return "\n".join(items)
 
 
-def _saas_currency_quote_rich(quote: dict) -> str:
-    """Readable Rich quote with current settlement date, not a fake invoice."""
-    currency = escape(str(quote["chosen_currency"]))
-    lines = [
-        "<h3>" + tr("💳 ViMi Pay · Валюта счёта",
-                     "💳 ViMi Pay · Bill currency") + "</h3>",
-        "<p>" + tr("Расчётный период: ", "Accounting period: ")
-        + escape(str(quote["billing_month"])) + "</p>",
-        "<table bordered compact>",
-        "<tr><td>" + tr("Валюта оплаты", "Payment currency")
-        + "</td><td><b>" + currency + "</b></td></tr>",
-        "<tr><td>" + tr("Комиссия + абонплата (база)",
-                        "Commission + service fee (base)")
-        + "</td><td>" + escape(str(quote["total_rub"]))
-        + " ₽</td></tr>",
-    ]
-    if quote.get("quote_ready"):
-        lines.extend([
-            "<tr><td>" + tr("Курс оплаты", "Settlement rate")
-            + "</td><td>1 " + currency + " = "
-            + escape(str(quote["rate_rub_per_unit"])) + " ₽</td></tr>",
-            "<tr><td>" + tr("Дата расчёта", "Quote date")
-            + "</td><td>" + escape(str(quote.get("quote_day", "—")))
-            + "</td></tr>",
-            "<tr><td>" + tr("Источник", "Source")
-            + "</td><td>" + escape(str(quote.get("source_name") or "—"))
-            + "</td></tr>",
-        ])
-        if quote.get("source_date"):
-            lines.append(
-                "<tr><td>" + tr("Дата ЦБ", "CBR date")
-                + "</td><td>" + escape(str(quote["source_date"]))
-                + "</td></tr>"
-            )
-    lines.append("</table>")
-    if quote.get("quote_ready"):
-        lines.append("<p><b>" + tr("Предварительная сумма: ",
-                                     "Estimated total: ")
-                     + escape(str(quote["estimated_total"])) + " "
-                     + currency + "</b></p>")
-    else:
-        lines.append("<p>" + tr(
-            "⚠️ Нет курсов для всех продаж либо для выбранной "
-            "валюты на дату расчёта. Итоговая сумма не готова.",
-            "⚠️ Verified rates are missing for some sales or for "
-            "the chosen settlement currency today. No final total.",
-        ) + "</p>")
-    lines.append("<p><i>" + tr(
-        "Курс продажи фиксируется на дату её подтверждения. "
-        "Это предпросмотр, а не выставленный счёт.",
-        "Every sale retains its approval-date rate. "
-        "Preview only, not an issued invoice.",
-    ) + "</i></p>")
-    return "\n".join(lines)
-
-
-def _saas_currency_quote_html(quote: dict) -> str:
-    """Show only a preview, never a fake issued/paid invoice."""
-    currency = escape(str(quote["chosen_currency"]))
-    month = escape(str(quote["billing_month"]))
-    lines = [
-        tr("<b>💳 ViMi Pay · Валюта счёта</b>",
-           "<b>💳 ViMi Pay · Bill currency</b>"),
-        tr("Расчётный месяц: ", "Billing month: ") + month,
-        tr("Выбрано: ", "Selected: ") + currency,
-        tr("Дата курса оплаты: ", "Settlement quote date: ")
-        + escape(str(quote.get("quote_day", "—"))),
-        "",
-        tr("Комиссия и абонплата, база: ", "Commission and fee, base: ")
-        + escape(str(quote["total_rub"])) + " ₽",
-    ]
-    if quote.get("quote_ready"):
-        lines.extend([
-            tr("Курс: ", "Rate: ")
-            + "1 " + currency + " = "
-            + escape(str(quote["rate_rub_per_unit"])) + " ₽",
-            "<b>" + tr("Предварительная сумма: ", "Estimated total: ")
-            + escape(str(quote["estimated_total"]))
-            + " " + currency + "</b>",
-        ])
-        source = quote.get("source_name")
-        if source and currency != "RUB":
-            lines.append(
-                tr("Источник: ", "Source: ") + escape(str(source))
-                + (", " + escape(str(quote["source_date"]))
-                   if quote.get("source_date") else "")
-            )
-    else:
-        lines.append(tr(
-            "⚠️ Нет полного набора курсов или не завершена сверка Stars. "
-            "Итоговый счёт пока не рассчитан.",
-            "⚠️ Currency rates or Stars reconciliation are incomplete. "
-            "No final invoice amount is available.",
-        ))
-    lines.append("")
-    lines.append(tr(
-        "<i>Это только предварительный расчёт. Оплата и выставление "
-        "окончательного счёта станут доступны после запуска биллинга.</i>",
-        "<i>This is only a preview. Payment and issuance of the final "
-        "invoice will be available after billing is activated.</i>",
-    ))
-    return "\n".join(lines)
-
-
 def _saas_preview_classic(preview: dict) -> str:
     """Telegram standard HTML fallback: no Rich-only table tags."""
     lines = [
@@ -606,15 +519,6 @@ def _saas_preview_classic(preview: dict) -> str:
         amount = escape(str(item["gross"]))
         currency = escape(str(item["currency"]))
         is_missing = int(item.get("missing", 0))
-        minimum, maximum = item.get("min_rate"), item.get("max_rate")
-        quote = (
-            tr("нет курса даты продажи", "sale-date rate missing")
-            if is_missing or minimum is None or maximum is None
-            else escape(
-                str(minimum) if minimum == maximum
-                else str(minimum) + "–" + str(maximum)
-            ) + " ₽"
-        )
         fee = (
             tr("освобождён", "exempt") if preview["is_platform_owner"]
             else tr("нет курса", "no rate") if is_missing
@@ -622,7 +526,6 @@ def _saas_preview_classic(preview: dict) -> str:
         )
         lines.append(
             "• " + amount + " " + currency
-            + " · " + tr("курс: ", "rate: ") + quote
             + " · 5%: " + fee
         )
     if not preview.get("rows"):
@@ -1037,9 +940,14 @@ def create_owner_setup_router(
             page=page,
         )
         preview = None
+        stars = None
         if project_id is not None:
             month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
             preview = await merchant_saas_project_preview(
+                factory, actor_user_id=actor_id,
+                project_id=project_id, month=month,
+            )
+            stars = await merchant_star_project_summary(
                 factory, actor_user_id=actor_id,
                 project_id=project_id, month=month,
             )
@@ -1141,11 +1049,6 @@ def create_owner_setup_router(
                 "saasbill:" + encode_uuid(UUID(str(item["id"])))
                 + ":" + str(page),
             )])
-        if project_id is not None:
-            rows.append([_button(
-                tr("💱 Курсы · предпросмотр", "💱 FX · preview only"),
-                "saaschoose",
-            )])
         rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
         rows.append([_button(
             tr("⬅️ Мои боты", "⬅️ My bots") if project_id is None
@@ -1156,8 +1059,22 @@ def create_owner_setup_router(
             await send_owner_rich(
                 bot, chat_id=user_id,
                 rich_html=_saas_preview_rich(preview) + "\n"
+                + (_saas_stars_rich(stars) + "\n" if stars else "")
                 + _saas_invoices_rich(report),
                 classic_html=_saas_preview_classic(preview) + "\n"
+                + (
+                    tr("⭐ Продано: ", "⭐ Stars sold: ")
+                    + str(stars["stars"]) + " ⭐ · "
+                    + tr("5% в USD: ", "5% in USD: ")
+                    + (
+                        tr("Освобождён", "Exempt")
+                        if stars.get("platform_owner_exempt")
+                        else "$" + format(
+                            Decimal(str(stars["commission_usd"])), ".2f",
+                        )
+                    ) + "\n"
+                    if stars else ""
+                )
                 + "\n".join(lines),
                 reply_markup=_markup(rows),
             )
@@ -3979,53 +3896,7 @@ def create_owner_setup_router(
             if project_id is None:
                 raise ValueError(tr("Сначала создайте или выберите проект",
                                     "Create or select a connection first"))
-            if action == "saaschoose":
-                await bot.send_message(
-                    user_id,
-                    tr(
-                        "<b>💱 Выбери валюту оплаты счёта ViMi Pay</b>\n"
-                        "Продажи оцениваются по курсу их дат. "
-                        "Валюта оплаты пересчитывается по курсу сегодня. "
-                        "Пока показан предварительный расчёт.",
-                        "<b>💱 Choose ViMi Pay bill currency</b>\n"
-                        "Sales use their own approval-date rates. "
-                        "The settlement rate is today's quote. "
-                        "Preview only; no payment request.",
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=_markup([
-                        [_button("RUB ₽", "saasquote:RUB"),
-                         _button("USD $", "saasquote:USD")],
-                        [_button("EUR €", "saasquote:EUR"),
-                         _button("UAH ₴", "saasquote:UAH")],
-                        [_button("BYN Br", "saasquote:BYN")],
-                        [_button(tr("⬅️ Счёт", "⬅️ Bill"), "saasinvoices:0")],
-                    ]),
-                )
-            elif action.startswith("saasquote:"):
-                currency = action.split(":", 1)[1]
-                if currency not in ("RUB", "USD", "EUR", "UAH", "BYN"):
-                    raise ValueError("Invalid payment currency")
-                month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
-                quote = await merchant_saas_currency_quote(
-                    factory, actor_user_id=actor_id,
-                    project_id=project_id, month=month,
-                    payment_currency=currency,
-                )
-                await send_owner_rich(
-                    bot, chat_id=user_id,
-                    rich_html=_saas_currency_quote_rich(quote),
-                    classic_html=_saas_currency_quote_html(quote),
-                    reply_markup=_markup([
-                        [_button(
-                            tr("💱 Другая валюта", "💱 Another currency"),
-                            "saaschoose",
-                        )],
-                        [_button(tr("⬅️ Счёт", "⬅️ Bill"),
-                                 "saasinvoices:0")],
-                    ]),
-                )
-            elif action == "modmanage" or action.startswith("modmanage:"):
+            if action == "modmanage" or action.startswith("modmanage:"):
                 page = action.split(":", 1)[1] if ":" in action else "0"
                 if not page.isascii() or not page.isdecimal():
                     raise ValueError("Неверная страница")

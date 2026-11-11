@@ -1,3 +1,9 @@
+## CURRENT APPROVED COMMERCIAL BILLING CONTRACT (2026-11-11)
+
+**Read [PLATFORM_COMMERCIAL_BILLING_V2.md](PLATFORM_COMMERCIAL_BILLING_V2.md) first.** This supersedes prior proposals wherever they conflict. ViMi Pay merchant payment flow uses the connected bot's single **🧾 Счёт** and the platform owner's central **👑 Финансы**. Central operator configures currency-specific payment methods for all connected bots, reviews proof, and authorizes each partial/full receipt. 72h trial, RUB 150 or USD 3 per bot by billing PRICE PROFILE (not UI language), 5% sales commission including Telegram Stars. Telegram's official 0.013 USD per Star developer-reward quote is versioned and captured per successful payment; 0.02 USD advertising price is unrelated. Commissions tracked by closed Moscow sales month; monthly service prepaid by calendar anniversary. Preserve immutable legacy financial evidence but migrate all active payment UI toward multi-attempt/partial allocation. Remove obsolete tenant FX-rates screen and dead handlers, keep internal daily CBR ledger. No existing user is charged retroactively. **Real billing, trial/quotas and holds remain disabled until separately approved.**
+
+---
+
 ## PR #127 follow-up hardening — FX/receipt snapshot binding and bank safety
 
 The **final** currency-lock action is guarded by migration 0054's

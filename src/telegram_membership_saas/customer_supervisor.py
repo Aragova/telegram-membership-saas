@@ -35,6 +35,9 @@ from telegram_membership_saas.modules.bots.health_service import (
 from telegram_membership_saas.modules.platform_monthly_fx_sync import (
     sync_official_daily_rates,
 )
+from telegram_membership_saas.modules.platform_stars_sync import (
+    capture_paid_file_stars,
+)
 from telegram_membership_saas.project_worker_lock import (
     ProjectWorkerBusy,
     SharedProjectLeaseManager,
@@ -304,6 +307,10 @@ class CustomerBotSupervisor:
         # Only shard zero runs official FX ingestion. No per-bot timers.
         self._fx_task: asyncio.Task[None] | None = None
         self._next_fx_sync_at = 0.0
+        # The same shard-zero supervisor reconciles Stars source evidence.
+        # One shared bounded task; never one timer/connection per bot.
+        self._star_task: asyncio.Task[None] | None = None
+        self._next_star_sync_at = 0.0
         # Shared-mode admission cursor ensures a handful of busy legacy
         # projects cannot consume every five-worker startup batch forever.
         self._admission_cursor: UUID | None = None
@@ -435,6 +442,26 @@ class CustomerBotSupervisor:
                 type(exc).__name__,
             )
 
+    async def _sync_star_evidence_safe(self) -> None:
+        try:
+            result = await capture_paid_file_stars(
+                self.factory, self.settings,
+            )
+            # Backfill busy accounts in bounded chunks without a tight loop.
+            if result.recorded >= 200:
+                self._next_star_sync_at = monotonic() + 30
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Financial evidence failures must NEVER block buyer delivery or
+            # previously paid customer access. Retry the same immutable
+            # source IDs and never guess a missing reward rate.
+            self._next_star_sync_at = monotonic() + 5 * 60
+            logger.warning(
+                "Stars evidence reconciliation failed (%s); retry later",
+                type(exc).__name__,
+            )
+
     async def run(self) -> None:
         if (
             self.settings.customer_supervisor_shard_id == 0
@@ -454,6 +481,15 @@ class CustomerBotSupervisor:
                     self._next_fx_sync_at = monotonic() + 6 * 60 * 60
                     self._fx_task = asyncio.create_task(
                         self._sync_daily_fx_safe()
+                    )
+                if (self.settings.customer_supervisor_shard_id == 0
+                    and self.settings.platform_owner_telegram_id is not None
+                    and monotonic() >= self._next_star_sync_at
+                    and (self._star_task is None
+                         or self._star_task.done())):
+                    self._next_star_sync_at = monotonic() + 5 * 60
+                    self._star_task = asyncio.create_task(
+                        self._sync_star_evidence_safe()
                     )
                 try:
                     await self.reconcile_once()
@@ -477,6 +513,11 @@ class CustomerBotSupervisor:
                     cancel_once(self._fx_task)
                     await asyncio.gather(
                         self._fx_task, return_exceptions=True,
+                    )
+                if self._star_task is not None:
+                    cancel_once(self._star_task)
+                    await asyncio.gather(
+                        self._star_task, return_exceptions=True,
                     )
                 for worker in self.workers.values():
                     cancel_once(worker.task)
