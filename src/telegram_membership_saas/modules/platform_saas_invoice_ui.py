@@ -5,8 +5,8 @@ separately reviewed financial allocation policy exists.
 """
 from __future__ import annotations
 
-from html import escape
 from decimal import Decimal
+from html import escape
 
 from telegram_membership_saas.localization import tr
 
