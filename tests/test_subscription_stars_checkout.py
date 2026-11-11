@@ -5,11 +5,15 @@ exactly once; wrong buyer/amount/bot cannot deliver. Manual settlement remains.
 """
 import os
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.asyncio import create_async_engine
 from test_platform_saas_invoice_rls import _project, _tid
 
 from telegram_membership_saas.config import Settings
@@ -25,6 +29,9 @@ from telegram_membership_saas.modules.bots.deletion_service import (
 )
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.outbox import OutboxEvent
+from telegram_membership_saas.modules.owner_setup.service import (
+    ensure_telegram_actor,
+)
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import replace_active_plan_price
 from telegram_membership_saas.modules.resources import Resource
@@ -461,3 +468,111 @@ async def test_replay_refund_before_next_purchase_does_not_delay_access():
             ))) == 0
     finally:
         await engine.dispose()
+
+
+async def test_merchant_bill_includes_subscription_stars_refund_commission():
+    """One genuine refunded subscription appears in the merchant's single
+    monthly refund section, instead of only under file-sales refunds.
+    """
+    cfg = Settings()
+    engine = build_engine(cfg)
+    factory = build_session_factory(engine)
+    admin = create_async_engine(cfg.migration_database_url)
+    operator_tg = _tid()
+    try:
+        operator = await ensure_telegram_actor(
+            factory, telegram_id=operator_tg, username=None, first_name=None,
+        )
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Stars merchant refund",
+                status="active", duration_value=1, duration_unit="month",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id,
+                resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id,
+                plan_id=plan.id, currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        buyer_id = _tid()
+        async with system_project_session_scope(factory, project_id) as session:
+            order = await create_stars_subscription_order(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, username=None, first_name="Buyer",
+                plan_price_id=price_id,
+            )
+            order_id, payload = order.id, order.invoice_payload
+        now = datetime.now(UTC)
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, payload=payload, currency="XTR",
+                amount=70, charge_id="merchant-" + str(order_id),
+                paid_at=now,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, payload=payload, currency="XTR",
+                amount=70, charge_id="merchant-" + str(order_id),
+                refunded_at=now,
+            )
+        month = now.astimezone(ZoneInfo("Europe/Moscow")).date().replace(day=1)
+        async with admin.connect() as conn:
+            tx = await conn.begin()
+            try:
+                await conn.execute(text(
+                    "INSERT INTO platform_operators(telegram_user_id,role)"
+                    " VALUES(:tg,'owner')"
+                ), {"tg": operator_tg})
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:user,true)"
+                ), {"user": str(operator)})
+                captured = (await conn.execute(text(
+                    "SELECT platform_saas_capture_new_subscription_stars(200)"
+                    " AS data"
+                ).columns(data=JSONB))).scalar_one()
+                assert captured["recorded"] >= 1
+                refunds = (await conn.execute(text(
+                    "SELECT platform_saas_capture_subscription_star_refunds(200)"
+                    " AS data"
+                ).columns(data=JSONB))).scalar_one()
+                assert refunds["recorded"] >= 1
+                assert refunds["applied_to_invoices"] is False
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:user,true)"
+                ), {"user": str(owner)})
+                report = (await conn.execute(text(
+                    "SELECT platform_saas_star_project_refund_summary("
+                    ":project,:month) AS data"
+                ).columns(data=JSONB), {
+                    "project": project_id, "month": month,
+                })).scalar_one()
+                assert report["refunds"] == 1
+                assert report["refunded_stars"] == 70
+                assert Decimal(report["reward_credit_usd"]) == Decimal("0.91")
+                assert Decimal(report["commission_credit_usd"]) == Decimal(
+                    "0.0455"
+                )
+                assert report["pending_refund_reconciliation"] == 0
+                assert report["applied_to_invoices"] is False
+            finally:
+                await tx.rollback()
+    finally:
+        await engine.dispose()
+        await admin.dispose()
