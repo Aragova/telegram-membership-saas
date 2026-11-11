@@ -6,6 +6,7 @@ separately reviewed financial allocation policy exists.
 from __future__ import annotations
 
 from html import escape
+from decimal import Decimal
 
 from telegram_membership_saas.localization import tr
 
@@ -15,7 +16,7 @@ def _safe(value: object) -> str:
 
 
 def _money(value: object) -> str:
-    return _safe(format(__import__("decimal").Decimal(str(value)), ".2f"))
+    return _safe(format(Decimal(str(value)), ".2f"))
 
 
 def _type_label(value: str) -> str:
