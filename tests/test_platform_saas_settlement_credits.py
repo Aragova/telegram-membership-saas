@@ -99,7 +99,16 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                 ) == "42501"
 
                 await _actor(conn, owner)
+                # CI creates the non-bypass membership_runtime role AFTER
+                # Alembic: check its actual EXECUTE grants, not admin-only.
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 quote = await _lock(conn, invoice, "USD")
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "SELECT * FROM platform_saas_currency_settlements"
+                        ))
+                await conn.execute(text("RESET ROLE"))
                 assert quote["locked"] is True
                 assert quote["currency"] == "USD"
                 assert quote["quote_day"] == today.isoformat()
