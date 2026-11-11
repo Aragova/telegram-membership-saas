@@ -51,6 +51,7 @@ from telegram_membership_saas.modules.pricing import (
 )
 from telegram_membership_saas.modules.projects import Project, ProjectMember
 from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.modules.telegram_access import TelegramJoinTicket
 
@@ -97,6 +98,7 @@ __all__ = [
     "ProjectMember",
     "Resource",
     "Subscription",
+    "SubscriptionStarOrder",
     "TelegramJoinTicket",
     "TelegramUser",
 ]
