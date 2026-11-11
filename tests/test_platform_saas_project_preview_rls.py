@@ -120,7 +120,7 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                         "SELECT public.platform_saas_publish_fx_rate("
                         ":day,:currency,:rate)"
                     ), {
-                        "day": local_date, "currency": cur,
+                        "day": month, "currency": cur,
                         "rate": Decimal(rate),
                     })
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
