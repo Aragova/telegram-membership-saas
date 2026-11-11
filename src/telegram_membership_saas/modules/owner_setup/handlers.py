@@ -216,14 +216,14 @@ from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_project_preview,
     merchant_saas_statements,
 )
-from telegram_membership_saas.modules.platform_stars_sync import (
-    merchant_star_project_summary,
-)
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
     lock_saas_invoice_currency_expected,
     preview_saas_invoice_currency,
     saas_invoice_credit_history,
     saas_invoice_currency_snapshot,
+)
+from telegram_membership_saas.modules.platform_stars_sync import (
+    merchant_star_project_summary,
 )
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
