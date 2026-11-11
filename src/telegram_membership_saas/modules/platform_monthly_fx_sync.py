@@ -118,6 +118,8 @@ async def sync_official_daily_rates(
                 missing.append(day)
     if not missing:
         return 0
+    # UI must have today's quote first. Backfill old approval dates next.
+    missing.sort(reverse=True)
 
     count = 0
     async with httpx.AsyncClient(
