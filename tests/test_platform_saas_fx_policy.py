@@ -44,13 +44,13 @@ async def _publish(conn, month, currency, rate):
 async def _snapshot(conn, month):
     return (await conn.execute(
         text(
-            "SELECT public.platform_saas_monthly_fx(:month) AS data"
+            "SELECT public.platform_saas_day_fx(:month) AS data"
         ).columns(data=JSONB),
         {"month": month},
     )).scalar_one()
 
 
-async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
+async def test_fx_publishing_is_owner_only_daily_immutable_and_billing_off():
     config = Settings()
     engine = build_engine(config)
     factory = build_session_factory(engine)
@@ -64,7 +64,7 @@ async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
         customer = await ensure_telegram_actor(
             factory, telegram_id=tg_customer, username=None, first_name=None,
         )
-        month = date(2026, 12, 1)
+        month = date(2026, 12, 11)
         async with admin_engine.connect() as conn:
             tx = await conn.begin()
             try:
@@ -88,14 +88,17 @@ async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
                 again = await _publish(conn, month, "USD", Decimal("70"))
                 assert again == first
                 await _publish(conn, month, "EUR", Decimal("85.00"))
+                await _publish(conn, month, "XTR", Decimal("1.04"))
+                await _publish(conn, date(2026, 12, 12), "USD", Decimal("80.00"))
+                assert (await _snapshot(conn, date(2026, 12, 12)))["rates"]["USD"] == 80
                 stored = await _snapshot(conn, month)
                 assert Decimal(str(stored["rates"]["USD"])) == Decimal("70")
                 assert Decimal(str(stored["rates"]["EUR"])) == Decimal("85")
-                assert len(stored["rates"]) == 2
+                assert len(stored["rates"]) == 3
                 assert (await _snapshot(conn, date(2027, 1, 1)))["rates"] == {}
 
                 for bad_month, currency, rate in (
-                    (date(2026, 12, 2), "USD", Decimal("70")),
+                    (None, "USD", Decimal("70")),
                     (month, "RUB", Decimal("1")),
                     (month, "usd", Decimal("70")),
                     (month, "NOTREAL", Decimal("70")),
@@ -114,9 +117,9 @@ async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
 
                 for operation in (
                     "UPDATE platform_saas_fx_rates SET rub_per_unit=90 "
-                    "WHERE billing_month='2026-12-01' AND currency_code='USD'",
+                    "WHERE rate_date='2026-12-11' AND currency_code='USD'",
                     "DELETE FROM platform_saas_fx_rates "
-                    "WHERE billing_month='2026-12-01' AND currency_code='USD'",
+                    "WHERE rate_date='2026-12-01' AND currency_code='USD'",
                 ):
                     with pytest.raises(DBAPIError) as blocked:
                         async with conn.begin_nested():
@@ -158,7 +161,7 @@ async def test_fx_publishing_is_owner_only_monthly_immutable_and_billing_off():
                     "uuid,uuid,date,jsonb)'::regprocedure)"
                 ))).scalar_one()
                 assert "public.platform_saas_fx_rates" in func
-                assert "Missing published monthly FX rate" in func
+                assert "Missing published payment-day FX rate" in func
             finally:
                 await tx.rollback()
     finally:
