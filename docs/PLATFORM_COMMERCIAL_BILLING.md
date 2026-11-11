@@ -72,6 +72,30 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 - Overdue account cannot start **new** checkout but old purchases and entitlements continue to completion and expiry.
 - No runtime effect until new billing policy is deliberately enabled; preserve compose.light100.yaml and existing staging consumers.
 
+## 7b. Immutable monthly FX policy (2026-11-11)
+
+Migration `0051_saas_fx_policy` creates one owner-published
+`platform_saas_fx_rates` row per `(Moscow month, non-RUB currency)`.
+The rate is RUB per one unit of the original sale currency, stored as
+`NUMERIC(38,18)`, with publisher and timestamp. Updates, deletes and
+attempts to republish a conflicting value are refused; a retry using the
+same rate is idempotent. There is **no preloaded or automatic exchange
+rate**. Only the authenticated platform owner can publish/read rates via
+restricted SECURITY DEFINER functions.
+
+The existing monthly commission invoice issuer still takes its historical
+JSON parameter for compatibility. However it **reads the published database
+policy as its source of truth**, and any supplied FX override must match
+that policy exactly. Missing rates stop invoice generation, not silently
+drop a currency or treat it as zero. RUB uses 1; individual invoice-line
+FX snapshots remain immutable.
+
+This stage creates **no invoices, scheduled tasks, rate-setting Telegram
+buttons, customer access effects, trial claims or holds**. Billing remains
+disabled. Historical rate corrections after issuance must use separately
+audited financial adjustments rather than mutating existing FX rows;
+refund/credit and dispute handling are still launch blockers.
+
 ## 7a. Simplified owner exemption (2026-11-11)
 
 Migration `0050_my_bots_exempt` replaces the earlier
