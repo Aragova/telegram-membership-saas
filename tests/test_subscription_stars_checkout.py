@@ -1001,3 +1001,248 @@ async def test_late_stars_charge_cannot_undo_owner_subscription_termination():
             ))) == 1
     finally:
         await engine.dispose()
+
+
+async def test_delayed_stars_confirmation_preserves_pre_refund_renewal():
+    """B was paid before A's refund, but B's update arrived afterward."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Late confirmation before refund",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        receipts = []
+        for _ in range(2):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                receipts.append((order.id, order.invoice_payload))
+        a_paid = (datetime.now(UTC) - timedelta(minutes=4)).replace(microsecond=0)
+        b_paid = a_paid + timedelta(minutes=1)
+        refunded = a_paid + timedelta(minutes=2)
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], currency="XTR",
+                amount=70, charge_id="late-b-a", paid_at=a_paid,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], currency="XTR",
+                amount=70, charge_id="late-b-a", refunded_at=refunded,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[1][1], currency="XTR",
+                amount=70, charge_id="late-b-b", paid_at=b_paid,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+            ))
+            assert grant.valid_from == a_paid + timedelta(days=1)
+            assert grant.valid_until == a_paid + timedelta(days=2)
+    finally:
+        await engine.dispose()
+
+
+async def test_delayed_stars_refund_repairs_manual_paid_renewal():
+    """M paid AFTER A's actual refund but before refund event was ingested."""
+    from telegram_membership_saas.modules.payments import (
+        approve_payment_request,
+        create_manual_payment_method,
+        create_payment_request,
+        mark_payment_request_submitted,
+    )
+
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Manual renewal after Stars refund",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            stars_price_id = price.id
+            usd_price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="USD", amount="10",
+            )
+            usd_price_id = usd_price.id
+            method = await create_manual_payment_method(
+                session, project_id=project_id, name="Test USD",
+                currency_codes=["USD"],
+                instruction_template="Send {amount} {currency}",
+            )
+            method_id = method.id
+        a_paid = (datetime.now(UTC) - timedelta(minutes=5)).replace(microsecond=0)
+        a_refund = a_paid + timedelta(minutes=1)
+        m_approved = a_paid + timedelta(minutes=2)
+        async with system_project_session_scope(factory, project_id) as session:
+            order = await create_stars_subscription_order(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, username=None, first_name="Buyer",
+                plan_price_id=stars_price_id,
+            )
+            order_id, payload, customer_id = (
+                order.id, order.invoice_payload, order.customer_id,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=payload, currency="XTR",
+                amount=70, charge_id="late-manual-a", paid_at=a_paid,
+            )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            request = await create_payment_request(
+                session, project_id=project_id, customer_id=customer_id,
+                plan_id=plan.id, plan_price_id=usd_price_id,
+                payment_method_id=method_id,
+            )
+            await mark_payment_request_submitted(
+                session, project_id=project_id, request_id=request.id,
+                submitted_at=m_approved - timedelta(seconds=1),
+            )
+            result = await approve_payment_request(
+                session, project_id=project_id, request_id=request.id,
+                reviewer_user_id=owner, reviewed_at=m_approved,
+            )
+            manual_payment_id = result.payment.id
+            assert result.grants[0].valid_from == a_paid + timedelta(days=1)
+        async with system_project_session_scope(factory, project_id) as session:
+            await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=payload, currency="XTR",
+                amount=70, charge_id="late-manual-a", refunded_at=a_refund,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            manual_grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == manual_payment_id,
+            ))
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project_id,
+                Subscription.plan_id == plan.id,
+            ))
+            assert manual_grant.status == "active"
+            assert manual_grant.valid_from == m_approved
+            assert manual_grant.valid_until == m_approved + timedelta(days=1)
+            assert sub.status == "active"
+            assert sub.last_payment_id == manual_payment_id
+            assert sub.current_period_start == m_approved
+    finally:
+        await engine.dispose()
+
+
+async def test_owner_termination_reader_rejects_wrong_project_scope():
+    """System payment context can read only its own subscription's end dates."""
+    from sqlalchemy.exc import DBAPIError
+
+    from telegram_membership_saas.modules.stars_subscription_timeline import (
+        owner_end_times,
+    )
+
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Audit read scope",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        async with system_project_session_scope(factory, project_id) as session:
+            order = await create_stars_subscription_order(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, username=None, first_name="Buyer",
+                plan_price_id=price_id,
+            )
+            payload = order.invoice_payload
+        async with system_project_session_scope(factory, project_id) as session:
+            _, sub = await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=payload, currency="XTR",
+                amount=70, charge_id="scope-1", paid_at=datetime.now(UTC),
+            )
+            sid = sub.id
+        async with system_project_session_scope(factory, project_id) as session:
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.id == sid, Subscription.project_id == project_id,
+            ))
+            assert await owner_end_times(
+                session, project_id=project_id, subscription=sub,
+            ) == ()
+            with pytest.raises(DBAPIError):
+                await session.scalar(select(func.public.subscription_owner_end_times(
+                    project_id, UUID(int=1),
+                )))
+    finally:
+        await engine.dispose()

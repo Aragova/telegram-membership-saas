@@ -27,7 +27,6 @@ from telegram_membership_saas.modules.outbox import (
     OutboxEventStatus,
     OutboxEventType,
 )
-from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments.request_service import (
     get_or_create_project_customer,
 )
@@ -37,8 +36,10 @@ from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.stars_subscription_timeline import (
     historical_stars_start,
+    load_refunded_star_sources,
     load_surviving_paid_sources,
-    rebuild_stars_windows_after,
+    owner_end_times,
+    rebuild_paid_windows_after,
     refresh_paid_subscription_summary,
 )
 from telegram_membership_saas.modules.stars_subscriptions import (
@@ -273,26 +274,18 @@ async def confirm_subscription_stars_payment(
     project = await session.scalar(select(Project).where(Project.id == project_id))
     if project is None:
         raise RuntimeError("Paid project disappeared")
-    if subscription is not None:
-        # The charge may have succeeded BEFORE the owner explicitly ended
-        # this subscription, although its Telegram update arrived afterward.
-        # Record the real charge for refund/accounting, but never silently
-        # undo a later owner termination. New charges AFTER termination
-        # remain eligible to create a fresh period.
-        ended_after_charge = await session.scalar(
-            select(OwnerObligationAudit.created_at).where(
-                OwnerObligationAudit.project_id == project_id,
-                OwnerObligationAudit.target_id == subscription.id,
-                OwnerObligationAudit.action == "subscription_end",
-                OwnerObligationAudit.created_at >= moment,
-            ).order_by(OwnerObligationAudit.created_at.desc()).limit(1)
-        )
-        if ended_after_charge is not None:
-            order.status = "paid"
-            order.telegram_charge_id = charge_id
-            order.paid_at = moment
-            await session.flush()
-            return order, subscription
+    terminations = await owner_end_times(
+        session, project_id=project_id, subscription=subscription,
+    )
+    # Authenticated original charges remain accounting evidence even when
+    # an owner's later explicit termination revoked their access. The
+    # owner-only RLS audit is read solely via a project-scoped DB function.
+    if any(moment <= ended for ended in terminations):
+        order.status = "paid"
+        order.telegram_charge_id = charge_id
+        order.paid_at = moment
+        await session.flush()
+        return order, subscription
     # A verified ledger receipt can arrive after a newer paid renewal.
     # Determine the interval from payment chronology, not the latest
     # subscription summary, which may belong to that newer purchase.
@@ -300,7 +293,13 @@ async def confirm_subscription_stars_payment(
         session, project_id=project_id, customer_id=order.customer_id,
         plan_id=order.plan_id,
     )
-    start_at = historical_stars_start(moment, earlier_manual, earlier_stars)
+    earlier_refunds = await load_refunded_star_sources(
+        session, project_id=project_id, customer_id=order.customer_id,
+        plan_id=order.plan_id,
+    )
+    start_at = historical_stars_start(
+        moment, earlier_manual, earlier_stars, earlier_refunds, terminations,
+    )
     end_at = calculate_period_end(
         start_at, timezone_name=project.timezone,
         duration_value=order.duration_value,
@@ -354,9 +353,10 @@ async def confirm_subscription_stars_payment(
     await session.flush()
     # If the receipt was recovered out of order, repair already-confirmed
     # later Stars grants. Manual grants retain their approved periods.
-    repaired = await rebuild_stars_windows_after(
+    repaired = await rebuild_paid_windows_after(
         session, project_id=project_id, customer_id=order.customer_id,
         plan_id=order.plan_id, after=moment,
+        termination_times=terminations,
     )
     await refresh_paid_subscription_summary(
         session, project_id=project_id, customer_id=order.customer_id,

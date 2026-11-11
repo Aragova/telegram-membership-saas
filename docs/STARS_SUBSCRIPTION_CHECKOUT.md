@@ -109,3 +109,20 @@ access or reversing the owner termination. A truly new charge following
 the termination can start a new subscription period. The buyer does not
 receive a false "access activated" success message for a charge whose grant
 was already superseded; they are directed to support for refund resolution.
+
+## Corrected delayed-events timeline and owner termination security
+
+Migration 0058 adds only a read-only SECURITY DEFINER lookup for the
+timestamps of `subscription_end` owner decisions, confined to the active
+project scope and exact subscription UUID. The existing owner-only audit
+RLS policy and source rows remain unchanged. The function is not available
+to PUBLIC and has no cross-tenant or arbitrary-table access.
+
+Out-of-order historical Stars purchases consult BOTH still-paid manual/Stars
+sources and already-returned Stars sources when the refund actually happened
+after the renewal purchase. Owner end events suppress old anchors across a
+cancellation. Revoked `EntitlementGrant.revoked_at` is deliberately NOT
+considered the real owner termination time because future-dated grants
+clamp that timestamp. A late Telegram refund repairs later manually approved
+renewals as well as Stars renewals, preserving manual Payment records and
+the original financial ledger while correcting access windows.

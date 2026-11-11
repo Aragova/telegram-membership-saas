@@ -1,13 +1,14 @@
-"""Chronological Stars subscription periods shared by payment and refund paths.
+"""Reconcile paid manual and Telegram Stars subscription periods in event time.
 
-All callers hold the project checkout/retirement lock. Manual grants are
-immutable: use *approval time*, not grant.valid_from, to determine whether a
-prepaid manual period preceded a Stars purchase.
+Payment history and original charge/refund evidence are immutable. Only
+still-active entitlement grant windows are repaired under the shared
+project checkout lock. Owner termination events are read through a
+strictly project-scoped database function, never through owner-only RLS.
 """
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.modules.entitlements import (
@@ -28,6 +29,26 @@ from telegram_membership_saas.modules.subscriptions import (
 )
 
 
+async def owner_end_times(
+    session: AsyncSession, *, project_id: UUID,
+    subscription: Subscription | None,
+) -> tuple[datetime, ...]:
+    """Scoped DEF-INER read is needed because system receipt has no owner ID."""
+    if subscription is None:
+        return ()
+    timestamps = await session.scalar(select(
+        func.public.subscription_owner_end_times(project_id, subscription.id)
+    ))
+    return tuple(timestamps or ())
+
+
+def _terminated_between(
+    termination_times: tuple[datetime, ...],
+    original_paid: datetime, later_paid: datetime,
+) -> bool:
+    return any(original_paid <= ended <= later_paid for ended in termination_times)
+
+
 async def load_surviving_paid_sources(
     session: AsyncSession, *, project_id: UUID, customer_id: UUID,
     plan_id: UUID,
@@ -44,7 +65,7 @@ async def load_surviving_paid_sources(
             EntitlementGrant.source == EntitlementSource.PAYMENT.value,
             Payment.customer_id == customer_id,
             Payment.plan_id == plan_id,
-        )
+        ).with_for_update(of=EntitlementGrant)
     )).all()
     stars = (await session.execute(
         select(EntitlementGrant, SubscriptionStarOrder)
@@ -64,65 +85,11 @@ async def load_surviving_paid_sources(
     return list(manual), list(stars)
 
 
-def manual_anchor_end(
-    manual: list[tuple[EntitlementGrant, Payment]], at: datetime,
-) -> datetime | None:
-    """A future-dated manual grant still anchors a later Stars charge."""
-    return max((
-        grant.valid_until for grant, payment in manual
-        if payment.approved_at <= at and grant.valid_until is not None
-    ), default=None)
-
-
-def historical_stars_start(
-    at: datetime,
-    manual: list[tuple[EntitlementGrant, Payment]],
-    stars: list[tuple[EntitlementGrant, SubscriptionStarOrder]],
-) -> datetime:
-    """Never extend an earlier recovered charge from a later purchase."""
-    anchors = [
-        grant.valid_until for grant, order in stars
-        if order.paid_at is not None and order.paid_at <= at
-        and grant.valid_until is not None
-    ]
-    manual_end = manual_anchor_end(manual, at)
-    if manual_end is not None:
-        anchors.append(manual_end)
-    return max([at, *anchors])
-
-
-async def rebuild_stars_windows_after(
+async def load_refunded_star_sources(
     session: AsyncSession, *, project_id: UUID, customer_id: UUID,
-    plan_id: UUID, after: datetime,
-) -> set[UUID]:
-    """Replay still-paid later Stars renewals after a late charge/refund.
-
-    Manual periods are not rewritten. An earlier refund never shifts a
-    later Stars purchase ahead of a prepayment already manually approved.
-    """
-    manual, stars = await load_surviving_paid_sources(
-        session, project_id=project_id, customer_id=customer_id,
-        plan_id=plan_id,
-    )
-    future: dict[UUID, tuple[SubscriptionStarOrder, list[EntitlementGrant]]] = {}
-    prior_stars = [
-        grant.valid_until for grant, order in stars
-        if order.paid_at is not None and order.paid_at <= after
-        and grant.valid_until is not None
-    ]
-    for grant, order in stars:
-        if order.paid_at is not None and order.paid_at > after:
-            if order.id not in future:
-                future[order.id] = (order, [])
-            future[order.id][1].append(grant)
-    if not future:
-        return set()
-    # Previously refunded Stars periods can remain historical renewal
-    # anchors. If B was purchased BEFORE A's refund, B prepaid against
-    # A's original expiry and must not lose that term when an unrelated
-    # older charge is discovered later. Conversely, a refund BEFORE B's
-    # purchase must not be used to extend B.
-    historical_refunds = (await session.execute(
+    plan_id: UUID,
+) -> list[tuple[EntitlementGrant, SubscriptionStarOrder, SubscriptionStarRefund]]:
+    rows = (await session.execute(
         select(EntitlementGrant, SubscriptionStarOrder, SubscriptionStarRefund)
         .join(SubscriptionStarOrder, and_(
             SubscriptionStarOrder.id == EntitlementGrant.source_id,
@@ -137,49 +104,145 @@ async def rebuild_stars_windows_after(
             EntitlementGrant.customer_id == customer_id,
             EntitlementGrant.source == EntitlementSource.STARS_PAYMENT.value,
             EntitlementGrant.status == EntitlementGrantStatus.REVOKED.value,
-            EntitlementGrant.valid_until.is_not(None),
             SubscriptionStarOrder.customer_id == customer_id,
             SubscriptionStarOrder.plan_id == plan_id,
         )
     )).all()
-    project = await session.scalar(select(Project).where(
-        Project.id == project_id,
-    ))
+    return list(rows)
+
+
+def manual_anchor_end(
+    manual: list[tuple[EntitlementGrant, Payment]],
+    at: datetime,
+    termination_times: tuple[datetime, ...] = (),
+) -> datetime | None:
+    """Prepaid manual grants anchor Stars by approval, not future valid_from."""
+    return max((
+        grant.valid_until for grant, payment in manual
+        if payment.approved_at <= at and grant.valid_until is not None
+        and not _terminated_between(termination_times, payment.approved_at, at)
+    ), default=None)
+
+
+def historical_stars_start(
+    at: datetime,
+    manual: list[tuple[EntitlementGrant, Payment]],
+    stars: list[tuple[EntitlementGrant, SubscriptionStarOrder]],
+    refunded: list[tuple[
+        EntitlementGrant, SubscriptionStarOrder, SubscriptionStarRefund
+    ]] = (),
+    termination_times: tuple[datetime, ...] = (),
+) -> datetime:
+    """Restore a late charge at purchase time, with historical refund anchors.
+
+    An order refunded AFTER this purchase was valid when the buyer renewed.
+    The same order refunded BEFORE purchase must not extend the renewal.
+    Owner termination always supersedes previous purchase anchors.
+    """
+    anchors = [
+        grant.valid_until for grant, order in stars
+        if order.paid_at is not None and order.paid_at <= at
+        and grant.valid_until is not None
+        and not _terminated_between(termination_times, order.paid_at, at)
+    ]
+    anchors.extend(
+        grant.valid_until for grant, order, returned in refunded
+        if order.paid_at is not None and order.paid_at <= at
+        and returned.refunded_at > at
+        and grant.valid_until is not None
+        and not _terminated_between(termination_times, order.paid_at, at)
+    )
+    manual_end = manual_anchor_end(manual, at, termination_times)
+    if manual_end is not None:
+        anchors.append(manual_end)
+    return max([at, *anchors])
+
+
+async def rebuild_paid_windows_after(
+    session: AsyncSession, *, project_id: UUID, customer_id: UUID,
+    plan_id: UUID, after: datetime,
+    termination_times: tuple[datetime, ...] = (),
+) -> set[UUID]:
+    """Replay later still-paid manual AND Stars renewals after backfill/refund.
+
+    Recomputes only effective grants. Previously refunded Stars source
+    periods retain their historical end as an anchor only for purchases
+    made before the real refund and without intervening owner termination.
+    """
+    manual, stars = await load_surviving_paid_sources(
+        session, project_id=project_id, customer_id=customer_id,
+        plan_id=plan_id,
+    )
+    events: dict[tuple[str, UUID], tuple[
+        datetime, int | None, str, list[EntitlementGrant]
+    ]] = {}
+    anchors: list[tuple[datetime, datetime]] = []
+    for grant, payment in manual:
+        at = payment.approved_at
+        if at <= after:
+            if grant.valid_until is not None:
+                anchors.append((at, grant.valid_until))
+        else:
+            key = ("manual", payment.id)
+            if key not in events:
+                events[key] = (
+                    at, payment.duration_value, payment.duration_unit, [],
+                )
+            events[key][3].append(grant)
+    for grant, order in stars:
+        if order.paid_at is None:
+            continue
+        at = order.paid_at
+        if at <= after:
+            if grant.valid_until is not None:
+                anchors.append((at, grant.valid_until))
+        else:
+            key = ("stars", order.id)
+            if key not in events:
+                events[key] = (at, order.duration_value, order.duration_unit, [])
+            events[key][3].append(grant)
+    if not events:
+        return set()
+    refunded = await load_refunded_star_sources(
+        session, project_id=project_id, customer_id=customer_id,
+        plan_id=plan_id,
+    )
+    project = await session.scalar(select(Project).where(Project.id == project_id))
     if project is None:
         raise RuntimeError("Paid subscription project disappeared")
-    changed: set[UUID] = set()
-    for order, grants in sorted(
-        future.values(), key=lambda pair: (pair[0].paid_at, str(pair[0].id)),
+    targets: set[UUID] = set()
+    for (_, _), (paid_at, value, unit, grants) in sorted(
+        events.items(), key=lambda item: (item[1][0], item[0][0], str(item[0][1])),
     ):
-        manual_end = manual_anchor_end(manual, order.paid_at)
-        refunded_anchors = [
-            grant.valid_until
-            for grant, old_order, refund in historical_refunds
-            if old_order.paid_at is not None
-            and old_order.paid_at <= order.paid_at
-            and refund.refunded_at > order.paid_at
-            and (grant.revoked_at is None or grant.revoked_at > order.paid_at)
+        ends = [
+            end for original_at, end in anchors
+            if original_at <= paid_at
+            and not _terminated_between(termination_times, original_at, paid_at)
         ]
-        prior_end = max(
-            [*prior_stars, *refunded_anchors,
-             *([manual_end] if manual_end is not None else [])],
-            default=None,
+        ends.extend(
+            grant.valid_until for grant, order, returned in refunded
+            if order.paid_at is not None and order.paid_at <= paid_at
+            and returned.refunded_at > paid_at
+            and grant.valid_until is not None
+            and not _terminated_between(
+                termination_times, order.paid_at, paid_at,
+            )
         )
-        start_at = max(order.paid_at, prior_end) if prior_end is not None else order.paid_at
+        start_at = max([paid_at, *ends])
         end_at = calculate_period_end(
             start_at, timezone_name=project.timezone,
-            duration_value=order.duration_value, duration_unit=order.duration_unit,
+            duration_value=value, duration_unit=unit,
         )
         for grant in grants:
             if grant.valid_from != start_at or grant.valid_until != end_at:
                 grant.valid_from = start_at
                 grant.valid_until = end_at
-                changed.add(grant.resource_id)
+                targets.add(grant.resource_id)
         if end_at is not None:
-            prior_stars.append(end_at)
-    if changed:
+            anchors.append((paid_at, end_at))
+    if targets:
         await session.flush()
-    return changed
+    return targets
 
 
 async def refresh_paid_subscription_summary(
@@ -194,7 +257,6 @@ async def refresh_paid_subscription_summary(
     survivors = [grant for grant, _ in manual] + [grant for grant, _ in stars]
     if not survivors:
         subscription.status = SubscriptionStatus.CANCELLED.value
-        # Historical payment references are retained for audit.
         await session.flush()
         return
     floor = datetime.min.replace(tzinfo=UTC)

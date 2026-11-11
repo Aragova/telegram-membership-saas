@@ -18,7 +18,8 @@ from telegram_membership_saas.modules.entitlements import (
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.stars_subscription_timeline import (
-    rebuild_stars_windows_after,
+    owner_end_times,
+    rebuild_paid_windows_after,
     refresh_paid_subscription_summary,
 )
 from telegram_membership_saas.modules.stars_subscriptions import (
@@ -112,9 +113,12 @@ async def record_verified_subscription_star_refund(
     await session.flush()
     # The subscription is a summary of multiple independently paid grants.
     # A returned renewal must not cancel an earlier still-paid period.
-    targets.update(await rebuild_stars_windows_after(
+    terminations = await owner_end_times(
+        session, project_id=project_id, subscription=subscription,
+    )
+    targets.update(await rebuild_paid_windows_after(
         session, project_id=project_id, customer_id=order.customer_id,
-        plan_id=order.plan_id, after=moment,
+        plan_id=order.plan_id, after=moment, termination_times=terminations,
     ))
     await refresh_paid_subscription_summary(
         session, project_id=project_id, customer_id=order.customer_id,
