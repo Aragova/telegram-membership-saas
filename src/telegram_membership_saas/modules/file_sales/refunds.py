@@ -6,7 +6,7 @@ The original paid file order and its delivery history remain intact.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -46,9 +46,9 @@ async def record_telegram_file_star_refund(
     ):
         raise ValueError("Invalid Telegram Stars refund service event")
     moment = refunded_at.astimezone(UTC)
-    if moment > datetime.now(UTC).replace(microsecond=999999):
-        # Telegram-authenticated message date may precede ingestion but not
-        # originate in the future. A clock skew can be retried safely.
+    if moment > datetime.now(UTC) + timedelta(minutes=5):
+        # Telegram's authenticated timestamp may be slightly ahead of
+        # the VM clock; larger skew cannot silently enter finance.
         raise ValueError("Future-dated Telegram Stars refund")
     async with system_project_session_scope(factory, project_id) as session:
         purchase = await session.scalar(
