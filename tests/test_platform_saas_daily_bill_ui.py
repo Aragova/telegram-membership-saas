@@ -65,8 +65,8 @@ def test_stars_requires_refunds_and_reward_value_before_invoicing():
     finally:
         _language.reset(token)
     assert "500" in result
-    assert "30" in result
-    assert "сумма не входит в счёт" in result
+    assert "Сверка" in result
+    assert "не включается в итоговую комиссию" in result
     assert "Предварительно:" not in result
 
 
