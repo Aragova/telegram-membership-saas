@@ -34,7 +34,10 @@ async def _commission(conn, merchant, owner, month, fx="{}"):
     ), {"m": merchant, "o": owner, "month": month, "fx": fx})).scalar_one()
 
 
-async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
+@pytest.mark.parametrize("cutoff_case", ["normal", "rollout", "trial"])
+async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice(
+    cutoff_case: str,
+):
     settings = Settings()
     engine = build_engine(settings)
     factory = build_session_factory(engine)
@@ -51,6 +54,15 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
     paid_at = datetime.combine(paid_day, time(12), moscow).astimezone(UTC)
     paid_at2 = datetime.combine(second_day, time(12), moscow).astimezone(UTC)
     start = paid_at - timedelta(days=60)
+    rollout_at = (
+        paid_at + timedelta(hours=1) if cutoff_case == "rollout"
+        else start - timedelta(days=5)
+    )
+    trial_at = (
+        paid_at - timedelta(hours=48) if cutoff_case == "trial" else start
+    )
+    expected_commission = Decimal("320" if cutoff_case == "normal" else "120")
+    expected_total = expected_commission + Decimal("150")
     try:
         operator = await ensure_telegram_actor(
             factory, telegram_id=operator_tg, username=None, first_name=None,
@@ -68,7 +80,7 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                 await conn.execute(text(
                     "UPDATE platform_saas_billing_control SET enabled=true,"
                     " effective_from=:effective WHERE id=1"
-                ), {"effective": start - timedelta(days=5)})
+                ), {"effective": rollout_at})
                 await conn.execute(text(
                     "UPDATE merchant_project_periods SET started_at=:start "
                     "WHERE project_id=:project AND ended_at IS NULL"
@@ -92,7 +104,7 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                     "'owner',:claimed)"
                 ), {
                     "id": uuid4(), "merchant": merchant,
-                    "owner": merchant_owner, "claimed": start,
+                    "owner": merchant_owner, "claimed": trial_at,
                 })
 
                 bot_telegram = (await conn.execute(text(
@@ -155,61 +167,37 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                         "month": month, "currency": currency,
                         "rate": Decimal(rate), "source_date": month,
                     })
-                # The connected-bot Bill preview must use the SAME
-                # billability cutoff as the invoice issuer. Show native
-                # turnover even when some sales are non-chargeable.
+                # Do not mutate immutable trial claims. Each parametrized
+                # scenario provisions the original claim/rollout in its
+                # initial state, inside a rollback-only transaction.
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:actor,true)"
                 ), {"actor": str(merchant_owner)})
-                for rollout, trial_start in (
-                    # A sale before commercial launch is never charged.
-                    (paid_at + timedelta(hours=1), start),
-                    # A sale inside the first 72 hours is never charged.
-                    (start - timedelta(days=5),
-                     paid_at - timedelta(hours=48)),
-                ):
-                    await conn.execute(text(
-                        "UPDATE platform_saas_billing_control "
-                        "SET effective_from=:rollout WHERE id=1"
-                    ), {"rollout": rollout})
-                    await conn.execute(text(
-                        "UPDATE merchant_platform_trial_claims "
-                        "SET claimed_at=:claimed "
-                        "WHERE owner_user_id=:owner AND scope='owner' "
-                        "AND policy_key='vimi-saas-72h-v1'"
-                    ), {"claimed": trial_start, "owner": merchant_owner})
-                    preview = (await conn.execute(text(
-                        "SELECT public.platform_saas_project_preview("
-                        ":project,:month) AS data"
-                    ).columns(data=JSONB), {
-                        "project": project, "month": month,
-                    })).scalar_one()
-                    by_currency = {
-                        item["currency"]: item for item in preview["rows"]
-                    }
-                    assert Decimal(str(by_currency["USD"]["gross"])) == 80
-                    assert Decimal(str(by_currency["USD"]["fee_rub"])) == 120
-                    assert Decimal(str(preview["fiat_commission_rub"])) == 120
-                    assert preview["estimate_complete"] is True
-                    quote = (await conn.execute(text(
-                        "SELECT public.platform_saas_quote_project_bill("
-                        ":project,:month,'RUB') AS data"
-                    ).columns(data=JSONB), {
-                        "project": project, "month": month,
-                    })).scalar_one()
-                    assert quote["quote_ready"] is True
-                    assert Decimal(str(quote["estimated_total"])) == 270
-                # Restore the original rollout and completed trial.
-                await conn.execute(text(
-                    "UPDATE merchant_platform_trial_claims "
-                    "SET claimed_at=:claimed "
-                    "WHERE owner_user_id=:owner AND scope='owner' "
-                    "AND policy_key='vimi-saas-72h-v1'"
-                ), {"claimed": start, "owner": merchant_owner})
-                await conn.execute(text(
-                    "UPDATE platform_saas_billing_control "
-                    "SET effective_from=:rollout WHERE id=1"
-                ), {"rollout": start - timedelta(days=5)})
+                preview = (await conn.execute(text(
+                    "SELECT public.platform_saas_project_preview("
+                    ":project,:month) AS data"
+                ).columns(data=JSONB), {
+                    "project": project, "month": month,
+                })).scalar_one()
+                by_currency = {
+                    item["currency"]: item for item in preview["rows"]
+                }
+                # The original revenue stays visible, but only eligible
+                # payments contribute to the 5% liability.
+                assert Decimal(str(by_currency["USD"]["gross"])) == 80
+                assert Decimal(str(by_currency["USD"]["fee_rub"])) == expected_commission
+                assert Decimal(str(
+                    preview["fiat_commission_rub"]
+                )) == expected_commission
+                assert preview["estimate_complete"] is True
+                quote = (await conn.execute(text(
+                    "SELECT public.platform_saas_quote_project_bill("
+                    ":project,:month,'RUB') AS data"
+                ).columns(data=JSONB), {
+                    "project": project, "month": month,
+                })).scalar_one()
+                assert quote["quote_ready"] is True
+                assert Decimal(str(quote["estimated_total"])) == expected_total
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:actor,true)"
                 ), {"actor": str(operator)})
@@ -228,18 +216,22 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                     " WHERE id=:invoice"
                 ), {"invoice": invoice})).one()
                 assert details.status == "issued"
-                assert Decimal(details.total_rub) == Decimal("320.00")
+                assert Decimal(details.total_rub) == expected_commission
                 lines = (await conn.execute(text(
                     "SELECT original_amount,rub_per_unit,charge_rub "
                     "FROM platform_saas_invoice_lines WHERE invoice_id=:id "
                     "ORDER BY original_amount DESC"
                 ), {"id": invoice})).all()
-                assert len(lines) == 2
-                assert [(Decimal(q.original_amount), Decimal(q.rub_per_unit),
-                         Decimal(q.charge_rub)) for q in lines] == [
-                    (Decimal("50"), Decimal("80"), Decimal("200")),
+                expected_lines = [
                     (Decimal("30"), Decimal("80"), Decimal("120")),
                 ]
+                if cutoff_case == "normal":
+                    expected_lines.insert(
+                        0, (Decimal("50"), Decimal("80"), Decimal("200"))
+                    )
+                assert len(lines) == len(expected_lines)
+                assert [(Decimal(q.original_amount), Decimal(q.rub_per_unit),
+                         Decimal(q.charge_rub)) for q in lines] == expected_lines
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await conn.execute(text(
@@ -252,13 +244,16 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:actor,true)"
                 ), {"actor": str(merchant_owner)})
-                for currency, expected in (
-                    ("RUB", Decimal("470.00")),
-                    ("USD", Decimal("5.88")),
-                    ("EUR", Decimal("5.22")),
-                    ("UAH", Decimal("235.00")),
-                    ("BYN", Decimal("17.41")),
+                for currency, rate in (
+                    ("RUB", Decimal("1")),
+                    ("USD", Decimal("80")),
+                    ("EUR", Decimal("90")),
+                    ("UAH", Decimal("2")),
+                    ("BYN", Decimal("27")),
                 ):
+                    expected = (expected_total / rate).quantize(
+                        Decimal("0.01")
+                    )
                     quote = (await conn.execute(text(
                         "SELECT public.platform_saas_quote_project_bill("
                         ":project,:month,:currency) AS data"
@@ -269,7 +264,7 @@ async def test_monthly_fx_used_for_real_approved_sales_and_idempotent_invoice():
                     })).scalar_one()
                     assert quote["quote_ready"] is True
                     assert quote["chosen_currency"] == currency
-                    assert Decimal(str(quote["total_rub"])) == Decimal("470")
+                    assert Decimal(str(quote["total_rub"])) == expected_total
                     assert Decimal(str(quote["estimated_total"])) == expected
                     assert quote["preview_only"] is True
                 assert (await conn.execute(text(
