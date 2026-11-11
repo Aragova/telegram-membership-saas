@@ -206,6 +206,7 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.platform_saas_payment_service import (
+    merchant_saas_currency_quote,
     merchant_saas_project_preview,
     merchant_saas_statements,
 )
@@ -304,10 +305,10 @@ def _saas_preview_rich(preview: dict) -> str:
                      + tr("Нет продаж", "No sales")
                      + "</td><td>0</td><td>0</td><td>0</td></tr>")
     lines.append("</table>")
-    today = preview.get("today_rates") or {}
+    today = preview.get("month_rates") or {}
     lines.append("<p>" + tr(
-        "Курсы на сегодня (опубликованные): ",
-        "Today's published rates: ",
+        "Курсы на месяц (опубликованные): ",
+        "Published monthly rates: ",
     ) + (
         ", ".join(
             escape(str(code)) + " = " + escape(str(value)) + " ₽"
@@ -359,6 +360,52 @@ def _saas_preview_rich(preview: dict) -> str:
         tr("Итоговые суммы подтверждаются выставленными счетами ниже.",
            "Only issued invoices below establish amounts payable.")
     ) + "</i></p>")
+    return "\n".join(lines)
+
+
+def _saas_currency_quote_html(quote: dict) -> str:
+    """Show only a preview, never a fake issued/paid invoice."""
+    currency = escape(str(quote["chosen_currency"]))
+    month = escape(str(quote["billing_month"]))
+    lines = [
+        tr("<b>💳 ViMi Pay · Валюта счёта</b>",
+           "<b>💳 ViMi Pay · Bill currency</b>"),
+        tr("Расчётный месяц: ", "Billing month: ") + month,
+        tr("Выбрано: ", "Selected: ") + currency,
+        "",
+        tr("Комиссия и абонплата, база: ", "Commission and fee, base: ")
+        + escape(str(quote["total_rub"])) + " ₽",
+    ]
+    if quote.get("quote_ready"):
+        lines.extend([
+            tr("Курс: ", "Rate: ")
+            + "1 " + currency + " = "
+            + escape(str(quote["rate_rub_per_unit"])) + " ₽",
+            "<b>" + tr("Предварительная сумма: ", "Estimated total: ")
+            + escape(str(quote["estimated_total"]))
+            + " " + currency + "</b>",
+        ])
+        source = quote.get("source_name")
+        if source and currency != "RUB":
+            lines.append(
+                tr("Источник: ", "Source: ") + escape(str(source))
+                + (", " + escape(str(quote["source_date"]))
+                   if quote.get("source_date") else "")
+            )
+    else:
+        lines.append(tr(
+            "⚠️ Нет полного набора курсов или не завершена сверка Stars. "
+            "Итоговый счёт пока не рассчитан.",
+            "⚠️ Currency rates or Stars reconciliation are incomplete. "
+            "No final invoice amount is available.",
+        ))
+    lines.append("")
+    lines.append(tr(
+        "<i>Это только предварительный расчёт. Оплата и выставление "
+        "окончательного счёта станут доступны после запуска биллинга.</i>",
+        "<i>This is only a preview. Payment and issuance of the final "
+        "invoice will be available after billing is activated.</i>",
+    ))
     return "\n".join(lines)
 
 
@@ -876,6 +923,11 @@ def create_owner_setup_router(
             nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
         if nav:
             rows.append(nav)
+        if project_id is not None:
+            rows.append([_button(
+                tr("💱 Выбрать валюту счёта", "💱 Choose bill currency"),
+                "saaschoose", "success",
+            )])
         rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
         rows.append([_button(
             tr("⬅️ Мои боты", "⬅️ My bots") if project_id is None
@@ -3516,7 +3568,50 @@ def create_owner_setup_router(
             if project_id is None:
                 raise ValueError(tr("Сначала создайте или выберите проект",
                                     "Create or select a connection first"))
-            if action == "modmanage" or action.startswith("modmanage:"):
+            if action == "saaschoose":
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "<b>💱 Выбери валюту оплаты счёта ViMi Pay</b>\n"
+                        "Курс фиксируется на расчётный месяц. "
+                        "Пока показан только предварительный расчёт.",
+                        "<b>💱 Choose ViMi Pay bill currency</b>\n"
+                        "The exchange rate is locked for the billing month. "
+                        "This is a preview, not a payment request.",
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button("RUB ₽", "saasquote:RUB"),
+                         _button("USD $", "saasquote:USD")],
+                        [_button("EUR €", "saasquote:EUR"),
+                         _button("UAH ₴", "saasquote:UAH")],
+                        [_button("BYN Br", "saasquote:BYN")],
+                        [_button(tr("⬅️ Счёт", "⬅️ Bill"), "saasinvoices:0")],
+                    ]),
+                )
+            elif action.startswith("saasquote:"):
+                currency = action.split(":", 1)[1]
+                if currency not in ("RUB", "USD", "EUR", "UAH", "BYN"):
+                    raise ValueError("Invalid payment currency")
+                month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
+                quote = await merchant_saas_currency_quote(
+                    factory, actor_user_id=actor_id,
+                    project_id=project_id, month=month,
+                    payment_currency=currency,
+                )
+                await bot.send_message(
+                    user_id, _saas_currency_quote_html(quote),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button(
+                            tr("💱 Другая валюта", "💱 Another currency"),
+                            "saaschoose",
+                        )],
+                        [_button(tr("⬅️ Счёт", "⬅️ Bill"),
+                                 "saasinvoices:0")],
+                    ]),
+                )
+            elif action == "modmanage" or action.startswith("modmanage:"):
                 page = action.split(":", 1)[1] if ":" in action else "0"
                 if not page.isascii() or not page.isdecimal():
                     raise ValueError("Неверная страница")
