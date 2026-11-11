@@ -205,10 +205,23 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
+from telegram_membership_saas.modules.platform_saas_invoice_ui import (
+    issued_invoice_classic,
+    issued_invoice_rich,
+    issued_quote_classic,
+    issued_quote_rich,
+    quote_fingerprint,
+)
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_currency_quote,
     merchant_saas_project_preview,
     merchant_saas_statements,
+)
+from telegram_membership_saas.modules.platform_saas_settlement_service import (
+    lock_saas_invoice_currency_expected,
+    preview_saas_invoice_currency,
+    saas_invoice_credit_history,
+    saas_invoice_currency_snapshot,
 )
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
@@ -398,8 +411,16 @@ def _saas_invoices_rich(report) -> str:
         + str(report.unpaid) + "</td></tr>",
         "<tr><td>" + tr("Остаток", "Outstanding") + "</td><td>"
         + escape(format(report.outstanding_rub, ".2f")) + " ₽</td></tr>",
-        "</table>",
     ]
+    pending_count = getattr(report, "pending_credit_count", 0)
+    if pending_count:
+        items.append(
+            "<tr><td>" + tr("↩️ Возвраты без зачёта",
+                              "↩️ Credits not allocated") + "</td><td>"
+            + escape(format(report.pending_credit_rub, ".2f"))
+            + " ₽ · " + str(pending_count) + "</td></tr>"
+        )
+    items.append("</table>")
     if not report.invoices:
         items.append("<p>" + tr(
             "Счетов к оплате пока нет.", "No platform invoices yet.",
@@ -413,18 +434,37 @@ def _saas_invoices_rich(report) -> str:
             tr("Оплачено", "Paid") if inv["status"] == "paid"
             else tr("Ожидает подтверждения", "Pending confirmation")
         )
+        settlement = inv.get("settlement") or {}
+        amount = (
+            str(settlement["amount"]) + " " + str(settlement["currency"])
+            if settlement.get("locked") else str(inv["amount_rub"]) + " ₽"
+        )
         items.append(
             "<p><b>" + escape(title) + ": "
-            + escape(str(inv["amount_rub"])) + " ₽</b> · "
+            + escape(amount) + "</b> · "
             + escape(state) + "</p>"
         )
+        if settlement.get("locked") and settlement.get("currency") != "RUB":
+            items.append("<p><i>" + tr("Рублёвая база: ",
+                                    "RUB reference: ")
+                         + escape(str(inv["amount_rub"])) + " ₽</i></p>")
         items.append(
             "<p>№ <code>" + escape(str(inv["id"])) + "</code> · "
             + tr("Срок: ", "Due: ")
             + escape(str(inv["due_at"])[:10]) + "</p>"
         )
+    foreign_locked = getattr(report, "foreign_unpaid_count", 0) > 0
     if report.unpaid:
-        if report.configured:
+        if foreign_locked:
+            items.append("<p>⚠️ " + tr(
+                "Есть неоплаченные счета с зафиксированной иностранной "
+                "валютой. Общие рублёвые реквизиты здесь скрыты. "
+                "Откройте нужный счёт и проверьте валюту.",
+                "Some unpaid invoices are locked to a foreign currency. "
+                "Shared RUB payment details are hidden. Open the individual "
+                "invoice to verify its payment currency.",
+            ) + "</p>")
+        elif report.configured:
             items.extend([
                 "<h4>" + tr("💳 Реквизиты платформы",
                              "💳 Payment instructions") + "</h4>",
@@ -1012,6 +1052,13 @@ def create_owner_setup_router(
             + escape(format(report.outstanding_rub, ".2f")) + " ₽",
             "",
         ]
+        if getattr(report, "pending_credit_count", 0):
+            lines.append(
+                tr("↩️ Возвраты в ожидании зачёта: ",
+                   "↩️ Refund credits pending allocation: ")
+                + escape(format(report.pending_credit_rub, ".2f"))
+                + " ₽ (" + str(report.pending_credit_count) + ")"
+            )
         if not report.invoices:
             lines.append(tr("Счетов пока нет.", "No platform invoices yet."))
         for item in report.invoices:
@@ -1024,9 +1071,15 @@ def create_owner_setup_router(
                 tr("Обслуживание бота", "Bot service") if item["kind"] == "prepayment"
                 else tr("Комиссия с продаж", "Sales commission")
             )
+            settlement = item.get("settlement") or {}
+            display_amount = (
+                str(settlement["amount"]) + " " + str(settlement["currency"])
+                if settlement.get("locked")
+                else str(item["amount_rub"]) + " ₽"
+            )
             lines.extend([
                 ("✅ " if is_paid else "⏳ ") + "<b>"
-                + escape(str(item["amount_rub"])) + " ₽</b> · "
+                + escape(display_amount) + "</b> · "
                 + escape(kind),
                 "  № <code>" + escape(str(item["id"])) + "</code>",
                 "  " + tr("Срок: ", "Due: ")
@@ -1034,7 +1087,14 @@ def create_owner_setup_router(
             ])
         if report.unpaid:
             lines.append("")
-            if report.configured:
+            if getattr(report, "foreign_unpaid_count", 0):
+                lines.append(tr(
+                    "⚠️ Есть неоплаченные валютные счета. Общие рублёвые "
+                    "реквизиты скрыты: откройте карточку нужного счёта.",
+                    "⚠️ Unpaid foreign-currency invoices exist. Shared RUB "
+                    "bank details are hidden; open the individual invoice.",
+                ))
+            elif report.configured:
                 lines.append(tr("💳 <b>Реквизиты ViMi Pay</b>",
                                 "💳 <b>ViMi Pay bank instructions</b>"))
                 lines.append("<pre>" + escape(str(report.instructions)) + "</pre>")
@@ -1068,10 +1128,23 @@ def create_owner_setup_router(
             nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
         if nav:
             rows.append(nav)
+        for item in report.invoices:
+            rows.append([_button(
+                ("✅ " if item["status"] == "paid" else "🧾 ")
+                + str(item["id"])[:8] + " · "
+                + (
+                    str(item["settlement"]["amount"]) + " "
+                    + str(item["settlement"]["currency"])
+                    if (item.get("settlement") or {}).get("locked")
+                    else str(item["amount_rub"]) + " ₽"
+                ),
+                "saasbill:" + encode_uuid(UUID(str(item["id"])))
+                + ":" + str(page),
+            )])
         if project_id is not None:
             rows.append([_button(
-                tr("💱 Выбрать валюту счёта", "💱 Choose bill currency"),
-                "saaschoose", "success",
+                tr("💱 Курсы · предпросмотр", "💱 FX · preview only"),
+                "saaschoose",
             )])
         rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
         rows.append([_button(
@@ -1093,6 +1166,52 @@ def create_owner_setup_router(
                 user_id, "\n".join(lines), parse_mode="HTML",
                 reply_markup=_markup(rows),
             )
+
+    async def show_saas_issued_invoice(
+        bot: Bot, user_id: int, actor_id: UUID,
+        invoice_id: UUID, *, page: int,
+    ) -> None:
+        """The existing invoice list drills down to one real issued bill.
+
+        Central accounts remain accessible after the last bot is transferred.
+        Historical liable owner is reverified on every callback.
+        """
+        report = await merchant_saas_statements(
+            factory, actor_user_id=actor_id,
+            project_id=fixed_project_id, page=page,
+        )
+        item = next(
+            (row for row in report.invoices if row["id"] == str(invoice_id)),
+            None,
+        )
+        if item is None:
+            raise ValueError(tr(
+                "Счёт отсутствует на этой странице.",
+                "Invoice not present on this page.",
+            ))
+        snapshot = await saas_invoice_currency_snapshot(
+            factory, actor_user_id=actor_id, invoice_id=invoice_id,
+        )
+        credits = await saas_invoice_credit_history(
+            factory, actor_user_id=actor_id, invoice_id=invoice_id,
+        )
+        buttons: list[list[InlineKeyboardButton]] = []
+        if not snapshot.get("locked") and item["status"] == "unpaid":
+            buttons.append([_button(
+                tr("💱 Зафиксировать валюту", "💱 Lock invoice currency"),
+                "saasbillchoose:" + encode_uuid(invoice_id) + ":" + str(page),
+                "success",
+            )])
+        buttons.append([_button(
+            tr("⬅️ К счетам", "⬅️ Invoices"),
+            "saasinvoices:" + str(page),
+        )])
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=issued_invoice_rich(item, snapshot, credits),
+            classic_html=issued_invoice_classic(item, snapshot, credits),
+            reply_markup=_markup(buttons),
+        )
 
     async def show_moderators(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -3436,6 +3555,7 @@ def create_owner_setup_router(
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasinvoices:",
+                "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -3703,6 +3823,152 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, fixed_project_id,
                     page=int(page_text),
                 )
+                await query.answer()
+                return
+            if action.startswith("sl:"):
+                # Short callback binds the displayed day/rate/amount to this
+                # one invoice. PostgreSQL revalidates under the invoice lock.
+                fields = action.split(":")
+                if len(fields) != 6:
+                    raise ValueError("Invalid guarded invoice settlement")
+                _, token, page_text, currency, day_token, fingerprint = fields
+                if (
+                    not page_text.isascii() or not page_text.isdecimal()
+                    or int(page_text) > 100000
+                    or currency not in ("RUB", "USD", "EUR", "UAH", "BYN")
+                    or len(day_token) != 8 or not day_token.isascii()
+                    or not day_token.isdecimal()
+                    or len(fingerprint) != 12
+                    or any(ch not in "0123456789abcdef" for ch in fingerprint)
+                ):
+                    raise ValueError("Invalid settlement callback")
+                invoice_id = decode_uuid(token)
+                invoice_page = int(page_text)
+                suffix = token + ":" + page_text
+                try:
+                    quoted = await preview_saas_invoice_currency(
+                        factory, actor_user_id=actor_id,
+                        invoice_id=invoice_id, currency=currency,
+                    )
+                    if (
+                        not quoted["quote_ready"]
+                        or quoted["quote_day"].replace("-", "") != day_token
+                        or quote_fingerprint(quoted) != fingerprint
+                    ):
+                        raise ValueError("Displayed quote expired")
+                    await lock_saas_invoice_currency_expected(
+                        factory, actor_user_id=actor_id,
+                        invoice_id=invoice_id, currency=currency,
+                        quote_day=datetime.strptime(day_token, "%Y%m%d").date(),
+                        rub_per_unit=Decimal(str(quoted["rub_per_unit"])),
+                        expected_amount=Decimal(str(quoted["amount"])),
+                    )
+                except Exception:
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⚠️ Условия расчёта изменились или счёт недоступен. "
+                            "Откройте его снова и проверьте актуальный курс "
+                            "перед фиксацией.",
+                            "⚠️ Settlement terms changed or the invoice is "
+                            "unavailable. Reopen it and review the updated "
+                            "rate before locking.",
+                        ),
+                        reply_markup=_markup([[_button(
+                            tr("⬅️ К счёту", "⬅️ Invoice"),
+                            "saasbill:" + suffix,
+                        )]]),
+                    )
+                else:
+                    await show_saas_issued_invoice(
+                        bot, user_id, actor_id, invoice_id, page=invoice_page,
+                    )
+                await query.answer()
+                return
+            if action.startswith((
+                "saasbill:", "saasbillchoose:", "saasbillquote:",
+            )):
+                parts = action.split(":")
+                kind = parts[0]
+                if len(parts) not in (3, 4):
+                    raise ValueError("Invalid billing action")
+                if kind == "saasbillquote" and len(parts) != 4:
+                    raise ValueError("Invalid settlement action")
+                if kind in ("saasbill", "saasbillchoose") and len(parts) != 3:
+                    raise ValueError("Invalid invoice action")
+                invoice_id = decode_uuid(parts[1])
+                page_value = parts[2]
+                if (
+                    not page_value.isascii() or not page_value.isdecimal()
+                    or int(page_value) > 100000
+                ):
+                    raise ValueError("Invalid invoice page")
+                invoice_page = int(page_value)
+                if kind == "saasbill":
+                    await show_saas_issued_invoice(
+                        bot, user_id, actor_id, invoice_id, page=invoice_page,
+                    )
+                elif kind == "saasbillchoose":
+                    # This step does not write an FX quote or change an invoice.
+                    snapshot = await saas_invoice_currency_snapshot(
+                        factory, actor_user_id=actor_id, invoice_id=invoice_id,
+                    )
+                    if snapshot.get("locked"):
+                        raise ValueError(tr(
+                            "Валюта уже зафиксирована.", "Currency already locked.",
+                        ))
+                    suffix = encode_uuid(invoice_id) + ":" + str(invoice_page)
+                    await bot.send_message(
+                        user_id,
+                        tr("<b>💱 Выберите валюту выставленного счёта</b>\n"
+                           "Перед фиксацией покажем курс ЦБ и окончательную сумму.",
+                           "<b>💱 Choose issued invoice currency</b>\n"
+                           "Review the official rate and amount before locking."),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button("RUB ₽", "saasbillquote:" + suffix + ":RUB"),
+                             _button("USD $", "saasbillquote:" + suffix + ":USD")],
+                            [_button("EUR €", "saasbillquote:" + suffix + ":EUR"),
+                             _button("UAH ₴", "saasbillquote:" + suffix + ":UAH")],
+                            [_button("BYN Br", "saasbillquote:" + suffix + ":BYN")],
+                            [_button(tr("⬅️ Счёт", "⬅️ Invoice"),
+                                     "saasbill:" + suffix)],
+                        ]),
+                    )
+                else:
+                    currency = parts[3]
+                    if currency not in ("RUB", "USD", "EUR", "UAH", "BYN"):
+                        raise ValueError("Invalid payment currency")
+                    suffix = encode_uuid(invoice_id) + ":" + str(invoice_page)
+                    quote = await preview_saas_invoice_currency(
+                        factory, actor_user_id=actor_id,
+                        invoice_id=invoice_id, currency=currency,
+                    )
+                    rows = []
+                    if quote["quote_ready"]:
+                        # Keep under Telegram's 64-byte callback limit.
+                        # The 12-hex token covers the exact rate and amount
+                        # shown on the Rich card, not merely its currency.
+                        lock_data = (
+                            "sl:" + suffix + ":" + currency + ":"
+                            + quote["quote_day"].replace("-", "") + ":"
+                            + quote_fingerprint(quote)
+                        )
+                        rows.append([_button(
+                            tr("🔒 Подтвердить и зафиксировать",
+                               "🔒 Confirm and lock"),
+                            lock_data, "success",
+                        )])
+                    rows.append([_button(
+                        tr("⬅️ Валюты", "⬅️ Currencies"),
+                        "saasbillchoose:" + suffix,
+                    )])
+                    await send_owner_rich(
+                        bot, chat_id=user_id,
+                        rich_html=issued_quote_rich(quote),
+                        classic_html=issued_quote_classic(quote),
+                        reply_markup=_markup(rows),
+                    )
                 await query.answer()
                 return
             project_id = await get_selected_project(

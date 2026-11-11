@@ -3,7 +3,7 @@
 No production billing is enabled and every financial test insert rolls back.
 """
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -80,6 +80,16 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                 ), {"id": invoice})
 
                 await _actor(conn, owner)
+                preview_sql = text(
+                    "SELECT public.platform_saas_preview_invoice_currency("
+                    ":id,'USD') AS data"
+                ).columns(data=JSONB)
+                preview_missing = (await conn.execute(
+                    preview_sql, {"id": invoice},
+                )).scalar_one()
+                assert preview_missing["preview_only"] is True
+                assert preview_missing["quote_ready"] is False
+                assert preview_missing["amount"] is None
                 with pytest.raises(DBAPIError) as no_rate:
                     async with conn.begin_nested():
                         await _lock(conn, invoice, "USD")
@@ -99,10 +109,45 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                 ) == "42501"
 
                 await _actor(conn, owner)
+                preview_ready = (await conn.execute(
+                    preview_sql, {"id": invoice},
+                )).scalar_one()
+                assert preview_ready["quote_ready"] is True
+                assert Decimal(str(preview_ready["amount"])) == Decimal("2")
+                assert Decimal(str(preview_ready["rub_per_unit"])) == Decimal("75")
+                assert preview_ready["quote_day"] == today.isoformat()
+                assert (await conn.execute(text(
+                    "SELECT count(*) FROM platform_saas_currency_settlements"
+                    " WHERE invoice_id=:id"
+                ), {"id": invoice})).scalar_one() == 0
                 # CI creates the non-bypass membership_runtime role AFTER
                 # Alembic: check its actual EXECUTE grants, not admin-only.
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
-                quote = await _lock(conn, invoice, "USD")
+                guarded = text(
+                    "SELECT public.platform_saas_lock_invoice_currency_expected("
+                    ":invoice,'USD',:day,:rate,:amount) AS data"
+                ).columns(data=JSONB)
+                quote_args = {
+                    "invoice": invoice, "day": today, "rate": Decimal("75"),
+                    "amount": Decimal("2.00"),
+                }
+                for changed in (
+                    {"day": today - timedelta(days=1)},
+                    {"rate": Decimal("76")},
+                    {"amount": Decimal("1.99")},
+                ):
+                    with pytest.raises(DBAPIError) as stale:
+                        async with conn.begin_nested():
+                            await conn.execute(
+                                guarded, {**quote_args, **changed},
+                            )
+                    assert getattr(stale.value.orig, "sqlstate", None) == "22023"
+                    unlocked = (await conn.execute(text(
+                        "SELECT public.platform_saas_invoice_currency_snapshot("
+                        ":invoice) AS data"
+                    ).columns(data=JSONB), {"invoice": invoice})).scalar_one()
+                    assert unlocked["locked"] is False
+                quote = (await conn.execute(guarded, quote_args)).scalar_one()
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await conn.execute(text(
@@ -110,6 +155,21 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                         ))
                 await conn.execute(text("RESET ROLE"))
                 assert quote["locked"] is True
+                count_foreign = text(
+                    "SELECT public.platform_saas_owner_foreign_invoice_count()"
+                )
+                assert (await conn.execute(count_foreign)).scalar_one() == 1
+                with pytest.raises(DBAPIError) as quote_already_locked:
+                    async with conn.begin_nested():
+                        await conn.execute(preview_sql, {"id": invoice})
+                assert getattr(
+                    quote_already_locked.value.orig, "sqlstate", None
+                ) == "42501"
+                history = (await conn.execute(text(
+                    "SELECT public.platform_saas_invoice_credit_history(:id) AS data"
+                ).columns(data=JSONB), {"id": invoice})).scalar_one()
+                assert history["credit_count"] == 0
+                assert history["entries"] == []
                 assert quote["currency"] == "USD"
                 assert quote["quote_day"] == today.isoformat()
                 assert Decimal(str(quote["rub_per_unit"])) == Decimal("75")
@@ -159,6 +219,9 @@ async def test_settlement_snapshot_uses_quote_day_and_rejects_resettlement():
                 await _actor(conn, operator)
                 receipt = await _confirm(conn, invoice, Decimal("2"))
                 assert await _confirm(conn, invoice, Decimal("2")) == receipt
+                await _actor(conn, owner)
+                assert (await conn.execute(count_foreign)).scalar_one() == 0
+                await _actor(conn, operator)
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await _confirm(
