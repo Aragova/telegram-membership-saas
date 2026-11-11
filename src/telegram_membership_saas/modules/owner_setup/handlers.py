@@ -387,6 +387,62 @@ def _saas_preview_rich(preview: dict) -> str:
     return "\n".join(lines)
 
 
+def _saas_currency_quote_rich(quote: dict) -> str:
+    """Readable Rich quote with current settlement date, not a fake invoice."""
+    currency = escape(str(quote["chosen_currency"]))
+    lines = [
+        "<h3>" + tr("💳 ViMi Pay · Валюта счёта",
+                     "💳 ViMi Pay · Bill currency") + "</h3>",
+        "<p>" + tr("Расчётный период: ", "Accounting period: ")
+        + escape(str(quote["billing_month"])) + "</p>",
+        "<table bordered compact>",
+        "<tr><td>" + tr("Валюта оплаты", "Payment currency")
+        + "</td><td><b>" + currency + "</b></td></tr>",
+        "<tr><td>" + tr("Комиссия + абонплата (база)",
+                        "Commission + service fee (base)")
+        + "</td><td>" + escape(str(quote["total_rub"]))
+        + " ₽</td></tr>",
+    ]
+    if quote.get("quote_ready"):
+        lines.extend([
+            "<tr><td>" + tr("Курс оплаты", "Settlement rate")
+            + "</td><td>1 " + currency + " = "
+            + escape(str(quote["rate_rub_per_unit"])) + " ₽</td></tr>",
+            "<tr><td>" + tr("Дата расчёта", "Quote date")
+            + "</td><td>" + escape(str(quote.get("quote_day", "—")))
+            + "</td></tr>",
+            "<tr><td>" + tr("Источник", "Source")
+            + "</td><td>" + escape(str(quote.get("source_name") or "—"))
+            + "</td></tr>",
+        ])
+        if quote.get("source_date"):
+            lines.append(
+                "<tr><td>" + tr("Дата ЦБ", "CBR date")
+                + "</td><td>" + escape(str(quote["source_date"]))
+                + "</td></tr>"
+            )
+    lines.append("</table>")
+    if quote.get("quote_ready"):
+        lines.append("<p><b>" + tr("Предварительная сумма: ",
+                                     "Estimated total: ")
+                     + escape(str(quote["estimated_total"])) + " "
+                     + currency + "</b></p>")
+    else:
+        lines.append("<p>" + tr(
+            "⚠️ Нет курсов для всех продаж либо для выбранной "
+            "валюты на дату расчёта. Итоговая сумма не готова.",
+            "⚠️ Verified rates are missing for some sales or for "
+            "the chosen settlement currency today. No final total.",
+        ) + "</p>")
+    lines.append("<p><i>" + tr(
+        "Курс продажи фиксируется на дату её подтверждения. "
+        "Это предпросмотр, а не выставленный счёт.",
+        "Every sale retains its approval-date rate. "
+        "Preview only, not an issued invoice.",
+    ) + "</i></p>")
+    return "\n".join(lines)
+
+
 def _saas_currency_quote_html(quote: dict) -> str:
     """Show only a preview, never a fake issued/paid invoice."""
     currency = escape(str(quote["chosen_currency"]))
@@ -396,6 +452,8 @@ def _saas_currency_quote_html(quote: dict) -> str:
            "<b>💳 ViMi Pay · Bill currency</b>"),
         tr("Расчётный месяц: ", "Billing month: ") + month,
         tr("Выбрано: ", "Selected: ") + currency,
+        tr("Дата курса оплаты: ", "Settlement quote date: ")
+        + escape(str(quote.get("quote_day", "—"))),
         "",
         tr("Комиссия и абонплата, база: ", "Commission and fee, base: ")
         + escape(str(quote["total_rub"])) + " ₽",
@@ -3597,11 +3655,13 @@ def create_owner_setup_router(
                     user_id,
                     tr(
                         "<b>💱 Выбери валюту оплаты счёта ViMi Pay</b>\n"
-                        "Курс фиксируется на расчётный месяц. "
-                        "Пока показан только предварительный расчёт.",
+                        "Продажи оцениваются по курсу их дат. "
+                        "Валюта оплаты пересчитывается по курсу сегодня. "
+                        "Пока показан предварительный расчёт.",
                         "<b>💱 Choose ViMi Pay bill currency</b>\n"
-                        "The exchange rate is locked for the billing month. "
-                        "This is a preview, not a payment request.",
+                        "Sales use their own approval-date rates. "
+                        "The settlement rate is today's quote. "
+                        "Preview only; no payment request.",
                     ),
                     parse_mode="HTML",
                     reply_markup=_markup([
@@ -3623,9 +3683,10 @@ def create_owner_setup_router(
                     project_id=project_id, month=month,
                     payment_currency=currency,
                 )
-                await bot.send_message(
-                    user_id, _saas_currency_quote_html(quote),
-                    parse_mode="HTML",
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=_saas_currency_quote_rich(quote),
+                    classic_html=_saas_currency_quote_html(quote),
                     reply_markup=_markup([
                         [_button(
                             tr("💱 Другая валюта", "💱 Another currency"),
