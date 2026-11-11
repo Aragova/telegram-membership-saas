@@ -184,12 +184,32 @@ async def stars_subscription_precheckout(
         project and plan and price and bot_exists and linked and customer
         and not customer.is_banned
     )
-    if allowed:
-        # A precheckout approval can precede delivery of successful_payment.
-        # Keep the bot credentials around for delayed updates/recovery.
-        order.precheckout_approved_at = datetime.now(UTC)
-        await session.flush()
     return allowed
+
+
+async def mark_stars_precheckout_approved(
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+    buyer_id: int, payload: str, amount: int,
+) -> bool:
+    """Serialized with bot retirement, only after LIVE Telegram rights check."""
+    await checkout_retirement_lock(session, project_id)
+    if not await stars_subscription_precheckout(
+        session, project_id=project_id, bot_id=bot_id,
+        buyer_id=buyer_id, payload=payload, currency="XTR", amount=amount,
+    ):
+        return False
+    order = await session.scalar(select(SubscriptionStarOrder).where(
+        SubscriptionStarOrder.project_id == project_id,
+        SubscriptionStarOrder.invoice_payload == payload,
+        SubscriptionStarOrder.telegram_user_id == buyer_id,
+        SubscriptionStarOrder.telegram_bot_id == bot_id,
+        SubscriptionStarOrder.status == "pending",
+    ).with_for_update())
+    if order is None:
+        return False
+    order.precheckout_approved_at = datetime.now(UTC)
+    await session.flush()
+    return True
 
 
 async def confirm_subscription_stars_payment(
