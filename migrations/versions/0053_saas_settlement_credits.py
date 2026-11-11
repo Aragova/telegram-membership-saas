@@ -380,6 +380,7 @@ def upgrade() -> None:
         ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
         SET search_path=pg_catalog,public AS $fn$
         DECLARE actor uuid; original record; previous record;
+                parent_invoice uuid; parent_status text;
                 used_credit numeric; credit_id uuid;
         BEGIN
           actor:=public.platform_saas_require_owner();
@@ -392,13 +393,28 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Invalid audited refund credit'
               USING ERRCODE='22023';
           END IF;
-          -- Lock the parent line, not the credit row, so two concurrent
-          -- refunds cannot each spend the same unused charge balance.
-          SELECT l.id,l.charge_rub,l.source_kind,i.status
+          -- Lock order: parent invoice first, then immutable sale line.
+          -- Voiding takes the invoice row lock. A competing void must wait
+          -- until this credit commits; a competing credit must recheck the
+          -- status after a void commits. The line lock separately serializes
+          -- partial credits against the same original 5% source.
+          SELECT invoice_id INTO parent_invoice
+          FROM public.platform_saas_invoice_lines WHERE id=p_line;
+          IF parent_invoice IS NULL THEN
+            RAISE EXCEPTION 'Creditable issued sale line required'
+              USING ERRCODE='42501';
+          END IF;
+          SELECT status INTO parent_status
+          FROM public.platform_saas_invoices
+          WHERE id=parent_invoice FOR UPDATE;
+          IF parent_status IS DISTINCT FROM 'issued' THEN
+            RAISE EXCEPTION 'Creditable issued sale line required'
+              USING ERRCODE='42501';
+          END IF;
+          SELECT l.id,l.charge_rub,l.source_kind
           INTO original FROM public.platform_saas_invoice_lines l
-          JOIN public.platform_saas_invoices i ON i.id=l.invoice_id
           WHERE l.id=p_line FOR UPDATE OF l;
-          IF original.id IS NULL OR original.status<>'issued'
+          IF original.id IS NULL
              OR original.source_kind NOT IN ('subscription','file_manual') THEN
             RAISE EXCEPTION 'Creditable issued sale line required'
               USING ERRCODE='42501';
