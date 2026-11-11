@@ -1,3 +1,20 @@
+## PR #130 — native Stars subscriptions, same subscription/access engine (in development)
+
+See [STARS_SUBSCRIPTION_CHECKOUT.md](STARS_SUBSCRIPTION_CHECKOUT.md).
+A real XTR price may be configured on existing plans. The buyer follows
+catalog → Telegram single-use Stars invoice → precheckout →
+`successful_payment` → one atomic Subscription/EntitlementGrant/Outbox
+commit. A missed update can be recovered from the bot's authenticated
+Stars ledger via `/starsrecover`. A verified subscription charge is
+also visible to the existing USD developer-reward snapshot and 5% evidence
+collector, without live SaaS fees. Manual checkout is preserved.
+**Draft PR #130 is unmerged and not staging-deployed.** Crypto Bot for
+files and subscriptions and subscription Stars refunds remain required
+follow-on gates; never enable live commercial billing or holds from this
+PR alone.
+
+---
+
 ## PR #129 — Native Stars refunds without subscription-access regressions (2026-11-11)
 
 Migration `0056_saas_star_refunds` adds an immutable, tenant-scoped record
