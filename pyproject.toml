@@ -14,6 +14,7 @@ dependencies = [
   "asyncpg>=0.30,<1",
   "cryptography>=43,<48",
   "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
   "pydantic-settings>=2.6,<3",
   "sqlalchemy[asyncio]>=2.0.36,<3",
   "uvicorn[standard]>=0.32,<1",
@@ -26,7 +27,6 @@ tms-customer-supervisor = "telegram_membership_saas.customer_supervisor_main:mai
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.27,<1",
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.24,<1",
   "ruff>=0.8,<1",
