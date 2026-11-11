@@ -142,6 +142,8 @@ jobs:
                       "platform_saas_notice_schedule()",
                       "platform_saas_notice_claim()",
                       "platform_saas_notice_finish(uuid,integer,boolean)",
+                      "platform_saas_publish_fx_rate(date,text,numeric)",
+                      "platform_saas_monthly_fx(date)",
                   ):
                       await connection.execute(
                           f"GRANT EXECUTE ON FUNCTION public.{function} "
