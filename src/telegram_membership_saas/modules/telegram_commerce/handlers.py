@@ -896,11 +896,7 @@ def create_telegram_commerce_router(
         message: Message, bot: Bot,
     ) -> None:
         refund = message.refunded_payment
-        if (
-            message.chat.type != "private" or refund is None
-            or message.from_user is None
-            or message.from_user.id != message.chat.id
-        ):
+        if message.chat.type != "private" or refund is None:
             return
         try:
             async with system_project_session_scope(
@@ -908,7 +904,7 @@ def create_telegram_commerce_router(
             ) as session:
                 await record_verified_subscription_star_refund(
                     session, project_id=project_id, bot_id=bot.id,
-                    buyer_id=message.from_user.id,
+                    buyer_id=message.chat.id,
                     payload=refund.invoice_payload,
                     currency=refund.currency, amount=refund.total_amount,
                     charge_id=refund.telegram_payment_charge_id,
