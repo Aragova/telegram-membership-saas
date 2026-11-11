@@ -1,35 +1,38 @@
-## SaaS daily FX and connected-bot Bill (2026-11-11)
+## Monthly official FX and customer-chosen bill currency (2026-11-11)
 
-**The connected customer bot's main Admin menu has one "🧾 Счёт / Bill"
-button** (moved from Settings; no duplicate). The existing account invoice
-history remains available, including `/billing` after bot transfer.
-The connected-bot Bill now includes a read-only Rich turnover breakdown:
-approved subscriptions, manually approved file sales, and successful file
-purchases via Stars. Each native currency appears independently. Commission
-for fiat purchases is previewed in RUB, using the rate **for each sale's
-Moscow calendar approval date**. A missing published day-rate is shown as
-missing and prevents a final total. The preview adds RUB 150 for next month's
-service period, except for platform-owned "My Bots"; actual payable invoices
-remain controlled by the disabled billing switch and owner confirmation.
+User-approved rule: **one official monthly exchange-rate snapshot** for the
+entire platform, never 80/90 example values hardcoded, never daily conversion.
+Supervisor shard 0 requests the Central Bank of Russia official XML for the
+first Moscow calendar day of the month (including denomination, e.g. ten
+hryvnias), stores immutable RUB-per-unit USD/EUR/UAH/BYN rates together with
+the source publication date, and retries safely if a source is unavailable.
+If the provider omits a currency or a rate is stale/invalid, invoicing
+**fails closed**. Existing rates are never overwritten or silently changed.
+No new bot-specific schedulers, no added FX button in platform settings.
 
-Migration `0051_saas_fx_policy` adds private immutable `(rate_date,
-currency)` exchange snapshots with owner-only publication, including optional
-`XTR` payout-value quotes. It intentionally publishes **no rate by default**
-and never changes a historical FX quote. The old monthly invoice issuer
-now reads the matching day-rate for every approved sale and refuses
-the old monthly override. RUB always uses 1. The connected-bot preview reads
-owner-scoped SQL; no tenant may publish rates or read foreign projects.
+Inside a connected bot's main Admin menu, the existing **🧾 Счёт / Bill**
+button shows confirmed turnover by native currency, Stars separately, and
+the preview of 5% commission plus next-month RUB 150 bot service fee. After
+**💱 Choose bill currency**, the owner selects **RUB, USD, EUR, UAH, BYN**.
+One read-only owner-scoped DB quote converts the same RUB reference total
+into the selected currency using the stored accounting-month quote
+(amount/one-currency-unit), preserving two-decimal rounding and publishing
+source metadata. There are not five separate invoices; the chosen currency
+must become part of **one** immutable invoice/settlement snapshot in the
+future commercial activation workflow. A quote is not a payable invoice,
+and it cannot be paid before a real invoice is issued and verified by
+the ViMi Pay platform owner.
 
-**Important limits:** automatic verified CBR daily import is not yet
-connected; the quote must be published with a trusted source before an
-invoice can be issued. Stars are shown as provisional turnover until
-reward-value quotes and Telegram refund/chargeback reconciliation are added.
-Stars are not yet inserted into payable commission invoices. No
-billing/trial/holds activation, no additional buttons, no customer flow
-changes. Do not mistake Stars purchase price or advertising credit value
-for merchant payout value. Follow-up PR: verified daily FX ingestion,
-Star reconciliation, refund/credit ledger, one unified invoice/settlement.
-
+Telegram Stars (XTR) are counted as separate confirmed turnover. They are
+**not** fiat and are not converted via CBR. They require an independently
+verified Stars reward-value source, withdrawal/refund/chargeback reconciliation
+and a fixed-rate payout snapshot. Until then, any Stars-inclusive quote is
+explicitly incomplete: no final payable total or invented exchange rate.
+This PR does not issue a live consolidated invoice, enable billing/holds/
+trials, send payment instructions, or interrupt any customer bot. Preserve
+ViMi Pay's own My Bots fee exemption without Telegram creator checks.
+Follow-up: Stars reconciliation, correction/credit ledger, durable
+single-invoice currency selection and payment confirmation.
 
 ## Permanent ViMi Pay owner rule (2026-11-11, supersedes PR #119-#121)
 
