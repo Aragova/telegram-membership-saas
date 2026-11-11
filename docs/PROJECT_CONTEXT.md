@@ -1,58 +1,36 @@
-## Telegram creator status live audit (2026-11-11)
+## Permanent ViMi Pay owner rule (2026-11-11, supersedes PR #119-#121)
 
-The existing owner-only **Platform → Finances → Invoices → Exemption audit**
-screen adds **one** "Check this page" callback, never one button per bot.
-It checks up to 8 pending bot/channel registrations directly via the
-registered customer bot's Telegram token (decrypted only in server memory):
-verify bot ID with `getMe`, require exactly one active channel, ensure the
-customer bot is channel administrator, then query the authenticated platform
-owner's `getChatMember` status. Only `creator` is a Telegram channel owner;
-`administrator` is not proof. Errors, missing/broken tokens, bot mismatches
-and ambiguous channels fail closed. Never log secrets or remote URL errors.
+**A bot/channel added via the platform owner's "👤 Мои боты" belongs to
+the ViMi Pay owner account and is SaaS-exempt. Period.** The authoritative
+server-side criterion is the project's `owner_user_id` (including its
+historical `merchant_project_periods`) matching the database-provisioned
+`platform_operators.role='owner'` account, with the bot belonging to that
+project. No Telegram `creator` verification, screenshots, exemption approval,
+extra buttons, preflight lists or separate UI workstreams. Never rely on
+callback data or a self-declared username for billing identity.
 
-**This is a read-only live audit, not exemption provisioning.** Results
-are ephemeral, no SQL writes, no new access/financial exemptions, no
-billing/trial/hold activation, and no automatic sweep of all operator bots.
-A later audited PR may add explicit owner-only, creator-verified exemption
-provisioning with DB transaction checks and before/after tests. Do not
-automatically exempt a platform operator's administrator-only channels.
-All screens RU/EN, native Rich where useful, no duplicate menus.
+Owner-account bots automatically skip RUB 150 monthly SaaS invoices,
+5% platform commissions, merchant trial quotas, complimentary grants quota
+and SaaS commercial holds. If ownership is transferred, future
+billing depends on the recipient's actual project owner; prior owner periods
+remain historically attributed. Other customers are unchanged and billable
+under separately activated commercial policy. Billing, trial/quotas and
+holds remain OFF until explicitly approved. There is only the existing
+"🧾 Счета → 💳 Реквизиты" billing UI, no "Проверка исключений" button.
+Migration `0050_platform_owner_my_bots_exempt` applies the rule in the
+central DB function, grant quota and hold calculation and removes unused
+audit functions; it creates no new invoices.
 
-## Financial UI separation (2026-11-10)
-
-The confusing 25-bot audit does **not** belong in the bank instructions
-screen. Under central Platform → Finance → Invoices, keep two separate
-navigation buttons: **Payment instructions** (short bank status and editor)
-and **Exemption audit** (authenticated operator's connected bots, verified
-creator exemptions and a full paginated list of unverified bots, eight per
-page). Both use the existing platform Rich UI and RU/EN, with a single back
-route to Invoices. Never imply all 25 connected bots are creator-owned.
-There is no self-verification/waiver toggle. Read-only migration
-`0049_saas_exemption_pages` restricts the report to the authenticated
-platform owner; billing, trials and holds stay OFF.
-
-## Prelaunch exemption readiness inventory (2026-11-10)
-
-Read-only prelaunch slice: the **existing** central platform owner
-Finances → Invoices → Payment instructions page shows registered
-platform-owner bots, actual creator-exemption records, and pending review
-bots (at most 8 shown). Database function
-`platform_saas_exemption_preflight()` requires the authenticated owner,
-returns no bank details or tenant financial ledgers, and writes nothing.
-This is a verification checklist, **not** a creator-verification mechanism;
-the Telegram creator proof must be checked before making an exemption record.
-Never infer exemption from being an administrator, nor automatically charge
-an unverified platform owner. No new menus, subscription changes, trial
-enabling or overdue holds. RU/EN and native Rich are required.
-The existing billing/hold/trial flags remain OFF. Before commercial rollout,
-also verify actual bank instructions, refunds, disputes and versioned FX.
-See [PLATFORM_COMMERCIAL_BILLING.md](PLATFORM_COMMERCIAL_BILLING.md).
+This is the controlling rule for subsequent PRs. Earlier paragraphs
+describing Telegram creator-based exemption verification are historical,
+not the current specification. Preserve RU/EN, native Rich where useful,
+`compose.light100.yaml` and all active customer access.
 
 ## PR #117: merchant invoices, owner bank instructions and notices (2026-11-10)
 
 Migration `0047_saas_owner_payment_ui` adds a single operator-controlled payment-instructions record, plus a durable, idempotent platform-invoice notification queue. These are **separate from merchant-to-customer payment methods**; no customer-facing checkout details, payment cards, or subscription access rights are changed.
 
-- Platform owner opens existing **👑 Platform → 💼 Finances → 🧾 Invoices → 💳 Payment details** to enter, view, replace, or explicitly clear bank instructions. Every operation checks the configured platform Telegram owner and the privileged database `platform_operators` role. Sensitive bank instructions are never printed into server logs. They are HTML-escaped for Telegram output. A compact readiness summary shows the three commercial switches, without automatically enabling any.
+- Platform owner opens existing **👑 Platform → 💼 Finances → 🧾 Invoices → 💳 Payment details** to enter, view, replace, or explicitly clear bank instructions. Every operation checks the configured platform Telegram owner and the privileged database `platform_operators` role. Sensitive bank instructions are never printed into server logs. They are HTML-escaped for Telegram output. The bank screen stays short; no exemption-audit or creator-check button is needed.
 - Connected-bot administrator opens **⚙️ Settings → 🧾 ViMi Pay invoices**, with historical owner-only account invoices, due dates, RUB totals, receipt state, and published bank instructions. The read-only SECURITY DEFINER report is limited to the authenticated historical liable Telegram owner, not merely a moderator or a new owner after bot transfer. No cross-merchant invoice rows or direct financial-table grants.
 - The existing central bot alert loop now schedules and sends invoice-issued / payment-due / seven-day-overdue Telegram reminders to the liable account (not through arbitrary customer bots). Outbox row is unique by invoice and kind, with skip-locked leasing, bounded retries, and suppressed pending messages after an operator-confirmed receipt. The messages contain the exact statement ID and payment instructions only when they have been configured.
 - Notifications are **inactive** if platform SaaS billing is OFF or no bank instructions are published. Existing invoice/hold/trial switches remain OFF by default. A newly deployed migration will create no real bills and send no commercial notifications until an explicit, separately approved rollout.
@@ -63,19 +41,19 @@ Migration `0047_saas_owner_payment_ui` adds a single operator-controlled payment
 
 ## PR #116 — opt-in SaaS overdue grace and new-commerce holds (2026-11-10)
 
-Migration 0046 adds a *third OFF-by-default* control, `platform_saas_hold_control`, with seven days' grace. Only unpaid, issued platform invoices issued on/after the separately activated hold rollout date can pause **new** subscription checkout, manual/Stars file orders, bot connection and channel additions. Debt is owner-wide across Merchant/project IDs; it does NOT follow a transferred project to another owner. A verified platform creator exemption applies only to checkout for the exact verified bot/channel. Existing paid buyer entitlements and file redelivery, pending manual approval, customer subscriptions, customer-supervisor operation and existing bots remain untouched. Platform owner manual bank receipt confirmation automatically lifts the hold. Status is in the existing Finance -> Invoices panel, not a duplicate dashboard. RU/EN exceptions. Neither policy is activated or merged without owner authorization. See docs/PLATFORM_COMMERCIAL_BILLING.md.
+Migration 0046 adds a *third OFF-by-default* control, `platform_saas_hold_control`, with seven days' grace. Only unpaid, issued platform invoices issued on/after the separately activated hold rollout date can pause **new** subscription checkout, manual/Stars file orders, bot connection and channel additions. Debt is owner-wide across Merchant/project IDs; it does NOT follow a transferred project to another owner. The platform-owner account and its own projects are automatically SaaS-exempt. Existing paid buyer entitlements and file redelivery, pending manual approval, customer subscriptions, customer-supervisor operation and existing bots remain untouched. Platform owner manual bank receipt confirmation automatically lifts the hold. Status is in the existing Finance -> Invoices panel, not a duplicate dashboard. RU/EN exceptions. Neither policy is activated or merged without owner authorization. See docs/PLATFORM_COMMERCIAL_BILLING.md.
 
 PR #115 final hardening: trial slots count even BotInstance rows currently status=deleting until physical removal, so retirement/recovery cannot bypass one-bot policy. Grandfather eligibility for pre-rollout ownership transfer uses historical *overlap* between the transferred bot's connected lifetime and recipient's owner period, not its original bot_connected time. New PostgreSQL integration tests protect both scenarios. Still OFF by default.\n\nPR #115 hardening: Trial checks also cover the existing dual-consent ownership transfer path; a recipient cannot gain an extra trial bot or skip owner enrollment by changing project ownership. Bot created_at is not trusted for eligibility. Manual entitlement UPDATE cannot reactivate a revoked grant, change buyer/resource/source or extend validity for enrolled owners; ordinary revocation and paid-entitlement servicing remain unaffected. Policy stays OFF.\n\n## PR #115 — 72-hour once-per-owner trial and one shared complimentary-access quota (2026-11-10)
 
-The new migration 0045 adds an **independent OFF-by-default** access policy for future new owners, a once-per-Telegram-owner trial claim on first successful bot registration, and a 3-per-channel monthly combined quota on non-paid manual access/paid-plan complimentary activations. Enforcement occurs on PostgreSQL bot/entitlement INSERT for concurrency safety and bypass resistance, rather than UI-only. Free grants are immutable audit events by original Telegram owner and channel ID, surviving reconnection, project or Merchant ID changes by that owner; one activation to N channels counts once **per channel**. Moderators cannot issue free grants or expand limits. Legacy owners with bots before rollout are grandfathered. Verified creator-owned ViMi Pay channels remain quota-exempt; being a channel admin alone does not grant exemption. The broader SaaS billing control remains OFF, and no customer payment or existing access changes. See docs/PLATFORM_COMMERCIAL_BILLING.md.
+The new migration 0045 adds an **independent OFF-by-default** access policy for future new owners, a once-per-Telegram-owner trial claim on first successful bot registration, and a 3-per-channel monthly combined quota on non-paid manual access/paid-plan complimentary activations. Enforcement occurs on PostgreSQL bot/entitlement INSERT for concurrency safety and bypass resistance, rather than UI-only. Free grants are immutable audit events by original Telegram owner and channel ID, surviving reconnection, project or Merchant ID changes by that owner; one activation to N channels counts once **per channel**. Moderators cannot issue free grants or expand limits. Legacy owners with bots before rollout are grandfathered. ViMi Pay platform-owner projects are quota-exempt using the actual project-owner identity; admin privileges on a different customer's project do not change ownership. The broader SaaS billing control remains OFF, and no customer payment or existing access changes. See docs/PLATFORM_COMMERCIAL_BILLING.md.
 
 ## PR #114 — 2026-11-10: platform SaaS invoices (OFF by default)
 
-Owner-only SECURITY DEFINER SQL operations for prepaid 150 RUB per bot, monthly 5% commission on approved subscriptions/manual file orders (explicit FX), single owner finance screen to review invoice status, two-step manual bank-receipt confirmation. Database control enabled=false by default, no paid invoices or blocks until an approved launch. Requires provisioned 72-hour owner trial, and verified platform-owned channels remain exempt; operator status alone is not ownership proof, so ambiguous projects require manual review. See docs/PLATFORM_COMMERCIAL_BILLING.md for safety and next stages.
+Owner-only SECURITY DEFINER SQL operations for prepaid 150 RUB per bot, monthly 5% commission on approved subscriptions/manual file orders (explicit FX), single owner finance screen to review invoice status, two-step manual bank-receipt confirmation. Database control enabled=false by default, no paid invoices or blocks until an approved launch. Requires provisioned 72-hour owner trial for ordinary merchants; ViMi Pay owner-account projects are exempt by database ownership. See docs/PLATFORM_COMMERCIAL_BILLING.md for safety and next stages.
 
 ## PR #113 — dormant ViMi Pay platform invoice persistence (2026-11-10)
 
-Migration 0043 introduces strict platform-only invoice, paid-source lines, immutable manually confirmed receipts and verified own-channel exemptions. It does NOT generate invoices, activate charging, alter any customer grants/payment access, or add Telegram buttons. New tables have FORCE RLS and no runtime CRUD permission. Only real approved Payment/FileManualOrder snapshots are eligible for the 5% ledger, with global source dedupe; a fixed RUB 150 line applies to an individual bot service period. Exemption requires platform owner identity plus a verified creator-owned channel/bot record; merely administrating another person's channel is not eligible. See docs/PLATFORM_COMMERCIAL_BILLING.md for the staged rollout and acceptance gates. No merge/deploy without exact-head CI/Codex review and explicit owner permission.
+Migration 0043 introduces strict platform-only invoice, paid-source lines, immutable manually confirmed receipts and verified own-channel exemptions. It does NOT generate invoices, activate charging, alter any customer grants/payment access, or add Telegram buttons. New tables have FORCE RLS and no runtime CRUD permission. Only real approved Payment/FileManualOrder snapshots are eligible for the 5% ledger, with global source dedupe; a fixed RUB 150 line applies to an individual bot service period. The latest rule is owner-account project ownership (migration 0050); the older separate Telegram creator verification requirement is superseded. See docs/PLATFORM_COMMERCIAL_BILLING.md for the staged rollout and acceptance gates. No merge/deploy without exact-head CI/Codex review and explicit owner permission.
 
 # ViMi Pay commercial SaaS billing direction — 2026-11-09
 
