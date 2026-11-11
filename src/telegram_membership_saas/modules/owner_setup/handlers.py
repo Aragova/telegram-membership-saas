@@ -387,6 +387,69 @@ def _saas_preview_rich(preview: dict) -> str:
     return "\n".join(lines)
 
 
+def _saas_invoices_rich(report) -> str:
+    """Keep platform invoices a separate compact Rich section."""
+    items = [
+        "<h4>" + tr("📑 Счета платформы", "📑 Platform invoices") + "</h4>",
+        "<table bordered compact>",
+        "<tr><td>" + tr("Выставлено", "Issued") + "</td><td>"
+        + str(report.total) + "</td></tr>",
+        "<tr><td>" + tr("Не оплачено", "Unpaid") + "</td><td>"
+        + str(report.unpaid) + "</td></tr>",
+        "<tr><td>" + tr("Остаток", "Outstanding") + "</td><td>"
+        + escape(format(report.outstanding_rub, ".2f")) + " ₽</td></tr>",
+        "</table>",
+    ]
+    if not report.invoices:
+        items.append("<p>" + tr(
+            "Счетов к оплате пока нет.", "No platform invoices yet.",
+        ) + "</p>")
+    for inv in report.invoices:
+        title = (
+            tr("Обслуживание", "Service") if inv["kind"] == "prepayment"
+            else tr("Комиссия", "Commission")
+        )
+        state = (
+            tr("Оплачено", "Paid") if inv["status"] == "paid"
+            else tr("Ожидает подтверждения", "Pending confirmation")
+        )
+        items.append(
+            "<p><b>" + escape(title) + ": "
+            + escape(str(inv["amount_rub"])) + " ₽</b> · "
+            + escape(state) + "</p>"
+        )
+        items.append(
+            "<p>№ <code>" + escape(str(inv["id"])) + "</code> · "
+            + tr("Срок: ", "Due: ")
+            + escape(str(inv["due_at"])[:10]) + "</p>"
+        )
+    if report.unpaid:
+        if report.configured:
+            items.extend([
+                "<h4>" + tr("💳 Реквизиты платформы",
+                             "💳 Payment instructions") + "</h4>",
+                "<pre>" + escape(str(report.instructions)) + "</pre>",
+                "<p>" + tr(
+                    "Укажите номер счёта в платеже. Подтверждение "
+                    "поступления выполняет владелец ViMi Pay.",
+                    "Include the invoice ID. Only the ViMi Pay "
+                    "operator verifies receipt.",
+                ) + "</p>",
+            ])
+        else:
+            items.append("<p>" + tr(
+                "⚠️ Реквизиты не опубликованы. Не переводите деньги.",
+                "⚠️ No payment instructions. Do not send money.",
+            ) + "</p>")
+    items.append("<p><i>" + tr(
+        "Это счета ViMi Pay, не счета ваших покупателей. "
+        "Оплаченный доступ сохраняется.",
+        "ViMi Pay charges, not your customers' invoices. "
+        "Previously paid access is retained.",
+    ) + "</i></p>")
+    return "\n".join(items)
+
+
 def _saas_currency_quote_rich(quote: dict) -> str:
     """Readable Rich quote with current settlement date, not a fake invoice."""
     currency = escape(str(quote["chosen_currency"]))
@@ -1020,7 +1083,7 @@ def create_owner_setup_router(
             await send_owner_rich(
                 bot, chat_id=user_id,
                 rich_html=_saas_preview_rich(preview) + "\n"
-                + "\n".join(lines),
+                + _saas_invoices_rich(report),
                 classic_html=_saas_preview_classic(preview) + "\n"
                 + "\n".join(lines),
                 reply_markup=_markup(rows),
