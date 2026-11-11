@@ -38,13 +38,8 @@ from telegram_membership_saas.modules.platform_saas_billing_service import (
     confirm_saas_receipt,
     platform_saas_invoice_report,
 )
-from telegram_membership_saas.modules.platform_saas_creator_check import (
-    CreatorAuditResult,
-    audit_creator_page,
-)
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     configure_platform_saas_payment,
-    platform_saas_exemption_page,
     platform_saas_payment_details,
 )
 from telegram_membership_saas.modules.platform_usage import (
@@ -839,91 +834,6 @@ def _platform_bank_text(details: dict) -> str:
     return "\n".join(lines)
 
 
-def _platform_exemption_text(report: dict) -> str:
-    """Compact read-only audit of registered bots; not creator verification."""
-    lines = [
-        tr("🛡 <b>ViMi Pay · Исключения</b>",
-           "🛡 <b>ViMi Pay · Exemptions</b>"),
-        tr("Ботов на аккаунте: ", "Account bots: ")
-        + str(int(report["operator_bots"])),
-        tr("Освобождение подтверждено: ", "Exemptions verified: ")
-        + str(int(report["verified"])),
-        tr("Нет подтверждения: ", "Unverified: ")
-        + str(int(report["pending"])),
-        "",
-    ]
-    pending = report.get("pending_bots") or []
-    if pending:
-        lines.append(tr(
-            "<b>Подключения без подтверждения</b>",
-            "<b>Connections without verification</b>",
-        ))
-        for item in pending:
-            username = escape(str(item.get("username", ""))[:64])
-            status = tr("нужна проверка", "review needed")
-            if item.get("state") == "needs_review":
-                status = tr("проверить канал", "review channel")
-            lines.append("• @" + username + " · " + status)
-    else:
-        lines.append(tr(
-            "Неподтверждённых подключений нет.",
-            "No unverified connections.",
-        ))
-    lines.extend([
-        "",
-        tr("Страница ", "Page ") + str(int(report["page"]) + 1)
-        + tr(" из ", " of ") + str(int(report["pages"])),
-        "",
-        tr(
-            "<i>Это боты, подключённые к вашему аккаунту, а не список "
-            "доказанных собственных каналов. Освобождение от счетов "
-            "появляется только после отдельной проверки статуса создателя "
-            "канала в Telegram. Здесь ничего не начисляется.</i>",
-            "<i>These are bots connected to your account, not proof of "
-            "channel ownership. A billing exemption requires separate "
-            "Telegram channel creator verification. No charges are issued "
-            "here.</i>",
-        ),
-    ])
-    return "\n".join(lines)
-
-
-def _platform_creator_check_text(result: CreatorAuditResult) -> str:
-    """Ephemeral Telegram API results, not permanent financial exemptions."""
-    status_labels = {
-        "creator": tr("✅ создатель", "✅ creator"),
-        "admin_only": tr("⚪ только администратор", "⚪ administrator only"),
-        "not_creator": tr("⚪ не создатель", "⚪ not creator"),
-        "no_access": tr("⚠️ бот не администратор", "⚠️ bot is not admin"),
-        "channel_ambiguous": tr("⚠️ канал не определён", "⚠️ channel ambiguous"),
-        "needs_review": tr("⚠️ неоднозначное подключение", "⚠️ ambiguous bot"),
-        "unavailable": tr("⚠️ Telegram недоступен", "⚠️ Telegram unavailable"),
-    }
-    lines = [
-        tr("🔎 <b>ViMi Pay · Проверка Telegram</b>",
-           "🔎 <b>ViMi Pay · Telegram verification</b>"),
-        tr("Проверено: ", "Checked: ") + str(len(result.rows)),
-        tr("Статус создателя: ", "Creator status: ") + str(result.creators),
-        "",
-    ]
-    for item in result.rows:
-        lines.append(
-            "• @" + escape(item.username[:64]) + " · "
-            + status_labels.get(item.status, status_labels["unavailable"])
-        )
-    lines.extend([
-        "",
-        tr(
-            "<i>Это результат проверки Telegram на данный момент. "
-            "Статус администратора не даёт освобождения от оплаты. "
-            "Никакие исключения и счета не изменены.</i>",
-            "<i>These are live Telegram checks only. An administrator "
-            "is not exempt. No exemption records or invoices changed.</i>",
-        ),
-    ])
-    return "\n".join(lines)
-
-
 def create_platform_dashboard_router(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings | None = None,
@@ -1198,86 +1108,6 @@ def create_platform_dashboard_router(
                                 _keyboard(rows) if index == len(chunks) - 1 else None
                             ),
                         )
-            elif len(tokens) == 3 and tokens[1] == "exemptions":
-                page_token = tokens[2]
-                if not page_token.isascii() or not page_token.isdecimal():
-                    raise ValueError("Invalid exemption page")
-                page = int(page_token)
-                if page > 100000:
-                    raise ValueError("Invalid exemption page")
-                actor_id = await ensure_telegram_actor(
-                    factory, telegram_id=query.from_user.id,
-                    username=query.from_user.username,
-                    first_name=query.from_user.first_name,
-                )
-                report = await platform_saas_exemption_page(
-                    factory, actor_user_id=actor_id,
-                    actor_telegram_id=query.from_user.id, page=page,
-                    settings=config,
-                )
-                rows = []
-                if report["pending_bots"]:
-                    rows.append([_button(
-                        tr("🔎 Проверить страницу", "🔎 Check this page"),
-                        f"exemptcheck:{page}",
-                    )])
-                nav = []
-                if page > 0:
-                    nav.append(_button("⬅️", f"exemptions:{page - 1}"))
-                if page + 1 < int(report["pages"]):
-                    nav.append(_button("➡️", f"exemptions:{page + 1}"))
-                if nav:
-                    rows.append(nav)
-                rows.append([_button(
-                    tr("⬅️ Счета", "⬅️ Invoices"), "billing:0",
-                )])
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text=_platform_exemption_text(report),
-                    reply_markup=_keyboard(rows), message_id=message_id,
-                )
-            elif len(tokens) == 3 and tokens[1] == "exemptcheck":
-                page_token = tokens[2]
-                if not page_token.isascii() or not page_token.isdecimal():
-                    raise ValueError("Invalid exemption page")
-                page = int(page_token)
-                if page > 100000:
-                    raise ValueError("Invalid exemption page")
-                # Telegram can require several remote API requests. Acknowledge
-                # the callback BEFORE the checks, not after a network delay.
-                await query.answer()
-                try:
-                    actor_id = await ensure_telegram_actor(
-                        factory, telegram_id=query.from_user.id,
-                        username=query.from_user.username,
-                        first_name=query.from_user.first_name,
-                    )
-                    result = await audit_creator_page(
-                        factory, actor_user_id=actor_id,
-                        actor_telegram_id=query.from_user.id, page=page,
-                        settings=config,
-                    )
-                    checked_text = _platform_creator_check_text(result)
-                except Exception:
-                    # The callback is already acknowledged. Do not answer it
-                    # twice, leak provider errors or present a false success.
-                    checked_text = tr(
-                        "⚠️ Проверка Telegram временно недоступна. "
-                        "Исключения не изменены.",
-                        "⚠️ Telegram verification is temporarily unavailable. "
-                        "Exemptions remain unchanged.",
-                    )
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text=checked_text,
-                    reply_markup=_keyboard([[
-                        _button(
-                            tr("⬅️ К исключениям", "⬅️ Exemptions"),
-                            f"exemptions:{page}",
-                        ),
-                    ]]), message_id=message_id,
-                )
-                return
             elif tokens[1:] == ["bankdetails"]:
                 await _show_bank_screen(
                     bot, query.from_user, message_id=message_id,
@@ -1365,10 +1195,6 @@ def create_platform_dashboard_router(
                 rows.append([_button(
                     tr("💳 Реквизиты ViMi Pay", "💳 ViMi Pay payment details"),
                     "bankdetails",
-                )])
-                rows.append([_button(
-                    tr("🛡 Проверка исключений", "🛡 Exemption audit"),
-                    "exemptions:0",
                 )])
                 rows.append([_button(
                     tr("⬅️ Финансы", "⬅️ Finances"), "merchants:30:0",
