@@ -270,7 +270,7 @@ async def test_refund_newest_renewal_and_lost_ledger_refund_preserve_old_access(
 
         refund = SimpleNamespace(
             id="renewal-1",
-            amount=-70,
+            amount=70,
             date=moment,
             source=None,
             receiver=SimpleNamespace(
@@ -313,7 +313,9 @@ async def test_refund_newest_renewal_and_lost_ledger_refund_preserve_old_access(
                 EntitlementGrant.status == "active",
             ))) == 0
 
-        # Telegram's outgoing refund and the original incoming Stars payment
+        # The Bot API returns an outgoing refund with positive amount and
+        # receiver (not a negative amount as TDLib internally represents).
+        # Telegram's refund and the incoming Stars payment
         # may both arrive while PostgreSQL is unavailable. Replay both from
         # Telegram's own ledger, not user text or a screenshot.
         async with system_project_session_scope(factory, project_id) as session:
@@ -333,7 +335,7 @@ async def test_refund_newest_renewal_and_lost_ledger_refund_preserve_old_access(
             source=source, receiver=None,
         )
         negative = SimpleNamespace(
-            id="renewal-2", amount=-70, date=moment,
+            id="renewal-2", amount=70, date=moment,
             source=None,
             receiver=SimpleNamespace(
                 type="user", transaction_type="invoice_payment",
@@ -422,15 +424,16 @@ async def test_replay_refund_before_next_purchase_does_not_delay_access():
 
         def _refund(payload, charge, moment):
             return SimpleNamespace(
-                id=charge, amount=-70, date=moment, source=None,
+                id=charge, amount=70, date=moment, source=None,
                 receiver=SimpleNamespace(
                     type="user", transaction_type="invoice_payment",
                     user=SimpleNamespace(id=buyer), invoice_payload=payload,
                 ),
             )
 
-        # Telegram ledger is newest-first. A naive two-pass "all incoming,
-        # then all outgoing" collector would wrongly extend B after A.
+        # Telegram ledger can be newest-first. The real Bot API serializes
+        # a positive refund amount with receiver and no source. A naive
+        # two-pass collector would wrongly extend B after refunded A.
         bot = SimpleNamespace(
             id=bot_id,
             get_star_transactions=AsyncMock(return_value=SimpleNamespace(
