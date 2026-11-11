@@ -1,4 +1,4 @@
-"""Immutable per-payment-day FX snapshots for ViMi Pay's dormant commission ledger.
+"""Immutable monthly FX snapshots for ViMi Pay's dormant commission ledger.
 
 Revision ID: 0051_saas_fx_policy
 Revises: 0050_my_bots_exempt
@@ -17,11 +17,14 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # One published FX policy for each currency and Moscow payment date.
+    # One published FX policy for each currency and Moscow billing month.
     # Existing invoice lines preserve the exact rate used at issuance.
     op.create_table(
         "platform_saas_fx_rates",
-        sa.Column("rate_date", sa.Date(), primary_key=True),
+        sa.Column("billing_month", sa.Date(), primary_key=True),
+        sa.Column("source_date", sa.Date(), nullable=True),
+        sa.Column("source_name", sa.String(40), nullable=False,
+                  server_default="owner_verified"),
         # XTR is Telegram's virtual reward unit, not a fiat/crypto
         # asset in the existing CurrencyAsset checkout registry.
         sa.Column("currency_code", sa.String(16), primary_key=True),
@@ -34,6 +37,10 @@ def upgrade() -> None:
         sa.Column(
             "published_at", sa.DateTime(timezone=True), nullable=False,
             server_default=sa.text("clock_timestamp()"),
+        ),
+        sa.CheckConstraint(
+            "EXTRACT(day FROM billing_month)=1",
+            name="ck_saas_fx_first_day",
         ),
         sa.CheckConstraint(
             "currency_code<>'RUB' AND rub_per_unit>0 "
@@ -79,7 +86,7 @@ def upgrade() -> None:
 
     op.execute("""
         CREATE FUNCTION public.platform_saas_publish_fx_rate(
-            p_day date, p_currency text, p_rate numeric
+            p_month date, p_currency text, p_rate numeric
         ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
         SET search_path = pg_catalog, public
         AS $f$
@@ -88,7 +95,7 @@ def upgrade() -> None:
           existing record;
         BEGIN
           actor:=public.platform_saas_require_owner();
-          IF p_day IS NULL
+          IF p_month IS NULL OR extract(day FROM p_month)<>1
              OR p_currency IS NULL OR p_currency='RUB'
              OR p_currency<>upper(btrim(p_currency))
              OR length(p_currency)>16
@@ -101,38 +108,38 @@ def upgrade() -> None:
                  WHERE code=p_currency AND status='active'
                )
              ) THEN
-            RAISE EXCEPTION 'Invalid daily FX policy'
+            RAISE EXCEPTION 'Invalid monthly FX policy'
               USING ERRCODE='22023';
           END IF;
           -- Serializes concurrent publications of the same monthly rate.
           PERFORM pg_advisory_xact_lock(
             hashtextextended(
-              'vimi-fx:'||to_char(p_day,'YYYY-MM-DD')||':'||p_currency,0
+              'vimi-fx:'||to_char(p_month,'YYYY-MM-DD')||':'||p_currency,0
             )
           );
           SELECT rub_per_unit,published_by,published_at INTO existing
           FROM public.platform_saas_fx_rates
-          WHERE rate_date=p_day AND currency_code=p_currency;
+          WHERE billing_month=p_month AND currency_code=p_currency;
           IF FOUND THEN
             IF existing.rub_per_unit<>p_rate THEN
-              RAISE EXCEPTION 'Daily FX rate already published'
+              RAISE EXCEPTION 'Monthly FX rate already published'
                 USING ERRCODE='23505';
             END IF;
             RETURN jsonb_build_object(
-              'day',p_day,'currency',p_currency,
+              'month',p_month,'currency',p_currency,
               'rub_per_unit',existing.rub_per_unit,
               'published_at',existing.published_at
             );
           END IF;
           INSERT INTO public.platform_saas_fx_rates(
-            rate_date,currency_code,rub_per_unit,published_by
-          ) VALUES(p_day,p_currency,p_rate,actor);
+            billing_month,currency_code,rub_per_unit,published_by
+          ) VALUES(p_month,p_currency,p_rate,actor);
           RETURN jsonb_build_object(
-            'day',p_day,'currency',p_currency,
+            'month',p_month,'currency',p_currency,
             'rub_per_unit',p_rate,
             'published_at',(
               SELECT published_at FROM public.platform_saas_fx_rates
-              WHERE rate_date=p_day AND currency_code=p_currency
+              WHERE billing_month=p_month AND currency_code=p_currency
             )
           );
         END;
@@ -140,23 +147,23 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE FUNCTION public.platform_saas_day_fx(p_day date)
+        CREATE FUNCTION public.platform_saas_monthly_fx(p_month date)
         RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
         SET search_path = pg_catalog, public
         AS $f$
         DECLARE rates jsonb;
         BEGIN
           PERFORM public.platform_saas_require_owner();
-          IF p_day IS NULL THEN
-            RAISE EXCEPTION 'Invalid FX accounting day'
+          IF p_month IS NULL OR extract(day FROM p_month)<>1 THEN
+            RAISE EXCEPTION 'Invalid FX accounting month'
               USING ERRCODE='22023';
           END IF;
           SELECT COALESCE(jsonb_object_agg(
             currency_code,rub_per_unit ORDER BY currency_code
           ),'{}'::jsonb) INTO rates
           FROM public.platform_saas_fx_rates
-          WHERE rate_date=p_day;
-          RETURN jsonb_build_object('day',p_day,'rates',rates);
+          WHERE billing_month=p_month;
+          RETURN jsonb_build_object('month',p_month,'rates',rates);
         END;
         $f$
     """)
@@ -286,22 +293,22 @@ def upgrade() -> None:
             IF source.currency_code='RUB' THEN
               fx := 1;
             ELSE
-              -- Rates are published for the exact Moscow sale date, NOT
-              -- for a month-end quote. The invoice line snapshots the FX.
+              -- Rates are frozen once per billing month, with the same
+              -- quote applied to every sale. Invoice lines snapshot FX.
               SELECT rate.rub_per_unit INTO fx
                 FROM public.platform_saas_fx_rates rate
-               WHERE rate.rate_date=(source.paid_at AT TIME ZONE 'Europe/Moscow')::date
+               WHERE rate.billing_month=p_month
                  AND rate.currency_code=source.currency_code;
               IF fx IS NULL THEN
-                RAISE EXCEPTION 'Missing published payment-day FX rate for %',
+                RAISE EXCEPTION 'Missing published monthly FX rate for %',
                   source.currency_code USING ERRCODE='22023';
               END IF;
               -- The old JSON parameter must be empty: one monthly override
-              -- must never replace the rate of each sale's actual day.
+              -- must never replace the monthly reference quote.
 
             END IF;
             IF fx<=0 OR fx>1000000000 THEN
-              RAISE EXCEPTION 'Invalid daily conversion rate'
+              RAISE EXCEPTION 'Invalid monthly conversion rate'
                 USING ERRCODE='22023';
             END IF;
             amount_rub := round(source.amount*fx*0.05,2);
@@ -398,10 +405,10 @@ def upgrade() -> None:
           rated AS (
             SELECT s.amount,s.currency,s.kind,
                    CASE WHEN s.currency='RUB' THEN 1::numeric
-                        ELSE fx.rub_per_unit END AS daily_rate
+                        ELSE fx.rub_per_unit END AS monthly_rate
             FROM sales s
             LEFT JOIN public.platform_saas_fx_rates fx
-              ON fx.rate_date=(s.paid_at AT TIME ZONE 'Europe/Moscow')::date
+              ON fx.billing_month=p_month
              AND fx.currency_code=s.currency
             WHERE s.paid_at >= (p_month::timestamp AT TIME ZONE 'Europe/Moscow')
               AND s.paid_at < ((p_month::timestamp + interval '1 month')
@@ -410,11 +417,11 @@ def upgrade() -> None:
           aggregates AS (
             SELECT currency,count(*) AS operations,
                    sum(amount) AS gross,
-                   count(*) FILTER (WHERE daily_rate IS NULL) AS missing_count,
-                   min(daily_rate) AS min_rate,max(daily_rate) AS max_rate,
+                   count(*) FILTER (WHERE monthly_rate IS NULL) AS missing_count,
+                   min(monthly_rate) AS min_rate,max(monthly_rate) AS max_rate,
                    coalesce(sum(
-                     CASE WHEN daily_rate IS NOT NULL
-                          THEN round(amount*daily_rate*0.05,2)
+                     CASE WHEN monthly_rate IS NOT NULL
+                          THEN round(amount*monthly_rate*0.05,2)
                           ELSE 0 END
                    ),0) AS fee
             FROM rated GROUP BY currency
@@ -436,18 +443,18 @@ def upgrade() -> None:
           SELECT coalesce(jsonb_object_agg(currency_code,rub_per_unit),
                           '{}'::jsonb) INTO today_rates
           FROM public.platform_saas_fx_rates
-          WHERE rate_date=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
+          WHERE billing_month=(date_trunc('month',clock_timestamp() AT TIME ZONE 'Europe/Moscow'))::date;
 
           RETURN jsonb_build_object(
             'month',p_month,'rows',rows,
             'fiat_commission_rub',CASE WHEN own_platform THEN 0 ELSE fiat_fee END,
             'stars_estimate_rub',CASE WHEN own_platform THEN 0 ELSE stars_fee END,
             'stars_need_reconciliation',star_count>0,
-            'missing_daily_rates',unrated_count,
+            'missing_monthly_rates',unrated_count,
             'next_bot_fee_rub',CASE WHEN own_platform THEN 0 ELSE 150 END,
             'is_platform_owner',own_platform,
             'billing_enabled',coalesce(billing_on,false),
-            'today_rates',today_rates,
+            'month_rates',today_rates,
             'estimate_complete',unrated_count=0 AND star_count=0
           );
         END;
@@ -471,7 +478,7 @@ def upgrade() -> None:
 
     for signature in (
         "platform_saas_publish_fx_rate(date,text,numeric)",
-        "platform_saas_day_fx(date)",
+        "platform_saas_monthly_fx(date)",
     ):
         op.execute(
             f"REVOKE ALL ON FUNCTION public.{signature} FROM PUBLIC"
@@ -484,7 +491,7 @@ def upgrade() -> None:
           ) THEN
             GRANT EXECUTE ON FUNCTION
               public.platform_saas_publish_fx_rate(date,text,numeric),
-              public.platform_saas_day_fx(date)
+              public.platform_saas_monthly_fx(date)
               TO membership_runtime;
           END IF;
         END $grant$
