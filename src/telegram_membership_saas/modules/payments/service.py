@@ -41,6 +41,11 @@ def _normalize_currency_codes(currency_codes: Iterable[str]) -> tuple[str, ...]:
     )
     if not normalized:
         raise ValueError("Payment method must support at least one currency")
+    if "XTR" in normalized:
+        raise ValueError(
+            "Telegram Stars is a native payment rail; no manual bank method "
+            "or payment instructions may be configured for XTR"
+        )
     return normalized
 
 
