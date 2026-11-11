@@ -510,7 +510,9 @@ def upgrade() -> None:
           SELECT coalesce(jsonb_object_agg(currency_code,rub_per_unit),
                           '{}'::jsonb) INTO today_rates
           FROM public.platform_saas_fx_rates
-          WHERE billing_month=(date_trunc('month',clock_timestamp() AT TIME ZONE 'Europe/Moscow'))::date;
+          WHERE billing_month=(date_trunc(
+            'month',clock_timestamp() AT TIME ZONE 'Europe/Moscow'
+          ))::date;
 
           RETURN jsonb_build_object(
             'month',p_month,'rows',rows,
