@@ -1,3 +1,38 @@
+## PR #126 — immutable issued-invoice settlement and refund evidence (2026-11-11)
+
+Migration `0053_saas_settlement_credits` is a **dormant financial-ledger
+foundation**, not permission to activate ViMi Pay billing. A monthly account
+preview remains preview-only: it neither locks a currency nor creates a debt.
+
+An existing **issued** RUB-denominated platform invoice may receive **exactly
+one immutable settlement selection** by its historically liable account owner:
+RUB/USD/EUR/UAH/BYN, quote request's Moscow date, source date, official CBR
+RUB-per-unit rate (or RUB=1), RUB base and final currency amount. Reopening
+the same currency returns the original quote; choosing a different one fails.
+Missing daily rates fail closed. A platform owner may independently confirm
+the **exact received currency and amount** using a separate atomic audited
+receipt; the legacy RUB receipt action refuses a non-RUB locked settlement.
+The original RUB invoice and receipts remain the accounting baseline.
+
+A real refund, chargeback or correction of a previously invoiced sale can be
+recorded **only by the database-provisioned platform operator**, with an
+external refund reference and positive RUB credit. Immutable source-linked
+credit entries are idempotent by sale line + reference. Multiple partial
+credits may not exceed the original charged 5% commission, including under
+concurrent operations. Free grants, bot prepayment, fabricated sales and
+tenant admins cannot produce commission credits.
+
+**Not yet implemented:** allocation/settlement of credits against later
+invoices or automatic reopening of previously issued bills, automatic refund
+verification, currency-specific bank instructions, live currency UI and
+commercial activation. Credit reports explicitly mark the unapplied balance
+as pending, and **no holds, invoices, customer entitlements or trial flags are
+modified** by an audit credit. Keep all existing menus compact, RU/EN, Rich
+and current fallback. Next work: authenticated UI for an issued invoice,
+credit allocation and operator reconciliation; require new tests and explicit
+activation approval.
+
+
 ## Sale-date FX and Rich admin billing (2026-11-11, supersedes monthly FX)
 
 **Controlling rule:** approved subscription or manually approved file sale
