@@ -80,3 +80,17 @@ manual paths. NEVER present a Crypto Bot payment button until the full
 payment and delivery loop is implemented and reviewed.
 Telegram's published rules currently require Stars for DIGITAL GOODS
 inside Telegram bots; this remains a deployment/product compliance gate.
+
+## Chronological recovery hardening (PR #130 follow-up)
+
+All authenticated Stars payments and refunds share the same per-project
+checkout/retirement serialization lock. When Telegram recovers an older paid
+charge after a newer one has been confirmed, the historical paid_at timestamp
+is used to place the older entitlement; later still-paid Stars periods are
+recomputed in payment order. Refunding an earlier charge applies the same
+reconstruction. Prepaid manual grants remain unchanged and anchor subsequent
+Stars periods by their actual Payment.approved_at, even if the manual
+EntitlementGrant.valid_from is in the future. No duplicate sale, grant, invoice,
+UI action, or new supervisor is introduced. Regression coverage includes
+a missed old Stars charge, a later confirmed purchase, and a manual prepayment
+anchor. Live commercial billing and staging rollout remain OFF.

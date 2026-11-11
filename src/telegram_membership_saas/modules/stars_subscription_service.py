@@ -36,6 +36,11 @@ from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
 )
+from telegram_membership_saas.modules.stars_subscription_timeline import (
+    historical_stars_start, load_surviving_paid_sources,
+    rebuild_stars_windows_after, refresh_paid_subscription_summary,
+)
+from telegram_membership_saas.modules.access.service import reconcile_access_target
 from telegram_membership_saas.modules.subscriptions import (
     Subscription,
     SubscriptionStatus,
@@ -265,17 +270,14 @@ async def confirm_subscription_stars_payment(
     project = await session.scalar(select(Project).where(Project.id == project_id))
     if project is None:
         raise RuntimeError("Paid project disappeared")
-    if subscription is not None and subscription.status == "active" and (
-        subscription.current_period_end is None
-    ):
-        start_at = moment
-    elif (
-        subscription is not None and subscription.status == "active"
-        and subscription.current_period_end is not None
-    ):
-        start_at = max(moment, subscription.current_period_end)
-    else:
-        start_at = moment
+    # A verified ledger receipt can arrive after a newer paid renewal.
+    # Determine the interval from payment chronology, not the latest
+    # subscription summary, which may belong to that newer purchase.
+    earlier_manual, earlier_stars = await load_surviving_paid_sources(
+        session, project_id=project_id, customer_id=order.customer_id,
+        plan_id=order.plan_id,
+    )
+    start_at = historical_stars_start(moment, earlier_manual, earlier_stars)
     end_at = calculate_period_end(
         start_at, timezone_name=project.timezone,
         duration_value=order.duration_value,
@@ -324,6 +326,22 @@ async def confirm_subscription_stars_payment(
     ]
     session.add_all(grants)
     await session.flush()
+    # If the receipt was recovered out of order, repair already-confirmed
+    # later Stars grants. Manual grants retain their approved periods.
+    repaired = await rebuild_stars_windows_after(
+        session, project_id=project_id, customer_id=order.customer_id,
+        plan_id=order.plan_id, after=moment,
+    )
+    await refresh_paid_subscription_summary(
+        session, project_id=project_id, customer_id=order.customer_id,
+        plan_id=order.plan_id, subscription=subscription,
+        as_of=datetime.now(UTC),
+    )
+    for resource_id in sorted(repaired):
+        await reconcile_access_target(
+            session, project_id=project_id,
+            customer_id=order.customer_id, resource_id=resource_id,
+        )
     session.add_all([
         OutboxEvent(
             project_id=project_id,

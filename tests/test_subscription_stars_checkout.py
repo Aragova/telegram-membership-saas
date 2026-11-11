@@ -699,3 +699,111 @@ async def test_delayed_refund_repairs_already_confirmed_newer_stars_purchase():
             ))) == paid_b
     finally:
         await engine.dispose()
+
+
+async def test_old_stars_charge_recovered_after_newer_paid_purchase():
+    """An old day-long charge must not be appended after a newer renewal."""
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Historical Stars recovery",
+                status="active", duration_value=1, duration_unit="day",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        receipts = []
+        for _ in range(2):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                receipts.append((order.id, order.invoice_payload))
+        now = datetime.now(UTC).replace(microsecond=0)
+        older = now - timedelta(days=3)
+        newer = now - timedelta(hours=12)
+        # Newer charge was already processed by a successful_payment update.
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[1][1], currency="XTR",
+                amount=70, charge_id="chron-new", paid_at=newer,
+            )
+        # The older paid charge only arrives via authenticated ledger recovery.
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], currency="XTR",
+                amount=70, charge_id="chron-old", paid_at=older,
+            )
+        async with system_project_session_scope(factory, project_id) as session:
+            old_grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[0][0],
+            ))
+            new_grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+            ))
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project_id, Subscription.plan_id == plan.id,
+            ))
+            assert old_grant.valid_from == older
+            assert old_grant.valid_until == older + timedelta(days=1)
+            assert new_grant.valid_from == newer
+            assert new_grant.valid_until == newer + timedelta(days=1)
+            assert sub.last_star_order_id == receipts[1][0]
+            assert sub.current_period_end == newer + timedelta(days=1)
+            assert sub.status == "active"
+        # The same recovered charge cannot append another period.
+        async with system_project_session_scope(factory, project_id) as session:
+            await confirm_subscription_stars_payment(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer, payload=receipts[0][1], currency="XTR",
+                amount=70, charge_id="chron-old", paid_at=older,
+            )
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[0][0],
+            ))) == 1
+    finally:
+        await engine.dispose()
+
+
+def test_manual_anchor_uses_payment_approval_not_future_grant_start():
+    """A prepaid manual renewal remains an anchor for later Stars purchase."""
+    from telegram_membership_saas.modules.stars_subscription_timeline import (
+        historical_stars_start, manual_anchor_end,
+    )
+    now = datetime.now(UTC)
+    manual_end = now + timedelta(days=32)
+    manual = [(
+        SimpleNamespace(valid_from=now + timedelta(days=2), valid_until=manual_end),
+        SimpleNamespace(approved_at=now - timedelta(minutes=1)),
+    )]
+    assert manual_anchor_end(manual, now) == manual_end
+    assert historical_stars_start(now, manual, []) == manual_end
+    assert manual_anchor_end(manual, now - timedelta(minutes=2)) is None

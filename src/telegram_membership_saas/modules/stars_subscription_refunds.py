@@ -7,7 +7,7 @@ immutable evidence. No buyer-submitted proof can alter an entitlement.
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.modules.access.service import reconcile_access_target
@@ -17,16 +17,13 @@ from telegram_membership_saas.modules.entitlements import (
     EntitlementSource,
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer
-from telegram_membership_saas.modules.payments import Payment
-from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
     SubscriptionStarRefund,
 )
-from telegram_membership_saas.modules.subscriptions import (
-    Subscription,
-    SubscriptionStatus,
-    calculate_period_end,
+from telegram_membership_saas.modules.subscriptions import Subscription
+from telegram_membership_saas.modules.stars_subscription_timeline import (
+    rebuild_stars_windows_after, refresh_paid_subscription_summary,
 )
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
@@ -114,115 +111,15 @@ async def record_verified_subscription_star_refund(
     await session.flush()
     # The subscription is a summary of multiple independently paid grants.
     # A returned renewal must not cancel an earlier still-paid period.
-    manual = (await session.scalars(
-        select(EntitlementGrant)
-        .join(Payment, and_(
-            Payment.id == EntitlementGrant.source_id,
-            Payment.project_id == EntitlementGrant.project_id,
-        ))
-        .where(
-            EntitlementGrant.project_id == project_id,
-            EntitlementGrant.customer_id == order.customer_id,
-            EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
-            EntitlementGrant.source == EntitlementSource.PAYMENT.value,
-            Payment.customer_id == order.customer_id,
-            Payment.plan_id == order.plan_id,
-        )
-    )).all()
-    star_rows = (await session.execute(
-        select(EntitlementGrant, SubscriptionStarOrder)
-        .join(SubscriptionStarOrder, and_(
-            SubscriptionStarOrder.id == EntitlementGrant.source_id,
-            SubscriptionStarOrder.project_id == EntitlementGrant.project_id,
-        ))
-        .where(
-            EntitlementGrant.project_id == project_id,
-            EntitlementGrant.customer_id == order.customer_id,
-            EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
-            EntitlementGrant.source == EntitlementSource.STARS_PAYMENT.value,
-            SubscriptionStarOrder.customer_id == order.customer_id,
-            SubscriptionStarOrder.plan_id == order.plan_id,
-        )
-        .with_for_update(of=EntitlementGrant)
-    )).all()
-    # A late Telegram refund may arrive AFTER a later payment was already
-    # confirmed. B's grant may have been scheduled from refunded A's expiry,
-    # despite A having actually been returned BEFORE B was purchased.
-    # Rebuild the subsequent Stars periods from original paid_at snapshots,
-    # without altering any independent/manual payment or the sale ledger.
-    subsequent: dict[UUID, tuple[SubscriptionStarOrder, list[EntitlementGrant]]] = {}
-    for grant, paid_order in star_rows:
-        if paid_order.paid_at is not None and paid_order.paid_at > moment:
-            if paid_order.id not in subsequent:
-                subsequent[paid_order.id] = (paid_order, [])
-            subsequent[paid_order.id][1].append(grant)
-    if subsequent:
-        project = await session.scalar(select(Project).where(
-            Project.id == project_id,
-        ))
-        if project is None:
-            raise RuntimeError("Refund project disappeared")
-        # Keep paid periods created before the verified refund as anchors.
-        # Later grants must not inherit the expiry of the returned purchase.
-        anchor_ends = [
-            grant.valid_until for grant in manual
-            if grant.valid_until is not None and grant.valid_from <= moment
-        ] + [
-            grant.valid_until for grant, paid_order in star_rows
-            if paid_order.paid_at is not None and paid_order.paid_at <= moment
-            and grant.valid_until is not None
-        ]
-        prior_end = max(anchor_ends, default=None)
-        for paid_order, paid_grants in sorted(
-            subsequent.values(),
-            key=lambda pair: (pair[0].paid_at, str(pair[0].id)),
-        ):
-            actual_start = (
-                max(paid_order.paid_at, prior_end)
-                if prior_end is not None else paid_order.paid_at
-            )
-            actual_end = calculate_period_end(
-                actual_start, timezone_name=project.timezone,
-                duration_value=paid_order.duration_value,
-                duration_unit=paid_order.duration_unit,
-            )
-            for grant in paid_grants:
-                if grant.valid_from != actual_start or grant.valid_until != actual_end:
-                    grant.valid_from = actual_start
-                    grant.valid_until = actual_end
-                    targets.add(grant.resource_id)
-            prior_end = actual_end
-        await session.flush()
-    stars = [grant for grant, _ in star_rows]
-    survivors = (*manual, *stars)
-    if survivors:
-        # Lifetime entitlements outrank finite grants; otherwise preserve
-        # the longest remaining purchased end date, then latest start.
-        end_floor = datetime.min.replace(tzinfo=UTC)
-        winning = max(
-            survivors,
-            key=lambda g: (
-                g.valid_until is None,
-                g.valid_until or end_floor,
-                g.valid_from,
-            ),
-        )
-        subscription.current_period_start = winning.valid_from
-        subscription.current_period_end = winning.valid_until
-        subscription.status = (
-            SubscriptionStatus.ACTIVE.value
-            if winning.valid_until is None or winning.valid_until > moment
-            else SubscriptionStatus.EXPIRED.value
-        )
-        if winning.source == EntitlementSource.PAYMENT.value:
-            subscription.last_payment_id = winning.source_id
-            subscription.last_star_order_id = None
-        else:
-            subscription.last_payment_id = None
-            subscription.last_star_order_id = winning.source_id
-    else:
-        subscription.status = SubscriptionStatus.CANCELLED.value
-        # Preserve the historical last payer link for audit/FK invariants.
+    targets.update(await rebuild_stars_windows_after(
+        session, project_id=project_id, customer_id=order.customer_id,
+        plan_id=order.plan_id, after=moment,
+    ))
+    await refresh_paid_subscription_summary(
+        session, project_id=project_id, customer_id=order.customer_id,
+        plan_id=order.plan_id, subscription=subscription,
+        as_of=datetime.now(UTC),
+    )
     await session.flush()
     for resource_id in sorted(targets):
         await reconcile_access_target(
