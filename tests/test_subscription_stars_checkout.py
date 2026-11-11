@@ -33,10 +33,17 @@ from telegram_membership_saas.modules.outbox import OutboxEvent
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import replace_active_plan_price
 from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.stars_subscription_refunds import (
+    record_verified_subscription_star_refund,
+)
 from telegram_membership_saas.modules.stars_subscription_service import (
     confirm_subscription_stars_payment,
     create_stars_subscription_order,
     stars_subscription_precheckout,
+)
+from telegram_membership_saas.modules.stars_subscriptions import (
+    SubscriptionStarOrder,
+    SubscriptionStarRefund,
 )
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.tenant_context import TenantContext
