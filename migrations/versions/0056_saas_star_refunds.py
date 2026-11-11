@@ -79,6 +79,19 @@ def upgrade() -> None:
             )::uuid
         )
     """)
+    # Live staging already has membership_runtime before Alembic runs.
+    # The connected bot only needs append/read access; financial rollup
+    # tables remain completely inaccessible outside owner-only RPCs.
+    op.execute("""
+        DO $tenant_grant$
+        BEGIN
+          IF EXISTS(SELECT 1 FROM pg_roles
+                    WHERE rolname='membership_runtime') THEN
+            GRANT SELECT,INSERT ON public.file_sale_star_refunds
+              TO membership_runtime;
+          END IF;
+        END $tenant_grant$
+    """)
     # Verify every inserted Telegram service event against the immutable
     # original paid order, not just application-supplied model fields.
     op.execute("""
