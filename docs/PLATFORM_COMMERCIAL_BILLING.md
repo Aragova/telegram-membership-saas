@@ -9,7 +9,7 @@ Status: product direction agreed; implementation phased, **all billing and restr
 - **Sales commission:** 5% of **approved and persisted purchases**, separately for each native-currency sale, including subscriptions and digital-file orders. The administrator pressing **Approve** is the billing event. Unpaid, cancelled or rejected invoices do not count. The pricing snapshot frozen on the purchase is authoritative, never a subsequently edited tariff.
 - **Commission period:** Moscow calendar month, [first day 00:00, next month first day 00:00); statement generated after close and due within 7 days. Distinguish service prepayment and accrued commission; one owner can have several bots and merchant businesses, and an invoice must show the scope of each line.
 - **Platform settlement:** buyer/merchant owner receives ViMi Pay's configured payment instructions, submits confirmation, then **the platform owner manually confirms actual receipt**. Never treat clicking "I paid" or uploading a receipt as confirmed platform revenue. Bank instructions and secrets must remain outside git. No automatic deductions or unapproved collection.
-- **Currencies:** preserve original sale amount and currency. For a RUB invoice use an explicitly published, versioned month-specific conversion rule, immutable rate snapshot on each charge, a deterministic rounding policy and reconciliation. No floating point money, no implicit exchange rates or cross-currency addition. If a rate is missing, stop invoicing and show an operator exception, not zero commission.
+- **Currencies:** preserve original sale amount and currency. For any selected settlement currency use an explicitly published, versioned month-specific conversion rule, immutable rate snapshot on each charge, a deterministic rounding policy and reconciliation. No floating point money, no implicit exchange rates or cross-currency addition. If a rate is missing, stop invoicing and show an operator exception, not zero commission.
 - **Refunds:** only authenticated, audited refund/credit adjustments. Do not change the original payment or charge; a negative compensating entry refers to the original source and period. Duplicate sales/refunds may never be charged twice.
 - **Existing customers:** no retroactive trial claims, debt or sales charges; commercial activation must have a separately approved start date and explicit owner communication.
 - **ViMi Pay's own bots are always exempt.** A bot/channel connected through the platform owner's **«👤 Мои боты»** is exempt from RUB 150 SaaS fees, the 5% ViMi Pay commission, the trial/complimentary quota and SaaS debt holds. No separate Telegram creator verification or proof collection is required.
@@ -72,43 +72,41 @@ Debt survives bot deletion/reconnection and persists against durable Merchant ID
 - Overdue account cannot start **new** checkout but old purchases and entitlements continue to completion and expiry.
 - No runtime effect until new billing policy is deliberately enabled; preserve compose.light100.yaml and existing staging consumers.
 
-## 7b. Daily sale-date FX and connected-bot Bill (2026-11-11)
+## 7b. Monthly FX and choice of invoice currency (2026-11-11)
 
-The administrator sees exactly one **🧾 Счёт / Bill** action in the main
-menu of each connected bot (removed from Settings, not duplicated).
-It displays owner-scoped turnover for the current Moscow month by original
-currency, 5% provisional commission for confirmed RUB/fiat transactions,
-and an estimate of next month's 150 RUB service fee. This is a **preview,
-not an issued invoice** while billing is off. The existing separate legal
-ledger invoices and bank instructions are still shown below. We never mix
-multiple merchants' customers' sales into an individual bot's turnover.
+User-approved rule: **one official monthly exchange-rate snapshot** for the
+entire platform, never 80/90 example values hardcoded, never daily conversion.
+Supervisor shard 0 requests the Central Bank of Russia official XML for the
+first Moscow calendar day of the month (including denomination, e.g. ten
+hryvnias), stores immutable RUB-per-unit USD/EUR/UAH/BYN rates together with
+the source publication date, and retries safely if a source is unavailable.
+If the provider omits a currency or a rate is stale/invalid, invoicing
+**fails closed**. Existing rates are never overwritten or silently changed.
+No new bot-specific schedulers, no added FX button in platform settings.
 
-Migration `0051_saas_fx_policy` stores immutable operator-published FX
-snapshots for **each Moscow payment date and currency**, not one uniform
-exchange rate for the entire month. For every confirmed payment the SQL
-issuer looks up the published rate of that original approval date, copies
-it into the invoice-line snapshot and applies 5% per source with
-kopeck rounding. Missing day-rates abort invoice issuance; month-wide FX
-override JSON is rejected. RUB uses 1. Duplicate publication of the same
-quote is idempotent, conflicting publication/update/delete is forbidden.
-No rates are pre-filled; verified daily import is a later stage. The quote
-source must be independently verified before publication. Historical
-corrective adjustments must not mutate prior exchange rates.
+Inside a connected bot's main Admin menu, the existing **🧾 Счёт / Bill**
+button shows confirmed turnover by native currency, Stars separately, and
+the preview of 5% commission plus next-month RUB 150 bot service fee. After
+**💱 Choose bill currency**, the owner selects **RUB, USD, EUR, UAH, BYN**.
+One read-only owner-scoped DB quote converts the same RUB reference total
+into the selected currency using the stored accounting-month quote
+(amount/one-currency-unit), preserving two-decimal rounding and publishing
+source metadata. There are not five separate invoices; the chosen currency
+must become part of **one** immutable invoice/settlement snapshot in the
+future commercial activation workflow. A quote is not a payable invoice,
+and it cannot be paid before a real invoice is issued and verified by
+the ViMi Pay platform owner.
 
-The connected-bot preview also counts successful Telegram Stars payments
-as `XTR` turnover. A separately published XTR/RUB reward-value quote can
-produce a **provisional** commission estimate. Because rewards and refunds
-can differ from buyer purchase prices and because Telegram may reverse
-transactions, XTR is excluded from payable invoices until the refund/
-chargeback reconciliation step is complete. We do not invent a constant
-Stars value. See Telegram Bot API for charge IDs and refund transactions.
-
-Still needed before launch: verified CBR daily rates ingestion; Telegram
-Stars reward-price and refund sync; a reconciled consolidated
-commission + next-month service invoice with one payment reference;
-refund/credit and dispute workflows. Commercial switches stay OFF.
-No retroactive obligations or interruption of 48 bots.
-
+Telegram Stars (XTR) are counted as separate confirmed turnover. They are
+**not** fiat and are not converted via CBR. They require an independently
+verified Stars reward-value source, withdrawal/refund/chargeback reconciliation
+and a fixed-rate payout snapshot. Until then, any Stars-inclusive quote is
+explicitly incomplete: no final payable total or invented exchange rate.
+This PR does not issue a live consolidated invoice, enable billing/holds/
+trials, send payment instructions, or interrupt any customer bot. Preserve
+ViMi Pay's own My Bots fee exemption without Telegram creator checks.
+Follow-up: Stars reconciliation, correction/credit ledger, durable
+single-invoice currency selection and payment confirmation.
 
 ## 7a. Simplified owner exemption (2026-11-11)
 
