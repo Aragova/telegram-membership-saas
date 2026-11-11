@@ -7,7 +7,6 @@ checkout types share the same Subscription, EntitlementGrant and access outbox.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -159,7 +158,15 @@ async def stars_subscription_precheckout(
         ProjectCustomer.id == order.customer_id,
         ProjectCustomer.project_id == project_id,
     ))
-    return bool(project and plan and price and customer and not customer.is_banned)
+    bot_exists = await session.scalar(select(BotInstance.id).where(
+        BotInstance.project_id == project_id,
+        BotInstance.telegram_bot_id == bot_id,
+        BotInstance.status == "registered",
+    ))
+    return bool(
+        project and plan and price and bot_exists and customer
+        and not customer.is_banned
+    )
 
 
 async def confirm_subscription_stars_payment(
@@ -189,6 +196,14 @@ async def confirm_subscription_stars_payment(
     ).with_for_update())
     if order is None or order.stars_amount != amount:
         raise PermissionError("Stars receipt does not match a pending order")
+    # Manual settlement locks customer before subscription; use the same
+    # lock order to prevent conflicting renewals and cross-rail deadlocks.
+    customer = await session.scalar(select(ProjectCustomer).where(
+        ProjectCustomer.id == order.customer_id,
+        ProjectCustomer.project_id == project_id,
+    ).with_for_update())
+    if customer is None:
+        raise RuntimeError("Paid project customer disappeared")
     # Original price and active-plan state are snapshots: if a seller archives
     # a plan AFTER Telegram charged, we must still fulfil the paid order.
     subscription = await session.scalar(select(Subscription).where(
@@ -202,12 +217,6 @@ async def confirm_subscription_stars_payment(
         return order, subscription
     if order.status != "pending":
         raise PermissionError("Stars order is no longer payable")
-    customer = await session.scalar(select(ProjectCustomer).where(
-        ProjectCustomer.id == order.customer_id,
-        ProjectCustomer.project_id == project_id,
-    ).with_for_update())
-    if customer is None:
-        raise RuntimeError("Paid project customer disappeared")
     project = await session.scalar(select(Project).where(Project.id == project_id))
     if project is None:
         raise RuntimeError("Paid project disappeared")
