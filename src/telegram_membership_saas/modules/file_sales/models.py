@@ -142,3 +142,49 @@ class FilePurchase(Base):
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FileStarRefund(Base):
+    """Immutable, authenticated Telegram Stars refund event for a paid file."""
+
+    __tablename__ = "file_sale_star_refunds"
+    __table_args__ = (
+        UniqueConstraint(
+            "purchase_id", name="uq_file_star_refund_purchase",
+        ),
+        UniqueConstraint(
+            "telegram_bot_id", "telegram_charge_id",
+            name="uq_file_star_refund_bot_charge",
+        ),
+        CheckConstraint(
+            "stars_amount BETWEEN 1 AND 250000",
+            name="ck_file_star_refund_amount",
+        ),
+        CheckConstraint(
+            "length(telegram_charge_id)>0",
+            name="ck_file_star_refund_charge_id",
+        ),
+        Index("ix_file_star_refund_paid_at", "refunded_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False,
+    )
+    purchase_id: Mapped[UUID] = mapped_column(
+        ForeignKey("file_sale_purchases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    telegram_bot_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_charge_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    invoice_payload: Mapped[str] = mapped_column(String(128), nullable=False)
+    stars_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    refunded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
