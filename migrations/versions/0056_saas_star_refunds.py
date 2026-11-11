@@ -225,10 +225,15 @@ def upgrade() -> None:
           END LOOP;
           SELECT count(*) INTO waiting
           FROM public.file_sale_star_refunds f
-          WHERE NOT EXISTS(
-            SELECT 1 FROM public.platform_saas_star_refund_credits c
-            WHERE c.file_refund_id=f.id
-          );
+          JOIN public.file_sale_purchases p ON p.id=f.purchase_id
+          WHERE p.paid_at>=(
+              SELECT started_at
+              FROM public.platform_saas_star_capture_control WHERE id=1
+            )
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_star_refund_credits c
+              WHERE c.file_refund_id=f.id
+            );
           RETURN jsonb_build_object(
             'recorded',inserted,
             'waiting_for_original_sale',waiting,
@@ -277,6 +282,13 @@ def upgrade() -> None:
           JOIN public.file_sale_purchases p ON p.id=f.purchase_id
           WHERE f.project_id=p_project
             AND f.refunded_at>=period_start AND f.refunded_at<period_end
+            -- Pre-0055 paid purchases are deliberately non-billable.
+            -- Their verified refund evidence remains immutable but cannot
+            -- wait for a positive SaaS sale that must never be backfilled.
+            AND p.paid_at>=(
+              SELECT started_at FROM public.platform_saas_star_capture_control
+              WHERE id=1
+            )
             AND NOT EXISTS(
               SELECT 1 FROM public.platform_saas_star_refund_credits c
               WHERE c.file_refund_id=f.id
