@@ -14,11 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.modules.bots.models import BotInstance
 from telegram_membership_saas.modules.entitlements import (
-    EntitlementGrant, EntitlementGrantStatus, EntitlementSource,
+    EntitlementGrant,
+    EntitlementGrantStatus,
+    EntitlementSource,
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.outbox import (
-    OutboxEvent, OutboxEventStatus, OutboxEventType,
+    OutboxEvent,
+    OutboxEventStatus,
+    OutboxEventType,
 )
 from telegram_membership_saas.modules.payments.request_service import (
     get_or_create_project_customer,
@@ -31,7 +35,9 @@ from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
 )
 from telegram_membership_saas.modules.subscriptions import (
-    Subscription, SubscriptionStatus, calculate_period_end,
+    Subscription,
+    SubscriptionStatus,
+    calculate_period_end,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import (
     upsert_telegram_user,
