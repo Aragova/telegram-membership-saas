@@ -115,14 +115,17 @@ async def test_bill_preview_groups_fiat_files_stars_per_project_and_blocks_other
                     "(telegram_user_id,role) VALUES(:id,'owner')"
                 ), {"id": owner_tg})
                 await _actor(conn, owner)
-                for cur, rate in (("USD", "80"), ("XTR", "1.04")):
-                    await conn.execute(text(
-                        "SELECT public.platform_saas_publish_fx_rate("
-                        ":day,:currency,:rate)"
-                    ), {
-                        "day": month, "currency": cur,
-                        "rate": Decimal(rate),
-                    })
+                await conn.execute(text(
+                    "SELECT public.platform_saas_publish_cbr_fx_rate("
+                    ":month,'USD',:rate,:source_date)"
+                ), {
+                    "month": month, "rate": Decimal("80"),
+                    "source_date": month,
+                })
+                await conn.execute(text(
+                    "SELECT public.platform_saas_publish_fx_rate("
+                    ":month,'XTR',:rate)"
+                ), {"month": month, "rate": Decimal("1.04")})
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 try:
                     own = await _preview(conn, project, month)
