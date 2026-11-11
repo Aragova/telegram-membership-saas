@@ -119,7 +119,7 @@ async def test_fx_publishing_is_owner_only_daily_immutable_and_billing_off():
                     "UPDATE platform_saas_fx_rates SET rub_per_unit=90 "
                     "WHERE rate_date='2026-12-11' AND currency_code='USD'",
                     "DELETE FROM platform_saas_fx_rates "
-                    "WHERE rate_date='2026-12-01' AND currency_code='USD'",
+                    "WHERE rate_date='2026-12-11' AND currency_code='USD'",
                 ):
                     with pytest.raises(DBAPIError) as blocked:
                         async with conn.begin_nested():
