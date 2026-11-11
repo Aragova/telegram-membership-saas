@@ -590,3 +590,112 @@ async def test_merchant_bill_includes_subscription_stars_refund_commission():
     finally:
         await engine.dispose()
         await admin.dispose()
+
+
+async def test_delayed_refund_repairs_already_confirmed_newer_stars_purchase():
+    """B paid after A was refunded, but B's successful_payment reached DB
+    before A's delayed refunded_payment. B must not wait for A's old expiry.
+    """
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    buyer_id = _tid()
+    try:
+        owner, _, project_id, bot_uuid, _ = await _project(factory, _tid())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project_id),
+        ) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project_id,
+            ))
+            plan = Plan(
+                project_id=project_id, name="Late refund already-paid renewal",
+                status="active", duration_value=1, duration_unit="month",
+            )
+            session.add(plan)
+            await session.flush()
+            session.add(PlanResource(
+                project_id=project_id, plan_id=plan.id,
+                resource_id=resource_id,
+            ))
+            price = await replace_active_plan_price(
+                session, project_id=project_id, plan_id=plan.id,
+                currency_code="XTR", amount="70",
+            )
+            price_id = price.id
+        paid_a = (datetime.now(UTC) - timedelta(minutes=5)).replace(
+            microsecond=0
+        )
+        returned_a = paid_a + timedelta(minutes=1)
+        paid_b = paid_a + timedelta(minutes=2)
+        receipts = []
+        for index, paid_at in enumerate((paid_a, paid_b)):
+            async with system_project_session_scope(factory, project_id) as session:
+                order = await create_stars_subscription_order(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer_id, username=None, first_name="Buyer",
+                    plan_price_id=price_id,
+                )
+                order_id, payload = order.id, order.invoice_payload
+            async with system_project_session_scope(factory, project_id) as session:
+                await confirm_subscription_stars_payment(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer_id, payload=payload, currency="XTR",
+                    amount=70, charge_id=f"delayed-refund-{index}",
+                    paid_at=paid_at,
+                )
+            receipts.append((order_id, payload))
+        async with system_project_session_scope(factory, project_id) as session:
+            before = await session.scalar(select(EntitlementGrant.valid_from).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+            ))
+            assert before > paid_b  # B wrongly stacked on still-active A.
+        async with system_project_session_scope(factory, project_id) as session:
+            refund_id = await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, payload=receipts[0][1],
+                amount=70, currency="XTR", charge_id="delayed-refund-0",
+                refunded_at=returned_a,
+            )
+            assert refund_id is not None
+        async with system_project_session_scope(factory, project_id) as session:
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project_id,
+                Subscription.plan_id == plan.id,
+            ))
+            later = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+            ))
+            assert later.status == "active"
+            assert later.valid_from == paid_b
+            assert later.valid_until == sub.current_period_end
+            assert sub.current_period_start == paid_b
+            assert sub.last_star_order_id == receipts[1][0]
+            assert sub.status == "active"
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[0][0],
+                EntitlementGrant.status == "active",
+            ))) == 0
+        # Duplicate Telegram refund is idempotent after both grant repair
+        # and owner-source financial evidence.
+        async with system_project_session_scope(factory, project_id) as session:
+            same_id = await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, payload=receipts[0][1],
+                amount=70, currency="XTR", charge_id="delayed-refund-0",
+                refunded_at=returned_a,
+            )
+            assert same_id == refund_id
+            assert (await session.scalar(select(EntitlementGrant.valid_from).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == receipts[1][0],
+            ))) == paid_b
+    finally:
+        await engine.dispose()
