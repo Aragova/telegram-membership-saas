@@ -15,8 +15,8 @@ from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
-from telegram_membership_saas.modules.merchant_revenue import merchant_confirmed_sales
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
+from telegram_membership_saas.modules.merchant_revenue import merchant_confirmed_sales
 from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.resources import Resource
