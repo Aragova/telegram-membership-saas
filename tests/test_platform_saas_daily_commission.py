@@ -253,6 +253,77 @@ async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice(
                 assert len(lines) == len(expected_lines)
                 assert [(Decimal(q.original_amount), Decimal(q.rub_per_unit),
                          Decimal(q.charge_rub)) for q in lines] == expected_lines
+                # A compensating credit is a separate immutable event,
+                # never a negative mutation to the original invoice line.
+                credit_line = (await conn.execute(text(
+                    "SELECT id FROM platform_saas_invoice_lines "
+                    "WHERE invoice_id=:id AND charge_rub=135"
+                ), {"id": invoice})).scalar_one()
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(merchant_owner)})
+                with pytest.raises(DBAPIError) as tenant_refund:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "SELECT public.platform_saas_record_refund_credit("
+                            ":line,'refund:partial:1',50,'refund')"
+                        ), {"line": credit_line})
+                assert getattr(
+                    tenant_refund.value.orig, "sqlstate", None
+                ) == "42501"
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(operator)})
+                refund_args = {
+                    "line": credit_line, "reference": "refund:partial:1",
+                    "amount": Decimal("50"), "reason": "refund",
+                }
+                refund_stmt = text(
+                    "SELECT public.platform_saas_record_refund_credit("
+                    ":line,:reference,:amount,:reason)"
+                )
+                refund_id = (await conn.execute(
+                    refund_stmt, refund_args
+                )).scalar_one()
+                assert (await conn.execute(
+                    refund_stmt, refund_args
+                )).scalar_one() == refund_id
+                with pytest.raises(DBAPIError) as changed_ref:
+                    async with conn.begin_nested():
+                        await conn.execute(
+                            refund_stmt, {**refund_args, "amount": Decimal("60")},
+                        )
+                assert getattr(
+                    changed_ref.value.orig, "sqlstate", None
+                ) == "23505"
+                with pytest.raises(DBAPIError) as over_credit:
+                    async with conn.begin_nested():
+                        await conn.execute(
+                            refund_stmt, {
+                                "line": credit_line,
+                                "reference": "refund:partial:2",
+                                "amount": Decimal("86"), "reason": "refund",
+                            },
+                        )
+                assert getattr(
+                    over_credit.value.orig, "sqlstate", None
+                ) == "23514"
+                credit_report = (await conn.execute(text(
+                    "SELECT public.platform_saas_refund_credit_report("
+                    ":owner) AS report"
+                ).columns(report=JSONB), {"owner": merchant_owner})).scalar_one()
+                assert Decimal(
+                    str(credit_report["total_credited_rub"])
+                ) == Decimal("50")
+                assert credit_report["application_status"] == (
+                    "pending_future_statement"
+                )
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "DELETE FROM platform_saas_refund_credits "
+                            "WHERE id=:id"
+                        ), {"id": refund_id})
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await conn.execute(text(
