@@ -19,6 +19,16 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
+from telegram_membership_saas.modules.bots.deletion_service import (
+    count_retirement_blockers,
+)
+from telegram_membership_saas.modules.stars_subscription_refunds import (
+    record_verified_subscription_star_refund,
+)
+from telegram_membership_saas.modules.stars_subscriptions import (
+    SubscriptionStarOrder,
+    SubscriptionStarRefund,
+)
 from telegram_membership_saas.modules.outbox import OutboxEvent
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import replace_active_plan_price
@@ -142,5 +152,54 @@ async def test_native_stars_charge_grants_one_subscription_and_access():
                     currency="XTR", amount=2000, charge_id="different",
                     paid_at=moment,
                 )
+        async with system_project_session_scope(factory, project_id) as session:
+            before = await count_retirement_blockers(
+                session, project_id=project_id,
+            )
+            assert before.subscriptions >= 1
+            with pytest.raises(PermissionError):
+                await record_verified_subscription_star_refund(
+                    session, project_id=project_id, bot_id=bot_id,
+                    buyer_id=buyer_id, payload=payload,
+                    currency="XTR", amount=1999,
+                    charge_id="paid-starter", refunded_at=moment,
+                )
+        async with system_project_session_scope(factory, project_id) as session:
+            refund_id = await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, payload=payload,
+                currency="XTR", amount=2000,
+                charge_id="paid-starter", refunded_at=moment,
+            )
+            assert refund_id is not None
+        async with system_project_session_scope(factory, project_id) as session:
+            repeated_id = await record_verified_subscription_star_refund(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, payload=payload,
+                currency="XTR", amount=2000,
+                charge_id="paid-starter", refunded_at=moment,
+            )
+            assert repeated_id == refund_id
+            assert (await session.scalar(select(func.count()).select_from(
+                SubscriptionStarRefund,
+            ).where(
+                SubscriptionStarRefund.project_id == project_id,
+                SubscriptionStarRefund.order_id == order_id,
+            ))) == 1
+            assert (await session.scalar(select(func.count()).select_from(
+                EntitlementGrant,
+            ).where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.source_id == order_id,
+                EntitlementGrant.status == "active",
+            ))) == 0
+            assert (await session.scalar(select(Subscription.status).where(
+                Subscription.project_id == project_id,
+                Subscription.last_star_order_id == order_id,
+            ))) == "cancelled"
+            assert (await session.scalar(select(SubscriptionStarOrder.status).where(
+                SubscriptionStarOrder.project_id == project_id,
+                SubscriptionStarOrder.id == order_id,
+            ))) == "paid"
     finally:
         await engine.dispose()
