@@ -18,6 +18,7 @@ from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan, PlanResource, PlanStatus
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
+from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.modules.telegram_commerce.service import (
@@ -41,7 +42,7 @@ async def plan_has_history(
     session: AsyncSession, *, project_id: UUID, plan_id: UUID,
 ) -> bool:
     """Unpaid invoices remain visible in history even after catalog removal."""
-    for model in (PaymentRequest, Payment, Subscription):
+    for model in (PaymentRequest, Payment, Subscription, SubscriptionStarOrder):
         ref = await session.scalar(
             select(model.id).where(
                 model.project_id == project_id,
@@ -228,7 +229,11 @@ async def delete_unused_owner_plan(
             PaymentRequest.project_id == project_id,
             PaymentRequest.plan_id == plan_id,
         ).limit(1))
-        if unpaid is not None:
+        star_invoice = await session.scalar(select(SubscriptionStarOrder.id).where(
+            SubscriptionStarOrder.project_id == project_id,
+            SubscriptionStarOrder.plan_id == plan_id,
+        ).limit(1))
+        if unpaid is not None or star_invoice is not None:
             # Immutable invoice snapshots/FKs must survive. Keep the plan
             # and its price history, but remove it from all new sales and menus.
             plan.status = PlanStatus.ARCHIVED.value
