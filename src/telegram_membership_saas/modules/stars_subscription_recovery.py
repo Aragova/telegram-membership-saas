@@ -1,8 +1,9 @@
 """Reconcile native subscription Stars charges and refunds from Telegram.
 
 Bot API getStarTransactions is independently authenticated by the connected
-bot token. Outgoing refund transactions reuse the original charge ID and have
-a negative amount; an incoming transaction is not evidence of no refunds.
+bot token. Outgoing refund transactions reuse the original charge ID,
+carry a positive amount in Bot API JSON, and set receiver (not source).
+An incoming transaction is not evidence that no refunds exist.
 This job retries after database outages and missed Telegram service updates.
 """
 from __future__ import annotations
@@ -101,13 +102,18 @@ async def reconcile_subscription_star_ledger(
                 and getattr(receiver, "type", None) == "user"
                 and getattr(receiver, "transaction_type", None) == "invoice_payment"
                 and getattr(receiver, "user", None) is not None
-                and item.amount < 0
+                and item.amount > 0
+                and source is None
                 and (buyer_id is None or buyer_id == receiver.user.id)
             ):
+                # The Bot API serializes outgoing refunds with a positive
+                # Stars amount and sets receiver (not source). It reverses
+                # the signed TDLib amount when constructing JSON. Match
+                # the original charge by ID and exact unsigned amount.
                 payload = getattr(receiver, "invoice_payload", None)
                 if payload is None or isinstance(payload, str):
                     outgoing[(item.id, receiver.user.id)] = (
-                        -item.amount, payload, at,
+                        item.amount, payload, at,
                     )
         if len(transactions) < PAGE_SIZE:
             break
