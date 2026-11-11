@@ -93,6 +93,9 @@ class SubscriptionStarOrder(Base):
     )
     telegram_charge_id: Mapped[str | None] = mapped_column(String(256))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    precheckout_approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp(),
         nullable=False,
