@@ -60,6 +60,8 @@ async def test_file_stars_official_reward_and_idempotent_rated_evidence():
                     "SELECT telegram_bot_id FROM bot_instances WHERE id=:id"
                 ), {"id": bot})).scalar_one()
                 folder, product, purchase = uuid4(), uuid4(), uuid4()
+                payload = "fs:" + uuid4().hex
+                charge = "star-fixture-" + uuid4().hex
                 await conn.execute(text(
                     "INSERT INTO file_sale_folders(id,project_id,name,status)"
                     " VALUES(:id,:project,'Stars audit','active')"
@@ -81,9 +83,8 @@ async def test_file_stars_official_reward_and_idempotent_rated_evidence():
                     "'Stars audit',:payload,:charge,'paid',:paid)"
                 ), {
                     "id": purchase, "project": project, "product": product,
-                    "bot": bot_tg, "payload": "fs:" + uuid4().hex,
-                    "charge": "star-fixture-" + uuid4().hex,
-                    "paid": paid_at,
+                    "bot": bot_tg, "payload": payload,
+                    "charge": charge, "paid": paid_at,
                 })
                 await _actor(conn, owner)
                 with pytest.raises(DBAPIError) as ordinary_cannot_capture:
@@ -153,6 +154,80 @@ async def test_file_stars_official_reward_and_idempotent_rated_evidence():
                 assert Decimal(result.reward_usd) == Decimal("26")
                 assert Decimal(result.commission_usd) == Decimal("1.30")
                 assert result.billing_eligible is False
+                refund_id = uuid4()
+                refund_sql = text(
+                    "INSERT INTO public.file_sale_star_refunds "
+                    "(id,project_id,purchase_id,telegram_bot_id,"
+                    "telegram_user_id,telegram_charge_id,invoice_payload,"
+                    "stars_amount,refunded_at) VALUES "
+                    "(:id,:project,:purchase,:bot,7171,:charge,:payload,"
+                    ":amount,:at)"
+                )
+                refund_args = {
+                    "id": refund_id, "project": project,
+                    "purchase": purchase, "bot": bot_tg,
+                    "charge": charge, "payload": payload,
+                    "amount": 2000, "at": paid_at,
+                }
+                with pytest.raises(DBAPIError) as invalid_refund:
+                    async with conn.begin_nested():
+                        await conn.execute(
+                            refund_sql,
+                            {**refund_args, "amount": 1999},
+                        )
+                assert getattr(
+                    invalid_refund.value.orig, "sqlstate", None
+                ) == "23514"
+                await conn.execute(refund_sql, refund_args)
+                await _actor(conn, operator)
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                refund_rpc = text(
+                    "SELECT public.platform_saas_capture_star_refunds(200)"
+                    " AS data"
+                ).columns(data=JSONB)
+                first = (await conn.execute(refund_rpc)).scalar_one()
+                assert first["recorded"] >= 1
+                assert first["applied_to_invoices"] is False
+                assert (await conn.execute(refund_rpc)).scalar_one()["recorded"] == 0
+                with pytest.raises(DBAPIError) as direct_refund_denied:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "SELECT * FROM platform_saas_star_refund_credits"
+                        ))
+                assert getattr(
+                    direct_refund_denied.value.orig, "sqlstate", None
+                ) == "42501"
+                await _actor(conn, owner)
+                history = (await conn.execute(text(
+                    "SELECT public.platform_saas_star_project_refund_summary("
+                    ":project,:month) AS data"
+                ).columns(data=JSONB), {
+                    "project": project, "month": month,
+                })).scalar_one()
+                assert history["refunds"] == 1
+                assert history["refunded_stars"] == 2000
+                assert Decimal(history["reward_credit_usd"]) == Decimal("26")
+                assert Decimal(history["commission_credit_usd"]) == Decimal("1.30")
+                assert history["pending_refund_reconciliation"] == 0
+                await conn.execute(text("RESET ROLE"))
+                assert (await conn.execute(text(
+                    "SELECT status FROM file_sale_purchases WHERE id=:id"
+                ), {"id": purchase})).scalar_one() == "paid"
+                original_credit = (await conn.execute(text(
+                    "SELECT commission_credit_usd "
+                    "FROM platform_saas_star_refund_credits "
+                    "WHERE file_refund_id=:id"
+                ), {"id": refund_id})).scalar_one()
+                assert Decimal(original_credit) == Decimal("1.30")
+                with pytest.raises(DBAPIError) as immutable_credit:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "DELETE FROM platform_saas_star_refund_credits "
+                            "WHERE file_refund_id=:id"
+                        ), {"id": refund_id})
+                assert getattr(
+                    immutable_credit.value.orig, "sqlstate", None
+                ) == "42501"
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await conn.execute(text(
