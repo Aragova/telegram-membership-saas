@@ -5,7 +5,7 @@ All commercial switch changes, FX and invoices exist only in one rolled-back
 test transaction. No user balances or staging data are touched.
 """
 import os
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
