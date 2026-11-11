@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.localization import current_language, tr
 from telegram_membership_saas.modules.merchant_finances import platform_merchant_finances
+from telegram_membership_saas.modules.owner_setup.rich_admin_ui import send_owner_rich
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
@@ -39,7 +40,6 @@ from telegram_membership_saas.modules.platform_saas_billing_service import (
     confirm_saas_receipt,
     platform_saas_invoice_report,
 )
-from telegram_membership_saas.modules.owner_setup.rich_admin_ui import send_owner_rich
 from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_invoice_classic,
     issued_invoice_rich,
