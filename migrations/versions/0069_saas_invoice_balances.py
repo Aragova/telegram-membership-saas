@@ -132,8 +132,18 @@ CREATE OR REPLACE FUNCTION public.platform_saas_owner_invoice_report(
              OR p_size IS NULL OR p_size<1 OR p_size>8 THEN
             RAISE EXCEPTION 'Invalid statement page' USING ERRCODE='22023';
           END IF;
+          -- An explicitly disabled v2 RUB method must never display retired
+          -- legacy bank details to the account owner.
           SELECT instructions INTO bank
+          FROM public.platform_saas_payment_methods_v2
+          WHERE currency_code='RUB' AND enabled;
+          IF bank IS NULL AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_payment_methods_v2
+            WHERE currency_code='RUB'
+          ) THEN
+            SELECT instructions INTO bank
             FROM public.platform_saas_payment_details WHERE id=1;
+          END IF;
           SELECT jsonb_build_object(
             'total',(SELECT count(*) FROM public.platform_saas_invoices i
                      WHERE i.owner_user_id=actor AND i.status='issued'),
@@ -302,10 +312,24 @@ CREATE OR REPLACE FUNCTION public.platform_saas_notice_schedule()
           SELECT effective_from INTO started
           FROM public.platform_saas_billing_control
           WHERE id=1 AND enabled=true;
+          -- Issue payment reminders only while a valid currently-enabled
+          -- payment method exists. A disabled v2 RUB row supersedes any
+          -- legacy bank details left for historical audit purposes.
           IF started IS NULL OR started>now_at
-             OR NOT EXISTS(
-               SELECT 1 FROM public.platform_saas_payment_details
-               WHERE id=1 AND instructions IS NOT NULL
+             OR NOT (
+               EXISTS(
+                 SELECT 1 FROM public.platform_saas_payment_methods_v2
+                 WHERE enabled
+               )
+               OR (
+                 NOT EXISTS(
+                   SELECT 1 FROM public.platform_saas_payment_methods_v2
+                   WHERE currency_code='RUB'
+                 ) AND EXISTS(
+                   SELECT 1 FROM public.platform_saas_payment_details
+                   WHERE id=1 AND instructions IS NOT NULL
+                 )
+               )
              ) THEN RETURN 0; END IF;
           PERFORM pg_advisory_xact_lock(2200471001);
           INSERT INTO public.platform_saas_notice_outbox(
@@ -361,13 +385,27 @@ CREATE OR REPLACE FUNCTION public.platform_saas_notice_claim()
         AS $fn$
         DECLARE
           item record;
-          bank text;
           now_at timestamptz := clock_timestamp();
         BEGIN
           PERFORM public.platform_saas_require_owner();
-          SELECT instructions INTO bank
-          FROM public.platform_saas_payment_details WHERE id=1;
-          IF bank IS NULL OR NOT EXISTS(
+          -- Reminders link back to the buyer's actual account checkout,
+          -- so no obsolete bank instructions are ever sent in notices.
+          IF NOT (
+            EXISTS(
+              SELECT 1 FROM public.platform_saas_payment_methods_v2
+              WHERE enabled
+            )
+            OR (
+              NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_methods_v2
+                WHERE currency_code='RUB'
+              )
+              AND EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_details
+                WHERE id=1 AND instructions IS NOT NULL
+              )
+            )
+          ) OR NOT EXISTS(
             SELECT 1 FROM public.platform_saas_billing_control
             WHERE id=1 AND enabled=true AND effective_from<=now_at
           ) THEN RETURN NULL; END IF;
@@ -403,7 +441,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_notice_claim()
             'kind',item.kind,'attempt',item.attempts+1,
             'recipient',item.telegram_user_id,
             'amount_rub',public.platform_saas_v2_remaining(item.invoice_id)::text,
-            'due_at',item.due_at,'instructions',bank
+            'due_at',item.due_at
           );
         END;
         $fn$

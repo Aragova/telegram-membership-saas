@@ -56,8 +56,8 @@ def _notice_text(item: dict) -> str:
     deadline = datetime.fromisoformat(
         str(item["due_at"]).replace("Z", "+00:00")
     ).astimezone(UTC).strftime("%d.%m.%Y")
-    instruction = str(item["instructions"])
-    # Operator may set bank details, never let their markup alter HTML.
+    # The operator may later disable or rotate bank details. Never
+    # embed an old payment destination in an immutable reminder outbox.
     return (
         "<b>" + title + "</b>\n\n"
         + tr("Номер счёта: ", "Invoice ID: ")
@@ -65,14 +65,14 @@ def _notice_text(item: dict) -> str:
         + tr("Сумма: ", "Amount: ")
         + "<b>" + escape(str(item["amount_rub"])) + " ₽</b>\n"
         + tr("Срок оплаты: ", "Due date: ") + deadline + "\n\n"
-        + tr("Реквизиты ViMi Pay:\n", "ViMi Pay bank instructions:\n")
-        + "<pre>" + escape(instruction) + "</pre>\n"
         + tr(
-            "Укажите номер счёта в назначении перевода. "
-            "Оплата будет отмечена после проверки поступления владельцем "
-            "платформы. Уже купленные подписки сохраняются.",
-            "Include the invoice ID with your transfer. Your payment will "
-            "be marked received only after the platform owner verifies it. "
+            "Откройте «🧾 Мои счета», выберите актуальную валюту и "
+            "реквизиты ViMi Pay, затем отправьте чек. "
+            "Оплата подтверждается после проверки поступления. "
+            "Уже купленные подписки сохраняются.",
+            "Open «🧾 My invoices» to choose the current ViMi Pay "
+            "currency and payment instructions, then upload your receipt. "
+            "Payment is confirmed after bank verification. "
             "Existing paid subscriptions remain valid.",
         )
     )
