@@ -59,12 +59,24 @@ def test_crypto_paid_rate_is_provider_payment_time_not_current_spot():
     assert receipt.currency_code == "BTC"
     missing = verify_paid_invoice({**paid, "paid_usd_rate": None}, **values)
     assert missing.paid_usd_rate is None  # no fake spot-rate fallback
-    for invalid in ("0", "-1", "NaN", "99999999999"):
-        # An unusable OPTIONAL accounting quote may not prevent fulfillment.
+    for invalid in (
+        "0", "-1", "NaN", "99999999999",
+        "0.0000000000000000001", "1e-99",
+    ):
+        # A tiny positive rate rounds to ZERO in SQL numeric(38,18).
+        # It is optional audit data, never a reason to reject the purchase.
         unpriced = verify_paid_invoice(
             {**paid, "paid_usd_rate": invalid}, **values,
         )
         assert unpriced.paid_usd_rate is None
+    normalized = verify_paid_invoice(
+        {**paid, "paid_usd_rate": "2.1234567890123456789"}, **values,
+    )
+    assert normalized.paid_usd_rate == Decimal("2.123456789012345679")
+    smallest = verify_paid_invoice(
+        {**paid, "paid_usd_rate": "0.000000000000000001"}, **values,
+    )
+    assert smallest.paid_usd_rate == Decimal("0.000000000000000001")
     with pytest.raises(CryptoPayError):
         verify_paid_invoice({**paid, "invoice_id": 777}, **values)
     fiat = verify_paid_invoice({
