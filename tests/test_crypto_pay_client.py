@@ -69,11 +69,11 @@ async def test_auth_create_and_get_invoices_use_only_official_host_and_header():
                 "bot_invoice_url": "https://t.me/CryptoTestnetBot?start=IV7782",
             }})
         if request.url.path.endswith("/getInvoices"):
-            return httpx.Response(200, json={"ok": True, "result": [{
+            return httpx.Response(200, json={"ok": True, "result": {"items": [{
                 "invoice_id": 7782, "status": "paid", "payload": "cp:test123",
                 "currency_type": "fiat", "fiat": "RUB", "amount": "550",
                 "paid_at": datetime.now(UTC).isoformat(),
-            }]})
+            }], "count": 1}})
         raise AssertionError("unexpected API method")
 
     async with CryptoPayClient(
@@ -160,3 +160,45 @@ async def test_provider_must_return_an_official_crypto_bot_link():
                 currency="TON", amount=Decimal("2"),
                 payload="cp:abc", description="Premium",
             )
+
+
+@pytest.mark.parametrize("payload,valid", [
+    ({"items": [{"invoice_id": 3}], "count": 1}, True),
+    ([{"invoice_id": 3}], True),  # Documented legacy flat-array response.
+    ({"items": [{"invoice_id": 4}]}, False),
+    ({"items": [{"invoice_id": 3}, {"invoice_id": 3}]}, False),
+    ({"items": "bad"}, False),
+    ({"items": [{"invoice_id": "3"}]}, False),
+])
+async def test_get_invoices_accepts_provider_envelope_but_rejects_spoofing(
+    payload, valid,
+):
+    def response(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True, "result": payload})
+
+    async with CryptoPayClient(
+        TOKEN, transport=httpx.MockTransport(response),
+    ) as api:
+        if valid:
+            invoices = await api.get_invoices((3,))
+            assert len(invoices) == 1 and invoices[0]["invoice_id"] == 3
+        else:
+            with pytest.raises(CryptoPayError):
+                await api.get_invoices((3,))
+
+
+async def test_official_legacy_cryptobot_invoice_link_is_allowed():
+    def response(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True, "result": {
+            "invoice_id": 35, "payload": "cp:oldlink",
+            "currency_type": "fiat", "fiat": "RUB", "amount": "120",
+            "status": "active",
+            "bot_invoice_url": "https://t.me/send?start=IV35",
+        }})
+
+    async with CryptoPayClient(TOKEN, transport=httpx.MockTransport(response)) as api:
+        invoice = await api.create_invoice(
+            currency="RUB", amount=Decimal("120"),
+            payload="cp:oldlink", description="Payment",
+        )
+        assert invoice["invoice_id"] == 35

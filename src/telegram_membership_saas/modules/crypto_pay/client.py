@@ -65,11 +65,14 @@ def _invoice_link(link: object, *, testnet: bool) -> str:
     if not isinstance(link, str):
         raise CryptoPayError("Crypto Pay returned an invalid invoice URL")
     parts = urlsplit(link)
-    allowed = "CryptoTestnetBot" if testnet else "CryptoBot"
+    # @send was the original public @CryptoBot address and still appears
+    # in provider-issued single-use invoice deep links.
+    allowed = {"cryptotestnetbot"} if testnet else {"cryptobot", "send"}
     if (parts.scheme != "https"
         or parts.username is not None or parts.password is not None
+        or parts.port is not None
         or parts.hostname not in {"t.me", "telegram.me"}
-        or (parts.path.strip("/").split("/", 1)[0].lower() != allowed.lower())):
+        or parts.path.strip("/").lower() not in allowed):
         raise CryptoPayError("Crypto Pay returned an unsafe invoice URL")
     return link
 
@@ -206,10 +209,18 @@ class CryptoPayClient:
         result = await self._call(
             "getInvoices", {"invoice_ids": ",".join(map(str, invoice_ids))},
         )
-        if not isinstance(result, list) or not all(isinstance(x, dict) for x in result):
+        # Current Crypto Pay responses commonly wrap the invoices as
+        # result.items (with count). Accept the documented flat array too.
+        # Neither shape is sufficient evidence of a paid purchase until
+        # verify_paid_invoice checks the exact frozen original order.
+        items = result.get("items") if isinstance(result, dict) else result
+        if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
             raise CryptoPayError("Crypto Pay invoice lookup is incomplete")
-        if any(type(x.get("invoice_id")) is not int for x in result):
+        if any(type(x.get("invoice_id")) is not int for x in items):
             raise CryptoPayError("Crypto Pay invoice ID is invalid")
-        if not {x["invoice_id"] for x in result} <= set(invoice_ids):
+        received = [x["invoice_id"] for x in items]
+        if len(set(received)) != len(received):
+            raise CryptoPayError("Crypto Pay returned duplicate invoices")
+        if not set(received) <= set(invoice_ids):
             raise CryptoPayError("Crypto Pay returned unrelated invoice data")
-        return tuple(result)
+        return tuple(items)

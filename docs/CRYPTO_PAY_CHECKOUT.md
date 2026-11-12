@@ -53,3 +53,14 @@ silently expose the old owner's merchant credential to the new owner.
    with bounded network usage; no second access/subscriber database.
 5. Exact-head PostgreSQL CI, fresh supervisor cold import, Codex review,
    explicit owner approval before any merge/staging/activation.
+
+### Provider wire compatibility (PR #133)
+
+The official Crypto Pay API documentation describes getInvoices as returning
+an invoice array. Provider integrations also return an envelope
+`result: {count, items: [...]}`. Both are accepted, while duplicate,
+unexpected and malformed invoice IDs are rejected; a paid grant still requires
+matching all immutable local invoice attributes. Legacy Crypto Bot invoice
+links on `https://t.me/send?start=...` and current
+`https://t.me/CryptoBot?start=...` are accepted only on mainnet; third-party
+domains, usernames and nonstandard ports are rejected.
