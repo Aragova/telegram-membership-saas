@@ -187,7 +187,12 @@ then persists `status='issuing'` before contacting the provider. A 15-minute
 reservation TTL and bounded outstanding-order count protect old quotes. If
 Crypto Pay times out or the DB commit fails after provider acceptance, the
 `issuing` state MUST be recovered by querying the original provider app;
-blind re-creation is forbidden. Successful responses store the provider ID
+blind re-creation is forbidden. A bounded `getInvoices` listing (five
+100-invoice pages by default) can recover a matching payload from the
+original credential version, after validating the same amount, currency,
+status and official invoice link. If the invoice cannot be found, its
+uncertain state is retained and no second provider bill is created.
+Successful responses store the provider ID
 and URL, and repeating an already-issued request returns the same frozen
 link. Rotation/disconnection prevents new issuance from a retired app, while
 already issued invoices remain bound to their historic credential version.
