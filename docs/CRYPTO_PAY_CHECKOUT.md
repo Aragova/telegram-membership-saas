@@ -189,9 +189,15 @@ Crypto Pay times out or the DB commit fails after provider acceptance, the
 `issuing` state MUST be recovered by querying the original provider app;
 blind re-creation is forbidden. A bounded `getInvoices` listing (five
 100-invoice pages by default) can recover a matching payload from the
-original credential version, after validating the same amount, currency,
-status and official invoice link. If the invoice cannot be found, its
-uncertain state is retained and no second provider bill is created.
+original credential version, after validating the same amount, currency
+and payload. Provider-confirmed `expired` invoices are recorded with the
+original provider ID and a local terminal `expired` status, WITHOUT exposing
+a payable link or granting a file/subscription. This releases the buyer's
+pending-invoice slot. Expired provider invoices may omit payment links, so
+only active/paid invoices require a safe official URL. Conflicting paid
+evidence on a supposedly expired invoice is rejected. If the invoice cannot
+be found, its uncertain state is retained and no second provider bill is
+created.
 Successful responses store the provider ID
 and URL, and repeating an already-issued request returns the same frozen
 link. Rotation/disconnection prevents new issuance from a retired app, while
