@@ -1,7 +1,8 @@
 """Crypto Pay reserved/issued invoices are not payment or delivery evidence."""
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
@@ -367,5 +368,39 @@ async def test_crypto_reservation_prevents_physical_file_deletion_but_not_remova
                 encryption_key=key, client_factory=Provider,
             )
         assert Provider.created == []
+    finally:
+        await engine.dispose()
+
+
+async def test_uncertain_invoices_keep_buyer_quota_even_after_24_hours():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        owner, _, project, bot_uuid, _ = await _project(factory, _tid())
+        async with system_project_session_scope(factory, project) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+        app, product = await _fixture(
+            factory, owner_id=owner, project_id=project, bot_id=bot_id, key=key,
+        )
+        buyer = _tid()
+        async with system_project_session_scope(factory, project) as session:
+            for _ in range(10):
+                session.add(CryptoPayInvoice(
+                    project_id=project, app_id=app.app_id,
+                    telegram_bot_id=bot_id, telegram_user_id=buyer,
+                    kind="file", product_id=product, name_snapshot="File",
+                    amount=Decimal("55.00"), currency_code="RUB",
+                    currency_type="fiat", payload="cp:" + uuid4().hex,
+                    status="issuing",
+                    created_at=datetime.now(UTC) - timedelta(days=3),
+                ))
+        with pytest.raises(ValueError, match="Too many pending"):
+            await reserve_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id, buyer_id=buyer,
+                kind="file", target_id=product, currency="RUB",
+            )
     finally:
         await engine.dispose()
