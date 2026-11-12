@@ -18,10 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
-from telegram_membership_saas.db import (
-    system_project_session_scope,
-    tenant_session_scope,
-)
+from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.crypto_pay.service import connect_crypto_pay
 from telegram_membership_saas.modules.identity import TelegramUser
