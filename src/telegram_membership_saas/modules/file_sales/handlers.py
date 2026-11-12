@@ -49,6 +49,7 @@ from telegram_membership_saas.modules.file_sales.rich_ui import (
 from telegram_membership_saas.modules.file_sales.service import (
     add_folder,
     add_product_asset,
+    authorize_file_stars_precheckout,
     change_product_status,
     confirm_stars_payment,
     create_product,
@@ -61,7 +62,6 @@ from telegram_membership_saas.modules.file_sales.service import (
     list_products,
     list_purchases_page,
     mark_file_delivery,
-    precheckout_allowed,
     purchased_assets,
     record_definitive_stars_precheckout_rejection,
     update_draft_product,
@@ -1150,10 +1150,11 @@ def create_file_sales_router(
     async def file_pre_checkout(query: PreCheckoutQuery, bot: Bot) -> None:
         if not query.invoice_payload.startswith("fs:"):
             return
-        allowed = await precheckout_allowed(
+        allowed, fresh_authorization = await authorize_file_stars_precheckout(
             factory, project_id=project_id, bot_id=bot.id,
             buyer_id=query.from_user.id, invoice_payload=query.invoice_payload,
             amount=query.total_amount, currency=query.currency,
+            precheckout_query_id=query.id,
         )
         try:
             await bot.answer_pre_checkout_query(
@@ -1164,7 +1165,8 @@ def create_file_sales_router(
                 ),
             )
         except TelegramBadRequest as exc:
-            if allowed and _definitively_rejected_stars_precheckout(str(exc)):
+            if (allowed and fresh_authorization
+                    and _definitively_rejected_stars_precheckout(str(exc))):
                 # The provider explicitly rejected this authorization.
                 # Resolve only THIS invoice, in an immutable evidence row.
                 try:
@@ -1172,6 +1174,7 @@ def create_file_sales_router(
                         factory, project_id=project_id, bot_id=bot.id,
                         buyer_id=query.from_user.id,
                         invoice_payload=query.invoice_payload,
+                        precheckout_query_id=query.id,
                     )
                 except Exception:
                     log.exception(
