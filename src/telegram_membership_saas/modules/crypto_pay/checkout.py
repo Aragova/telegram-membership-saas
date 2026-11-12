@@ -96,6 +96,7 @@ async def reserve_crypto_invoice(
         product_id = None
         duration_value = None
         duration_unit = None
+        resource_ids_snapshot: list[str] = []
         if kind == "subscription":
             row = (await session.execute(
                 select(Plan, PlanPrice).join(
@@ -117,7 +118,7 @@ async def reserve_crypto_invoice(
             if row is None:
                 raise ValueError("Subscription price is no longer available")
             plan, price = row
-            linked = await session.scalar(select(Resource.id).join(
+            linked = (await session.scalars(select(Resource.id).join(
                 PlanResource,
                 (PlanResource.project_id == Resource.project_id)
                 & (PlanResource.resource_id == Resource.id),
@@ -126,9 +127,12 @@ async def reserve_crypto_invoice(
                 PlanResource.plan_id == plan.id,
                 Resource.status == "active",
                 Resource.removed_at.is_(None),
-            ).limit(1))
-            if linked is None:
+            ).order_by(Resource.id))).all()
+            if not linked:
                 raise ValueError("Subscription has no active resource")
+            # Freeze exact original channel/group IDs for recovery even if
+            # the owner subsequently edits the plan resources.
+            resource_ids_snapshot = [str(resource_id) for resource_id in linked]
             # Import lazily: customer runtime previously had a cold-start
             # import cycle via telegram_commerce.__init__ and Stars handlers.
             from telegram_membership_saas.modules.telegram_commerce.service import (
@@ -199,6 +203,7 @@ async def reserve_crypto_invoice(
             duration_unit=duration_unit, amount=amount,
             currency_code=currency, currency_type=spec["currency_type"],
             payload="cp:" + order_id.hex, status="reserved",
+            resource_ids_snapshot=resource_ids_snapshot,
         )
         session.add(record)
         await session.flush()
