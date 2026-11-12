@@ -1,6 +1,6 @@
 """Original-app verified Crypto Pay transfer credits, audit-only.
 
-Revision ID: 0065_crypto_verified_transfer_credits
+Revision ID: 0065_crypto_refund_credits
 Revises: 0064_crypto_sale_usd_evidence
 
 No payouts, invoice netting, SaaS billing activation or buyer controls.
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0065_crypto_verified_transfer_credits"
+revision: str = "0065_crypto_refund_credits"
 down_revision: str | None = "0064_crypto_sale_usd_evidence"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
