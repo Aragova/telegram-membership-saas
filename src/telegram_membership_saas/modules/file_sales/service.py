@@ -31,6 +31,7 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileProduct,
     FilePurchase,
     FileStarAuthorization,
+    FileStarAuthorizationRejection,
 )
 from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
@@ -784,6 +785,12 @@ async def _has_authorized_file_stars(
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.product_id == product_id,
             FilePurchase.status == "pending",
+            ~select(FileStarAuthorizationRejection.purchase_id).where(
+                FileStarAuthorizationRejection.purchase_id
+                == FileStarAuthorization.purchase_id,
+                FileStarAuthorizationRejection.project_id
+                == FileStarAuthorization.project_id,
+            ).exists(),
         ).limit(1))
     return authorized is not None
 
@@ -906,6 +913,10 @@ async def create_stars_order(
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.product_id == product_id,
             FilePurchase.status == "pending",
+            ~select(FileStarAuthorizationRejection.purchase_id).where(
+                FileStarAuthorizationRejection.purchase_id == FilePurchase.id,
+                FileStarAuthorizationRejection.project_id == FilePurchase.project_id,
+            ).exists(),
         ).order_by(FilePurchase.created_at.desc()).limit(1))
         if pending and pending.stars_amount == item.stars_price:
             return DigitalOrder(
@@ -918,6 +929,10 @@ async def create_stars_order(
             FilePurchase.telegram_bot_id == bot_id,
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.status == "pending",
+            ~select(FileStarAuthorizationRejection.purchase_id).where(
+                FileStarAuthorizationRejection.purchase_id == FilePurchase.id,
+                FileStarAuthorizationRejection.project_id == FilePurchase.project_id,
+            ).exists(),
         )) or 0
         if total >= PENDING_ORDER_LIMIT:
             raise ValueError(tr(
@@ -963,6 +978,16 @@ async def precheckout_allowed(
             ))
             if purchase is None:
                 return False
+            rejected = await session.scalar(select(
+                FileStarAuthorizationRejection.purchase_id,
+            ).where(
+                FileStarAuthorizationRejection.purchase_id == purchase.id,
+                FileStarAuthorizationRejection.project_id == project_id,
+            ))
+            if rejected is not None:
+                # This invoice's previous precheckout was DEFINITIVELY
+                # rejected. Never reauthorize its old payment link.
+                return False
             # A pending Stars invoice must not charge again after an
             # authenticated Crypto Pay purchase settled for this file.
             owned_crypto = await session.scalar(select(CryptoPayInvoice.id).where(
@@ -1004,6 +1029,45 @@ async def precheckout_allowed(
             return allowed
         except (PermissionError, ValueError):
             return False
+
+
+async def record_definitive_stars_precheckout_rejection(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, buyer_id: int,
+    invoice_payload: str,
+) -> bool:
+    """Release only a DEFINITIVELY rejected Stars precheckout acknowledgement.
+
+    This may only be called when Telegram's API explicitly returns a
+    negative, non-ambiguous answer for our positive precheckout response.
+    An ambiguous network timeout keeps the safety claim until independent
+    provider reconciliation. Financial purchase data is never modified.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        await checkout_retirement_lock(session, project_id)
+        purchase = await session.scalar(select(FilePurchase).where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.invoice_payload == invoice_payload,
+            FilePurchase.status == "pending",
+        ))
+        if purchase is None:
+            return False
+        authorization = await session.scalar(select(
+            FileStarAuthorization.purchase_id,
+        ).where(
+            FileStarAuthorization.project_id == project_id,
+            FileStarAuthorization.purchase_id == purchase.id,
+        ))
+        if authorization is None:
+            return False
+        await session.execute(insert(FileStarAuthorizationRejection).values(
+            purchase_id=purchase.id, project_id=project_id,
+        ).on_conflict_do_nothing(
+            index_elements=[FileStarAuthorizationRejection.purchase_id],
+        ))
+        return True
 
 
 async def confirm_stars_payment(
