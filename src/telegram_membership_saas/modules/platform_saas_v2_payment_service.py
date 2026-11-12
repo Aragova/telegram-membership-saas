@@ -29,6 +29,7 @@ async def _rpc(
     """Named, closed-set SQL entrypoints, never interpolate a caller's name."""
     names = {
         "platform_saas_v2_invoice_balance": ("invoice",),
+        "platform_saas_v2_available_methods": ("invoice",),
         "platform_saas_v2_create_attempt": ("invoice", "amount_rub", "currency"),
         "platform_saas_v2_submit_proof":
             ("attempt", "bot_id", "message_id", "file_id", "file_type"),
@@ -46,6 +47,7 @@ async def _rpc(
     )
     if name in {
         "platform_saas_v2_invoice_balance",
+        "platform_saas_v2_available_methods",
         "platform_saas_v2_create_attempt",
         "platform_saas_v2_pending_proofs",
     }:
@@ -54,6 +56,23 @@ async def _rpc(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
         return (await session.execute(query, arguments)).scalar_one()
+
+
+async def saas_v2_available_methods(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, invoice_id: UUID, project_id: UUID | None = None,
+) -> tuple[str, ...]:
+    data = await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name="platform_saas_v2_available_methods",
+        arguments={"invoice": invoice_id},
+    )
+    if not isinstance(data, list) or any(
+        not isinstance(code, str) or code not in PAYMENT_CURRENCIES
+        for code in data
+    ):
+        raise RuntimeError("Invalid platform bank currency list")
+    return tuple(data)
 
 
 async def saas_v2_invoice_balance(
