@@ -54,6 +54,22 @@ def upgrade() -> None:
     op.execute(
         "INSERT INTO public.platform_saas_crypto_capture_control(id) VALUES(1)"
     )
+    # A durable owner-only scan cursor advances past absent quotations and
+    # ambiguous attribution instead of letting the same oldest 200 invoices
+    # block every newer, fully verified sale forever. Not a financial fact:
+    # unlike the immutable evidence tables, this cursor MAY be updated.
+    op.create_table(
+        "platform_saas_crypto_scan_cursor",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("last_paid_at", sa.DateTime(timezone=True)),
+        sa.Column("last_invoice_id", sa.Uuid()),
+        sa.CheckConstraint("id=1", name="ck_crypto_scan_singleton"),
+        sa.CheckConstraint(
+            "(last_paid_at IS NULL) = (last_invoice_id IS NULL)",
+            name="ck_crypto_scan_complete",
+        ),
+    )
+    op.execute("INSERT INTO public.platform_saas_crypto_scan_cursor(id) VALUES(1)")
     op.create_table(
         "platform_saas_crypto_sales",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -125,6 +141,7 @@ def upgrade() -> None:
     for table in (
         "crypto_pay_paid_usd_rates",
         "platform_saas_crypto_capture_control",
+        "platform_saas_crypto_scan_cursor",
         "platform_saas_crypto_sales",
     ):
         op.execute(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY")
@@ -192,6 +209,7 @@ def upgrade() -> None:
           IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
           THEN
             REVOKE ALL ON public.platform_saas_crypto_capture_control,
+                public.platform_saas_crypto_scan_cursor,
                 public.platform_saas_crypto_sales
                 FROM membership_runtime;
             GRANT SELECT,INSERT ON public.crypto_pay_paid_usd_rates
@@ -227,6 +245,9 @@ def upgrade() -> None:
           inserted integer:=0;
           unresolved integer:=0;
           cutoff timestamptz;
+          scan_state record;
+          last_seen_at timestamptz;
+          last_seen_id uuid;
         BEGIN
           PERFORM public.platform_saas_require_owner();
           IF p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 200 THEN
@@ -239,6 +260,12 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Crypto Pay capture cutoff missing'
               USING ERRCODE='42501';
           END IF;
+          SELECT last_paid_at,last_invoice_id INTO scan_state
+          FROM public.platform_saas_crypto_scan_cursor WHERE id=1 FOR UPDATE;
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'Crypto Pay audit scan cursor unavailable'
+              USING ERRCODE='42501';
+          END IF;
           FOR original IN
             SELECT i.id,i.project_id,i.app_id,i.provider_invoice_id,
                    i.telegram_bot_id,i.kind,i.currency_code,
@@ -248,6 +275,10 @@ def upgrade() -> None:
                 AND a.project_id=i.project_id
             WHERE i.status='paid' AND i.paid_at>=cutoff
               AND a.environment='mainnet'
+              AND (scan_state.last_paid_at IS NULL OR
+                   (i.paid_at,i.id)>(
+                     scan_state.last_paid_at,scan_state.last_invoice_id
+                   ))
               AND NOT EXISTS (
                 SELECT 1 FROM public.platform_saas_crypto_sales s
                 WHERE s.invoice_id=i.id
@@ -255,6 +286,8 @@ def upgrade() -> None:
             ORDER BY i.paid_at,i.id LIMIT p_limit
           LOOP
             processed:=processed+1;
+            last_seen_at:=original.paid_at;
+            last_seen_id:=original.id;
             sale_date:=(original.paid_at AT TIME ZONE 'Europe/Moscow')::date;
             rate:=NULL;
             rate_provenance:=NULL;
@@ -379,6 +412,17 @@ def upgrade() -> None:
             ) ON CONFLICT (invoice_id) DO NOTHING;
             IF FOUND THEN inserted:=inserted+1; END IF;
           END LOOP;
+          -- A scan with no next rows wraps back to the oldest unresolved
+          -- invoice. Persist progress before returning, so missing FX in
+          -- one project cannot starve newer payments in another.
+          IF processed=0 THEN
+            UPDATE public.platform_saas_crypto_scan_cursor
+               SET last_paid_at=NULL,last_invoice_id=NULL WHERE id=1;
+          ELSE
+            UPDATE public.platform_saas_crypto_scan_cursor
+               SET last_paid_at=last_seen_at,last_invoice_id=last_seen_id
+             WHERE id=1;
+          END IF;
           RETURN jsonb_build_object(
               'examined',processed,'recorded',inserted,
               'unresolved',unresolved,
