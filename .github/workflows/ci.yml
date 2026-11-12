@@ -51,9 +51,7 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Lint
-        run: |
-          ruff check --diff . || true
-          ruff check .
+        run: ruff check .
 
       # Real deployment starts each entrypoint in a fresh interpreter.
       # compileall and pytest's preloaded import graph cannot detect cycles.

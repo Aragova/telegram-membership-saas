@@ -31,7 +31,6 @@ from telegram_membership_saas.modules.owner_setup.service import (
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.tenant_context import TenantContext
 
-
 # Project/bot-scoped hint set ONLY by the owner-authorized Crypto Pay
 # setup callback. It is an optimization, not a permission grant: the live
 # wizard and merchant API connection always revalidate in the database.
