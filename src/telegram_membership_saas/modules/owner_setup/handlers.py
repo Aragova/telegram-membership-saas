@@ -3519,6 +3519,101 @@ def create_owner_setup_router(
         else:
             await show_dashboard(bot, message.chat.id, actor_id, project_id)
 
+    class ViMiBillingProofFilter(BaseFilter):
+        """Only media replies to this bot's durable invoice attempt prompt.
+
+        No in-memory wizard: after a supervisor restart the customer can
+        still submit the receipt by replying to the original bot message.
+        """
+        async def __call__(self, message: Message) -> bool:
+            reply = message.reply_to_message
+            return bool(
+                reply is not None
+                and reply.text is not None
+                and reply.text.startswith("🧾 ViMi Pay · ")
+                and (message.photo or message.document)
+            )
+
+    @router.message(ViMiBillingProofFilter())
+    async def receive_vimi_bank_proof(message: Message, bot: Bot) -> None:
+        if (
+            fixed_project_id is None or message.from_user is None
+            or message.chat.type != "private"
+            or message.chat.id != message.from_user.id
+            or message.reply_to_message is None
+            or message.reply_to_message.from_user is None
+            or message.reply_to_message.from_user.id != bot.id
+        ):
+            return
+        reply = message.reply_to_message
+        token = reply.text.split(" · ", 1)[1].split()[0]
+        try:
+            attempt = UUID(hex=token)
+        except (ValueError, AttributeError):
+            return
+        sender = await actor(message.from_user)
+        if message.photo:
+            file_type = "photo"
+            file_id = message.photo[-1].file_id
+        elif message.document:
+            file_type = "document"
+            file_id = message.document.file_id
+        else:
+            return
+        try:
+            await saas_v2_submit_proof(
+                factory, actor_id=sender, attempt_id=attempt,
+                project_id=fixed_project_id, bot_id=bot.id,
+                message_id=message.message_id,
+                file_id=file_id, file_type=file_type,
+            )
+        except (ValueError, PermissionError):
+            await bot.send_message(
+                message.from_user.id,
+                tr("⚠️ Этот чек не относится к вашему действующему счёту. "
+                   "Откройте 🧾 Счёт и повторите оплату.",
+                   "⚠️ This receipt does not match an active invoice. "
+                   "Open 🧾 Bill and try again."),
+            )
+            return
+        except Exception:
+            await bot.send_message(
+                message.from_user.id,
+                tr("⚠️ Чек не удалось сохранить. Повторите отправку.",
+                   "⚠️ The receipt could not be recorded. Please retry."),
+            )
+            return
+        # The image/file_id is bot-scoped. Use the SAME bot to deliver
+        # evidence to the central operator's Telegram account, rather than
+        # passing unusable file IDs into the central Bot API.
+        operator_tg = get_settings().platform_owner_telegram_id
+        if operator_tg and operator_tg != message.from_user.id:
+            try:
+                caption = (
+                    "🧾 ViMi Pay · " + attempt.hex + "\n"
+                    + tr("Платёжный чек на проверку. Сумму и реквизиты "
+                         "сверьте с карточкой в 👑 Финансы.",
+                         "Payment proof for review. Match bank details "
+                         "and amount against 👑 Finances.")
+                )
+                if file_type == "photo":
+                    await bot.send_photo(operator_tg, file_id, caption=caption)
+                else:
+                    await bot.send_document(operator_tg, file_id, caption=caption)
+            except AiogramError:
+                # The record remains visible to the central operator in
+                # the pending-proof queue; bank verification is mandatory.
+                logging.getLogger(__name__).warning(
+                    "ViMi Pay receipt relay unavailable (bot-scoped media)"
+                )
+        await bot.send_message(
+            message.from_user.id,
+            tr("✅ Чек зарегистрирован. Оплата будет зачтена только после "
+               "подтверждения поступления администратором ViMi Pay.",
+               "✅ Receipt recorded. The platform operator must verify "
+               "actual bank funds before this payment is credited."),
+        )
+
     @router.message(Command("billing"))
     async def owner_platform_billing_command(message: Message, bot: Bot) -> None:
         if not _private(message) or message.from_user is None:
