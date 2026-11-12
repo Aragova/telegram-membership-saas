@@ -722,6 +722,44 @@ async def _load_paid(
     )
 
 
+async def paid_file_purchase_id(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    bot_id: int, buyer_id: int, product_id: UUID,
+) -> UUID | None:
+    """Return any rail's already-paid purchase; files are bought only once.
+
+    A confirmed crypto invoice is identical ownership evidence to a paid
+    Stars order or approved bank transfer. Purchase history remains durable.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        stars = await session.scalar(select(FilePurchase.id).where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.product_id == product_id,
+            FilePurchase.status == "paid",
+        ).limit(1))
+        if stars is not None:
+            return stars
+        manual = await session.scalar(select(FileManualOrder.id).where(
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.telegram_bot_id == bot_id,
+            FileManualOrder.telegram_user_id == buyer_id,
+            FileManualOrder.product_id == product_id,
+            FileManualOrder.status == "approved",
+        ).limit(1))
+        if manual is not None:
+            return manual
+        return await session.scalar(select(CryptoPayInvoice.id).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+            CryptoPayInvoice.product_id == product_id,
+            CryptoPayInvoice.kind == "file",
+            CryptoPayInvoice.status == "paid",
+        ).limit(1))
+
+
 @translate_commercial_hold
 async def create_stars_order(
     factory: async_sessionmaker[AsyncSession], *,
@@ -774,6 +812,20 @@ async def create_stars_order(
             return DigitalOrder(
                 id=manual_paid.id, product_id=product_id,
                 product_name=manual_paid.product_name,
+                amount=item.stars_price, invoice_payload="", paid=True,
+            )
+        crypto_paid = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+            CryptoPayInvoice.product_id == product_id,
+            CryptoPayInvoice.kind == "file",
+            CryptoPayInvoice.status == "paid",
+        ).limit(1))
+        if crypto_paid is not None:
+            return DigitalOrder(
+                id=crypto_paid.id, product_id=product_id,
+                product_name=crypto_paid.name_snapshot,
                 amount=item.stars_price, invoice_payload="", paid=True,
             )
         # A disabled storefront method cannot create a new Stars invoice.
