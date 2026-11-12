@@ -205,10 +205,11 @@ async def issue_reserved_crypto_invoice(
     encryption_key: SecretStr | None,
     client_factory: Callable[..., CryptoPayClient] = CryptoPayClient,
 ) -> IssuedCryptoInvoice:
-    """Issue once under a row lock; never expose a link without durable storage.
+    """Commit 'issuing' BEFORE contacting Crypto Pay to prevent duplicate bills.
 
-    Serialized by project retirement lock and invoice row lock. On provider
-    errors the database transaction rolls back and no link is returned.
+    A network timeout, process crash or failed DB finalization leaves 'issuing'
+    and requires explicit provider reconciliation, NEVER blind createInvoice
+    retry. No buyer-facing route or automatic paid delivery exists yet.
     """
     async with system_project_session_scope(factory, project_id) as session:
         await checkout_retirement_lock(session, project_id)
@@ -225,6 +226,8 @@ async def issue_reserved_crypto_invoice(
                 id=record.id, url=record.invoice_url,
                 amount=record.amount, currency_code=record.currency_code,
             )
+        if record.status == "issuing":
+            raise CryptoPayError("Invoice issuance is awaiting provider reconciliation")
         if record.status != "reserved":
             raise ValueError("Invoice cannot be issued in its current state")
         await _ready(
@@ -232,6 +235,57 @@ async def issue_reserved_crypto_invoice(
         )
         if record.created_at < datetime.now(UTC) - timedelta(minutes=15):
             raise ValueError("Crypto Pay checkout reservation has expired")
+
+        # A product or channel can disappear between reservation and issue.
+        # Do not create a payable invoice for an item that cannot be delivered.
+        # Existing issued invoices stay historically payable/recoverable.
+        if record.kind == "file":
+            available = await session.scalar(select(FileProduct.id).join(
+                FileFolder,
+                (FileFolder.id == FileProduct.folder_id)
+                & (FileFolder.project_id == FileProduct.project_id),
+            ).where(
+                FileProduct.id == record.product_id,
+                FileProduct.project_id == project_id,
+                FileProduct.telegram_bot_id == bot_id,
+                FileProduct.status == "published",
+                FileProduct.removed_at.is_(None),
+                FileFolder.status == "active",
+                FileFolder.removed_at.is_(None),
+            ).with_for_update(of=FileProduct))
+            asset = await session.scalar(select(FileAsset.id).where(
+                FileAsset.project_id == project_id,
+                FileAsset.product_id == record.product_id,
+            ).limit(1))
+            if available is None or asset is None:
+                raise ValueError("Reserved file has been removed or is unavailable")
+        elif record.kind == "subscription":
+            available = await session.scalar(select(Plan.id).join(
+                PlanPrice,
+                (PlanPrice.project_id == Plan.project_id)
+                & (PlanPrice.plan_id == Plan.id),
+            ).where(
+                Plan.id == record.plan_id,
+                Plan.project_id == project_id,
+                PlanPrice.id == record.plan_price_id,
+                Plan.status == "active",
+                Plan.removed_at.is_(None),
+            ).with_for_update(of=Plan))
+            resource = await session.scalar(select(Resource.id).join(
+                PlanResource,
+                (PlanResource.project_id == Resource.project_id)
+                & (PlanResource.resource_id == Resource.id),
+            ).where(
+                PlanResource.project_id == project_id,
+                PlanResource.plan_id == record.plan_id,
+                Resource.status == "active",
+                Resource.removed_at.is_(None),
+            ).limit(1))
+            if available is None or resource is None:
+                raise ValueError("Reserved subscription is no longer available")
+        else:
+            raise ValueError("Unsupported Crypto Pay checkout kind")
+
         app, token = await load_crypto_app_token(
             session, project_id=project_id, app_id=record.app_id,
             encryption_key=encryption_key,
@@ -242,15 +296,31 @@ async def issue_reserved_crypto_invoice(
         if (app.status != "active" or app.telegram_bot_id != bot_id
                 or app.owner_user_id != owner):
             raise PermissionError("Merchant connection was replaced or disabled")
-        async with client_factory(
-            token, testnet=app.environment == "testnet",
-        ) as provider:
-            issued = await provider.create_invoice(
-                currency=record.currency_code, amount=record.amount,
-                payload=record.payload, description=record.name_snapshot,
-            )
-        record.provider_invoice_id = issued["invoice_id"]
-        record.invoice_url = issued["bot_invoice_url"]
+        testnet = app.environment == "testnet"
+        amount, currency, payload = record.amount, record.currency_code, record.payload
+        description = record.name_snapshot
+        record.status = "issuing"
+        await session.flush()
+    # The transition above is durable before provider I/O. Never return a
+    # link or retry an uncertain request until a separate verified recovery.
+    async with client_factory(token, testnet=testnet) as provider:
+        response = await provider.create_invoice(
+            currency=currency, amount=amount,
+            payload=payload, description=description,
+        )
+    async with system_project_session_scope(factory, project_id) as session:
+        await checkout_retirement_lock(session, project_id)
+        record = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.id == invoice_id,
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.app_id == app.id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+        ).with_for_update())
+        if record is None or record.status != "issuing":
+            raise CryptoPayError("Crypto Pay issuance changed before finalization")
+        record.provider_invoice_id = response["invoice_id"]
+        record.invoice_url = response["bot_invoice_url"]
         record.status = "issued"
         await session.flush()
         return IssuedCryptoInvoice(
