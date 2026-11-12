@@ -246,8 +246,30 @@ def test_uncertain_invoice_recovery_checks_price_payload_and_official_url():
         ("amount", "101"),
         ("fiat", "EUR"),
         ("bot_invoice_url", "https://invalid.example/pay"),
-        ("status", "expired"),
     ):
         invalid = {**template, field: replacement}
         with pytest.raises(CryptoPayError):
             verify_created_invoice_snapshot(invalid, **kwargs)
+
+
+
+def test_recovered_expired_invoice_is_terminal_without_a_payment_link():
+    snapshot = {
+        "invoice_id": 93, "payload": "cp:expired", "status": "expired",
+        "currency_type": "fiat", "fiat": "EUR", "amount": "15.00",
+    }
+    expected = dict(
+        payload="cp:expired", amount=Decimal("15.00"),
+        currency_code="EUR", currency_type="fiat", testnet=False,
+    )
+    # Provider may omit bot_invoice_url on expired invoices.
+    # Never surface an old or malformed payment URL after expiry.
+    assert verify_created_invoice_snapshot(snapshot, **expected) == (93, None)
+    for change in (
+        {"amount": "15.01"}, {"fiat": "USD"},
+        {"payload": "cp:someone-else"},
+        {"status": "cancelled"}, {"paid_at": datetime.now(UTC).isoformat()},
+    ):
+        altered = {**snapshot, **change}
+        with pytest.raises(CryptoPayError):
+            verify_created_invoice_snapshot(altered, **expected)
