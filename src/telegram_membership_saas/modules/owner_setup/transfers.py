@@ -28,6 +28,7 @@ from telegram_membership_saas.modules.bots.service import (
     encrypt_token,
     verify_telegram_bot,
 )
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp
 from telegram_membership_saas.modules.entitlements.models import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -377,6 +378,21 @@ async def finalize_transfer(
                 PaymentMethod.project_id == project_id,
                 PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
             ).values(status=PaymentMethodStatus.DISABLED.value)
+        )
+        # Crypto Pay credentials belong to the outgoing merchant. Retire
+        # their app BEFORE project ownership changes, while its owner RLS
+        # still permits writes. Preserve the encrypted historical version
+        # for late invoice verification; never hand it to the new owner.
+        await session.execute(
+            update(CryptoPayApp).where(
+                CryptoPayApp.project_id == project_id,
+                CryptoPayApp.telegram_bot_id == bot.telegram_bot_id,
+                CryptoPayApp.owner_user_id == actor_id,
+                CryptoPayApp.status == "active",
+            ).values(
+                status="retired",
+                retired_at=datetime.now(UTC),
+            )
         )
         bot.token_ciphertext = item.encrypted_new_token
         await session.flush()
