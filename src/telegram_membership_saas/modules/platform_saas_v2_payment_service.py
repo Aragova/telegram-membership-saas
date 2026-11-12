@@ -112,11 +112,13 @@ async def saas_v2_create_attempt(
 
 async def saas_v2_submit_proof(
     factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID, attempt_id: UUID, project_id: UUID,
+    actor_id: UUID, attempt_id: UUID, project_id: UUID | None,
     bot_id: int, message_id: int, file_id: str, file_type: str,
 ) -> UUID:
-    if not project_id or bot_id <= 0 or message_id <= 0:
-        raise PermissionError("Connected bot source required")
+    # Account invoices also live in the central bot after bot transfer.
+    # The SQL RPC verifies the historical liable owner independently.
+    if bot_id <= 0 or message_id <= 0:
+        raise PermissionError("Telegram proof source required")
     if file_type not in ("photo", "document") or not file_id:
         raise ValueError("Unsupported payment evidence")
     result = await _rpc(

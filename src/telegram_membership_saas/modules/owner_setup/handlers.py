@@ -3537,7 +3537,7 @@ def create_owner_setup_router(
     @router.message(ViMiBillingProofFilter())
     async def receive_vimi_bank_proof(message: Message, bot: Bot) -> None:
         if (
-            fixed_project_id is None or message.from_user is None
+            message.from_user is None
             or message.chat.type != "private"
             or message.chat.id != message.from_user.id
             or message.reply_to_message is None
