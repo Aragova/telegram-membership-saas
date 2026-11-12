@@ -215,6 +215,8 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.platform_saas_invoice_ui import (
+    unified_monthly_classic,
+    unified_monthly_rich,
     issued_invoice_classic,
     issued_invoice_rich,
     issued_quote_classic,
@@ -222,7 +224,7 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     quote_fingerprint,
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
-    merchant_saas_project_preview,
+    merchant_saas_unified_monthly_preview,
     merchant_saas_statements,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
@@ -230,9 +232,6 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
     preview_saas_invoice_currency,
     saas_invoice_credit_history,
     saas_invoice_currency_snapshot,
-)
-from telegram_membership_saas.modules.platform_stars_sync import (
-    merchant_star_project_summary,
 )
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
@@ -974,15 +973,10 @@ def create_owner_setup_router(
             factory, actor_user_id=actor_id, project_id=project_id,
             page=page,
         )
-        preview = None
-        stars = None
+        unified = None
         if project_id is not None:
             month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
-            preview = await merchant_saas_project_preview(
-                factory, actor_user_id=actor_id,
-                project_id=project_id, month=month,
-            )
-            stars = await merchant_star_project_summary(
+            unified = await merchant_saas_unified_monthly_preview(
                 factory, actor_user_id=actor_id,
                 project_id=project_id, month=month,
             )
@@ -1090,35 +1084,13 @@ def create_owner_setup_router(
             else tr("⬅️ Настройки", "⬅️ Settings"),
             "projects" if project_id is None else "settings",
         )])
-        if preview is not None:
+        if unified is not None:
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html=_saas_preview_rich(preview) + "\n"
-                + (_saas_stars_rich(stars) + "\n" if stars else "")
+                rich_html=unified_monthly_rich(unified) + "\n"
                 + _saas_invoices_rich(report),
-                classic_html=_saas_preview_classic(preview) + "\n"
-                + (
-                    display_currency("XTR") + " · "
-                    + tr("Продано: ", "Sold: ")
-                    + str(stars["stars"]) + " "
-                    + display_currency("XTR") + " · "
-                    + tr("Возвратов: ", "Refunds: ")
-                    + str(int(stars.get("refunds", 0))) + " · "
-                    + tr("Кредит: ", "Credit: ")
-                    + "$" + format(Decimal(str(
-                        stars.get("commission_credit_usd", "0")
-                    )), ".2f") + " · "
-                    + tr("5% в USD: ", "5% in USD: ")
-                    + (
-                        tr("Освобождён", "Exempt")
-                        if stars.get("platform_owner_exempt")
-                        else "$" + format(
-                            Decimal(str(stars["commission_usd"])), ".2f",
-                        )
-                    ) + "\n"
-                    if stars else ""
-                )
-                + "\n".join(lines),
+                classic_html=unified_monthly_classic(unified)
+                + "\n\n" + "\n".join(lines),
                 reply_markup=_markup(rows),
             )
         else:
