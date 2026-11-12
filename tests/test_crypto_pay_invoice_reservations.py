@@ -30,6 +30,7 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileFolder,
     FileProduct,
 )
+from telegram_membership_saas.modules.file_sales.service import delete_unsold_product
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource
@@ -241,5 +242,97 @@ async def test_crypto_subscription_reservation_fails_closed_on_rotation():
                 encryption_key=key, client_factory=Provider,
             )
         assert not Provider.created
+    finally:
+        await engine.dispose()
+
+
+async def test_uncertain_crypto_invoice_failure_is_not_retried():
+    """Provider may have created an invoice before a timeout was raised."""
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+
+    class TimedOutProvider(Provider):
+        async def create_invoice(self, **_):
+            raise CryptoPayError("Crypto Pay API is temporarily unavailable")
+
+    try:
+        owner, _, project, bot_uuid, _ = await _project(factory, _tid())
+        async with system_project_session_scope(factory, project) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+        _, product = await _fixture(
+            factory, owner_id=owner, project_id=project, bot_id=bot_id, key=key,
+        )
+        buyer = _tid()
+        reserved = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id, buyer_id=buyer,
+            kind="file", target_id=product, currency="RUB",
+        )
+        with pytest.raises(CryptoPayError, match="temporarily unavailable"):
+            await issue_reserved_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer, invoice_id=reserved, encryption_key=key,
+                client_factory=TimedOutProvider,
+            )
+        async with system_project_session_scope(factory, project) as session:
+            record = await session.scalar(select(CryptoPayInvoice).where(
+                CryptoPayInvoice.id == reserved,
+            ))
+            assert record.status == "issuing"
+            assert record.provider_invoice_id is None
+        with pytest.raises(CryptoPayError, match="awaiting provider reconciliation"):
+            await issue_reserved_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer, invoice_id=reserved,
+                encryption_key=key, client_factory=Provider,
+            )
+        assert Provider.created == []
+    finally:
+        await engine.dispose()
+
+
+async def test_crypto_reservation_prevents_physical_file_deletion_but_not_removal():
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        owner, _, project, bot_uuid, _ = await _project(factory, _tid())
+        async with system_project_session_scope(factory, project) as session:
+            bot_id = await session.scalar(select(BotInstance.telegram_bot_id).where(
+                BotInstance.id == bot_uuid,
+            ))
+        _, product = await _fixture(
+            factory, owner_id=owner, project_id=project, bot_id=bot_id, key=key,
+        )
+        buyer = _tid()
+        reserved = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer, kind="file", target_id=product, currency="RUB",
+        )
+        await delete_unsold_product(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, product_id=product,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            item = await session.scalar(select(FileProduct).where(
+                FileProduct.id == product,
+            ))
+            assert item is not None and item.status == "archived"
+            assert await session.scalar(select(FileAsset.id).where(
+                FileAsset.product_id == product,
+            )) is not None
+        with pytest.raises(ValueError, match="removed or is unavailable"):
+            await issue_reserved_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer, invoice_id=reserved,
+                encryption_key=key, client_factory=Provider,
+            )
+        assert Provider.created == []
     finally:
         await engine.dispose()
