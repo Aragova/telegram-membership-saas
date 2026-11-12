@@ -7,6 +7,7 @@ No retroactive billing: existing issued invoices and credited receipts remain
 immutable; read-only report and hold evaluation are corrected consistently.
 """
 from collections.abc import Sequence
+
 from alembic import op
 
 revision: str = "0069_saas_balance"
@@ -18,7 +19,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     # Only privileged SECURITY DEFINER invoice functions may call this
     # helper; runtime/buyers must not enumerate other merchants' debts.
-    op.execute("CREATE FUNCTION public.platform_saas_v2_remaining(p_invoice uuid)\nRETURNS numeric LANGUAGE plpgsql STABLE SECURITY DEFINER\nSET search_path=pg_catalog,public AS $f$\nDECLARE original numeric; received numeric; credited numeric;\nBEGIN\n  SELECT total_rub INTO original FROM public.platform_saas_invoices\n  WHERE id=p_invoice AND status='issued';\n  IF original IS NULL THEN\n    RAISE EXCEPTION 'Issued invoice required for balance'\n      USING ERRCODE='42501';\n  END IF;\n  SELECT coalesce(sum(amount_rub),0) INTO received\n  FROM public.platform_saas_receipts WHERE invoice_id=p_invoice;\n  SELECT coalesce(sum(allocated_rub),0) INTO credited\n  FROM public.platform_saas_payment_allocations_v2 WHERE invoice_id=p_invoice;\n  IF received+credited>original THEN\n    RAISE EXCEPTION 'Invoice overpayment violates accounting invariant'\n      USING ERRCODE='23514';\n  END IF;\n  RETURN original-received-credited;\nEND; $f$")
+    op.execute("CREATE FUNCTION public.platform_saas_v2_remaining(p_invoice uuid)\nRETURNS numeric LANGUAGE plpgsql STABLE SECURITY DEFINER\nSET search_path=pg_catalog,public AS $f$\nDECLARE original numeric; received numeric; credited numeric; invoice_status text;\nBEGIN\n  SELECT total_rub,status INTO original,invoice_status FROM public.platform_saas_invoices\n  WHERE id=p_invoice;\n  IF original IS NULL THEN\n    RAISE EXCEPTION 'Issued invoice required for balance'\n      USING ERRCODE='42501';\n  END IF;\n  IF invoice_status<>'issued' THEN RETURN 0; END IF;\n  SELECT coalesce(sum(amount_rub),0) INTO received\n  FROM public.platform_saas_receipts WHERE invoice_id=p_invoice;\n  SELECT coalesce(sum(allocated_rub),0) INTO credited\n  FROM public.platform_saas_payment_allocations_v2 WHERE invoice_id=p_invoice;\n  IF received+credited>original THEN\n    RAISE EXCEPTION 'Invoice overpayment violates accounting invariant'\n      USING ERRCODE='23514';\n  END IF;\n  RETURN original-received-credited;\nEND; $f$")
     op.execute("""
       REVOKE ALL ON FUNCTION public.platform_saas_v2_remaining(uuid)
       FROM PUBLIC
