@@ -365,3 +365,58 @@ async def test_paid_crypto_file_cannot_be_billed_again_by_crypto_manual_or_stars
                    for row in markup.inline_keyboard for button in row)
     finally:
         await engine.dispose()
+
+
+
+async def test_one_crypto_file_quote_survives_currency_and_price_changes(monkeypatch):
+    """One-time files cannot have simultaneous payable USD and RUB invoices."""
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        owner, project, bot_id, product_id = await _shop(factory, key)
+        async with system_project_session_scope(factory, project) as session:
+            app = await session.scalar(select(CryptoPayApp).where(
+                CryptoPayApp.project_id == project,
+            ))
+            app.environment = "mainnet"
+        monkeypatch.setattr(buyer, "get_settings", lambda: Settings(
+            bot_token_encryption_key=key, crypto_pay_buyer_enabled=True,
+        ))
+        await set_manual_price(
+            factory, project_id=project, bot_id=bot_id,
+            product_id=product_id, actor_id=owner,
+            currency="USD", value="7.50",
+        )
+        options = dict(await price_editor_options(
+            factory, project_id=project, bot_id=bot_id,
+            product_id=product_id, actor_id=owner,
+        ))
+        assert options["USD"] == Decimal("7.50")
+        def kwargs(code):
+            return {
+                "project_id": project, "bot_id": bot_id, "buyer_id": uid,
+                "kind": "file", "target_id": product_id,
+                "currency": code, "encryption_key": key,
+                "client_factory": MainnetProvider,
+            }
+        uid = _tid()
+        first = await begin_buyer_crypto_checkout(factory, **kwargs("RUB"))
+        second = await begin_buyer_crypto_checkout(factory, **kwargs("USD"))
+        assert first.id == second.id
+        assert second.currency == "RUB"
+        assert second.amount == Decimal("55.00")
+        assert len(Provider.created) == 1
+        await set_manual_price(
+            factory, project_id=project, bot_id=bot_id,
+            product_id=product_id, actor_id=owner,
+            currency="RUB", value="64.99",
+        )
+        third = await begin_buyer_crypto_checkout(factory, **kwargs("RUB"))
+        assert third.id == first.id
+        assert third.amount == Decimal("55.00")
+        assert len(Provider.created) == 1
+    finally:
+        await engine.dispose()
