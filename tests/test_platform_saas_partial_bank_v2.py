@@ -78,7 +78,30 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 assert await _call(conn, "platform_saas_v2_bank_method", {
                     "currency": "RUB", "instructions": "ViMi bank RUB test details",
                 })
+                assert await _call(conn, "platform_saas_v2_bank_method", {
+                    "currency": "USD", "instructions": "ViMi USD bank test details",
+                })
+                await conn.execute(text("RESET ROLE"))
+                await conn.execute(text(
+                    "INSERT INTO public.platform_saas_daily_fx_rates("
+                    "rate_date,currency_code,rub_per_unit,source_name,"
+                    "source_date,published_by) VALUES("
+                    "(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date,"
+                    "'USD',95,'CBR',"
+                    "(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date,"
+                    ":operator) ON CONFLICT DO NOTHING"
+                ), {"operator": operator})
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _actor(conn, owner)
+                usd_quote = await _call(
+                    conn, "platform_saas_v2_create_attempt",
+                    {"invoice": invoice, "amount_rub": Decimal("150"),
+                     "currency": "USD"},
+                )
+                assert Decimal(usd_quote["amount_rub"]) == Decimal("150")
+                assert Decimal(usd_quote["amount"]) > 0
+                # FX cents are quoted, the exact RUB debt is not rewritten.
+                assert usd_quote["currency"] == "USD"
                 quote = await _call(conn, "platform_saas_v2_create_attempt", {
                     "invoice": invoice, "amount_rub": Decimal("100"),
                     "currency": "RUB",
@@ -140,7 +163,7 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 ) == Decimal("50")
                 await _actor(conn, operator)
                 central_view = await _call(
-                    conn, "platform_saas_invoice_report",
+                    conn, "platform_saas_hold_invoice_report",
                     {"page": 0, "size": 10},
                 )
                 assert central_view["unpaid"] == 1
@@ -190,7 +213,19 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 assert Decimal(central_view["unpaid_rub"]) == 0
                 assert Decimal(central_view["received_rub"]) == Decimal("150")
                 assert central_view["invoices"][0]["status"] == "paid"
-                assert central_view["invoices"][0]["remaining_rub"] == "0"
+                assert Decimal(
+                    central_view["invoices"][0]["remaining_rub"]
+                ) == 0
+                await conn.execute(text("RESET ROLE"))
+                with pytest.raises(DBAPIError) as voided:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "UPDATE public.platform_saas_invoices SET "
+                            "status='void' WHERE id=:invoice"
+                        ), {"invoice": invoice})
+                assert getattr(voided.value.orig, "sqlstate", None) == "42501"
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await _actor(conn, operator)
                 with pytest.raises(DBAPIError) as double:
                     async with conn.begin_nested():
                         await conn.execute(text(
