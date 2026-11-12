@@ -542,6 +542,50 @@ def upgrade() -> None:
           END $grant$
         """)
 
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_available_methods(
+      p_invoice uuid
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE actor uuid; result jsonb; original record;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      SELECT * INTO original FROM public.platform_saas_invoices
+      WHERE id=p_invoice;
+      IF original.id IS NULL OR original.status<>'issued'
+         OR original.owner_user_id IS DISTINCT FROM actor THEN
+        RAISE EXCEPTION 'Invoice not owned by this account'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT coalesce(jsonb_agg(x.currency_code ORDER BY x.currency_code),
+        '[]'::jsonb) INTO result
+      FROM (
+        SELECT currency_code FROM public.platform_saas_payment_methods_v2
+        WHERE enabled=true
+        UNION
+        SELECT 'RUB'::varchar(3)
+        WHERE EXISTS(SELECT 1 FROM public.platform_saas_payment_details
+          WHERE id=1 AND instructions IS NOT NULL)
+      ) x;
+      RETURN result;
+    END; $f$
+    """)
+    op.execute("""
+       REVOKE ALL ON FUNCTION
+       public.platform_saas_v2_available_methods(uuid) FROM PUBLIC
+    """)
+    op.execute("""
+       DO $grant$
+       BEGIN
+         IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+         THEN
+           GRANT EXECUTE ON FUNCTION
+             public.platform_saas_v2_available_methods(uuid)
+           TO membership_runtime;
+         END IF;
+       END $grant$
+    """)
+
 
 def downgrade() -> None:
     raise RuntimeError(
