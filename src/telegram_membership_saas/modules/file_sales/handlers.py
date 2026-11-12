@@ -213,7 +213,7 @@ def create_file_sales_router(
         )
         rows = []
         for method in controls:
-            name = (tr("⭐ Telegram Stars", "⭐ Telegram Stars")
+            name = (display_currency("XTR")
                     if method.auto_stars else "💳 " + method.name[:36])
             rows.append([_button(
                 ("🟢 " if method.enabled else "🔴 ") + name,
@@ -1002,7 +1002,7 @@ def create_file_sales_router(
                     "initcurrency:" + code, "success",
                 )] for code in choices]
                 rows.append([_button(
-                    tr("⭐ Telegram Stars", "⭐ Telegram Stars"),
+                    display_currency("XTR"),
                     "initcurrency:XTR",
                 )])
                 await bot.send_message(

@@ -158,7 +158,7 @@ async def test_file_receipt_admin_notification_uses_reviewer_language(monkeypatc
     ("lang", "header", "prompt", "stars_label"),
     [
         ("ru", "Оформление покупки файла", "Как вам удобнее оплатить?",
-         "Звёзды Telegram"),
+         "⭐ Telegram Stars"),
         ("en", "File purchase checkout", "How would you like to pay?",
          "Telegram Stars"),
     ],
@@ -206,9 +206,9 @@ async def test_buyer_file_payment_screen_is_ru_or_en(
     ("lang", "heading", "bulk_label", "stars_label"),
     [
         ("ru", "Способы оплаты файлов", "Выключить все способы оплаты",
-         "Автоматическая оплата звёздами"),
+         "⭐ Telegram Stars"),
         ("en", "File payment methods", "Disable all payment methods",
-         "Automatic Stars"),
+         "⭐ Telegram Stars"),
     ],
 )
 async def test_owner_file_payment_methods_localize_both_languages(
