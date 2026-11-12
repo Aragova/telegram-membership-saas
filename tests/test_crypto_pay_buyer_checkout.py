@@ -50,7 +50,11 @@ from telegram_membership_saas.modules.file_sales.manual_service import (
     review_manual_order,
     set_manual_price,
 )
-from telegram_membership_saas.modules.file_sales.models import FileProduct, FilePurchase
+from telegram_membership_saas.modules.file_sales.models import (
+    FileProduct,
+    FilePurchase,
+    FileStarAuthorization,
+)
 from telegram_membership_saas.modules.file_sales.payment_controls import (
     AUTO_CRYPTO_ID,
     list_file_payment_controls,
@@ -540,7 +544,9 @@ async def test_durable_stars_precheckout_authorization_blocks_new_crypto_charge(
         )
         async with system_project_session_scope(factory, project) as session:
             recorded = await session.get(FilePurchase, stars.id)
-            assert recorded.stars_authorized_at is not None
+            authorization = await session.get(FileStarAuthorization, stars.id)
+            assert authorization is not None
+            assert authorization.authorized_at is not None
             assert recorded.status == "pending"
 
         # The client can now be charged by Telegram at any moment, even if
