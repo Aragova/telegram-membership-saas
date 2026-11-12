@@ -25,6 +25,7 @@ def upgrade() -> None:
         "file_sale_star_authorizations",
         sa.Column("purchase_id", sa.Uuid(), primary_key=True),
         sa.Column("project_id", sa.Uuid(), nullable=False),
+        sa.Column("precheckout_query_id", sa.String(256), nullable=True),
         sa.Column(
             "authorized_at", sa.DateTime(timezone=True),
             nullable=False, server_default=sa.func.now(),
