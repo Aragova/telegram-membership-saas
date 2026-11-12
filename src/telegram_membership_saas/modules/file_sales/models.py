@@ -158,6 +158,9 @@ class FileStarAuthorization(Base):
             ["file_sale_purchases.id", "file_sale_purchases.project_id"],
             ondelete="RESTRICT", name="fk_file_star_auth_purchase_project",
         ),
+        UniqueConstraint(
+            "purchase_id", "project_id", name="uq_file_star_auth_project",
+        ),
     )
 
     purchase_id: Mapped[UUID] = mapped_column(
@@ -165,6 +168,33 @@ class FileStarAuthorization(Base):
     )
     project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     authorized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class FileStarAuthorizationRejection(Base):
+    """Append-only proof that a specific Stars precheckout was rejected by Telegram.
+
+    Only an explicitly definitive Telegram API rejection authorizes insertion.
+    Old invoices with rejection evidence may not be re-authorized; buyers
+    must obtain a new invoice if they still want to use Stars.
+    """
+    __tablename__ = "file_sale_star_authorization_rejections"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["purchase_id", "project_id"],
+            [
+                "file_sale_star_authorizations.purchase_id",
+                "file_sale_star_authorizations.project_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_file_star_auth_rejection_project",
+        ),
+    )
+
+    purchase_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    rejected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
 
