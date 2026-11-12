@@ -176,9 +176,14 @@ async def show_file_payment_options(
     )
     if not count:
         raise ValueError(tr("У товара пока нет вложений", "This product has no attachments yet"))
-    already_paid = await paid_file_purchase_id(
-        factory, project_id=project_id, bot_id=bot.id, buyer_id=buyer_id,
-        product_id=product_id,
+    from telegram_membership_saas.config import get_settings
+
+    crypto_buyer_live = get_settings().crypto_pay_buyer_enabled
+    already_paid = (
+        await paid_file_purchase_id(
+            factory, project_id=project_id, bot_id=bot.id, buyer_id=buyer_id,
+            product_id=product_id,
+        ) if crypto_buyer_live else None
     )
     if already_paid is not None:
         await bot.send_message(
@@ -204,11 +209,13 @@ async def show_file_payment_options(
     stars_enabled = await file_stars_enabled(
         factory, project_id=project_id, bot_id=bot.id,
     )
-    async with system_project_session_scope(factory, project_id) as session:
-        crypto_prices = await file_crypto_prices(
-            session, project_id=project_id, bot_id=bot.id,
-            product_id=product_id,
-        )
+    crypto_prices = ()
+    if crypto_buyer_live and get_settings().bot_token_encryption_key is not None:
+        async with system_project_session_scope(factory, project_id) as session:
+            crypto_prices = await file_crypto_prices(
+                session, project_id=project_id, bot_id=bot.id,
+                product_id=product_id,
+            )
     if (not options and not crypto_prices
             and (product.stars_price is None or not stars_enabled)):
         await bot.send_message(
