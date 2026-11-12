@@ -586,6 +586,39 @@ def upgrade() -> None:
        END $grant$
     """)
 
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_methods_read()
+    RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE output jsonb;
+    BEGIN
+      PERFORM public.platform_saas_require_owner();
+      SELECT coalesce(jsonb_agg(
+        jsonb_build_object(
+          'currency',currency_code,'enabled',enabled,
+          'instructions',instructions,'updated_at',updated_at
+        ) ORDER BY currency_code
+      ),'[]'::jsonb) INTO output
+      FROM public.platform_saas_payment_methods_v2;
+      RETURN output;
+    END; $f$
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+      public.platform_saas_v2_methods_read() FROM PUBLIC
+    """)
+    op.execute("""
+      DO $grant$
+      BEGIN
+        IF EXISTS(SELECT 1 FROM pg_roles
+          WHERE rolname='membership_runtime') THEN
+          GRANT EXECUTE ON FUNCTION
+            public.platform_saas_v2_methods_read()
+          TO membership_runtime;
+        END IF;
+      END $grant$
+    """)
+
 
 def downgrade() -> None:
     raise RuntimeError(
