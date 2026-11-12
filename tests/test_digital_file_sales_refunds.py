@@ -57,7 +57,7 @@ async def test_refunded_payment_from_telegram_records_a_single_source_event(
 
 async def test_refund_service_message_not_swallowed_by_active_file_editor():
     states = {456: {"stage": "upload", "expires": monotonic() + 300}}
-    matcher = ui.FileEditorFilter(states)
+    matcher = ui.FileEditorFilter(states, MagicMock())
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=456),
         chat=SimpleNamespace(id=456, type="private"),
@@ -66,7 +66,7 @@ async def test_refund_service_message_not_swallowed_by_active_file_editor():
             invoice_payload="fs:verified",
         ),
     )
-    assert not await matcher(message)
+    assert not await matcher(message, MagicMock())
     assert 456 in states
 
 

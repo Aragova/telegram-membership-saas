@@ -169,14 +169,14 @@ async def test_active_owner_editor_does_not_capture_a_payment_update():
     from time import monotonic
 
     states = {123: {"stage": "upload", "expires": monotonic() + 600}}
-    matcher = ui.FileEditorFilter(states)
+    matcher = ui.FileEditorFilter(states, MagicMock())
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=123),
         chat=SimpleNamespace(type="private", id=123),
         text=None,
         successful_payment=SimpleNamespace(invoice_payload="fs:test"),
     )
-    assert not await matcher(message)
+    assert not await matcher(message, MagicMock())
     assert 123 in states
 
 
