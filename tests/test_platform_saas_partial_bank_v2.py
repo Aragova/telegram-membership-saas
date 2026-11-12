@@ -107,7 +107,7 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                     "currency": "RUB",
                 })
                 assert quote["amount"] == "100.00"
-                assert quote["amount_rub"] == "100.00"
+                assert Decimal(quote["amount_rub"]) == Decimal("100")
                 assert "bank RUB" in quote["instructions"]
                 attempt_id = quote["id"]
                 await _actor(conn, outsider)
