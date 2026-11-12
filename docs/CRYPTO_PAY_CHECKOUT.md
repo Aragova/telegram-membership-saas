@@ -135,3 +135,17 @@ getMe and encrypted credential registration, the handler atomically
 discards only that specific wizard generation. If the owner navigated to
 a newer setup while getMe was pending, the newer flow is left untouched.
 Only generic error messages reach Telegram, never raw API tokens or secrets.
+
+### Strict secret interception across expired/alternate flows (PR #134)
+
+The secret guard is the first connected-bot message route after language.
+Any credential-shaped private text is **always deleted first**, even if the
+owner's 15-minute wizard expired, was cancelled, or was successfully consumed.
+This avoids forwarding late API tokens through stale Telegram buyer replies.
+During an active `crypto_pay_token` flow, the guard also intercepts
+malformed or truncated non-command input: a wrong first attempt cannot
+make the alternate owner setup handler consume the durable secret wizard
+and expose the subsequent valid retry. The provider is never contacted
+unless deletion succeeds AND the current verified bot-scoped wizard is live.
+Ordinary commands such as /cancel remain routed normally. Buyer payments
+and access entitlement routes are unchanged.

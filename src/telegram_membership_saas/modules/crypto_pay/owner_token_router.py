@@ -36,7 +36,11 @@ def _plausible_merchant_token(value: str | None) -> bool:
     cleaned = value.strip() if isinstance(value, str) else ""
     return bool(
         20 <= len(cleaned) <= 256 and cleaned.isascii()
-        and ":" in cleaned and not any(ch.isspace() for ch in cleaned)
+        and not any(ch.isspace() for ch in cleaned)
+        # Even after a setup timeout/restart a credential-shaped text must
+        # NEVER reach a buyer dialog. Crypto Pay app tokens normally contain
+        # a colon; tolerate long whitespace-free opaque variants as well.
+        and (":" in cleaned or (len(cleaned) >= 32 and cleaned.isalnum()))
     )
 
 
@@ -93,9 +97,17 @@ class CryptoPaySecretFilter(BaseFilter):
     async def __call__(self, message: Message, bot: Bot) -> bool:
         if (
             message.from_user is None or message.chat.type != "private"
-            or not _plausible_merchant_token(message.text)
+            or message.text is None or message.text.startswith("/")
         ):
             return False
+        # A token-shaped text is ALWAYS deleted, even after the 15-minute
+        # wizard expired or after a successful setup. This prevents secrets
+        # from escaping into old buyer replies when a prompt is stale.
+        if _plausible_merchant_token(message.text):
+            return True
+        # While the wizard is active, intercept even a malformed/truncated
+        # first attempt, so an alternate owner reply handler cannot consume
+        # the form and leave a subsequent valid retry unprotected.
         actor = await ensure_telegram_actor(
             self.factory, telegram_id=message.from_user.id,
             username=message.from_user.username,
@@ -147,8 +159,14 @@ def create_crypto_secret_router(
         )
         if flow is None:
             await bot.send_message(
-                uid, tr("Настройка устарела. Откройте Crypto Pay заново.",
-                       "Setup expired. Open Crypto Pay again."),
+                uid, tr(
+                    "🔒 Сообщение с возможным API-токеном удалено. "
+                    "Защищённая настройка не активна. Откройте 💎 Crypto Pay "
+                    "в способах оплаты и начните подключение заново.",
+                    "🔒 A possible API token was deleted. "
+                    "Protected setup isn't active. Open 💎 Crypto Pay "
+                    "from payment methods and start a new connection.",
+                ),
             )
             return
         try:
