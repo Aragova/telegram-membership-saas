@@ -420,3 +420,87 @@ async def test_one_crypto_file_quote_survives_currency_and_price_changes(monkeyp
         assert len(Provider.created) == 1
     finally:
         await engine.dispose()
+
+
+async def test_outstanding_crypto_invoice_blocks_stars_and_manual_file_checkout():
+    """Neither an old Stars link nor a new purchase may double charge a file."""
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        _, project, bot_id, product_id = await _shop(factory, key)
+        buyer_id = _tid()
+        other_buyer = _tid()
+        async with system_project_session_scope(factory, project) as session:
+            product = await session.get(FileProduct, product_id)
+            product.stars_price = 50
+
+        # Native Stars invoice was displayed first. It must stop at the
+        # Telegram precheckout boundary if the buyer later starts Crypto Pay.
+        pending_stars = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        )
+        assert not pending_stars.paid
+        assert await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=pending_stars.invoice_payload,
+            amount=50, currency="XTR",
+        )
+        crypto_id = await _issue(
+            factory, project=project, bot_id=bot_id, buyer=buyer_id,
+            kind="file", target_id=product_id, key=key,
+        )
+        assert not await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=pending_stars.invoice_payload,
+            amount=50, currency="XTR",
+        )
+        with pytest.raises(ValueError, match="Crypto Pay invoice"):
+            await create_stars_order(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=product_id,
+            )
+        with pytest.raises(ValueError, match="Crypto Pay invoice"):
+            await create_manual_order(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=product_id,
+                currency="RUB", method_id=uuid4(),
+            )
+        # Another customer's purchase of the same file is independent.
+        independent = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=other_buyer, product_id=product_id,
+        )
+        assert not independent.paid
+
+        # 'issuing' may mean Crypto Pay already accepted the payment,
+        # even if the bot lost its response. Never treat it as safe.
+        async with system_project_session_scope(factory, project) as session:
+            record = await session.get(CryptoPayInvoice, crypto_id)
+            record.status = "issuing"
+        assert not await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=pending_stars.invoice_payload,
+            amount=50, currency="XTR",
+        )
+
+        # ONLY the provider reconciliation worker sets terminal expiry.
+        async with system_project_session_scope(factory, project) as session:
+            record = await session.get(CryptoPayInvoice, crypto_id)
+            record.status = "expired"
+            record.invoice_url = None
+        assert await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=pending_stars.invoice_payload,
+            amount=50, currency="XTR",
+        )
+        reopened = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        )
+        assert reopened.id == pending_stars.id
+    finally:
+        await engine.dispose()
