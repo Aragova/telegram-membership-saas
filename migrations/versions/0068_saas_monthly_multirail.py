@@ -208,15 +208,25 @@ def upgrade() -> None:
                )
                OR sale.paid_at < parent.period_start
                OR sale.paid_at >= parent.period_end
-               OR (NEW.original_currency='RUB' AND NEW.rub_per_unit <> 1)
-               OR NEW.charge_rub IS DISTINCT FROM
-                  CASE
-                    WHEN NEW.source_kind IN (
-                      'file_stars','subscription_stars',
-                      'file_crypto','subscription_crypto'
-                    ) THEN round(sale.amount * NEW.rub_per_unit * 0.05, 18)
-                    ELSE round(sale.amount * NEW.rub_per_unit * 0.05, 2)
-                  END
+               OR (
+                 NEW.original_currency='RUB'
+                 AND NEW.source_kind NOT IN ('file_crypto','subscription_crypto')
+                 AND NEW.rub_per_unit <> 1
+               )
+               OR (
+                 NEW.source_kind IN (
+                   'file_stars','subscription_stars',
+                   'file_crypto','subscription_crypto'
+                 ) AND NEW.charge_rub IS DISTINCT FROM
+                   round(sale.amount * NEW.rub_per_unit * 0.05, 18)
+               )
+               OR (
+                 NEW.source_kind NOT IN (
+                   'file_stars','subscription_stars',
+                   'file_crypto','subscription_crypto'
+                 ) AND NEW.charge_rub IS DISTINCT FROM
+                   round(sale.amount * NEW.rub_per_unit * 0.05, 2)
+               )
             THEN
               RAISE EXCEPTION 'Approved purchase / commission snapshot mismatch'
                 USING ERRCODE='23514';
