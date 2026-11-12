@@ -48,13 +48,14 @@ from telegram_membership_saas.modules.file_sales.manual_service import (
     price_editor_options,
     set_manual_price,
 )
-from telegram_membership_saas.modules.file_sales.models import FileProduct
+from telegram_membership_saas.modules.file_sales.models import FileProduct, FilePurchase
 from telegram_membership_saas.modules.file_sales.payment_controls import (
     AUTO_CRYPTO_ID,
     list_file_payment_controls,
     toggle_file_payment_method,
 )
 from telegram_membership_saas.modules.file_sales.service import (
+    confirm_stars_payment,
     create_stars_order,
     paid_file_purchase_id,
     precheckout_allowed,
@@ -504,5 +505,91 @@ async def test_outstanding_crypto_invoice_blocks_stars_and_manual_file_checkout(
             buyer_id=buyer_id, product_id=product_id,
         )
         assert reopened.id == pending_stars.id
+    finally:
+        await engine.dispose()
+
+
+async def test_durable_stars_precheckout_authorization_blocks_new_crypto_charge():
+    """Precheckout ok=True must persist before Crypto Pay creates another link."""
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        _, project, bot_id, product_id = await _shop(factory, key)
+        first_buyer, second_buyer = _tid(), _tid()
+        async with system_project_session_scope(factory, project) as session:
+            product = await session.get(FileProduct, product_id)
+            product.stars_price = 73
+            app = await session.scalar(select(CryptoPayApp).where(
+                CryptoPayApp.project_id == project,
+            ))
+            app.environment = "mainnet"
+
+        stars = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=first_buyer, product_id=product_id,
+        )
+        assert await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=first_buyer, invoice_payload=stars.invoice_payload,
+            amount=73, currency="XTR",
+        )
+        async with system_project_session_scope(factory, project) as session:
+            recorded = await session.get(FilePurchase, stars.id)
+            assert recorded.stars_authorized_at is not None
+            assert recorded.status == "pending"
+
+        # The client can now be charged by Telegram at any moment, even if
+        # successful_payment has not been processed by our dispatcher.
+        with pytest.raises(ValueError, match="authorized Telegram Stars"):
+            await reserve_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=first_buyer, kind="file",
+                target_id=product_id, currency="RUB",
+                require_mainnet=True,
+            )
+
+        # Reverse interleaving: reservation first, then Stars approval.
+        second_reservation = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=second_buyer, kind="file",
+            target_id=product_id, currency="RUB",
+            require_mainnet=True,
+        )
+        second_stars = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=second_buyer, product_id=product_id,
+        )
+        assert await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=second_buyer,
+            invoice_payload=second_stars.invoice_payload,
+            amount=73, currency="XTR",
+        )
+        with pytest.raises(ValueError, match="authorized Telegram Stars"):
+            await issue_reserved_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=second_buyer, invoice_id=second_reservation,
+                encryption_key=key, client_factory=MainnetProvider,
+                require_mainnet=True,
+            )
+        assert Provider.created == []
+
+        # Authenticated payment evidence eventually resolves pending Stars.
+        paid = await confirm_stars_payment(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=first_buyer, invoice_payload=stars.invoice_payload,
+            amount=73, currency="XTR", charge_id="auth-stars-charge-1",
+        )
+        assert paid.status == "paid"
+        with pytest.raises(ValueError, match="already been purchased"):
+            await reserve_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=first_buyer, kind="file",
+                target_id=product_id, currency="RUB",
+                require_mainnet=True,
+            )
     finally:
         await engine.dispose()
