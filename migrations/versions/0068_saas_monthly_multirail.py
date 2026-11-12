@@ -5,6 +5,7 @@ Revises: 0067_saas_partial_payments
 """
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0068_saas_multirail"
@@ -34,6 +35,13 @@ def upgrade() -> None:
         )
       )
     """)
+    # Retain per-sale fee precision. Only the monthly payable total is
+    # rounded to kopecks after all original sources have been summed.
+    op.alter_column(
+        "platform_saas_invoice_lines", "charge_rub",
+        existing_type=sa.Numeric(38, 2), type_=sa.Numeric(38, 18),
+        existing_nullable=False,
+    )
     op.execute("DROP INDEX public.uq_saas_once_per_paid_source")
     op.execute("""
       CREATE UNIQUE INDEX uq_saas_once_per_paid_source
@@ -202,7 +210,13 @@ def upgrade() -> None:
                OR sale.paid_at >= parent.period_end
                OR (NEW.original_currency='RUB' AND NEW.rub_per_unit <> 1)
                OR NEW.charge_rub IS DISTINCT FROM
-                  round(sale.amount * NEW.rub_per_unit * 0.05, 2)
+                  CASE
+                    WHEN NEW.source_kind IN (
+                      'file_stars','subscription_stars',
+                      'file_crypto','subscription_crypto'
+                    ) THEN round(sale.amount * NEW.rub_per_unit * 0.05, 18)
+                    ELSE round(sale.amount * NEW.rub_per_unit * 0.05, 2)
+                  END
             THEN
               RAISE EXCEPTION 'Approved purchase / commission snapshot mismatch'
                 USING ERRCODE='23514';
@@ -263,7 +277,7 @@ def upgrade() -> None:
             SELECT count(*),COALESCE(sum(charge_rub),0)
             INTO line_count,sum_lines FROM public.platform_saas_invoice_lines
             WHERE invoice_id=OLD.id;
-            IF line_count=0 OR sum_lines<>OLD.total_rub
+            IF line_count=0 OR round(sum_lines,2)<>OLD.total_rub
                OR EXISTS (
                  SELECT 1 FROM public.platform_saas_invoice_lines l
                  WHERE l.invoice_id=OLD.id AND
@@ -381,6 +395,66 @@ def upgrade() -> None:
           PERFORM pg_advisory_xact_lock(
             hashtextextended('saas:'||v_invoice_key,0)
           );
+
+          -- Capture workers are bounded and may skip original crypto
+          -- provider invoices with missing paid-time USD proof. A monthly
+          -- invoice must never seal while any known eligible paid source
+          -- is uncaptured, regardless of whether the other rails are ready.
+          IF EXISTS (
+            SELECT 1 FROM (
+              SELECT 'file_stars'::text AS kind,f.id AS source_id,
+                     f.project_id,f.paid_at,
+                     sc.started_at AS capture_from
+              FROM public.file_sale_purchases f
+              CROSS JOIN public.platform_saas_star_capture_control sc
+              WHERE f.status='paid' AND f.telegram_charge_id IS NOT NULL
+              UNION ALL
+              SELECT 'subscription_stars',o.id,o.project_id,o.paid_at,
+                     sc.started_at
+              FROM public.subscription_star_orders o
+              CROSS JOIN public.platform_saas_star_capture_control sc
+              WHERE o.status='paid'
+              UNION ALL
+              SELECT 'crypto',i.id,i.project_id,i.paid_at,cc.started_at
+              FROM public.crypto_pay_invoices i
+              JOIN public.crypto_pay_apps app
+                ON app.id=i.app_id AND app.project_id=i.project_id
+              CROSS JOIN public.platform_saas_crypto_capture_control cc
+              WHERE i.status='paid' AND app.environment='mainnet'
+            ) raw
+            WHERE raw.paid_at >= period_start AND raw.paid_at < period_end
+              AND raw.paid_at >= greatest(
+                  raw.capture_from,first_charge,
+                  trial_started+interval '72 hours'
+              )
+              AND EXISTS(
+                SELECT 1 FROM public.merchant_project_periods hist
+                WHERE hist.merchant_id=p_merchant
+                  AND hist.owner_user_id=p_owner
+                  AND hist.project_id=raw.project_id
+                  AND hist.started_at<=raw.paid_at
+                  AND (hist.ended_at IS NULL OR hist.ended_at>raw.paid_at)
+              )
+              AND (
+                (raw.kind='crypto' AND NOT EXISTS(
+                   SELECT 1 FROM public.platform_saas_crypto_sales v
+                   WHERE v.invoice_id=raw.source_id
+                     AND v.merchant_id=p_merchant
+                     AND v.owner_user_id=p_owner
+                ))
+                OR (raw.kind<>'crypto' AND NOT EXISTS(
+                   SELECT 1 FROM public.platform_saas_star_sales v
+                   WHERE v.source_kind=raw.kind
+                     AND v.source_id=raw.source_id
+                     AND v.merchant_id=p_merchant
+                     AND v.owner_user_id=p_owner
+                ))
+              )
+          ) THEN
+            RAISE EXCEPTION
+              'Uncaptured paid Stars/Crypto sales block monthly invoice'
+              USING ERRCODE='23514';
+          END IF;
           SELECT i.id,i.status INTO previous
             FROM public.platform_saas_invoices i
             WHERE i.invoice_key=v_invoice_key FOR UPDATE;
@@ -490,7 +564,13 @@ def upgrade() -> None:
               RAISE EXCEPTION 'Invalid sale-day conversion rate'
                 USING ERRCODE='22023';
             END IF;
-            amount_rub := round(source.amount*fx*0.05,2);
+            amount_rub := CASE
+              WHEN source.source_kind IN (
+                'file_stars','subscription_stars',
+                'file_crypto','subscription_crypto'
+              ) THEN round(source.amount*fx*0.05,18)
+              ELSE round(source.amount*fx*0.05,2)
+            END;
             IF amount_rub<=0 THEN CONTINUE; END IF;
             total := total+amount_rub;
             quote := quote || jsonb_build_array(jsonb_build_object(
@@ -500,14 +580,14 @@ def upgrade() -> None:
               'fx',fx,'charge',amount_rub
             ));
           END LOOP;
-          IF total=0 THEN RETURN NULL; END IF;
+          IF round(total,2)=0 THEN RETURN NULL; END IF;
           invoice_id:=gen_random_uuid();
           INSERT INTO public.platform_saas_invoices(
              id,invoice_key,merchant_id,owner_user_id,kind,
              period_start,period_end,due_at,total_rub
           ) VALUES (
              invoice_id,v_invoice_key,p_merchant,p_owner,'commission',
-             period_start,period_end,period_end+interval '7 days',total
+             period_start,period_end,period_end+interval '7 days',round(total,2)
           );
           FOR datum IN SELECT value FROM jsonb_array_elements(quote) LOOP
             INSERT INTO public.platform_saas_invoice_lines(
@@ -522,6 +602,66 @@ def upgrade() -> None:
                0.05,(datum->>'charge')::numeric
             );
           END LOOP;
+
+          -- Capture workers are bounded and may skip original crypto
+          -- provider invoices with missing paid-time USD proof. A monthly
+          -- invoice must never seal while any known eligible paid source
+          -- is uncaptured, regardless of whether the other rails are ready.
+          IF EXISTS (
+            SELECT 1 FROM (
+              SELECT 'file_stars'::text AS kind,f.id AS source_id,
+                     f.project_id,f.paid_at,
+                     sc.started_at AS capture_from
+              FROM public.file_sale_purchases f
+              CROSS JOIN public.platform_saas_star_capture_control sc
+              WHERE f.status='paid' AND f.telegram_charge_id IS NOT NULL
+              UNION ALL
+              SELECT 'subscription_stars',o.id,o.project_id,o.paid_at,
+                     sc.started_at
+              FROM public.subscription_star_orders o
+              CROSS JOIN public.platform_saas_star_capture_control sc
+              WHERE o.status='paid'
+              UNION ALL
+              SELECT 'crypto',i.id,i.project_id,i.paid_at,cc.started_at
+              FROM public.crypto_pay_invoices i
+              JOIN public.crypto_pay_apps app
+                ON app.id=i.app_id AND app.project_id=i.project_id
+              CROSS JOIN public.platform_saas_crypto_capture_control cc
+              WHERE i.status='paid' AND app.environment='mainnet'
+            ) raw
+            WHERE raw.paid_at >= period_start AND raw.paid_at < period_end
+              AND raw.paid_at >= greatest(
+                  raw.capture_from,first_charge,
+                  trial_started+interval '72 hours'
+              )
+              AND EXISTS(
+                SELECT 1 FROM public.merchant_project_periods hist
+                WHERE hist.merchant_id=p_merchant
+                  AND hist.owner_user_id=p_owner
+                  AND hist.project_id=raw.project_id
+                  AND hist.started_at<=raw.paid_at
+                  AND (hist.ended_at IS NULL OR hist.ended_at>raw.paid_at)
+              )
+              AND (
+                (raw.kind='crypto' AND NOT EXISTS(
+                   SELECT 1 FROM public.platform_saas_crypto_sales v
+                   WHERE v.invoice_id=raw.source_id
+                     AND v.merchant_id=p_merchant
+                     AND v.owner_user_id=p_owner
+                ))
+                OR (raw.kind<>'crypto' AND NOT EXISTS(
+                   SELECT 1 FROM public.platform_saas_star_sales v
+                   WHERE v.source_kind=raw.kind
+                     AND v.source_id=raw.source_id
+                     AND v.merchant_id=p_merchant
+                     AND v.owner_user_id=p_owner
+                ))
+              )
+          ) THEN
+            RAISE EXCEPTION
+              'Uncaptured paid Stars/Crypto sales block monthly invoice'
+              USING ERRCODE='23514';
+          END IF;
           UPDATE public.platform_saas_invoices SET status='issued'
           WHERE id=invoice_id;
           RETURN invoice_id;
