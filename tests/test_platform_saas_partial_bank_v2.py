@@ -162,6 +162,7 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                             "VALUES(gen_random_uuid(),:invoice,:operator,150)"
                         ), {"invoice": invoice, "operator": operator})
                 assert getattr(double.value.orig, "sqlstate", None) == "23514"
+                await conn.execute(text("RESET ROLE"))
                 assert (await conn.execute(text(
                     "SELECT enabled FROM platform_saas_billing_control WHERE id=1"
                 ))).scalar_one() is False
