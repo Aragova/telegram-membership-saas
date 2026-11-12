@@ -30,6 +30,7 @@ async def _rpc(
     names = {
         "platform_saas_v2_invoice_balance": ("invoice",),
         "platform_saas_v2_available_methods": ("invoice",),
+        "platform_saas_v2_methods_read": (),
         "platform_saas_v2_create_attempt": ("invoice", "amount_rub", "currency"),
         "platform_saas_v2_submit_proof":
             ("attempt", "bot_id", "message_id", "file_id", "file_type"),
@@ -48,6 +49,7 @@ async def _rpc(
     if name in {
         "platform_saas_v2_invoice_balance",
         "platform_saas_v2_available_methods",
+        "platform_saas_v2_methods_read",
         "platform_saas_v2_create_attempt",
         "platform_saas_v2_pending_proofs",
     }:
@@ -127,6 +129,21 @@ async def saas_v2_submit_proof(
         },
     )
     return UUID(str(result))
+
+
+async def saas_v2_methods_read(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int,
+    settings: Settings | None = None,
+) -> tuple[dict, ...]:
+    _check_actor(actor_telegram_id, settings)
+    result = await _rpc(
+        factory, actor_id=actor_id,
+        name="platform_saas_v2_methods_read", arguments={},
+    )
+    if not isinstance(result, list):
+        raise RuntimeError("Invalid ViMi Pay method catalog")
+    return tuple(result)
 
 
 async def saas_v2_configure_method(
