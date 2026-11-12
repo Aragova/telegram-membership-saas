@@ -178,6 +178,7 @@ def _virtual_refunded_anchors(
     ]],
     termination_times: tuple[datetime, ...],
     timezone_name: str,
+    crypto: list[tuple[EntitlementGrant, CryptoPayInvoice]] | None = None,
 ) -> list[tuple[UUID, datetime, datetime, datetime, datetime]]:
     """Virtual original periods for ALL returned purchases in event time.
 
@@ -214,6 +215,22 @@ def _virtual_refunded_anchors(
             and grant.valid_until is not None
             and not _terminated_between(
                 termination_times, paid_order.paid_at, paid_at,
+            )
+        )
+        source_ends.extend(
+            grant.valid_until for grant, invoice in (crypto or ())
+            if invoice.paid_at is not None
+            and (
+                invoice.paid_at < paid_at
+                or (
+                    invoice.paid_at == paid_at
+                    and (invoice.created_at, str(invoice.id))
+                    < (order.created_at, str(order.id))
+                )
+            )
+            and grant.valid_until is not None
+            and not _terminated_between(
+                termination_times, invoice.paid_at, paid_at,
             )
         )
         source_ends.extend(
@@ -286,6 +303,7 @@ def historical_stars_start(
         for _, original_paid, valid_end, returned_at, created
         in _virtual_refunded_anchors(
             manual, stars, refunded, termination_times, timezone_name,
+            crypto=crypto,
         )
         if (
             original_paid < at
@@ -387,6 +405,7 @@ async def rebuild_paid_windows_after(
     virtual_ends = {
         order_id: end for order_id, _, end, _, _ in _virtual_refunded_anchors(
             manual, stars, refunded, termination_times, project.timezone,
+            crypto=crypto,
         )
     }
     for _, order, returned in refunded:
