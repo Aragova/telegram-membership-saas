@@ -7,7 +7,7 @@ from time import monotonic
 from uuid import UUID
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import AiogramError
+from aiogram.exceptions import AiogramError, TelegramBadRequest
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
@@ -63,6 +63,7 @@ from telegram_membership_saas.modules.file_sales.service import (
     mark_file_delivery,
     precheckout_allowed,
     purchased_assets,
+    record_definitive_stars_precheckout_rejection,
     update_draft_product,
     view_product,
 )
@@ -79,6 +80,20 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
 
 log = logging.getLogger(__name__)
 ENTRY_SECONDS = 900
+
+
+def _definitively_rejected_stars_precheckout(error: str) -> bool:
+    """Only explicit 'not accepted' Telegram responses release the hold.
+
+    Network errors and 'already answered' replies are ambiguous: they may
+    represent a real successful authorization and MUST keep the claim.
+    """
+    message = error.casefold()
+    return (
+        "query is too old" in message
+        or "query_id_invalid" in message
+        or "query id is invalid" in message
+    )
 
 
 def _button(text: str, action: str, style: str = "primary") -> InlineKeyboardButton:
@@ -1140,13 +1155,33 @@ def create_file_sales_router(
             buyer_id=query.from_user.id, invoice_payload=query.invoice_payload,
             amount=query.total_amount, currency=query.currency,
         )
-        await bot.answer_pre_checkout_query(
-            pre_checkout_query_id=query.id, ok=allowed,
-            error_message=None if allowed else tr(
-                "Товар недоступен или сумма изменилась.",
-                "This product or amount is no longer available.",
-            ),
-        )
+        try:
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query_id=query.id, ok=allowed,
+                error_message=None if allowed else tr(
+                    "Товар недоступен или сумма изменилась.",
+                    "This product or amount is no longer available.",
+                ),
+            )
+        except TelegramBadRequest as exc:
+            if allowed and _definitively_rejected_stars_precheckout(str(exc)):
+                # The provider explicitly rejected this authorization.
+                # Resolve only THIS invoice, in an immutable evidence row.
+                try:
+                    await record_definitive_stars_precheckout_rejection(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        buyer_id=query.from_user.id,
+                        invoice_payload=query.invoice_payload,
+                    )
+                except Exception:
+                    log.exception(
+                        "CRITICAL: could not persist definitive Stars "
+                        "precheckout rejection"
+                    )
+                return
+            # Timeouts, 'already answered' and other ambiguous errors keep
+            # the durable hold; buyer payment history must be reconciled.
+            raise
 
     @router.message(F.refunded_payment.invoice_payload.startswith("fs:"))
     async def file_refund_notice(message: Message, bot: Bot) -> None:
