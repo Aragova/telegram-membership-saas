@@ -138,10 +138,10 @@ async def test_release_mainnet_file_and_subscription_complete_through_one_worker
         # A real provider failure must NOT fabricate a payment or deliver.
         provider_file_id = next(
             k for k, value in Provider.invoice_data.items()
-            if value["payload"] == "cp:" + str(file.id)
+            if value["payload"] == "cp:" + file.id.hex
         )
-        # Local payload is cp:<UUID> with hyphens, never rely on Telegram
-        # buyer input or a screenshot as payment evidence.
+        # The frozen local payload uses the UUID hex form. Never accept
+        # buyer input or screenshots as payment evidence.
         original_paid_at = Provider.invoice_data[provider_file_id].pop("paid_at")
         Provider.invoice_data[provider_file_id].update({
             "status": "active",
