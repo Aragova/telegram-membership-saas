@@ -51,6 +51,10 @@ async def test_secret_filter_only_intercepts_plausible_active_merchant_token(
     )
     active = AsyncMock(return_value=True)
     monkeypatch.setattr(crypto, "active_crypto_pay_secret_prompt", active)
+    monkeypatch.setattr(
+        crypto, "read_current_crypto_owner",
+        AsyncMock(return_value=(actor, 12345)),
+    )
     guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
     bot = SimpleNamespace(id=654321)
 
@@ -342,6 +346,10 @@ async def test_malformed_first_attempt_does_not_disable_secure_retry(
     )
     active = AsyncMock(return_value=True)
     monkeypatch.setattr(crypto, "active_crypto_pay_secret_prompt", active)
+    monkeypatch.setattr(
+        crypto, "read_current_crypto_owner",
+        AsyncMock(return_value=(actor, 12345)),
+    )
     read = AsyncMock(return_value=flow)
     monkeypatch.setattr(crypto, "read_crypto_pay_secret_prompt", read)
     connect = AsyncMock(side_effect=[ValueError("invalid token"), None])
@@ -398,6 +406,10 @@ async def test_public_crypto_payment_data_is_not_deleted(
     monkeypatch.setattr(
         crypto, "active_crypto_pay_secret_prompt", AsyncMock(return_value=False),
     )
+    monkeypatch.setattr(
+        crypto, "read_current_crypto_owner",
+        AsyncMock(return_value=(uuid4(), 98765)),
+    )
     guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
     assert await guard(_message(public_data), SimpleNamespace(id=654321)) is False
 
@@ -409,3 +421,61 @@ def test_numeric_prefix_token_is_scrubbed_after_wizard_expiry():
     assert crypto._plausible_merchant_token(
         " 123456:" + "C" * 35 + "\n",
     )
+
+
+async def test_buyer_plain_text_skips_identity_upsert_and_wizard_lookup(
+    monkeypatch,
+):
+    """Hundreds of buyers must not require a write to telegram_users."""
+    project, actor = uuid4(), uuid4()
+    identity = AsyncMock(return_value=(actor, 12345))
+    upsert = AsyncMock()
+    active = AsyncMock(return_value=False)
+    monkeypatch.setattr(crypto, "read_current_crypto_owner", identity)
+    monkeypatch.setattr(crypto, "ensure_telegram_actor", upsert)
+    monkeypatch.setattr(crypto, "active_crypto_pay_secret_prompt", active)
+    guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
+    bot = SimpleNamespace(id=654321)
+    for uid in range(88880, 88910):
+        message = _message("Buyer message asking about delivery")
+        message.from_user.id = uid
+        assert await guard(message, bot) is False
+    identity.assert_awaited_once()
+    upsert.assert_not_awaited()
+    active.assert_not_awaited()
+
+
+async def test_authorized_owner_hint_immediately_overrides_old_owner_cache(
+    monkeypatch,
+):
+    project = uuid4()
+    old_actor, new_actor = uuid4(), uuid4()
+    read = AsyncMock(return_value=(old_actor, 98765))
+    active = AsyncMock(return_value=True)
+    monkeypatch.setattr(crypto, "read_current_crypto_owner", read)
+    monkeypatch.setattr(crypto, "active_crypto_pay_secret_prompt", active)
+    guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
+    bot = SimpleNamespace(id=654321)
+    # First ordinary buyer input populates old owner identity cache.
+    assert await guard(_message("Hello, I paid already"), bot) is False
+    read.assert_awaited_once()
+    # An owner-authorized cryptonet callback warms new owner immediately,
+    # without waiting for TTL to expire after a transfer.
+    crypto.remember_crypto_pay_owner(
+        project_id=project, bot_id=bot.id,
+        actor_id=new_actor, telegram_user_id=12345,
+    )
+    assert await guard(_message("bad first token"), bot) is True
+    read.assert_awaited_once()
+    assert active.await_args.kwargs["actor_id"] == new_actor
+
+
+async def test_token_shaped_input_never_reads_owner_cache(
+    monkeypatch,
+):
+    project = uuid4()
+    read = AsyncMock()
+    monkeypatch.setattr(crypto, "read_current_crypto_owner", read)
+    guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
+    assert await guard(_message(), SimpleNamespace(id=654321))
+    read.assert_not_awaited()
