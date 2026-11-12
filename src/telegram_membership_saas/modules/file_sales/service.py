@@ -47,6 +47,7 @@ from telegram_membership_saas.modules.projects.models import Project, ProjectSta
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
 
 ASSET_LIMIT = 20
@@ -760,12 +761,34 @@ async def paid_file_purchase_id(
         ).limit(1))
 
 
+async def _has_unsettled_crypto_file_invoice(
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+    buyer_id: int, product_id: UUID,
+) -> bool:
+    """A one-time file cannot get a second charge while Crypto Pay is payable.
+
+    Only Crypto Pay itself may end 'issuing' or 'issued', after provider
+    verification. An old button or local timer never makes its link safe.
+    """
+    existing = await session.scalar(select(CryptoPayInvoice.id).where(
+        CryptoPayInvoice.project_id == project_id,
+        CryptoPayInvoice.telegram_bot_id == bot_id,
+        CryptoPayInvoice.telegram_user_id == buyer_id,
+        CryptoPayInvoice.product_id == product_id,
+        CryptoPayInvoice.kind == "file",
+        CryptoPayInvoice.status.in_(("issuing", "issued")),
+    ).limit(1))
+    return existing is not None
+
+
 @translate_commercial_hold
 async def create_stars_order(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, product_id: UUID,
 ) -> DigitalOrder:
     async with system_project_session_scope(factory, project_id) as session:
+        # Serialize new Stars orders with crypto invoice reservation.
+        await checkout_retirement_lock(session, project_id)
         await _ready(
             session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
         )
@@ -828,6 +851,16 @@ async def create_stars_order(
                 product_name=crypto_paid.name_snapshot,
                 amount=item.stars_price, invoice_payload="", paid=True,
             )
+        if await _has_unsettled_crypto_file_invoice(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        ):
+            raise ValueError(tr(
+                "Для файла уже открыт счёт Crypto Pay. Дождитесь оплаты или "
+                "подтверждённого истечения счёта, прежде чем платить Stars.",
+                "This file has an outstanding Crypto Pay invoice. Wait for "
+                "payment or confirmed expiry before paying with Stars.",
+            ))
         # A disabled storefront method cannot create a new Stars invoice.
         # Already-paid orders above remain downloadable.
         disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
@@ -889,6 +922,7 @@ async def precheckout_allowed(
         return False
     async with system_project_session_scope(factory, project_id) as session:
         try:
+            await checkout_retirement_lock(session, project_id)
             await _ready(
                 session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
             )
@@ -912,7 +946,10 @@ async def precheckout_allowed(
                 CryptoPayInvoice.kind == "file",
                 CryptoPayInvoice.status == "paid",
             ).limit(1))
-            if owned_crypto is not None:
+            if owned_crypto is not None or await _has_unsettled_crypto_file_invoice(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=purchase.product_id,
+            ):
                 return False
             disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
                 FileSaleMethodVisibility.project_id == project_id,
