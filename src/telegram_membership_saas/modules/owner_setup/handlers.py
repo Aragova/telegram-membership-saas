@@ -32,6 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
@@ -1379,7 +1380,7 @@ def create_owner_setup_router(
         )
         sales = (
             "\n".join(
-                f"• {escape(currency)}: {_statistics_amount(amount)}"
+                f"• {escape(display_currency(currency))}: {_statistics_amount(amount)}"
                 f" · {count}"
                 for currency, amount, count in stats.currency_totals
             )
@@ -2472,7 +2473,7 @@ def create_owner_setup_router(
             return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
 
         revenues = "\n".join(
-            f"• {escape(currency)}: {precise_amount(amount)} ({count})"
+            f"• {escape(display_currency(currency))}: {precise_amount(amount)} ({count})"
             for currency, amount, count in metrics.sales_by_currency
         ) or tr("Нет подтверждённых продаж", "No confirmed sales")
         type_label = tr("Канал", "Channel") if metrics.resource_type == (
@@ -2577,12 +2578,11 @@ def create_owner_setup_router(
         for price in data.prices:
             lines.append(
                 ("✅ " if price.method_count or price.currency == "XTR" else "⚠️ ")
-                + escape(
-                    format_amount(price.amount, price.precision)
-                    + " " + price.currency
-                )
+                + escape(display_price(
+                    format_amount(price.amount, price.precision), price.currency,
+                ))
                 + (
-                    tr(" · ⭐ Telegram Stars", " · ⭐ Telegram Stars")
+                    ""
                     if price.currency == "XTR" else
                     tr(" · оплата настроена", " · payment ready")
                     if price.method_count else
@@ -2590,7 +2590,7 @@ def create_owner_setup_router(
                 )
             )
         rows.extend([
-            [_button("💰 " + code, "price:" + plan_id.hex + ":" + code)]
+            [_button("💰 " + display_currency(code), "price:" + plan_id.hex + ":" + code)]
             for code in codes
         ])
         rows.append([_button(
@@ -3046,7 +3046,7 @@ def create_owner_setup_router(
         )
         rows = [
             [_button(
-                code, f"methodcurrency:{code}" if mode == "method"
+                display_currency(code), f"methodcurrency:{code}" if mode == "method"
                 else f"price:{plan_id.hex}:{code}"
             )]
             for code in codes
@@ -5660,8 +5660,8 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, step="price_amount",
                     payload={"plan_id": plan_hex, "currency": currency},
                     text=tr(
-                        f"💰 Укажите цену в {currency} (например, 499 или 9.99):",
-                        f"💰 Enter the price in {currency} (e.g. 499 or 9.99):",
+                        f"💰 Укажите цену в {display_currency(currency)} (например, 499 или 9.99):",
+                        f"💰 Enter the price in {display_currency(currency)} (e.g. 499 or 9.99):",
                     ),
                 )
             elif action.startswith("publish:"):
@@ -5732,13 +5732,13 @@ def create_owner_setup_router(
                 )
                 rows = [
                     [_button(
-                        "➕ " + code,
+                        "➕ " + display_currency(code),
                         "methodattach:" + method_id.hex + ":" + code,
                     )] for code in codes if code not in method.currencies
                 ]
                 rows.extend([
                     [_button(
-                        tr("➖ " + code, "➖ " + code),
+                        "➖ " + display_currency(code),
                         "methodremoveask:" + encode_uuid(method_id) + ":" + code,
                         "danger",
                     )] for code in method.currencies

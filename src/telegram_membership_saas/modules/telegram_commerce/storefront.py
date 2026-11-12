@@ -14,6 +14,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
@@ -48,6 +49,12 @@ CURRENCY_ICONS = {
 
 def _currency_icon(code: str) -> str:
     return CURRENCY_ICONS.get(code, "🌐")
+
+
+def _currency_label(code: str) -> str:
+    if code == "XTR":
+        return display_currency(code)
+    return _currency_icon(code) + " " + code
 
 
 def _plan_summary(name: str, period: str, *, duration_only: bool) -> str:
@@ -160,7 +167,10 @@ def _currency_rows(
         selected = code == current
         # The filled green button and the emoji are both visible selections:
         # older Telegram clients may ignore button.style.
-        label = ("🟢" if selected else "") + _currency_icon(code) + code
+        label = ("🟢" if selected else "") + (
+            display_currency(code) if code == "XTR"
+            else _currency_icon(code) + code
+        )
         buttons.append(InlineKeyboardButton(
             text=label,
             callback_data=callback,
@@ -243,7 +253,7 @@ def catalog_screen(
         ),
         "",
         tr("🌍 Валюта: <b>", "🌍 Currency: <b>")
-        + _currency_icon(chosen) + " " + escape(chosen) + "</b>",
+        + escape(_currency_label(chosen)) + "</b>",
     ]
     current_resource = None
     for item in visible:
@@ -260,7 +270,7 @@ def catalog_screen(
                     option.plan_name, option.duration_value, option.duration_unit,
                 ),
             ) + "</b>"
-            + " — " + escape(price + " " + chosen)
+            + " — " + escape(display_price(price, chosen))
         )
         button_plan = (
             period if is_period_only_plan_name(
@@ -270,7 +280,7 @@ def catalog_screen(
         )
         rows.append([InlineKeyboardButton(
             text=(
-                "💎 " + button_plan + " · " + price + " " + chosen
+                "💎 " + button_plan + " · " + display_price(price, chosen)
             )[:64],
             callback_data=(
                 f"offer:{encode_uuid(option.plan_price_id)}:{current_page}"
@@ -340,7 +350,7 @@ def offer_screen(
             else "🎟️ <b>" + escape(option.plan_name) + "</b>\n"
         )
         + "🗓️ " + escape(period) + "\n"
-        + "💰 <b>" + escape(price + " " + option.currency_code) + "</b>\n\n"
+        + "💰 <b>" + escape(display_price(price, option.currency_code)) + "</b>\n\n"
         + tr("👇 <b>Как вам удобнее оплатить?</b>",
              "👇 <b>How would you like to pay?</b>")
     )
@@ -384,7 +394,7 @@ def rich_catalog_html(
     parts.extend([
         "<h3>" + tr("💎 Подписки", "💎 Subscriptions") + "</h3>",
         "<p>" + tr("🌍 Валюта: ", "🌍 Currency: ")
-        + _currency_icon(chosen) + " <b>" + escape(chosen) + "</b></p>",
+        + "<b>" + escape(_currency_label(chosen)) + "</b></p>",
     ])
     active_resource: str | None = None
     for offer in visible:
@@ -409,7 +419,7 @@ def rich_catalog_html(
         amount = format_amount(option.amount, option.currency_precision)
         parts.append(
             "<tr><td>" + escape(label) + "</td><td>"
-            + escape(amount + " " + chosen) + "</td></tr>"
+            + escape(display_price(amount, chosen)) + "</td></tr>"
         )
     if active_resource is not None:
         parts.append("</table>")

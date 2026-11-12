@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas import receipt_intents
+from telegram_membership_saas.currency_display import display_price
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import (
     current_language,
@@ -176,7 +177,7 @@ def _acceptable_receipt(message: Message) -> bool:
 def _option_label(option: CheckoutOption) -> str:
     return (
         f"{option.plan_name} · {format_period(option.duration_value, option.duration_unit)} · "
-        f"{format_amount(option.amount, option.currency_precision)} {option.currency_code} · "
+        f"{display_price(format_amount(option.amount, option.currency_precision), option.currency_code)} · "
         f"{option.payment_method_name}"
     )
 
@@ -240,14 +241,14 @@ def _review_text(item: ReviewItem) -> str:
             "🧾 Заявка на подтверждение\n\n"
             f"👤 Покупатель: {username}\n"
             f"📦 Тариф: {item.plan_name}\n"
-            f"💳 Оплата: {amount} {item.currency_code}\n"
+            f"💳 Оплата: {display_price(amount, item.currency_code)}\n"
             f"Способ: {item.payment_method_name}\n"
             f"🔖 Заявка: {item.request_id}\n\n"
             "Проверьте поступление средств в банке, затем примите решение.",
             "🧾 Payment pending review\n\n"
             f"👤 Customer: {username}\n"
             f"📦 Plan: {item.plan_name}\n"
-            f"💳 Amount: {amount} {item.currency_code}\n"
+            f"💳 Amount: {display_price(amount, item.currency_code)}\n"
             f"Method: {item.payment_method_name}\n"
             f"🔖 Request: {item.request_id}\n\n"
             "Confirm the bank transfer before approving the payment.",
@@ -278,7 +279,7 @@ def _admin_review_result_text(result: ReviewResult, *, approve: bool) -> str:
         tr("👤 Покупатель: ", "👤 Customer: ") + escape(username) + "\n"
         + tr("📦 Тариф: ", "📦 Plan: ") + escape(item.plan_name) + "\n"
         + tr("💳 Сумма: ", "💳 Amount: ")
-        + f"{format_amount(item.amount, 18)} {escape(item.currency_code)}\n"
+        + f"{escape(display_price(format_amount(item.amount, 18), item.currency_code))}\n"
     )
     if approve:
         details += (
@@ -833,7 +834,7 @@ def create_telegram_commerce_router(
             + (f"📦 <b>{escape(checkout.option.plan_name)}</b>\n"
                if named_plan else "")
             + f"⏳ {escape(period_label)}\n"
-            + f"💳 <b>{amount} {escape(checkout.request.currency_code)}</b>\n"
+            + f"💳 <b>{escape(display_price(amount, checkout.request.currency_code))}</b>\n"
             + tr("Способ: ", "Method: ")
             + f"{escape(checkout.option.payment_method_name)}\n\n"
             + f"{escape(checkout.instruction)}\n\n"

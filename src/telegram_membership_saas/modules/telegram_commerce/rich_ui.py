@@ -14,6 +14,7 @@ from aiogram.methods import EditMessageText
 from aiogram.types import InlineKeyboardMarkup
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.currency_display import display_price
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.telegram_commerce.service import (
     format_amount,
@@ -44,7 +45,7 @@ def rich_subscription_offer_html(
     title = tr("💎 Оформление подписки", "💎 Subscription checkout")
     period = format_period(option.duration_value, option.duration_unit)
     amount = format_amount(option.amount, option.currency_precision)
-    price = amount + " " + option.currency_code
+    price = display_price(amount, option.currency_code)
     parts = [
         "<h3>" + title + "</h3>",
         "<table bordered compact>",
