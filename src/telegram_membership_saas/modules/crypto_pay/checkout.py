@@ -412,6 +412,27 @@ async def issue_reserved_crypto_invoice(
             ).limit(1))
             if available is None or asset is None:
                 raise ValueError("Reserved file has been removed or is unavailable")
+            # The customer may have paid through Stars or received approval
+            # for a manual transfer AFTER this invoice was reserved. All
+            # three sources are rechecked under the same project checkout
+            # lock immediately BEFORE making an external payable invoice.
+            for model, paid_status in (
+                (FilePurchase, "paid"),
+                (FileManualOrder, "approved"),
+                (CryptoPayInvoice, "paid"),
+            ):
+                paid_purchase = await session.scalar(select(model.id).where(
+                    model.project_id == project_id,
+                    model.telegram_bot_id == bot_id,
+                    model.telegram_user_id == buyer_id,
+                    model.product_id == record.product_id,
+                    model.status == paid_status,
+                ).limit(1))
+                if paid_purchase is not None:
+                    raise ValueError(
+                        "This file was already purchased; cannot issue "
+                        "another payable Crypto Pay invoice"
+                    )
         elif record.kind == "subscription":
             available = await session.scalar(select(Plan.id).join(
                 PlanPrice,
