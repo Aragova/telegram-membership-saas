@@ -208,6 +208,14 @@ CREATE OR REPLACE FUNCTION public.platform_saas_owner_hold_state(
              OR p_at<greatest(started,billing_started) THEN
             RETURN 'disabled';
           END IF;
+          -- Owner/operator accounts are exempt from monetary holds,
+          -- even if historic invoices remain in the immutable audit.
+          IF EXISTS(
+            SELECT 1 FROM public.telegram_users u
+            JOIN public.platform_operators po
+              ON po.telegram_user_id=u.telegram_user_id
+            WHERE u.id=p_owner AND po.role='owner'
+          ) THEN RETURN 'clear'; END IF;
           SELECT count(*),count(*) FILTER(
             WHERE greatest(i.due_at,i.issued_at,started)
                   + make_interval(days=>grace)<=p_at

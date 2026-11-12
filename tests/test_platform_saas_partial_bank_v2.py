@@ -121,13 +121,13 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 await _actor(conn, owner)
                 proof = await _call(conn, "platform_saas_v2_submit_proof", {
                     "attempt": attempt_id, "bot": 123987123,
-                    "message": 546, "file_id": "private-file-id-123",
+                    "chat": owner_tg, "message": 546, "file_id": "private-file-id-123",
                     "kind": "photo",
                 })
                 assert proof
                 assert await _call(conn, "platform_saas_v2_submit_proof", {
                     "attempt": attempt_id, "bot": 123987123,
-                    "message": 546, "file_id": "private-file-id-123",
+                    "chat": owner_tg, "message": 546, "file_id": "private-file-id-123",
                     "kind": "photo",
                 }) == proof
                 await _actor(conn, operator)
@@ -189,7 +189,7 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 last_id = last["id"]
                 await _call(conn, "platform_saas_v2_submit_proof", {
                     "attempt": last_id, "bot": 123987123,
-                    "message": 547, "file_id": "private-file-id-456",
+                    "chat": owner_tg, "message": 547, "file_id": "private-file-id-456",
                     "kind": "document",
                 })
                 await _actor(conn, operator)

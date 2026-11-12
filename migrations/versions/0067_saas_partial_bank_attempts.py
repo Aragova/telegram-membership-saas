@@ -69,15 +69,20 @@ def upgrade() -> None:
             "platform_saas_payment_attempts_v2.id", ondelete="RESTRICT",
         ), unique=True, nullable=False),
         sa.Column("source_bot_id", sa.BigInteger(), nullable=False),
+        # Telegram message_id is scoped to a chat, NOT a bot.
+        sa.Column("source_chat_id", sa.BigInteger(), nullable=False),
         sa.Column("source_message_id", sa.BigInteger(), nullable=False),
         sa.Column("source_file_id", sa.String(512), nullable=False),
         sa.Column("file_type", sa.String(12), nullable=False),
         sa.Column("submitted_at", sa.DateTime(timezone=True), nullable=False,
                   server_default=sa.text("clock_timestamp()")),
-        sa.UniqueConstraint("source_bot_id", "source_message_id",
-                            name="uq_saas_v2_proof_original_message"),
+        sa.UniqueConstraint(
+            "source_bot_id", "source_chat_id", "source_message_id",
+            name="uq_saas_v2_proof_original_message",
+        ),
         sa.CheckConstraint(
-            "source_bot_id>0 AND source_message_id>0 "
+            "source_bot_id>0 AND source_chat_id>0 "
+            "AND source_message_id>0 "
             "AND file_type IN ('photo','document')",
             name="ck_saas_v2_proof_media",
         ),
@@ -331,7 +336,7 @@ def upgrade() -> None:
     """)
     op.execute("""
     CREATE FUNCTION public.platform_saas_v2_submit_proof(
-      p_attempt uuid,p_bot bigint,p_message bigint,
+      p_attempt uuid,p_bot bigint,p_chat bigint,p_message bigint,
       p_file_id text,p_kind text
     ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
     SET search_path=pg_catalog,public AS $f$
@@ -341,7 +346,12 @@ def upgrade() -> None:
       SELECT * INTO original
       FROM public.platform_saas_payment_attempts_v2 WHERE id=p_attempt;
       IF original.id IS NULL OR original.owner_user_id IS DISTINCT FROM actor
-         OR p_bot IS NULL OR p_bot<=0 OR p_message IS NULL OR p_message<=0
+         OR p_bot IS NULL OR p_bot<=0 OR p_chat IS NULL OR p_chat<=0
+         OR p_chat IS DISTINCT FROM (
+           SELECT u.telegram_user_id FROM public.telegram_users u
+           WHERE u.id=actor
+         )
+         OR p_message IS NULL OR p_message<=0
          OR length(coalesce(p_file_id,'')) NOT BETWEEN 8 AND 512
          OR p_kind NOT IN ('photo','document')
          OR clock_timestamp()>original.expires_at THEN
@@ -353,10 +363,10 @@ def upgrade() -> None:
       IF existing IS NOT NULL THEN RETURN existing; END IF;
       proof:=gen_random_uuid();
       INSERT INTO public.platform_saas_payment_proofs_v2(
-        id,attempt_id,source_bot_id,source_message_id,
-        source_file_id,file_type
+        id,attempt_id,source_bot_id,source_chat_id,
+        source_message_id,source_file_id,file_type
       ) VALUES(
-        proof,p_attempt,p_bot,p_message,p_file_id,p_kind
+        proof,p_attempt,p_bot,p_chat,p_message,p_file_id,p_kind
       );
       RETURN proof;
     END; $f$
@@ -484,6 +494,7 @@ def upgrade() -> None:
         'amount',a.amount_currency::text,
         'quote_date',a.quote_date,
         'source_bot',p.source_bot_id,
+        'source_chat',p.source_chat_id,
         'source_message',p.source_message_id,
         'source_file',p.source_file_id,'file_type',p.file_type,
         'submitted_at',p.submitted_at
@@ -532,7 +543,7 @@ def upgrade() -> None:
       "platform_saas_v2_bank_method(text,text)",
       "platform_saas_v2_invoice_balance(uuid)",
       "platform_saas_v2_create_attempt(uuid,numeric,text)",
-      "platform_saas_v2_submit_proof(uuid,bigint,bigint,text,text)",
+      "platform_saas_v2_submit_proof(uuid,bigint,bigint,bigint,text,text)",
       "platform_saas_v2_approve_attempt(uuid,text)",
       "platform_saas_v2_reject_attempt(uuid,text)",
       "platform_saas_v2_pending_proofs(integer)",

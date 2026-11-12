@@ -1138,15 +1138,18 @@ def create_owner_setup_router(
             project_id=fixed_project_id,
         )
         buttons: list[list[InlineKeyboardButton]] = []
-        if (Decimal(str(balance["remaining_rub"])) > 0
-                and not snapshot.get("locked")):
+        if Decimal(str(balance["remaining_rub"])) > 0:
             buttons.append([_button(
                 tr("💳 Оплатить полностью или частично",
                    "💳 Pay in full or partially"),
                 "saasv2pay:" + encode_uuid(invoice_id) + ":" + str(page),
                 "success",
             )])
-        if not snapshot.get("locked") and item["status"] == "unpaid":
+        if (
+            not snapshot.get("locked")
+            and item["status"] == "unpaid"
+            and Decimal(str(balance.get("partial_rub", 0))) == 0
+        ):
             buttons.append([_button(
                 tr("💱 Зафиксировать валюту", "💱 Lock invoice currency"),
                 "saasbillchoose:" + encode_uuid(invoice_id) + ":" + str(page),
@@ -3564,7 +3567,7 @@ def create_owner_setup_router(
             await saas_v2_submit_proof(
                 factory, actor_id=sender, attempt_id=attempt,
                 project_id=fixed_project_id, bot_id=bot.id,
-                message_id=message.message_id,
+                chat_id=message.chat.id, message_id=message.message_id,
                 file_id=file_id, file_type=file_type,
             )
         except (ValueError, PermissionError):

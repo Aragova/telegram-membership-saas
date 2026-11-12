@@ -184,7 +184,7 @@ jobs:
                       "platform_saas_v2_available_methods(uuid)",
                       "platform_saas_v2_methods_read()",
                       "platform_saas_v2_create_attempt(uuid,numeric,text)",
-                      "platform_saas_v2_submit_proof(uuid,bigint,bigint,text,text)",
+                      "platform_saas_v2_submit_proof(uuid,bigint,bigint,bigint,text,text)",
                       "platform_saas_v2_approve_attempt(uuid,text)",
                       "platform_saas_v2_reject_attempt(uuid,text)",
                       "platform_saas_v2_pending_proofs(integer)",

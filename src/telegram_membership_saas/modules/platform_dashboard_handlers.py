@@ -1401,6 +1401,8 @@ def create_platform_dashboard_router(
                         + "</b> · " + escape(str(item["rub"])) + " ₽\n"
                         + tr("Источник: бот ", "Source: bot ")
                         + escape(str(item["source_bot"]))
+                        + tr(", чат ", ", chat ")
+                        + escape(str(item["source_chat"]))
                         + tr(", сообщение ", ", message ")
                         + escape(str(item["source_message"]))
                     )

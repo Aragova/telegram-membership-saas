@@ -33,7 +33,7 @@ async def _rpc(
         "platform_saas_v2_methods_read": (),
         "platform_saas_v2_create_attempt": ("invoice", "amount_rub", "currency"),
         "platform_saas_v2_submit_proof":
-            ("attempt", "bot_id", "message_id", "file_id", "file_type"),
+            ("attempt", "bot_id", "chat_id", "message_id", "file_id", "file_type"),
         "platform_saas_v2_bank_method": ("currency", "instructions"),
         "platform_saas_v2_approve_attempt": ("attempt", "bank_reference"),
         "platform_saas_v2_reject_attempt": ("attempt", "reason"),
@@ -113,11 +113,12 @@ async def saas_v2_create_attempt(
 async def saas_v2_submit_proof(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, attempt_id: UUID, project_id: UUID | None,
-    bot_id: int, message_id: int, file_id: str, file_type: str,
+    bot_id: int, chat_id: int, message_id: int,
+    file_id: str, file_type: str,
 ) -> UUID:
     # Account invoices also live in the central bot after bot transfer.
     # The SQL RPC verifies the historical liable owner independently.
-    if bot_id <= 0 or message_id <= 0:
+    if bot_id <= 0 or chat_id <= 0 or message_id <= 0:
         raise PermissionError("Telegram proof source required")
     if file_type not in ("photo", "document") or not file_id:
         raise ValueError("Unsupported payment evidence")
@@ -126,7 +127,8 @@ async def saas_v2_submit_proof(
         name="platform_saas_v2_submit_proof",
         arguments={
             "attempt": attempt_id, "bot_id": bot_id,
-            "message_id": message_id, "file_id": file_id,
+            "chat_id": chat_id, "message_id": message_id,
+            "file_id": file_id,
             "file_type": file_type,
         },
     )
