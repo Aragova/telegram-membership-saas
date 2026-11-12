@@ -341,7 +341,7 @@ async def recover_uncertain_crypto_invoice(
     project_id: UUID, invoice_id: UUID, encryption_key: SecretStr | None,
     client_factory: Callable[..., CryptoPayClient] = CryptoPayClient,
     max_pages: int = 5,
-) -> IssuedCryptoInvoice:
+) -> IssuedCryptoInvoice | None:
     """Find a timed-out createInvoice by its unique frozen payload.
 
     Scans up to 500 recent invoices on the original app. Absence in a
@@ -383,6 +383,7 @@ async def recover_uncertain_crypto_invoice(
         found[0], payload=payload, amount=amount,
         currency_code=code, currency_type=currency_type, testnet=testnet,
     )
+    expired = found[0]["status"] == "expired"
     async with system_project_session_scope(factory, project_id) as session:
         record = await session.scalar(select(CryptoPayInvoice).where(
             CryptoPayInvoice.id == invoice_id,
@@ -393,9 +394,15 @@ async def recover_uncertain_crypto_invoice(
                 or record.amount != amount or record.currency_code != code):
             raise CryptoPayError("Invoice changed during provider reconciliation")
         record.provider_invoice_id = provider_id
-        record.invoice_url = link
-        record.status = "issued"
+        record.invoice_url = None if expired else link
+        record.status = "expired" if expired else "issued"
         await session.flush()
+        if expired:
+            # Terminal provider evidence frees the buyer's pending quota.
+            # Never return a clickable link to an expired invoice.
+            return None
+        if link is None:
+            raise CryptoPayError("Provider invoice link is missing")
         return IssuedCryptoInvoice(
             id=invoice_id, url=link, amount=amount, currency_code=code,
         )
