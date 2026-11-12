@@ -98,3 +98,16 @@ current owner wizard is awaiting input. This prevents merchant secrets being
 saved as a product title, description or price. The actual owner input
 handler deletes token messages BEFORE contacting Crypto Pay. Regressions
 exercise both file-sale routers and ensure normal editors remain usable.
+
+### Priority secret-ingress security (PR #134)
+
+The first connected-bot router after language handles ONLY plausible
+merchant API credential messages with an authenticated, unexpired, bot- and
+project-scoped `crypto_pay_token` setup state. It runs BEFORE moderator
+message composers, file editors, manual receipt workflows and the buyer/owner
+conversation replies. Thus even an old quoted subscriber notification cannot
+forward a secret, and old product drafts cannot store it. This handler
+deletes the Telegram token message BEFORE consuming the wizard or validating
+the token. Failed deletion blocks registration. Non-token chat messages
+avoid an extra credential-flow DB lookup for efficient 50-100 bot operation.
+All existing file editor checks remain as defense in depth.

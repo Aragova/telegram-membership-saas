@@ -9,6 +9,9 @@ from telegram_membership_saas.modules.broadcasts.handlers import (
     StartAudienceMiddleware,
     create_broadcast_router,
 )
+from telegram_membership_saas.modules.crypto_pay.owner_token_router import (
+    create_crypto_secret_router,
+)
 from telegram_membership_saas.modules.file_sales.handlers import (
     create_file_sales_router,
 )
@@ -138,6 +141,13 @@ def create_customer_dispatcher(
     ))
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.
+    # Merchant API credentials must be intercepted BEFORE every generic
+    # file editor, buyer conversation and moderator reply handler. The
+    # filter is extremely narrow: only merchant-token-shaped private text
+    # while the actual owner has an active BOT-SCOPED Crypto Pay wizard.
+    dispatcher.include_router(create_crypto_secret_router(
+        session_factory, project_id=project_id,
+    ))
     # Private transfer invitations and token proof must be handled before
     # owner and buyer forms; only participants pass the service checks.
     dispatcher.include_router(create_transfer_router(
