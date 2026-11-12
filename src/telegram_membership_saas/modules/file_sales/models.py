@@ -141,6 +141,10 @@ class FilePurchase(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Durable Telegram precheckout approval. A sent ok=True can charge Stars
+    # before successful_payment reaches this bot; Crypto Pay must not issue
+    # a second payable link during that unresolved interval.
+    stars_authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
