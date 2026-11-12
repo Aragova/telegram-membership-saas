@@ -49,6 +49,9 @@ from telegram_membership_saas.modules.bots.service import (
     register_customer_bot,
 )
 from telegram_membership_saas.modules.broadcasts.service import cancel_draft
+from telegram_membership_saas.modules.crypto_pay.owner_token_router import (
+    remember_crypto_pay_owner,
+)
 from telegram_membership_saas.modules.crypto_pay.service import (
     connect_crypto_pay,
     disconnect_crypto_pay,
@@ -5823,6 +5826,10 @@ def create_owner_setup_router(
                         "Never share the token. If deletion fails, rotate it.\n"
                         "Use /cancel to exit.",
                     ),
+                )
+                remember_crypto_pay_owner(
+                    project_id=project_id, bot_id=bot.id,
+                    actor_id=actor_id, telegram_user_id=user_id,
                 )
             elif action == "cryptoffask":
                 if fixed_project_id != project_id:

@@ -7,25 +7,59 @@ API token to a subscriber or save it as a draft file description.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from time import monotonic
 from uuid import UUID
 
 from aiogram import Bot, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
-from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.crypto_pay.service import connect_crypto_pay
+from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.owner_setup.service import (
     SetupFlow,
     consume_button_flow,
     ensure_telegram_actor,
 )
+from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.tenant_context import TenantContext
+
+
+# Project/bot-scoped hint set ONLY by the owner-authorized Crypto Pay
+# setup callback. It is an optimization, not a permission grant: the live
+# wizard and merchant API connection always revalidate in the database.
+_OWNER_HINTS: dict[tuple[UUID, int], tuple[UUID, int, float]] = {}
+_OWNER_HINT_TTL = 20 * 60
+_OWNER_LOOKUP_TTL = 30.0
+
+
+def remember_crypto_pay_owner(
+    *, project_id: UUID, bot_id: int, actor_id: UUID,
+    telegram_user_id: int,
+) -> None:
+    _OWNER_HINTS[(project_id, bot_id)] = (
+        actor_id, telegram_user_id, monotonic() + _OWNER_HINT_TTL,
+    )
+
+
+async def read_current_crypto_owner(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+) -> tuple[UUID, int] | None:
+    """Read-only owner lookup; do not insert a TelegramUser for every buyer."""
+    async with system_project_session_scope(factory, project_id) as session:
+        row = (await session.execute(
+            select(Project.owner_user_id, TelegramUser.telegram_user_id)
+            .join(TelegramUser, TelegramUser.id == Project.owner_user_id)
+            .where(Project.id == project_id, Project.status == "active")
+        )).one_or_none()
+        return (row[0], row[1]) if row is not None else None
 
 
 def _plausible_merchant_token(value: str | None) -> bool:
@@ -107,6 +141,8 @@ class CryptoPaySecretFilter(BaseFilter):
     ) -> None:
         self.factory = factory
         self.project_id = project_id
+        self._owner: tuple[UUID, int] | None = None
+        self._owner_lookup_until = 0.0
 
     async def __call__(self, message: Message, bot: Bot) -> bool:
         if (
@@ -114,21 +150,31 @@ class CryptoPaySecretFilter(BaseFilter):
             or message.text is None or message.text.startswith("/")
         ):
             return False
-        # A token-shaped text is ALWAYS deleted, even after the 15-minute
-        # wizard expired or after a successful setup. This prevents secrets
-        # from escaping into old buyer replies when a prompt is stale.
+        # Numeric-prefix merchant credentials always bypass the cache and
+        # are deleted, even when the owner's wizard expired.
         if _plausible_merchant_token(message.text):
             return True
-        # While the wizard is active, intercept even a malformed/truncated
-        # first attempt, so an alternate owner reply handler cannot consume
-        # the form and leave a subsequent valid retry unprotected.
-        actor = await ensure_telegram_actor(
-            self.factory, telegram_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-        )
+        # Most messages are BUYER chat: no identity INSERT/UPDATE, no owner
+        # wizard lookup, and no tenant session on the hot path. The original
+        # project owner identity is cached briefly and the wizard read is
+        # performed only for the verified Telegram owner ID.
+        now = monotonic()
+        hint = _OWNER_HINTS.get((self.project_id, bot.id))
+        if hint is not None and hint[2] > now:
+            owner = (hint[0], hint[1])
+        else:
+            if self._owner_lookup_until <= now:
+                self._owner = await read_current_crypto_owner(
+                    self.factory, project_id=self.project_id,
+                )
+                self._owner_lookup_until = monotonic() + _OWNER_LOOKUP_TTL
+            owner = self._owner
+        if owner is None or owner[1] != message.from_user.id:
+            return False
+        # Owner setup is never trusted from this cache: its live step,
+        # project, bot, generation and expiry are checked under tenant RLS.
         return await active_crypto_pay_secret_prompt(
-            self.factory, actor_id=actor, bot_scope_id=bot.id,
+            self.factory, actor_id=owner[0], bot_scope_id=bot.id,
             project_id=self.project_id,
         )
 

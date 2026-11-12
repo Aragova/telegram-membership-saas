@@ -159,3 +159,16 @@ deleted. When the owner actually has a live bot-scoped Crypto Pay token wizard,
 ALL private non-command text is intercepted and deleted before verification,
 regardless of provider token format. This separates credential protection from
 normal buyer support/payment evidence.
+
+### Owner-only hot-path optimization (PR #134)
+
+The first secret router still deletes a correctly shaped API token before all
+other message handlers without any database lookup. For ordinary private text,
+it checks a short-lived, project-scoped owner identity cache and immediately
+skips buyer messages. On cache miss, it performs ONE read-only project-owner
+identity query (no Telegram user upsert) and caches it briefly. Only the
+identified current owner's text incurs a tenant-scoped wizard read. An
+authorized Crypto Pay setup callback warms the local owner hint immediately
+after binding the durable prompt, including after ownership transfer. All
+authorization and active generation checks still occur in the database;
+the in-process hint is NEVER used to grant credentials or payment rights.
