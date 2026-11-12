@@ -22,6 +22,7 @@ from test_platform_saas_invoice_rls import (
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.platform_saas_notices import _notice_text
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
@@ -109,6 +110,12 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 )
                 assert "RUB" not in methods
                 assert "USD" in methods
+                report = await _call(
+                    conn, "platform_saas_owner_invoice_report",
+                    {"page": 0, "size": 6},
+                )
+                assert report["details_configured"] is False
+                assert report["instructions"] is None
                 with pytest.raises(DBAPIError) as retired:
                     async with conn.begin_nested():
                         await _call(
@@ -278,3 +285,18 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
     finally:
         await engine.dispose()
         await admin.dispose()
+
+
+
+def test_billing_reminder_uses_live_invoice_navigation_not_stale_bank_details():
+    item = {
+        "kind": "overdue",
+        "invoice_id": "11111111-1111-4111-8111-111111111111",
+        "due_at": "2026-11-12T00:00:00+00:00",
+        "amount_rub": "50.00",
+        "instructions": "RETIRED BANK ACCOUNT 0000000000",
+    }
+    message = _notice_text(item)
+    assert "RETIRED BANK ACCOUNT" not in message
+    assert "50.00" in message
+    assert "ViMi Pay" in message
