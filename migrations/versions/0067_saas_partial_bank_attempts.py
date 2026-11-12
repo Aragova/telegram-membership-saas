@@ -358,6 +358,191 @@ def upgrade() -> None:
     """)
 
 
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_approve_attempt(
+      p_attempt uuid,p_reference text
+    ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE actor uuid; original record; invoice record;
+            existing record; used numeric; allocated_id uuid;
+    BEGIN
+      actor:=public.platform_saas_require_owner();
+      IF p_attempt IS NULL
+         OR length(btrim(coalesce(p_reference,''))) NOT BETWEEN 8 AND 160 THEN
+        RAISE EXCEPTION 'Verified bank receipt reference required'
+          USING ERRCODE='22023';
+      END IF;
+      SELECT * INTO original FROM public.platform_saas_payment_attempts_v2
+      WHERE id=p_attempt;
+      IF original.id IS NULL THEN
+        RAISE EXCEPTION 'Unknown partial payment attempt'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT * INTO invoice FROM public.platform_saas_invoices
+      WHERE id=original.invoice_id FOR UPDATE;
+      IF invoice.id IS NULL OR invoice.status<>'issued'
+         OR invoice.owner_user_id IS DISTINCT FROM original.owner_user_id THEN
+        RAISE EXCEPTION 'Original bill/owner has changed'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT * INTO existing
+      FROM public.platform_saas_payment_allocations_v2
+      WHERE attempt_id=p_attempt;
+      IF existing.id IS NOT NULL THEN
+        IF existing.bank_reference IS DISTINCT FROM btrim(p_reference) THEN
+          RAISE EXCEPTION 'Conflicting receipt replay'
+            USING ERRCODE='23505';
+        END IF;
+        RETURN existing.id;
+      END IF;
+      IF NOT EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_proofs_v2
+        WHERE attempt_id=p_attempt
+      ) OR EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_rejections_v2
+        WHERE attempt_id=p_attempt
+      ) THEN
+        RAISE EXCEPTION 'Proof missing or payment rejected'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT coalesce(sum(amount_rub),0) INTO used
+      FROM public.platform_saas_receipts
+      WHERE invoice_id=invoice.id;
+      SELECT used+coalesce(sum(allocated_rub),0) INTO used
+      FROM public.platform_saas_payment_allocations_v2
+      WHERE invoice_id=invoice.id;
+      IF used+original.amount_rub>invoice.total_rub THEN
+        RAISE EXCEPTION 'Partial payment would over-allocate invoice'
+          USING ERRCODE='23514';
+      END IF;
+      allocated_id:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_allocations_v2(
+        id,attempt_id,invoice_id,received_currency,received_amount,
+        allocated_rub,bank_reference,confirmed_by
+      ) VALUES(
+        allocated_id,p_attempt,invoice.id,original.currency_code,
+        original.amount_currency,original.amount_rub,
+        btrim(p_reference),actor
+      );
+      RETURN allocated_id;
+    END; $f$
+    """)
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_reject_attempt(
+      p_attempt uuid,p_reason text
+    ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE actor uuid; entry record; prior uuid; rejected_id uuid;
+    BEGIN
+      actor:=public.platform_saas_require_owner();
+      IF p_attempt IS NULL OR
+         length(btrim(coalesce(p_reason,''))) NOT BETWEEN 5 AND 500 THEN
+        RAISE EXCEPTION 'Rejection reason required'
+          USING ERRCODE='22023';
+      END IF;
+      SELECT * INTO entry FROM public.platform_saas_payment_attempts_v2
+      WHERE id=p_attempt FOR UPDATE;
+      IF entry.id IS NULL OR EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_allocations_v2
+        WHERE attempt_id=p_attempt
+      ) THEN
+        RAISE EXCEPTION 'Already settled or unknown payment'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT id INTO prior FROM public.platform_saas_payment_rejections_v2
+      WHERE attempt_id=p_attempt;
+      IF prior IS NOT NULL THEN RETURN prior; END IF;
+      rejected_id:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_rejections_v2(
+        id,attempt_id,reason,rejected_by
+      ) VALUES(rejected_id,p_attempt,btrim(p_reason),actor);
+      RETURN rejected_id;
+    END; $f$
+    """)
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_pending_proofs(
+      p_page integer
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE pending jsonb;
+    BEGIN
+      PERFORM public.platform_saas_require_owner();
+      IF p_page IS NULL OR p_page NOT BETWEEN 0 AND 100000 THEN
+        RAISE EXCEPTION 'Invalid review page' USING ERRCODE='22023';
+      END IF;
+      SELECT coalesce(jsonb_agg(jsonb_build_object(
+        'id',a.id,'invoice_id',a.invoice_id,
+        'owner_user_id',a.owner_user_id,
+        'rub',a.amount_rub::text,'currency',a.currency_code,
+        'amount',a.amount_currency::text,
+        'quote_date',a.quote_date,
+        'source_bot',p.source_bot_id,
+        'source_message',p.source_message_id,
+        'source_file',p.source_file_id,'file_type',p.file_type,
+        'submitted_at',p.submitted_at
+      ) ORDER BY p.submitted_at,a.id),'[]'::jsonb) INTO pending
+      FROM (
+        SELECT a.* FROM public.platform_saas_payment_attempts_v2 a
+        JOIN public.platform_saas_payment_proofs_v2 p
+          ON p.attempt_id=a.id
+        WHERE NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_payment_allocations_v2 ok
+          WHERE ok.attempt_id=a.id
+        ) AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_payment_rejections_v2 no
+          WHERE no.attempt_id=a.id
+        )
+        ORDER BY p.submitted_at,a.id LIMIT 8 OFFSET p_page*8
+      ) a
+      JOIN public.platform_saas_payment_proofs_v2 p ON p.attempt_id=a.id;
+      RETURN jsonb_build_object('items',pending,'page',p_page);
+    END; $f$
+    """)
+    # A legacy one-shot full receipt must NEVER follow any partial
+    # allocation; conversely, operator approval locks and checks legacy
+    # receipts before recording the new allocation.
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_legacy_guard()
+    RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    BEGIN
+      IF EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_allocations_v2 a
+        WHERE a.invoice_id=NEW.invoice_id
+      ) THEN
+        RAISE EXCEPTION 'Partial allocations already exist'
+          USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END; $f$
+    """)
+    op.execute("""
+    CREATE TRIGGER trg_saas_v2_legacy_guard
+    BEFORE INSERT ON public.platform_saas_receipts
+    FOR EACH ROW EXECUTE FUNCTION public.platform_saas_v2_legacy_guard()
+    """)
+    for signature in (
+      "platform_saas_v2_bank_method(text,text)",
+      "platform_saas_v2_invoice_balance(uuid)",
+      "platform_saas_v2_create_attempt(uuid,numeric,text)",
+      "platform_saas_v2_submit_proof(uuid,bigint,bigint,text,text)",
+      "platform_saas_v2_approve_attempt(uuid,text)",
+      "platform_saas_v2_reject_attempt(uuid,text)",
+      "platform_saas_v2_pending_proofs(integer)",
+    ):
+        op.execute(f"REVOKE ALL ON FUNCTION public.{signature} FROM PUBLIC")
+        op.execute(f"""
+          DO $grant$
+          BEGIN
+            IF EXISTS(SELECT 1 FROM pg_roles
+              WHERE rolname='membership_runtime') THEN
+              GRANT EXECUTE ON FUNCTION public.{signature}
+                TO membership_runtime;
+            END IF;
+          END $grant$
+        """)
+
+
 def downgrade() -> None:
     raise RuntimeError(
         "Do not roll back append-only ViMi Pay payment evidence"
