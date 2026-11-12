@@ -29,7 +29,10 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     verify_created_invoice_snapshot,
     verify_paid_invoice,
 )
-from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
+from telegram_membership_saas.modules.crypto_pay.models import (
+    CryptoPayInvoice,
+    CryptoPayPaidUsdRate,
+)
 from telegram_membership_saas.modules.crypto_pay.service import load_crypto_app_token
 from telegram_membership_saas.modules.crypto_pay.settlement import (
     _apply_verified_receipt,
@@ -42,6 +45,7 @@ from telegram_membership_saas.project_worker_lock import checkout_retirement_loc
 
 log = logging.getLogger(__name__)
 MAX_INVOICES_PER_SCAN = 12
+MAX_RATE_REPAIRS_PER_SCAN = 3
 ISSUING_LIST_PAGES = 3
 POLL_SECONDS = 45.0
 
@@ -209,6 +213,126 @@ async def _verify_issued_batch(
     return completed
 
 
+
+async def _claim_due_missing_rate_ids(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, now: datetime,
+) -> tuple[UUID, ...]:
+    """Retry paid crypto quotes fairly, without unbounded API or DB work.
+
+    Reuse the existing per-invoice due timestamp. This does not change the
+    original payment or its delivery/renewal state. All old missing quotes
+    remain retryable, but at most three are claimed per worker tick.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        absent = ~select(CryptoPayPaidUsdRate.invoice_id).where(
+            CryptoPayPaidUsdRate.invoice_id == CryptoPayInvoice.id,
+        ).exists()
+        rows = (await session.scalars(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.status == "paid",
+            CryptoPayInvoice.currency_type == "crypto",
+            absent,
+            or_(
+                CryptoPayInvoice.next_check_at.is_(None),
+                CryptoPayInvoice.next_check_at <= now,
+            ),
+        ).order_by(
+            CryptoPayInvoice.next_check_at.asc().nullsfirst(),
+            CryptoPayInvoice.paid_at, CryptoPayInvoice.id,
+        ).limit(MAX_RATE_REPAIRS_PER_SCAN).with_for_update(
+            skip_locked=True,
+        ))).all()
+        for invoice in rows:
+            # Early gaps may be transient; long-lived missing provider
+            # evidence is revisited daily without hammering Crypto Pay.
+            age = now - invoice.paid_at
+            interval = timedelta(hours=1) if age < timedelta(days=1) else timedelta(days=1)
+            invoice.next_check_at = now + interval
+        await session.flush()
+        return tuple(row.id for row in rows)
+
+
+async def _repair_missing_paid_rates(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    invoice_ids: tuple[UUID, ...], key: SecretStr,
+    client_factory: Callable[..., CryptoPayClient],
+) -> int:
+    """Read only original merchant getInvoices receipts, never today's spot.
+
+    A repair inserts missing financial evidence; it MUST NOT grant access,
+    duplicate a purchase, rewrite any saved quote or change paid status.
+    """
+    if not invoice_ids:
+        return 0
+    grouped: dict[UUID, list[tuple]] = defaultdict(list)
+    credentials: dict[UUID, tuple[str, bool]] = {}
+    async with system_project_session_scope(factory, project_id) as session:
+        for record in (await session.scalars(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.id.in_(invoice_ids),
+            CryptoPayInvoice.status == "paid",
+            CryptoPayInvoice.currency_type == "crypto",
+        ))).all():
+            if record.provider_invoice_id is None:
+                continue
+            try:
+                if record.app_id not in credentials:
+                    app, token = await load_crypto_app_token(
+                        session, project_id=project_id, app_id=record.app_id,
+                        encryption_key=key,
+                    )
+                    if app.telegram_bot_id != record.telegram_bot_id:
+                        raise CryptoPayError("Original merchant app/bot mismatch")
+                    credentials[record.app_id] = (token, app.environment == "testnet")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("Crypto Pay quote credentials unavailable (%s)",
+                            type(exc).__name__)
+                continue
+            grouped[record.app_id].append((
+                record.id, record.provider_invoice_id, record.payload,
+                record.amount, record.currency_code, record.currency_type,
+            ))
+    repaired = 0
+    for app_id, rows in grouped.items():
+        token, testnet = credentials[app_id]
+        try:
+            async with client_factory(token, testnet=testnet) as provider:
+                data = await provider.get_invoices(tuple(row[1] for row in rows))
+            by_id = {item["invoice_id"]: item for item in data}
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("Crypto Pay quote lookup deferred (%s)", type(exc).__name__)
+            continue
+        for invoice_id, provider_id, payload, amount, code, currency_type in rows:
+            remote = by_id.get(provider_id)
+            if remote is None or remote.get("status") != "paid":
+                continue
+            try:
+                receipt = verify_paid_invoice(
+                    remote, invoice_id=provider_id, payload=payload,
+                    amount=amount, currency_code=code, currency_type=currency_type,
+                )
+                if receipt.paid_usd_rate is None:
+                    continue
+                async with system_project_session_scope(factory, project_id) as session:
+                    await _apply_verified_receipt(
+                        session, project_id=project_id,
+                        invoice_id=invoice_id, receipt=receipt,
+                    )
+                repaired += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("Crypto Pay quote repair deferred (%s)",
+                            type(exc).__name__)
+    return repaired
+
+
 async def _deliver_one_file(
     factory: async_sessionmaker[AsyncSession], *, bot: Bot,
     project_id: UUID, now: datetime,
@@ -309,6 +433,23 @@ async def reconcile_crypto_pay_once(
         raise
     except Exception as exc:
         log.warning("Crypto Pay batch verification deferred (%s)",
+                    type(exc).__name__)
+    # Already-paid crypto invoices can lack a provider USD quotation.
+    # Claim a separate bounded retry batch, then verify the ORIGINAL app.
+    # A failed quote cannot prevent the buyer's already-paid file delivery.
+    try:
+        rate_ids = await _claim_due_missing_rate_ids(
+            factory, project_id=project_id, bot_id=bot.id, now=moment,
+        )
+        repaired = await _repair_missing_paid_rates(
+            factory, project_id=project_id, invoice_ids=rate_ids,
+            key=encryption_key, client_factory=client_factory,
+        )
+        progress = progress or repaired > 0
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log.warning("Crypto Pay missing-quote repair deferred (%s)",
                     type(exc).__name__)
     # Even when the provider is down, previously paid files still retry.
     delivered = await _deliver_one_file(

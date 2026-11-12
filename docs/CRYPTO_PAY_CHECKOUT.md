@@ -363,6 +363,16 @@ buyer order, monthly invoice, payment method, collection bot or supervisor.
   payment and SaaS invoice schemas intact. Existing historical paid
   testnet and pre-cutoff invoices are not backbilled.
 
+**Missing-rate recovery hardening:** Already-paid crypto invoices with no
+original provider USD rate are revisited by the SAME per-bot recovery loop.
+At most three due invoices are claimed per tick, with hourly retries for
+recent payments and daily retries for older ones. A later original-merchant
+`getInvoices` paid response must independently match invoice ID, amount,
+currency, payload and paid timestamp before an absent quote is appended.
+No later market rate is substituted, existing rates are immutable, and no
+file/subscription/access event is replayed. An unavailable provider or
+quote never delays paid file delivery. No new worker or schema migration.
+
 **Launch gate remains CLOSED.** This PR only records auditable 5% USD
 evidence. The existing monthly RUB invoice issuance function does NOT yet
 incorporate crypto sales; refunds, corrections and provider dispute

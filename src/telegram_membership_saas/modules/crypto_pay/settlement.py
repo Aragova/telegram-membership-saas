@@ -124,6 +124,17 @@ async def _apply_verified_receipt(
     if invoice.status == "paid":
         if invoice.paid_at != receipt.paid_at:
             raise CryptoPayError("Already-paid invoice has conflicting timestamp")
+        # The original provider may omit its optional payment-time USD rate
+        # on the first read. A later independently verified getInvoices read
+        # may fill ONLY this missing immutable audit row. Never replay grants,
+        # the file purchase or access outbox for an already-paid invoice.
+        if invoice.currency_type == "crypto" and receipt.paid_usd_rate is not None:
+            existing_rate = await session.get(CryptoPayPaidUsdRate, invoice.id)
+            if existing_rate is None:
+                await _snapshot_original_asset_usd_rate(
+                    session, invoice=invoice, receipt=receipt,
+                )
+                await session.flush()
         return CryptoSettlement(
             invoice_id=invoice.id, kind=invoice.kind, changed=False,
             paid_at=invoice.paid_at, buyer_id=invoice.telegram_user_id,

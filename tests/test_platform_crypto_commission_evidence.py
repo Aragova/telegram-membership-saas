@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_crypto_pay_atomic_fulfillment import _issue, _shop
 from test_crypto_pay_invoice_reservations import Provider, _tid
+from test_crypto_pay_recovery import TelegramStub
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
@@ -36,6 +37,9 @@ from telegram_membership_saas.modules.crypto_pay.client import (
 from telegram_membership_saas.modules.crypto_pay.models import (
     CryptoPayInvoice,
     CryptoPayPaidUsdRate,
+)
+from telegram_membership_saas.modules.crypto_pay.recovery import (
+    reconcile_crypto_pay_once,
 )
 from telegram_membership_saas.modules.crypto_pay.settlement import (
     settle_crypto_pay_invoice,
@@ -346,6 +350,87 @@ async def test_crypto_paid_asset_rate_persists_atomically_and_replays_safely():
     finally:
         await engine.dispose()
 
+
+
+
+async def test_missing_original_paid_quote_recovers_without_second_purchase():
+    """Only the missing immutable USD rate is repaired after real fulfillment."""
+    CryptoAssetProvider.created = []
+    CryptoAssetProvider.invoice_data = {}
+    CryptoAssetProvider.paid_rate = "0.0000000000000000001"
+    cfg = Settings()
+    engine = build_engine(cfg)
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        _, project, bot_id, product_id = await _shop(factory, key)
+        async with system_project_session_scope(factory, project) as session:
+            session.add(FileManualPrice(
+                project_id=project, product_id=product_id,
+                currency_code="TON", amount=Decimal("1.5"),
+            ))
+        buyer = _tid()
+        invoice_id = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer, kind="file",
+            target_id=product_id, currency="TON",
+        )
+        await issue_reserved_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id, buyer_id=buyer,
+            invoice_id=invoice_id, encryption_key=key,
+            client_factory=CryptoAssetProvider,
+        )
+        original = await settle_crypto_pay_invoice(
+            factory, project_id=project, invoice_id=invoice_id,
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        assert original.changed
+        async with system_project_session_scope(factory, project) as session:
+            assert await session.get(CryptoPayPaidUsdRate, invoice_id) is None
+
+        provider_id = next(iter(CryptoAssetProvider.invoice_data))
+        remote = CryptoAssetProvider.invoice_data[provider_id]
+        bot = TelegramStub(bot_id)
+        # A spoofed amount must NEVER supply a quote, even after sale.
+        remote["amount"] = "999"
+        await reconcile_crypto_pay_once(
+            factory, project_id=project, bot=bot,
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        assert bot.files == [(buyer, "test-file-id")]
+        async with system_project_session_scope(factory, project) as session:
+            assert await session.get(CryptoPayPaidUsdRate, invoice_id) is None
+
+        remote["amount"] = "1.5"
+        remote["paid_usd_rate"] = "3.5"
+        assert await reconcile_crypto_pay_once(
+            factory, project_id=project, bot=bot,
+            now=datetime.now(UTC) + timedelta(hours=2),
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            invoice = await session.get(CryptoPayInvoice, invoice_id)
+            quote = await session.get(CryptoPayPaidUsdRate, invoice_id)
+            assert invoice.status == "paid"
+            assert quote is not None
+            assert quote.usd_per_asset == Decimal("3.5")
+            assert quote.paid_at == original.paid_at
+            assert invoice.last_delivered_at is not None
+        assert bot.files == [(buyer, "test-file-id")]
+        # Later provider replies cannot overwrite immutable original evidence.
+        remote["paid_usd_rate"] = "999"
+        await reconcile_crypto_pay_once(
+            factory, project_id=project, bot=bot,
+            now=datetime.now(UTC) + timedelta(days=2),
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            quote = await session.get(CryptoPayPaidUsdRate, invoice_id)
+            assert quote.usd_per_asset == Decimal("3.5")
+        assert len(CryptoAssetProvider.created) == 1
+        assert bot.files == [(buyer, "test-file-id")]
+    finally:
+        await engine.dispose()
 
 
 async def test_crypto_audit_cursor_wraps_even_as_new_paid_invoices_arrive():
