@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
