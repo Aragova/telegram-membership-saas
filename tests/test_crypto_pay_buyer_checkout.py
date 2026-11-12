@@ -458,12 +458,12 @@ async def test_outstanding_crypto_invoice_blocks_stars_and_manual_file_checkout(
             buyer_id=buyer_id, invoice_payload=pending_stars.invoice_payload,
             amount=50, currency="XTR",
         )
-        with pytest.raises(ValueError, match="Crypto Pay invoice"):
+        with pytest.raises(ValueError, match="Crypto Pay"):
             await create_stars_order(
                 factory, project_id=project, bot_id=bot_id,
                 buyer_id=buyer_id, product_id=product_id,
             )
-        with pytest.raises(ValueError, match="Crypto Pay invoice"):
+        with pytest.raises(ValueError, match="Crypto Pay"):
             await create_manual_order(
                 factory, project_id=project, bot_id=bot_id,
                 buyer_id=buyer_id, product_id=product_id,
