@@ -20,6 +20,7 @@ from telegram_membership_saas.db_base import Base
 class EntitlementSource(StrEnum):
     PAYMENT = "payment"
     STARS_PAYMENT = "stars_payment"
+    CRYPTO_PAYMENT = "crypto_payment"
     MANUAL = "manual"
     OWNER_SERVICE = "owner_service"
     PROMOCODE = "promocode"
@@ -61,7 +62,7 @@ class EntitlementGrant(Base):
             name="fk_entitlement_grants_manual_plan_project",
         ),
         CheckConstraint(
-            "source IN ('payment', 'stars_payment', 'manual', 'owner_service', "
+            "source IN ('payment', 'stars_payment', 'crypto_payment', 'manual', 'owner_service', "
             "'promocode', 'trial', 'referral', 'import', 'compensation')",
             name="ck_entitlement_grants_source",
         ),
