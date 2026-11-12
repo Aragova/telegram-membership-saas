@@ -37,6 +37,7 @@ from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.stars_subscription_timeline import (
     historical_stars_start,
     load_refunded_star_sources,
+    load_surviving_crypto_sources,
     load_surviving_paid_sources,
     owner_end_times,
     rebuild_paid_windows_after,
@@ -297,13 +298,17 @@ async def confirm_subscription_stars_payment(
         session, project_id=project_id, customer_id=order.customer_id,
         plan_id=order.plan_id,
     )
+    earlier_crypto = await load_surviving_crypto_sources(
+        session, project_id=project_id, customer_id=order.customer_id,
+        plan_id=order.plan_id,
+    )
     earlier_refunds = await load_refunded_star_sources(
         session, project_id=project_id, customer_id=order.customer_id,
         plan_id=order.plan_id,
     )
     start_at = historical_stars_start(
         moment, earlier_manual, earlier_stars, earlier_refunds,
-        terminations, project.timezone, current_order=order,
+        terminations, project.timezone, current_order=order, crypto=earlier_crypto,
     )
     end_at = calculate_period_end(
         start_at, timezone_name=project.timezone,
@@ -320,7 +325,7 @@ async def confirm_subscription_stars_payment(
             plan_id=order.plan_id, status=SubscriptionStatus.ACTIVE.value,
             started_at=start_at, current_period_start=start_at,
             current_period_end=end_at, last_payment_id=None,
-            last_star_order_id=order.id,
+            last_star_order_id=order.id, last_crypto_invoice_id=None,
         )
         session.add(subscription)
     else:
@@ -332,6 +337,7 @@ async def confirm_subscription_stars_payment(
         subscription.current_period_end = end_at
         subscription.last_payment_id = None
         subscription.last_star_order_id = order.id
+        subscription.last_crypto_invoice_id = None
 
     resource_ids = tuple((await session.scalars(
         select(PlanResource.resource_id).where(
