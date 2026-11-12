@@ -24,11 +24,16 @@ from telegram_membership_saas.db import (
     build_session_factory,
     system_project_session_scope,
 )
+from telegram_membership_saas.modules.crypto_pay.checkout import (
+    issue_reserved_crypto_invoice,
+    reserve_crypto_invoice,
+)
 from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayError,
     verify_paid_invoice,
 )
 from telegram_membership_saas.modules.crypto_pay.models import (
+    CryptoPayInvoice,
     CryptoPayPaidUsdRate,
 )
 from telegram_membership_saas.modules.crypto_pay.settlement import (
@@ -271,12 +276,6 @@ class CryptoAssetProvider(Provider):
 
 async def test_crypto_paid_asset_rate_persists_atomically_and_replays_safely():
     """Real PostgreSQL snapshot belongs to original verified paid invoice."""
-    from telegram_membership_saas.modules.crypto_pay.checkout import (
-        reserve_crypto_invoice,
-        issue_reserved_crypto_invoice,
-    )
-    from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
-
     CryptoAssetProvider.created = []
     CryptoAssetProvider.invoice_data = {}
     CryptoAssetProvider.paid_rate = "3.1234567890123456789"
