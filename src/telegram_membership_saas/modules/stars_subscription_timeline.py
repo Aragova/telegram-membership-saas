@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -83,6 +84,33 @@ async def load_surviving_paid_sources(
         ).with_for_update(of=EntitlementGrant)
     )).all()
     return list(manual), list(stars)
+
+
+
+
+async def load_surviving_crypto_sources(
+    session: AsyncSession, *, project_id: UUID, customer_id: UUID,
+    plan_id: UUID,
+) -> list[tuple[EntitlementGrant, CryptoPayInvoice]]:
+    """The same historical paid-source timeline includes Crypto Pay renewals."""
+    rows = (await session.execute(
+        select(EntitlementGrant, CryptoPayInvoice)
+        .join(CryptoPayInvoice, and_(
+            CryptoPayInvoice.id == EntitlementGrant.source_id,
+            CryptoPayInvoice.project_id == EntitlementGrant.project_id,
+        ))
+        .where(
+            EntitlementGrant.project_id == project_id,
+            EntitlementGrant.customer_id == customer_id,
+            EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+            EntitlementGrant.source == EntitlementSource.CRYPTO_PAYMENT.value,
+            CryptoPayInvoice.customer_id == customer_id,
+            CryptoPayInvoice.plan_id == plan_id,
+            CryptoPayInvoice.kind == "subscription",
+            CryptoPayInvoice.status == "paid",
+        ).with_for_update(of=EntitlementGrant)
+    )).all()
+    return list(rows)
 
 
 async def load_refunded_star_sources(
@@ -226,6 +254,7 @@ def historical_stars_start(
     termination_times: tuple[datetime, ...] = (),
     timezone_name: str = "UTC",
     current_order: SubscriptionStarOrder | None = None,
+    crypto: list[tuple[EntitlementGrant, CryptoPayInvoice]] | None = None,
 ) -> datetime:
     """Place an old charge using fully replayed historical refunded anchors.
 
@@ -240,6 +269,14 @@ def historical_stars_start(
         and grant.valid_until is not None
         and not _terminated_between(termination_times, order.paid_at, at)
     ]
+    anchors.extend(
+        grant.valid_until
+        for grant, invoice in (crypto or ())
+        if invoice.paid_at is not None
+        and invoice.paid_at <= at
+        and grant.valid_until is not None
+        and not _terminated_between(termination_times, invoice.paid_at, at)
+    )
     manual_end = manual_anchor_end(manual, at, termination_times)
     if manual_end is not None:
         anchors.append(manual_end)
@@ -282,6 +319,10 @@ async def rebuild_paid_windows_after(
         session, project_id=project_id, customer_id=customer_id,
         plan_id=plan_id,
     )
+    crypto = await load_surviving_crypto_sources(
+        session, project_id=project_id, customer_id=customer_id,
+        plan_id=plan_id,
+    )
     # A revoked/refunded order may still have been a valid prepayment
     # anchor at the time a later charge was made. Replay its *virtual*
     # period too, rather than using a stale grant end after an old charge
@@ -317,6 +358,21 @@ async def rebuild_paid_windows_after(
                 events[key] = (
                     at, order.duration_value, order.duration_unit, [],
                     None, order.created_at,
+                )
+            events[key][3].append(grant)
+    for grant, invoice in crypto:
+        if invoice.paid_at is None:
+            continue
+        at = invoice.paid_at
+        if at < after or (at == after and not include_equal):
+            if grant.valid_until is not None:
+                anchors.append((at, grant.valid_until, None))
+        else:
+            key = ("crypto", invoice.id)
+            if key not in events:
+                events[key] = (
+                    at, invoice.duration_value, invoice.duration_unit, [],
+                    None, invoice.created_at,
                 )
             events[key][3].append(grant)
     if not events:
@@ -385,7 +441,14 @@ async def refresh_paid_subscription_summary(
         session, project_id=project_id, customer_id=customer_id,
         plan_id=plan_id,
     )
-    survivors = [grant for grant, _ in manual] + [grant for grant, _ in stars]
+    crypto = await load_surviving_crypto_sources(
+        session, project_id=project_id, customer_id=customer_id, plan_id=plan_id,
+    )
+    survivors = (
+        [grant for grant, _ in manual]
+        + [grant for grant, _ in stars]
+        + [grant for grant, _ in crypto]
+    )
     if not survivors:
         subscription.status = SubscriptionStatus.CANCELLED.value
         await session.flush()
@@ -407,7 +470,13 @@ async def refresh_paid_subscription_summary(
     if winning.source == EntitlementSource.PAYMENT.value:
         subscription.last_payment_id = winning.source_id
         subscription.last_star_order_id = None
-    else:
+        subscription.last_crypto_invoice_id = None
+    elif winning.source == EntitlementSource.STARS_PAYMENT.value:
         subscription.last_payment_id = None
         subscription.last_star_order_id = winning.source_id
+        subscription.last_crypto_invoice_id = None
+    else:
+        subscription.last_payment_id = None
+        subscription.last_star_order_id = None
+        subscription.last_crypto_invoice_id = winning.source_id
     await session.flush()
