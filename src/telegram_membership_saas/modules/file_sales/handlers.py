@@ -220,6 +220,13 @@ def create_file_sales_router(
                 "paytoggle:" + method.method_id.hex,
                 "success" if method.enabled else "danger",
             )])
+        # Same merchant configuration as subscription payments: one settings
+        # screen, no extra file-specific Crypto Pay token or provider.
+        rows.append([InlineKeyboardButton(
+            text=tr("💎 Crypto Pay · настроить", "💎 Crypto Pay · configure"),
+            callback_data="own:cryptopay",
+            style="primary",
+        )])
         # Exactly one bulk button; its label changes when any method is off.
         any_disabled = any(not method.enabled for method in controls)
         rows.append([_button(
