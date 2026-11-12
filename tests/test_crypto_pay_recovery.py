@@ -10,9 +10,9 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy import select
-
 from test_crypto_pay_atomic_fulfillment import _issue, _shop
 from test_crypto_pay_invoice_reservations import Provider, _tid
+
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
     build_engine,
