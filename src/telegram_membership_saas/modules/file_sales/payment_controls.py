@@ -16,14 +16,17 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots import BotInstance
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp
 from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
 )
 from telegram_membership_saas.modules.file_sales.service import _owner
 from telegram_membership_saas.modules.payments import PaymentMethod, PaymentMethodStatus
+from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.tenant_context import TenantContext
 
 AUTO_STARS_ID = UUID(int=0)
+AUTO_CRYPTO_ID = UUID(int=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +35,7 @@ class FilePaymentChoice:
     name: str
     enabled: bool
     auto_stars: bool = False
+    auto_crypto: bool = False
 
 
 async def file_method_enabled(
@@ -84,10 +88,25 @@ async def _choices(
         )
         for method_id, name in methods
     )
-    return items + (FilePaymentChoice(
-        method_id=AUTO_STARS_ID, name="Telegram Stars (XTR)",
+    automatic = (FilePaymentChoice(
+        method_id=AUTO_STARS_ID, name="⭐ Telegram Stars",
         enabled=flags.get(AUTO_STARS_ID, True), auto_stars=True,
     ),)
+    crypto_app = await session.scalar(select(CryptoPayApp.id).join(
+        Project, Project.id == CryptoPayApp.project_id,
+    ).where(
+        CryptoPayApp.project_id == project_id,
+        CryptoPayApp.telegram_bot_id == bot_id,
+        CryptoPayApp.owner_user_id == Project.owner_user_id,
+        CryptoPayApp.status == "active",
+        CryptoPayApp.environment == "mainnet",
+    ))
+    if crypto_app is not None:
+        automatic += (FilePaymentChoice(
+            method_id=AUTO_CRYPTO_ID, name="💎 Crypto Pay",
+            enabled=flags.get(AUTO_CRYPTO_ID, True), auto_crypto=True,
+        ),)
+    return items + automatic
 
 
 async def list_file_payment_controls(
