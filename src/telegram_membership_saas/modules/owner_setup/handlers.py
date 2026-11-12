@@ -564,10 +564,12 @@ def _saas_preview_classic(preview: dict) -> str:
         + escape(str(preview["next_bot_fee_rub"])) + " ₽",
     ])
     if preview["stars_need_reconciliation"]:
-        lines.append(tr(
-            "⭐ Stars: нужна сверка возвратов и стоимости вывода.",
-            "⭐ Stars: refunds and reward value need reconciliation.",
-        ))
+        lines.append(
+            display_currency("XTR") + ": " + tr(
+                "нужна сверка возвратов и стоимости вывода.",
+                "refunds and reward value need reconciliation.",
+            )
+        )
     if int(preview["missing_daily_rates"]):
         lines.append(tr(
             "⚠️ Курсы на даты продаж неполные. Итог не готов.",
