@@ -22,7 +22,11 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayError,
     CryptoPayInvoiceReceipt,
 )
-from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp, CryptoPayInvoice
+from telegram_membership_saas.modules.crypto_pay.models import (
+    CryptoPayApp,
+    CryptoPayInvoice,
+    CryptoPayPaidUsdRate,
+)
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -61,6 +65,24 @@ class CryptoSettlement:
     changed: bool
     paid_at: datetime
     buyer_id: int
+
+
+async def _snapshot_original_asset_usd_rate(
+    session: AsyncSession, *, invoice: CryptoPayInvoice,
+    receipt: CryptoPayInvoiceReceipt,
+) -> None:
+    """Record the payment-time provider USD rate as immutable audit evidence.
+
+    Never replace missing historical evidence with today's exchange spot.
+    The original paid purchase is independent of commission evidence.
+    """
+    if invoice.currency_type != "crypto" or receipt.paid_usd_rate is None:
+        return
+    session.add(CryptoPayPaidUsdRate(
+        invoice_id=invoice.id, project_id=invoice.project_id,
+        asset_code=invoice.currency_code, usd_per_asset=receipt.paid_usd_rate,
+        paid_at=receipt.paid_at.astimezone(UTC),
+    ))
 
 
 async def _apply_verified_receipt(
@@ -117,6 +139,9 @@ async def _apply_verified_receipt(
             raise RuntimeError("Paid file invoice has no original assets")
         invoice.status = "paid"
         invoice.paid_at = moment
+        await _snapshot_original_asset_usd_rate(
+            session, invoice=invoice, receipt=receipt,
+        )
         await session.flush()
         # File push/delivery worker will use this invoice as the single
         # paid order ID; the buyer's My Files already reads the same row.
@@ -169,6 +194,9 @@ async def _apply_verified_receipt(
     if any(moment <= ended for ended in terminations):
         invoice.status = "paid"
         invoice.paid_at = moment
+        await _snapshot_original_asset_usd_rate(
+            session, invoice=invoice, receipt=receipt,
+        )
         await session.flush()
         return CryptoSettlement(
             invoice_id=invoice.id, kind=invoice.kind, changed=True,
@@ -198,6 +226,9 @@ async def _apply_verified_receipt(
     )
     invoice.status = "paid"
     invoice.paid_at = moment
+    await _snapshot_original_asset_usd_rate(
+        session, invoice=invoice, receipt=receipt,
+    )
     if subscription is None:
         subscription = Subscription(
             project_id=project_id, customer_id=customer.id,
