@@ -109,8 +109,8 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "original_amount>0 AND usd_per_unit>0 AND "
-            "gross_usd=original_amount*usd_per_unit AND "
-            "commission_usd=gross_usd*0.05",
+            "gross_usd=round(original_amount*usd_per_unit,18) AND "
+            "commission_usd=round(gross_usd*0.05,18)",
             name="ck_saas_crypto_exact_fee",
         ),
     )
@@ -366,7 +366,8 @@ def upgrade() -> None:
                 original_bot,original.telegram_bot_id,
                 original.kind||'_crypto',original.currency_code,
                 original.currency_type,original.amount,rate,
-                original.amount*rate,original.amount*rate*0.05,
+                round(original.amount*rate,18),
+                round(round(original.amount*rate,18)*0.05,18),
                 rate_provenance,sale_date,original.paid_at,eligible
             ) ON CONFLICT (invoice_id) DO NOTHING;
             IF FOUND THEN inserted:=inserted+1; END IF;
