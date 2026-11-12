@@ -43,6 +43,12 @@ class TelegramStub:
     async def send_document(self, user_id, file_id, **kwargs):
         self.files.append((user_id, file_id))
 
+    # _deliver builds a method lookup containing every Telegram media type.
+    send_photo = send_document
+    send_video = send_document
+    send_audio = send_document
+    send_animation = send_document
+
 
 def _provider_paid(paid: bool) -> None:
     for invoice in Provider.invoice_data.values():
