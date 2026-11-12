@@ -30,6 +30,7 @@ from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
 )
 from telegram_membership_saas.modules.file_sales.service import (
+    _has_authorized_file_stars,
     _has_unsettled_crypto_file_invoice,
     _owner,
     _product,
@@ -370,6 +371,16 @@ async def create_manual_order(
         ).limit(1))
         if crypto_paid is not None:
             return crypto_paid, True
+        if await _has_authorized_file_stars(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        ):
+            raise ValueError(tr(
+                "Для этого файла уже разрешена оплата Stars. "
+                "Сначала проверьте результат оплаты.",
+                "Stars payment is already authorized for this file. "
+                "Reconcile its result before using another method.",
+            ))
         if await _has_unsettled_crypto_file_invoice(
             session, project_id=project_id, bot_id=bot_id,
             buyer_id=buyer_id, product_id=product_id,
@@ -608,6 +619,14 @@ async def review_manual_order(
             raise ValueError(tr(
                 "Проверять можно только заявку с чеком",
                 "Only requests with a receipt can be reviewed",
+            ))
+        if approve and await _has_authorized_file_stars(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=order.telegram_user_id, product_id=order.product_id,
+        ):
+            raise ValueError(tr(
+                "Авторизована оплата Stars. Сначала проверьте её результат.",
+                "Stars payment is authorized. Reconcile it before approval.",
             ))
         if approve and await _has_unsettled_crypto_file_invoice(
             session, project_id=project_id, bot_id=bot_id,
