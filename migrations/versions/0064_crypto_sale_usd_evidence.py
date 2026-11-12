@@ -63,9 +63,15 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("last_paid_at", sa.DateTime(timezone=True)),
         sa.Column("last_invoice_id", sa.Uuid()),
+        # Freeze each scan cycle's upper bound: continuously arriving
+        # payments cannot postpone a retry of older unresolved invoices.
+        sa.Column("max_paid_at", sa.DateTime(timezone=True)),
+        sa.Column("max_invoice_id", sa.Uuid()),
         sa.CheckConstraint("id=1", name="ck_crypto_scan_singleton"),
         sa.CheckConstraint(
-            "(last_paid_at IS NULL) = (last_invoice_id IS NULL)",
+            "(last_paid_at IS NULL) = (last_invoice_id IS NULL)"
+            " AND (max_paid_at IS NULL) = (max_invoice_id IS NULL)"
+            " AND (last_paid_at IS NULL OR max_paid_at IS NOT NULL)",
             name="ck_crypto_scan_complete",
         ),
     )
@@ -248,6 +254,8 @@ def upgrade() -> None:
           scan_state record;
           last_seen_at timestamptz;
           last_seen_id uuid;
+          max_at timestamptz;
+          max_id uuid;
         BEGIN
           PERFORM public.platform_saas_require_owner();
           IF p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 200 THEN
@@ -260,11 +268,27 @@ def upgrade() -> None:
             RAISE EXCEPTION 'Crypto Pay capture cutoff missing'
               USING ERRCODE='42501';
           END IF;
-          SELECT last_paid_at,last_invoice_id INTO scan_state
+          SELECT last_paid_at,last_invoice_id,max_paid_at,max_invoice_id
+            INTO scan_state
           FROM public.platform_saas_crypto_scan_cursor WHERE id=1 FOR UPDATE;
           IF NOT FOUND THEN
             RAISE EXCEPTION 'Crypto Pay audit scan cursor unavailable'
               USING ERRCODE='42501';
+          END IF;
+          max_at:=scan_state.max_paid_at;
+          max_id:=scan_state.max_invoice_id;
+          IF max_at IS NULL THEN
+            -- Each pass owns a fixed snapshot horizon. New invoices may
+            -- appear during or between batches; they belong to NEXT pass.
+            SELECT i.paid_at,i.id INTO max_at,max_id
+            FROM public.crypto_pay_invoices i
+            JOIN public.crypto_pay_apps a
+              ON a.id=i.app_id AND a.project_id=i.project_id
+            WHERE i.status='paid' AND i.paid_at>=cutoff
+              AND a.environment='mainnet'
+            ORDER BY i.paid_at DESC,i.id DESC LIMIT 1;
+            UPDATE public.platform_saas_crypto_scan_cursor
+              SET max_paid_at=max_at,max_invoice_id=max_id WHERE id=1;
           END IF;
           FOR original IN
             SELECT i.id,i.project_id,i.app_id,i.provider_invoice_id,
@@ -275,6 +299,8 @@ def upgrade() -> None:
                 AND a.project_id=i.project_id
             WHERE i.status='paid' AND i.paid_at>=cutoff
               AND a.environment='mainnet'
+              AND max_at IS NOT NULL
+              AND (i.paid_at,i.id) <= (max_at,max_id)
               AND (scan_state.last_paid_at IS NULL OR
                    (i.paid_at,i.id)>(
                      scan_state.last_paid_at,scan_state.last_invoice_id
@@ -412,12 +438,15 @@ def upgrade() -> None:
             ) ON CONFLICT (invoice_id) DO NOTHING;
             IF FOUND THEN inserted:=inserted+1; END IF;
           END LOOP;
-          -- A scan with no next rows wraps back to the oldest unresolved
-          -- invoice. Persist progress before returning, so missing FX in
-          -- one project cannot starve newer payments in another.
-          IF processed=0 THEN
+          -- Every pass completes after its fixed high-water mark, EVEN
+          -- while new merchant payments keep arriving. A partial scan
+          -- resumes from the last item; after exhausting the frozen
+          -- horizon, old missing-FX invoices are eligible for retry.
+          IF processed=0
+             OR (last_seen_at,last_seen_id)>=(max_at,max_id) THEN
             UPDATE public.platform_saas_crypto_scan_cursor
-               SET last_paid_at=NULL,last_invoice_id=NULL WHERE id=1;
+               SET last_paid_at=NULL,last_invoice_id=NULL,
+                   max_paid_at=NULL,max_invoice_id=NULL WHERE id=1;
           ELSE
             UPDATE public.platform_saas_crypto_scan_cursor
                SET last_paid_at=last_seen_at,last_invoice_id=last_seen_id
