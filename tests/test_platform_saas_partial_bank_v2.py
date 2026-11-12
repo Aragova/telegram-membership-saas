@@ -128,6 +128,25 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 assert balance["remaining_rub"] == "50.00"
                 assert balance["partial_rub"] == "100.00"
                 assert balance["paid"] is False
+                merchant_view = await _call(
+                    conn, "platform_saas_owner_invoice_report",
+                    {"page": 0, "size": 6},
+                )
+                assert merchant_view["unpaid"] == 1
+                assert Decimal(merchant_view["outstanding_rub"]) == Decimal("50")
+                assert merchant_view["invoices"][0]["status"] == "unpaid"
+                assert Decimal(
+                    merchant_view["invoices"][0]["remaining_rub"]
+                ) == Decimal("50")
+                await _actor(conn, operator)
+                central_view = await _call(
+                    conn, "platform_saas_invoice_report",
+                    {"page": 0, "size": 10},
+                )
+                assert central_view["unpaid"] == 1
+                assert Decimal(central_view["unpaid_rub"]) == Decimal("50")
+                assert Decimal(central_view["received_rub"]) == Decimal("100")
+                await _actor(conn, owner)
                 with pytest.raises(DBAPIError) as too_big:
                     async with conn.begin_nested():
                         await _call(conn, "platform_saas_v2_create_attempt", {
@@ -154,6 +173,24 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 })
                 assert balance["remaining_rub"] == "0.00"
                 assert balance["paid"] is True
+                await _actor(conn, owner)
+                owner_view = await _call(
+                    conn, "platform_saas_owner_invoice_report",
+                    {"page": 0, "size": 6},
+                )
+                assert owner_view["unpaid"] == 0
+                assert Decimal(owner_view["outstanding_rub"]) == 0
+                assert owner_view["invoices"][0]["status"] == "paid"
+                await _actor(conn, operator)
+                central_view = await _call(
+                    conn, "platform_saas_hold_invoice_report",
+                    {"page": 0, "size": 10},
+                )
+                assert central_view["unpaid"] == 0
+                assert Decimal(central_view["unpaid_rub"]) == 0
+                assert Decimal(central_view["received_rub"]) == Decimal("150")
+                assert central_view["invoices"][0]["status"] == "paid"
+                assert central_view["invoices"][0]["remaining_rub"] == "0"
                 with pytest.raises(DBAPIError) as double:
                     async with conn.begin_nested():
                         await conn.execute(text(
