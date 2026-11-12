@@ -201,12 +201,12 @@ async def test_crypto_fiat_usd_and_rub_sale_evidence_is_owner_only_and_idempoten
                 assert len(result["rows"]) == 2
                 await conn.execute(text("RESET ROLE"))
                 evidence = (await conn.execute(text(
-                    "SELECT invoice_id,original_currency,rate_source,"
+                    "SELECT invoice_id,currency_code,rate_source,"
                     "billing_eligible FROM platform_saas_crypto_sales "
                     "WHERE invoice_id IN (:rub,:usd)"
                 ), {"rub": rub_invoice, "usd": usd_invoice})).all()
                 assert len(evidence) == 2
-                sources = {row.original_currency: row.rate_source for row in evidence}
+                sources = {row.currency_code: row.rate_source for row in evidence}
                 assert sources == {"RUB": "cbr_sale_day", "USD": "fiat_usd"}
                 assert not any(row.billing_eligible for row in evidence)
                 with pytest.raises(DBAPIError) as immutable:
