@@ -34,6 +34,9 @@ from telegram_membership_saas.modules.file_sales.service import (
     purchased_assets,
 )
 from telegram_membership_saas.modules.outbox import OutboxEvent
+from telegram_membership_saas.modules.owner_setup.channel_management import (
+    remove_channel_without_paid_purchases,
+)
 from telegram_membership_saas.modules.owner_setup.obligations import (
     end_owner_subscription,
     revoke_owner_grant,
@@ -308,5 +311,79 @@ async def test_owner_termination_revokes_crypto_paid_grants_and_access():
             assert sub.status == "cancelled"
             assert grant.status == "revoked"
             assert grant.revoked_at is not None
+    finally:
+        await engine.dispose()
+
+
+async def test_paid_crypto_channel_cannot_be_deleted_after_plan_resource_edit():
+    """A crypto-only sold channel must survive even after plan links are edited."""
+    _reset_provider()
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        owner, project, bot_id, _ = await _shop(factory, key)
+        async with system_project_session_scope(factory, project) as session:
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project,
+            ))
+            plan = Plan(
+                project_id=project, name="Crypto channel",
+                duration_value=1, duration_unit="month", status="active",
+            )
+            session.add(plan)
+            await session.flush()
+            price = PlanPrice(
+                project_id=project, plan_id=plan.id,
+                currency_code="RUB", version=1,
+                amount=Decimal("250"), status="active",
+            )
+            session.add_all([
+                price,
+                PlanResource(
+                    project_id=project, plan_id=plan.id,
+                    resource_id=resource_id,
+                ),
+            ])
+            await session.flush()
+            price_id, plan_id = price.id, plan.id
+
+        invoice_id = await _issue(
+            factory, project=project, bot_id=bot_id, buyer=_tid(),
+            kind="subscription", target_id=price_id, key=key,
+        )
+        settled = await settle_crypto_pay_invoice(
+            factory, project_id=project, invoice_id=invoice_id,
+            encryption_key=key, client_factory=Provider,
+        )
+        assert settled.changed
+        async with system_project_session_scope(factory, project) as session:
+            grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.project_id == project,
+                EntitlementGrant.source_id == invoice_id,
+            ))
+            assert grant is not None and grant.resource_id == resource_id
+            linked = await session.scalar(select(PlanResource).where(
+                PlanResource.project_id == project,
+                PlanResource.plan_id == plan_id,
+                PlanResource.resource_id == resource_id,
+            ))
+            await session.delete(linked)
+
+        # PlanResource is gone. The frozen grant is still historical evidence:
+        # never hide this channel or archive it as an "unsold" channel.
+        with pytest.raises(ValueError, match="подтверждённые покупки"):
+            await remove_channel_without_paid_purchases(
+                factory, actor_id=owner,
+                project_id=project, resource_id=resource_id,
+            )
+        async with system_project_session_scope(factory, project) as session:
+            resource = await session.get(Resource, resource_id)
+            assert resource.removed_at is None
+            grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.source_id == invoice_id,
+                EntitlementGrant.project_id == project,
+            ))
+            assert grant is not None and grant.source == "crypto_payment"
     finally:
         await engine.dispose()
