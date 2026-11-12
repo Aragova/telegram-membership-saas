@@ -49,6 +49,13 @@ from telegram_membership_saas.modules.platform_saas_payment_service import (
     configure_platform_saas_payment,
     platform_saas_payment_details,
 )
+from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_v2_configure_method,
+    saas_v2_confirm_attempt,
+    saas_v2_methods_read,
+    saas_v2_pending_proofs,
+    saas_v2_reject_attempt,
+)
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
     confirm_saas_currency_receipt,
     saas_invoice_credit_history,
@@ -814,6 +821,32 @@ class _PlatformBankEntryFilter(BaseFilter):
         )
 
 
+class _PlatformSaasReviewEntryFilter(BaseFilter):
+    def __init__(self, pending: dict[int, tuple[UUID, bool]]) -> None:
+        self.pending = pending
+
+    async def __call__(self, message: Message) -> bool:
+        return bool(
+            message.from_user is not None
+            and message.from_user.id in self.pending
+            and message.chat.type == "private"
+            and message.text is not None
+        )
+
+
+class _PlatformSaasMethodEntryFilter(BaseFilter):
+    def __init__(self, pending: dict[int, str]) -> None:
+        self.pending = pending
+
+    async def __call__(self, message: Message) -> bool:
+        return bool(
+            message.from_user is not None
+            and message.from_user.id in self.pending
+            and message.chat.type == "private"
+            and message.text is not None
+        )
+
+
 def _platform_bank_text(details: dict) -> str:
     """Keep bank instructions focused; audit is a sibling invoices screen."""
     configured = bool(details["configured"])
@@ -856,6 +889,8 @@ def create_platform_dashboard_router(
     pending_bank_entry = (
         bank_navigation.pending if bank_navigation is not None else set()
     )
+    pending_v2_review: dict[int, tuple[UUID, bool]] = {}
+    pending_v2_method: dict[int, str] = {}
 
     async def _show_bank_screen(bot: Bot, user, message_id: int | None = None) -> None:
         actor_id = await ensure_telegram_actor(
@@ -944,6 +979,94 @@ def create_platform_dashboard_router(
                    "Check operator access and connectivity."),
             )
 
+    @router.message(_PlatformSaasReviewEntryFilter(pending_v2_review))
+    async def platform_bank_receipt_reference(message: Message, bot: Bot) -> None:
+        user = message.from_user
+        if user is None or not is_configured_platform_owner(user.id, config):
+            return
+        attempt, approve = pending_v2_review[user.id]
+        if _editor_command(message.text) == "/cancel":
+            pending_v2_review.pop(user.id, None)
+            await bot.send_message(user.id, tr(
+                "Проверка отменена.", "Review canceled.",
+            ))
+            return
+        if _editor_command(message.text):
+            await bot.send_message(user.id, tr(
+                "Введите банковский референс или /cancel.",
+                "Enter a bank reference or /cancel.",
+            ))
+            return
+        value = message.text.strip()
+        try:
+            actor_id = await ensure_telegram_actor(
+                factory, telegram_id=user.id, username=user.username,
+                first_name=user.first_name,
+            )
+            if approve:
+                await saas_v2_confirm_attempt(
+                    factory, actor_id=actor_id, actor_telegram_id=user.id,
+                    attempt_id=attempt, verified_bank_reference=value,
+                    settings=config,
+                )
+            else:
+                await saas_v2_reject_attempt(
+                    factory, actor_id=actor_id, actor_telegram_id=user.id,
+                    attempt_id=attempt, reason=value, settings=config,
+                )
+        except Exception:
+            await bot.send_message(user.id, tr(
+                "⚠️ Не удалось подтвердить операцию. Проверьте реальное "
+                "поступление, референс и статус счёта. /cancel — отмена.",
+                "⚠️ Cannot confirm. Recheck actual bank funds, reference "
+                "and invoice status. /cancel to abort.",
+            ))
+            return
+        pending_v2_review.pop(user.id, None)
+        await bot.send_message(user.id, tr(
+            "✅ Банковское поступление подтверждено." if approve
+            else "❌ Заявка отклонена.",
+            "✅ Bank payment confirmed." if approve
+            else "❌ Payment attempt rejected.",
+        ))
+
+    @router.message(_PlatformSaasMethodEntryFilter(pending_v2_method))
+    async def platform_v2_bank_method_entry(message: Message, bot: Bot) -> None:
+        user = message.from_user
+        if user is None or not is_configured_platform_owner(user.id, config):
+            return
+        currency = pending_v2_method[user.id]
+        if _editor_command(message.text) == "/cancel":
+            pending_v2_method.pop(user.id, None)
+            await _show_bank_screen(bot, user)
+            return
+        if _editor_command(message.text) not in (None, "/disable"):
+            await bot.send_message(user.id, tr(
+                "Пришлите реквизиты, /disable или /cancel.",
+                "Send bank details, /disable or /cancel.",
+            ))
+            return
+        instructions = None if _editor_command(message.text) == "/disable" else (
+            message.text.strip()
+        )
+        try:
+            actor_id = await ensure_telegram_actor(
+                factory, telegram_id=user.id, username=user.username,
+                first_name=user.first_name,
+            )
+            await saas_v2_configure_method(
+                factory, actor_id=actor_id, actor_telegram_id=user.id,
+                currency=currency, instructions=instructions, settings=config,
+            )
+        except Exception:
+            await bot.send_message(user.id, tr(
+                "⚠️ Реквизиты отклонены. Проверьте их и повторите.",
+                "⚠️ Bank instructions rejected. Please retry.",
+            ))
+            return
+        pending_v2_method.pop(user.id, None)
+        await _show_bank_screen(bot, user)
+
     @router.message(_PlatformBankEntryFilter(pending_bank_entry))
     async def platform_bank_entry(message: Message, bot: Bot) -> None:
         if message.from_user is None:
@@ -1014,6 +1137,8 @@ def create_platform_dashboard_router(
         # Also cover standalone router tests that bypass dispatcher middleware.
         # All platform navigations leave the form; bankedit reopens it below.
         pending_bank_entry.discard(query.from_user.id)
+        pending_v2_review.pop(query.from_user.id, None)
+        pending_v2_method.pop(query.from_user.id, None)
         tokens = (query.data or "").split(":")
         message_id = getattr(query.message, "message_id", None)
         try:
