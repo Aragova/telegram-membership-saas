@@ -21,12 +21,12 @@ from telegram_membership_saas import receipt_intents
 from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import recipient_language, tr
-from telegram_membership_saas.modules.crypto_pay.buyer import file_crypto_prices
 from telegram_membership_saas.manual_checkout_ui import (
     manual_checkout_rich_html,
     retire_cancelled_checkout,
     send_manual_checkout,
 )
+from telegram_membership_saas.modules.crypto_pay.buyer import file_crypto_prices
 from telegram_membership_saas.modules.file_sales.manual_service import (
     available_methods,
     close_pending_manual_order,
