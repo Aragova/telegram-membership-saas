@@ -481,6 +481,8 @@ async def test_outstanding_crypto_invoice_blocks_stars_and_manual_file_checkout(
         async with system_project_session_scope(factory, project) as session:
             record = await session.get(CryptoPayInvoice, crypto_id)
             record.status = "issuing"
+            record.provider_invoice_id = None
+            record.invoice_url = None
         assert not await precheckout_allowed(
             factory, project_id=project, bot_id=bot_id,
             buyer_id=buyer_id, invoice_payload=pending_stars.invoice_payload,
