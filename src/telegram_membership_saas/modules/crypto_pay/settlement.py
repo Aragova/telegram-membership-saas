@@ -78,6 +78,9 @@ async def _snapshot_original_asset_usd_rate(
     """
     if invoice.currency_type != "crypto" or receipt.paid_usd_rate is None:
         return
+    # Database guard requires this invoice to be visibly paid IN THE SAME
+    # transaction before accepting the immutable rate record.
+    await session.flush()
     session.add(CryptoPayPaidUsdRate(
         invoice_id=invoice.id, project_id=invoice.project_id,
         asset_code=invoice.currency_code, usd_per_asset=receipt.paid_usd_rate,
