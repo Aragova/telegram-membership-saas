@@ -5,7 +5,6 @@ Revises: 0059_crypto_pay_foundation
 """
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0060_crypto_issuing_guard"
