@@ -58,6 +58,9 @@ async def test_secret_filter_only_intercepts_plausible_active_merchant_token(
     active.assert_not_awaited()
 
     assert await guard(_message(), bot) is True
+    # Same secret, pasted with spaces/newline while quoting an old buyer
+    # notification, MUST still be captured and deleted before forwarding.
+    assert await guard(_message("  123456:" + "C" * 35 + "\n"), bot) is True
     assert active.await_args.kwargs["project_id"] == project
     assert active.await_args.kwargs["bot_scope_id"] == bot.id
     active.return_value = False
@@ -124,3 +127,46 @@ async def test_failed_secret_deletion_never_reaches_provider(monkeypatch):
 )
 def test_plain_messages_do_not_trigger_secret_db_filter(payload):
     assert not crypto._plausible_merchant_token(payload)
+
+
+@pytest.mark.parametrize(
+    "pasted", [
+        "  123456:" + "C" * 35 + "\n",
+        "\n123456:" + "C" * 35 + "   ",
+        "\t123456:" + "C" * 35 + "\r\n",
+    ],
+)
+async def test_quoted_padded_merchant_secret_is_deleted_before_connect(
+    monkeypatch, pasted,
+):
+    project = uuid4()
+    monkeypatch.setattr(
+        crypto, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        crypto, "active_crypto_pay_secret_prompt", AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        crypto, "consume_flow", AsyncMock(return_value=SetupFlow(
+            "crypto_pay_token", project, {"environment": "mainnet"}, 15,
+        )),
+    )
+    connected = AsyncMock()
+    monkeypatch.setattr(crypto, "connect_crypto_pay", connected)
+    monkeypatch.setattr(
+        crypto, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="example-key"),
+    )
+    guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
+    bot = MagicMock()
+    bot.id = 654321
+    bot.delete_message = AsyncMock(return_value=True)
+    bot.send_message = AsyncMock()
+    message = _message(pasted)
+    assert await guard(message, bot)
+    await _router_handler(
+        crypto.create_crypto_secret_router(MagicMock(), project_id=project),
+    )(message, bot)
+    bot.delete_message.assert_awaited_once()
+    assert connected.await_args.kwargs["api_token"] == pasted.strip()
+    assert pasted.strip() not in str(bot.send_message.await_args_list)

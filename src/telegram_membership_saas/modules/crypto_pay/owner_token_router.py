@@ -29,9 +29,13 @@ from telegram_membership_saas.tenant_context import TenantContext
 
 def _plausible_merchant_token(value: str | None) -> bool:
     """Reject normal buyer chat without a database query per message."""
+    # Telegram paste commonly includes surrounding spaces/newlines.
+    # Classify the same normalized text the credential handler consumes,
+    # BEFORE any earlier file/transfer/buyer-message router can see it.
+    cleaned = value.strip() if isinstance(value, str) else ""
     return bool(
-        value and 20 <= len(value) <= 256 and value.isascii()
-        and ":" in value and not any(ch.isspace() for ch in value)
+        20 <= len(cleaned) <= 256 and cleaned.isascii()
+        and ":" in cleaned and not any(ch.isspace() for ch in cleaned)
     )
 
 
