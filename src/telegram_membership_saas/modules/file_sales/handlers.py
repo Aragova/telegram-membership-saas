@@ -234,8 +234,11 @@ def create_file_sales_router(
         )
         rows = []
         for method in controls:
-            name = (display_currency("XTR")
-                    if method.auto_stars else "💳 " + method.name[:36])
+            name = (
+                display_currency("XTR") if method.auto_stars
+                else "💎 Crypto Pay" if method.auto_crypto
+                else "💳 " + method.name[:36]
+            )
             rows.append([_button(
                 ("🟢 " if method.enabled else "🔴 ") + name,
                 "paytoggle:" + method.method_id.hex,
@@ -267,15 +270,15 @@ def create_file_sales_router(
                 "🟢 Включён · 🔴 Выключен\n\n"
                 "Эти настройки действуют только на продажи файлов "
                 "в данном боте. Подписки и другие боты не затрагиваются.\n"
-                "Ручной способ с похожим названием и автоматическая оплата "
-                "⭐ Telegram Stars — разные способы оплаты.\n"
+                "Ручные переводы, ⭐ Telegram Stars и 💎 Crypto Pay "
+                "управляются отдельно.\n"
                 "Созданные заявки и оплаченные файлы сохраняются.",
                 "💳 <b>File payment methods</b>\n"
                 "🟢 Enabled · 🔴 Disabled\n\n"
                 "Settings affect file sales in this bot only. "
                 "Subscriptions and other bots are unchanged.\n"
-                "A manually named payment method and automatic "
-                "⭐ Telegram Stars are separate payment choices.\n"
+                "Manual transfer, ⭐ Telegram Stars and 💎 Crypto Pay "
+                "are managed independently.\n"
                 "Existing orders and paid files remain intact.",
             ),
             parse_mode="HTML", reply_markup=_keyboard(rows),
