@@ -111,3 +111,15 @@ deletes the Telegram token message BEFORE consuming the wizard or validating
 the token. Failed deletion blocks registration. Non-token chat messages
 avoid an extra credential-flow DB lookup for efficient 50-100 bot operation.
 All existing file editor checks remain as defense in depth.
+
+### Switching back to file editors
+
+When the merchant deliberately opens a new file title/description/upload
+editor or a manual file price editor, the bot first clears any previously
+active merchant credential/owner setup wizard for that bot (using the same
+persistent, generation-safe cancel function as /cancel). The new editor can
+then accept ordinary file text without accidentally deleting it as a stale
+Crypto Pay token. Entering /files also cancels the previous owner wizard.
+The priority secret router still protects any actual token sent WHILE
+a Crypto Pay credential wizard is active, including replies to old buyer
+notifications and stale transfer forms.

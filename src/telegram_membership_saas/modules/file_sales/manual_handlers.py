@@ -51,6 +51,7 @@ from telegram_membership_saas.modules.file_sales.service import (
     view_product,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
+    cancel_owner_flow,
     ensure_telegram_actor,
     is_expected_prompt,
 )
@@ -495,6 +496,11 @@ def create_manual_file_router(
                     await price_editor_options(
                         factory, project_id=project_id, bot_id=bot.id,
                         product_id=product_id, actor_id=actor,
+                    )
+                    # Explicitly entering a new file price editor cancels
+                    # an old merchant-secret prompt in this same bot.
+                    await cancel_owner_flow(
+                        factory, actor_id=actor, bot_scope_id=bot.id,
                     )
                     editor[uid] = {
                         "product": product_id, "currency": currency,

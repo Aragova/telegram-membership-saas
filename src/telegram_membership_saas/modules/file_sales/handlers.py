@@ -68,6 +68,7 @@ from telegram_membership_saas.modules.file_sales.service import (
 )
 from telegram_membership_saas.modules.owner_setup.service import (
     can_manage_project,
+    cancel_owner_flow,
     ensure_telegram_actor,
     is_expected_prompt,
 )
@@ -551,7 +552,11 @@ def create_file_sales_router(
         if message.from_user is None or message.chat.type != "private":
             return
         pending.pop(message.from_user.id, None)
-        admin, _ = await is_owner(message.from_user, bot)
+        admin, actor_id = await is_owner(message.from_user, bot)
+        if admin:
+            await cancel_owner_flow(
+                factory, actor_id=actor_id, bot_scope_id=bot.id,
+            )
         await home(bot, message.from_user.id, admin)
 
     @router.message(Command("myfiles"))
@@ -573,6 +578,20 @@ def create_file_sales_router(
         admin, who = await is_owner(query.from_user, bot)
         action = query.data[3:]
         try:
+            # Opening a NEW file editor is an explicit change of workflow.
+            # Retire older Crypto Pay/owner token input first; otherwise its
+            # valid persistent setup state can swallow the newly requested
+            # file name, description or price.
+            if admin and (
+                action == "newfolder"
+                or action.startswith((
+                    "newproduct:", "editname:", "editdescription:",
+                    "editprice:", "upload:",
+                ))
+            ):
+                await cancel_owner_flow(
+                    factory, actor_id=who, bot_scope_id=bot.id,
+                )
             if action == "home":
                 pending.pop(uid, None)
                 await home(bot, uid, admin)
