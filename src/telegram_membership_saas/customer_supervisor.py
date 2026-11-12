@@ -32,6 +32,9 @@ from telegram_membership_saas.modules.bots.health_service import (
     claim_bot_health,
     write_bot_health,
 )
+from telegram_membership_saas.modules.platform_crypto_sync import (
+    capture_crypto_sale_evidence,
+)
 from telegram_membership_saas.modules.platform_monthly_fx_sync import (
     sync_official_daily_rates,
 )
@@ -311,6 +314,9 @@ class CustomerBotSupervisor:
         # One shared bounded task; never one timer/connection per bot.
         self._star_task: asyncio.Task[None] | None = None
         self._next_star_sync_at = 0.0
+        # Same existing shard-zero process; NO independent finance supervisor.
+        self._crypto_evidence_task: asyncio.Task[None] | None = None
+        self._next_crypto_evidence_at = 0.0
         # Shared-mode admission cursor ensures a handful of busy legacy
         # projects cannot consume every five-worker startup batch forever.
         self._admission_cursor: UUID | None = None
@@ -462,6 +468,23 @@ class CustomerBotSupervisor:
                 type(exc).__name__,
             )
 
+    async def _sync_crypto_evidence_safe(self) -> None:
+        try:
+            result = await capture_crypto_sale_evidence(
+                self.factory, self.settings,
+            )
+            if result.recorded >= 200:
+                self._next_crypto_evidence_at = monotonic() + 30
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Only financial valuation retries; never disturb buyer access.
+            self._next_crypto_evidence_at = monotonic() + 5 * 60
+            logger.warning(
+                "Crypto Pay USD evidence capture deferred (%s)",
+                type(exc).__name__,
+            )
+
     async def run(self) -> None:
         if (
             self.settings.customer_supervisor_shard_id == 0
@@ -491,6 +514,15 @@ class CustomerBotSupervisor:
                     self._star_task = asyncio.create_task(
                         self._sync_star_evidence_safe()
                     )
+                if (self.settings.customer_supervisor_shard_id == 0
+                    and self.settings.platform_owner_telegram_id is not None
+                    and monotonic() >= self._next_crypto_evidence_at
+                    and (self._crypto_evidence_task is None
+                         or self._crypto_evidence_task.done())):
+                    self._next_crypto_evidence_at = monotonic() + 5 * 60
+                    self._crypto_evidence_task = asyncio.create_task(
+                        self._sync_crypto_evidence_safe()
+                    )
                 try:
                     await self.reconcile_once()
                 except asyncio.CancelledError:
@@ -518,6 +550,11 @@ class CustomerBotSupervisor:
                     cancel_once(self._star_task)
                     await asyncio.gather(
                         self._star_task, return_exceptions=True,
+                    )
+                if self._crypto_evidence_task is not None:
+                    cancel_once(self._crypto_evidence_task)
+                    await asyncio.gather(
+                        self._crypto_evidence_task, return_exceptions=True,
                     )
                 for worker in self.workers.values():
                     cancel_once(worker.task)
