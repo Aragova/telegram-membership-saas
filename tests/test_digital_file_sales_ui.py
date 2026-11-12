@@ -146,6 +146,7 @@ async def test_editor_uploads_media_but_only_after_owner_recheck(monkeypatch):
     ))
     add = AsyncMock(return_value=1)
     monkeypatch.setattr(ui, "add_product_asset", add)
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
     bot.id = 9999
     await cb(router)(query("upload:" + encode_uuid(product)), bot)
@@ -237,3 +238,17 @@ async def test_stars_charge_db_failure_does_not_claim_paid_delivery(
     sent = bot.send_message.await_args.args[1]
     assert "не смог записать" in sent
     assert "Проверить оплату" in sent
+
+async def test_new_file_editor_cancels_old_crypto_token_wizard(monkeypatch):
+    project, owner = uuid4(), uuid4()
+    router = ui.create_file_sales_router(MagicMock(), project_id=project)
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+    cancel = AsyncMock(return_value=True)
+    monkeypatch.setattr(ui, "cancel_owner_flow", cancel)
+    bot = _bot()
+    bot.id = 9999
+    await cb(router)(query("newfolder"), bot)
+    cancel.assert_awaited_once()
+    assert cancel.await_args.kwargs == {"actor_id": owner, "bot_scope_id": bot.id}
+    assert "название папки" in bot.send_message.await_args.args[1]

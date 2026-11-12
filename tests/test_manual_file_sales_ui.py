@@ -251,3 +251,18 @@ async def test_all_file_payment_methods_disabled_shows_back_navigation(monkeypat
     assert [b.callback_data for b in _buttons(call.kwargs["reply_markup"])] == [
         "fs:folder:" + encode_uuid(folder),
     ]
+
+async def test_new_file_price_editor_cancels_old_crypto_token_setup(monkeypatch):
+    product, owner, project = uuid4(), uuid4(), uuid4()
+    factory = MagicMock()
+    router = ui.create_manual_file_router(factory, project_id=project)
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(
+        ui, "price_editor_options", AsyncMock(return_value=(("RUB", None),)),
+    )
+    cancel = AsyncMock(return_value=True)
+    monkeypatch.setattr(ui, "cancel_owner_flow", cancel)
+    bot = _bot()
+    await _handler(router)(_query("setprice:" + encode_uuid(product) + ":RUB"), bot)
+    cancel.assert_awaited_once_with(factory, actor_id=owner, bot_scope_id=bot.id)
+    assert "Укажите цену" in bot.send_message.await_args.args[1]
