@@ -230,7 +230,10 @@ async def test_provider_outage_keeps_secret_guard_active_for_retry(
     await handler(msg, bot)
     consume.assert_not_awaited()
     assert read.await_count == 1
-    assert "Protected input remains active" in str(bot.send_message.await_args)
+    assert any(
+        label in str(bot.send_message.await_args)
+        for label in ("Защищённый ввод остаётся активным", "Protected input remains active")
+    )
     # On retry the same old buyer quote cannot intercept the token.
     await handler(msg, bot)
     assert connect.await_count == 2
@@ -275,4 +278,7 @@ async def test_concurrent_owner_navigation_is_not_discarded_after_verification(
         crypto.create_crypto_secret_router(MagicMock(), project_id=project),
     )(_message(), bot)
     assert "123456:" not in str(bot.send_message.await_args_list)
-    assert "securely connected" in str(bot.send_message.await_args)
+    assert any(
+        label in str(bot.send_message.await_args)
+        for label in ("защищённо подключён", "securely connected")
+    )
