@@ -299,9 +299,14 @@ def upgrade() -> None:
         RAISE EXCEPTION 'Verified bank currency conversion unavailable'
           USING ERRCODE='42501';
       END IF;
+      -- Foreign currency is paid in 2 decimal places. A rounded bank
+      -- transfer can differ slightly from the RUB obligation. Preserve the
+      -- exact RUB amount requested; the platform absorbs that bounded FX
+      -- rounding difference rather than creating an unpayable residual.
       converted:=round(p_requested_rub/rate,2);
-      snapped_rub:=round(converted*rate,2);
-      IF converted<=0 OR snapped_rub<=0 OR snapped_rub>due THEN
+      snapped_rub:=p_requested_rub;
+      IF converted<=0 OR snapped_rub>due
+         OR abs(converted*rate-snapped_rub)>rate*0.005+0.005 THEN
         RAISE EXCEPTION 'Converted payment amount outside remaining debt'
           USING ERRCODE='23514';
       END IF;
@@ -372,8 +377,10 @@ def upgrade() -> None:
         RAISE EXCEPTION 'Verified bank receipt reference required'
           USING ERRCODE='22023';
       END IF;
+      -- Approval and rejection must lock the SAME row before reading
+      -- opposite outcomes. Invoice lock remains second, for balance safety.
       SELECT * INTO original FROM public.platform_saas_payment_attempts_v2
-      WHERE id=p_attempt;
+      WHERE id=p_attempt FOR UPDATE;
       IF original.id IS NULL THEN
         RAISE EXCEPTION 'Unknown partial payment attempt'
           USING ERRCODE='42501';
