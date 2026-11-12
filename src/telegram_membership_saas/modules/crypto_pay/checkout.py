@@ -13,7 +13,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from pydantic import SecretStr
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
@@ -79,8 +79,13 @@ async def reserve_crypto_invoice(
             CryptoPayInvoice.project_id == project_id,
             CryptoPayInvoice.telegram_bot_id == bot_id,
             CryptoPayInvoice.telegram_user_id == buyer_id,
-            CryptoPayInvoice.status.in_(("reserved", "issued")),
-            CryptoPayInvoice.created_at >= datetime.now(UTC) - timedelta(days=1),
+            or_(
+                CryptoPayInvoice.status == "issuing",
+                and_(
+                    CryptoPayInvoice.status.in_(("reserved", "issued")),
+                    CryptoPayInvoice.created_at >= datetime.now(UTC) - timedelta(days=1),
+                ),
+            ),
         )) or 0
         if pending >= 10:
             raise ValueError("Too many pending Crypto Pay invoices")
