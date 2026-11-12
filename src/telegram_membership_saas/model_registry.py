@@ -8,6 +8,7 @@ from telegram_membership_saas.modules.broadcasts import (
     BroadcastDraft,
     BroadcastTemplate,
 )
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp, CryptoPayInvoice
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.file_sales import (
     FileAsset,
@@ -80,6 +81,8 @@ __all__ = [
     "OwnerObligationAudit",
     "OwnerNetworkProfile",
     "ProjectProfileApplication",
+    "CryptoPayApp",
+    "CryptoPayInvoice",
     "CurrencyAsset",
     "EffectiveAccess",
     "EntitlementGrant",

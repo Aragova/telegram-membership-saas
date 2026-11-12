@@ -1,3 +1,16 @@
+## PR #133 — Crypto Pay merchant checkout foundation (2026-11-12)
+
+Build the merchant-owned Crypto Pay rail after native Stars. Each connected
+bot owner gets their own Crypto Pay app and encrypted API token. Verified
+getMe, mainnet/testnet client, immutable fiat/crypto invoice snapshots,
+idempotent paid receipt verification, project/owner RLS and credential
+rotation are defined before buyer UI. **No Crypto Pay buttons are enabled
+until full provider-confirmed subscription and file delivery exist.** Manual
+and Stars unaffected; SaaS billing remains off. See
+[CRYPTO_PAY_CHECKOUT.md](CRYPTO_PAY_CHECKOUT.md).
+
+---
+
 ## PR #130 — native Stars subscriptions, same subscription/access engine (in development)
 
 See [STARS_SUBSCRIPTION_CHECKOUT.md](STARS_SUBSCRIPTION_CHECKOUT.md).
