@@ -126,9 +126,14 @@ def verify_paid_invoice(
     if currency_type == "crypto" and rate_value not in (None, ""):
         try:
             candidate = _safe_decimal(rate_value)
-            if candidate <= Decimal("1000000000"):
-                paid_usd_rate = candidate
-        except CryptoPayError:
+            # Stored immutable SQL numeric(38,18) must not round a tiny
+            # positive provider quote to ZERO and rollback real fulfillment.
+            # Normalize before creating a receipt, and leave an unusable
+            # optional quote unresolved rather than blocking the buyer.
+            persisted = candidate.quantize(Decimal("0.000000000000000001"))
+            if Decimal("0") < persisted <= Decimal("1000000000"):
+                paid_usd_rate = persisted
+        except (CryptoPayError, InvalidOperation):
             # This OPTIONAL accounting field is not a payment proof.
             # Valid paid invoices must still fulfill their original buyer
             # even if the provider omitted/malformed its USD quote. Record
