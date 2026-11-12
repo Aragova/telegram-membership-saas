@@ -333,6 +333,9 @@ async def issue_reserved_crypto_invoice(
         record.provider_invoice_id = response["invoice_id"]
         record.invoice_url = response["bot_invoice_url"]
         record.status = "issued"
+        # A concurrent poll may have claimed 'issuing' for a 20-minute
+        # uncertainty scan. Now the provider ID is known; poll normally.
+        record.next_check_at = None
         await session.flush()
         return IssuedCryptoInvoice(
             id=record.id, url=record.invoice_url,
@@ -401,6 +404,10 @@ async def recover_uncertain_crypto_invoice(
         record.provider_invoice_id = provider_id
         record.invoice_url = None if expired else link
         record.status = "expired" if expired else "issued"
+        if not expired:
+            # Restore the normal ~1-minute polling cadence for an active
+            # invoice after recovering an uncertain createInvoice outcome.
+            record.next_check_at = None
         await session.flush()
         if expired:
             # Terminal provider evidence frees the buyer's pending quota.
