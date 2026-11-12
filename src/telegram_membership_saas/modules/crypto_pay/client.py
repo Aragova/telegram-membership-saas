@@ -122,16 +122,23 @@ def verify_paid_invoice(
     # the paid asset AT PAYMENT. Never use getExchangeRates(now) to value
     # a historical crypto-denominated sale. Missing rates remain unresolved.
     rate_value = provider_invoice.get("paid_usd_rate")
-    paid_usd_rate = (
-        _safe_decimal(rate_value) if rate_value not in (None, "") else None
-    )
-    if paid_usd_rate is not None and paid_usd_rate > Decimal("1000000000"):
-        raise CryptoPayError("Crypto Pay paid USD rate is out of bounds")
+    paid_usd_rate = None
+    if currency_type == "crypto" and rate_value not in (None, ""):
+        try:
+            candidate = _safe_decimal(rate_value)
+            if candidate <= Decimal("1000000000"):
+                paid_usd_rate = candidate
+        except CryptoPayError:
+            # This OPTIONAL accounting field is not a payment proof.
+            # Valid paid invoices must still fulfill their original buyer
+            # even if the provider omitted/malformed its USD quote. Record
+            # no fee until a real payment-time quote is verified.
+            pass
     return CryptoPayInvoiceReceipt(
         invoice_id=invoice_id, paid_at=paid_at.astimezone(UTC),
         payload=payload, amount=_safe_decimal(amount),
         currency_code=currency_code, currency_type=currency_type,
-        paid_usd_rate=paid_usd_rate if currency_type == "crypto" else None,
+        paid_usd_rate=paid_usd_rate,
     )
 
 
