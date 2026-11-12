@@ -88,9 +88,6 @@ async def reserve_crypto_invoice(
                 ),
             ),
         )) or 0
-        if pending >= 10:
-            raise ValueError("Too many pending Crypto Pay invoices")
-
         customer_id = None
         plan_id = None
         plan_price_id = None
@@ -225,6 +222,8 @@ async def reserve_crypto_invoice(
                 .with_for_update())).first()
             if older is not None:
                 return older.id
+        if pending >= 10:
+            raise ValueError("Too many pending Crypto Pay invoices")
         order_id = uuid4()
         record = CryptoPayInvoice(
             id=order_id, project_id=project_id, app_id=app.id,
