@@ -3,6 +3,8 @@ import os
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
+from pydantic import SecretStr
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -16,6 +18,8 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.modules.bots.models import BotInstance
 from telegram_membership_saas.modules.bots.service import VerifiedBot
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp
+from telegram_membership_saas.modules.crypto_pay.service import connect_crypto_pay
 from telegram_membership_saas.modules.file_sales import service as file_service
 from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
 from telegram_membership_saas.modules.owner_setup import transfers as svc
@@ -58,6 +62,14 @@ async def test_owner_transfer_requires_both_parties_and_keeps_merchant_history(m
             session.add(PaymentMethod(
                 project_id=project, name="Owner bank",
                 instruction_template="Old owner bank account",
+                status="active",
+            ))
+            old_crypto_app_id = uuid4()
+            session.add(CryptoPayApp(
+                id=old_crypto_app_id, project_id=project,
+                telegram_bot_id=bot_id, owner_user_id=owner,
+                token_ciphertext="encrypted-old-crypto-api-token",
+                environment="testnet", app_label="Prior owner crypto app",
                 status="active",
             ))
 
@@ -164,6 +176,35 @@ async def test_owner_transfer_requires_both_parties_and_keeps_merchant_history(m
             ))
             assert transferred.status == "completed"
             assert transferred.encrypted_new_token is None
+            # FORCE RLS intentionally prevents new owner from reading the
+            # outgoing owner's encrypted app, even after it was retired.
+            assert await session.scalar(select(CryptoPayApp).where(
+                CryptoPayApp.id == old_crypto_app_id,
+            )) is None
+
+        # A new merchant can connect a fresh Crypto Pay app without hitting
+        # the one-active-app-per-bot index left by the old owner's credential.
+        class NewMerchantProvider:
+            def __init__(self, token, *, testnet):
+                assert token == "123456789:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+                assert testnet is True
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                pass
+
+            async def get_me(self):
+                return {"name": "New merchant app"}
+
+        new_crypto = await connect_crypto_pay(
+            factory, project_id=project, bot_id=bot_id, actor_id=buyer,
+            api_token="123456789:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+            encryption_key=SecretStr(Fernet.generate_key().decode("ascii")),
+            testnet=True, client_factory=NewMerchantProvider,
+        )
+        assert new_crypto.app_label == "New merchant app"
 
         with pytest.raises((PermissionError, TenantAccessDenied)):
             async with tenant_session_scope(
@@ -178,6 +219,13 @@ async def test_owner_transfer_requires_both_parties_and_keeps_merchant_history(m
             )) == outsider
 
         async with admin_engine.connect() as session:
+            previous = (await session.execute(text(
+                "SELECT status, token_ciphertext, retired_at "
+                "FROM crypto_pay_apps WHERE id=:id"
+            ), {"id": old_crypto_app_id})).one()
+            assert previous[0] == "retired"
+            assert previous[1] == "encrypted-old-crypto-api-token"
+            assert previous[2] is not None
             periods = (await session.execute(text(
                 "SELECT merchant_id, owner_user_id, started_at, ended_at "
                 "FROM merchant_project_periods WHERE project_id = :pid "

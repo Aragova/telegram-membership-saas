@@ -64,3 +64,13 @@ matching all immutable local invoice attributes. Legacy Crypto Bot invoice
 links on `https://t.me/send?start=...` and current
 `https://t.me/CryptoBot?start=...` are accepted only on mainnet; third-party
 domains, usernames and nonstandard ports are rejected.
+
+### Ownership-transfer safety
+
+The same verified `finalize_transfer` transaction that disables old manual
+payment instructions also retires the outgoing owner's active Crypto Pay app
+before changing project ownership. Historic encrypted API token versions
+remain for reconciliation of invoices paid prior to the transfer, but the
+incoming merchant cannot see or reuse them and can register their own app
+without hitting the active-app uniqueness constraint. A real PostgreSQL
+transfer→reconnect test enforces this contract.
