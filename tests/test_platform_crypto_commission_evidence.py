@@ -6,13 +6,12 @@ rolled back in this test. No SaaS bill or customer hold is activated.
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -29,7 +28,6 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayError,
     verify_paid_invoice,
 )
-from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp
 from telegram_membership_saas.modules.crypto_pay.settlement import (
     settle_crypto_pay_invoice,
 )
