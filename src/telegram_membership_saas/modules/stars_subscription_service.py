@@ -50,9 +50,6 @@ from telegram_membership_saas.modules.subscriptions import (
     SubscriptionStatus,
     calculate_period_end,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import (
-    upsert_telegram_user,
-)
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 
 STARS_MAX = 250_000
@@ -106,6 +103,13 @@ async def create_stars_subscription_order(
     ).limit(1))
     if linked is None:
         raise ValueError("Plan has no active channel or group")
+    # Import at call time: telegram_commerce.__init__ loads handlers, which
+    # import Stars recovery. A module-level import here creates a cycle
+    # before the customer supervisor can start any of its Telegram workers.
+    from telegram_membership_saas.modules.telegram_commerce.service import (
+        upsert_telegram_user,
+    )
+
     user = await upsert_telegram_user(
         session, telegram_user_id=buyer_id, username=username,
         first_name=first_name,

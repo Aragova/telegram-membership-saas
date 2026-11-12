@@ -53,6 +53,14 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      # Real deployment starts each entrypoint in a fresh interpreter.
+      # compileall and pytest's preloaded import graph cannot detect cycles.
+      - name: Cold-start import smoke tests
+        run: |
+          python -c "import telegram_membership_saas.customer_supervisor_main"
+          python -c "import telegram_membership_saas.customer_bot_main"
+          python -c "import telegram_membership_saas.bot_main"
+
       - name: Alembic heads
         run: alembic heads
 
