@@ -1,3 +1,25 @@
+## 2026-11-12 — #135 crypto atomic settlement backend after #136
+
+PR #136 was merged as `a99c344` and deployed via staging workflow #43219753620,
+with migration 0060 and `DEPLOY SUCCESS` confirmed. The new branch
+`feat/135-crypto-atomic-fulfillment` begins the next backend-only stage:
+
+- Keep the **buyer Crypto Pay option hidden** until periodic verified
+  reconciliation, file media delivery, buyer Rich UI and end-to-end tests pass.
+- Reuse the original `crypto_pay_invoices` as canonical file payment records
+  in /myfiles. No duplicate file purchase table.
+- Introduce `last_crypto_invoice_id` in Subscription and `crypto_payment`
+  as EntitlementGrant source with schema migration 0061.
+- Freeze subscription resource IDs on invoice reservation. Verify original
+  merchant app payment and atomically persist the financial event, grants and
+  access outbox; repair the existing cross-rail paid timeline.
+- Keep existing manual + Stars payment flows and SaaS billing switches
+  unchanged. No automatic provider withdrawals or commissions.
+
+See `docs/CRYPTO_PAY_CHECKOUT.md` for the safety gate.
+
+---
+
 ## 2026-11-12 — Current Crypto Pay state and next slice
 
 PR #134 was merged to `main` as `64fdc22`: single owner-only 💎 Crypto Pay
