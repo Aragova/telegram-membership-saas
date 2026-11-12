@@ -57,6 +57,8 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_v2_configure_method,
     saas_v2_confirm_attempt,
+    saas_v2_methods_read,
+    saas_v2_pending_proofs,
     saas_v2_reject_attempt,
 )
 from telegram_membership_saas.modules.platform_usage import (
@@ -907,6 +909,10 @@ def create_platform_dashboard_router(
                 tr("🗑 Убрать реквизиты", "🗑 Clear instructions"), "bankclearask",
             )])
         buttons.append([_button(
+            tr("💱 Реквизиты по валютам", "💱 Currency bank methods"),
+            "v2methods",
+        )])
+        buttons.append([_button(
             tr("⬅️ Счета", "⬅️ Invoices"), "billing:0",
         )])
         await _render_platform_screen(
@@ -1293,6 +1299,180 @@ def create_platform_dashboard_router(
                 await _show_bank_screen(
                     bot, query.from_user, message_id=message_id,
                 )
+            elif tokens[1:] == ["v2methods"]:
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                methods = await saas_v2_methods_read(
+                    factory, actor_id=actor_id,
+                    actor_telegram_id=query.from_user.id, settings=config,
+                )
+                by_currency = {m["currency"]: m for m in methods}
+                text_lines = [
+                    tr("💱 <b>ViMi Pay · Реквизиты по валютам</b>",
+                       "💱 <b>ViMi Pay · Bank methods by currency</b>"),
+                    tr("Изменения применяются только к новым платёжным "
+                       "попыткам. Старые реквизиты в чеках сохраняются.",
+                       "Changes apply only to new payment attempts. "
+                       "Prior receipts retain their original instructions."),
+                ]
+                currency_rows = []
+                for currency in ("RUB", "USD", "EUR", "UAH", "BYN"):
+                    method = by_currency.get(currency)
+                    enabled = bool(method and method.get("enabled"))
+                    text_lines.append(
+                        ("✅ " if enabled else "◯ ") + currency
+                        + (" · " + tr("активен", "active")
+                           if enabled else " · " + tr("выключен", "off"))
+                    )
+                    currency_rows.append(_button(
+                        "💳 " + currency, "v2method:" + currency,
+                    ))
+                rows = [currency_rows[i:i + 2]
+                        for i in range(0, len(currency_rows), 2)]
+                rows.append([_button(
+                    tr("⬅️ Реквизиты", "⬅️ Bank details"), "bankdetails",
+                )])
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text="\n".join(text_lines), reply_markup=_keyboard(rows),
+                    message_id=message_id,
+                )
+            elif len(tokens) == 3 and tokens[1] == "v2method":
+                currency = tokens[2]
+                if currency not in ("RUB", "USD", "EUR", "UAH", "BYN"):
+                    raise ValueError("Invalid platform banking currency")
+                pending_v2_method[query.from_user.id] = currency
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=tr(
+                        "💳 <b>Реквизиты ViMi Pay: ", "💳 <b>ViMi Pay method: "
+                    ) + escape(currency) + "</b>\n\n" + tr(
+                        "Пришлите новые реквизиты одним сообщением "
+                        "(8–900 символов). /disable отключит этот способ. "
+                        "/cancel отменит ввод.",
+                        "Send new bank instructions in one message "
+                        "(8–900 characters). /disable turns the method off. "
+                        "/cancel aborts editing.",
+                    ),
+                    reply_markup=_keyboard([[_button(
+                        tr("⬅️ Назад", "⬅️ Back"), "v2methods",
+                    )]]), message_id=message_id,
+                )
+            elif len(tokens) == 3 and tokens[1] == "v2proofs":
+                page_token = tokens[2]
+                if (not page_token.isascii() or not page_token.isdecimal()
+                        or int(page_token) > 100000):
+                    raise ValueError("Invalid bank proof review page")
+                page = int(page_token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                result = await saas_v2_pending_proofs(
+                    factory, actor_id=actor_id,
+                    actor_telegram_id=query.from_user.id, page=page,
+                    settings=config,
+                )
+                rows = []
+                lines = [
+                    tr("🧾 <b>ViMi Pay · Проверка чеков</b>",
+                       "🧾 <b>ViMi Pay · Payment proof review</b>"),
+                    tr("Сверяйте <b>фактическое поступление</b> в банке, "
+                       "сумму и референс. Фото само по себе не оплата.",
+                       "Verify <b>actual received funds</b>, amount and "
+                       "bank reference. A screenshot is not payment."),
+                ]
+                items = result["items"]
+                if not items:
+                    lines.append(tr("Новых заявок нет.", "No new submissions."))
+                for item in items:
+                    attempt_id = UUID(str(item["id"]))
+                    token = encode_uuid(attempt_id)
+                    lines.append(
+                        "\n№ <code>" + escape(str(attempt_id)) + "</code>\n"
+                        + tr("Счёт: ", "Invoice: ")
+                        + "<code>" + escape(str(item["invoice_id"])) + "</code>\n"
+                        + tr("Сумма: ", "Amount: ") + "<b>"
+                        + escape(str(item["amount"]) + " " + str(item["currency"]))
+                        + "</b> · " + escape(str(item["rub"])) + " ₽\n"
+                        + tr("Источник: бот ", "Source: bot ")
+                        + escape(str(item["source_bot"]))
+                        + tr(", сообщение ", ", message ")
+                        + escape(str(item["source_message"]))
+                    )
+                    rows.append([
+                        _button("✅ #" + str(attempt_id)[:8],
+                                "v2review:ok:" + token + ":" + page_token),
+                        _button("❌ #" + str(attempt_id)[:8],
+                                "v2review:no:" + token + ":" + page_token),
+                    ])
+                nav = []
+                if page:
+                    nav.append(_button("⬅️", "v2proofs:" + str(page - 1)))
+                if len(items) == 8:
+                    nav.append(_button("➡️", "v2proofs:" + str(page + 1)))
+                if nav:
+                    rows.append(nav)
+                rows.append([_button(
+                    tr("🔄 Обновить", "🔄 Refresh"), "v2proofs:" + page_token,
+                )])
+                rows.append([_button(
+                    tr("⬅️ Счета", "⬅️ Invoices"), "billing:0",
+                )])
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text="\n".join(lines), reply_markup=_keyboard(rows),
+                    message_id=message_id,
+                )
+            elif len(tokens) == 5 and tokens[1] == "v2review":
+                _, _, decision, attempt_token, page_token = tokens
+                if decision not in ("ok", "no"):
+                    raise ValueError("Invalid bank review decision")
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid review page")
+                attempt_id = decode_uuid(attempt_token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                queue = await saas_v2_pending_proofs(
+                    factory, actor_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    page=int(page_token), settings=config,
+                )
+                if not any(str(item["id"]) == str(attempt_id)
+                           for item in queue["items"]):
+                    raise ValueError("Original payment attempt no longer pending")
+                pending_v2_review[query.from_user.id] = (
+                    attempt_id, decision == "ok",
+                )
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=tr(
+                        "✅ <b>Подтверждение банковского поступления</b>\n"
+                        "Только после независимой проверки банка введите "
+                        "уникальный референс поступившего перевода "
+                        "(8–160 символов). /cancel — отменить.",
+                        "✅ <b>Verify actual bank receipt</b>\n"
+                        "Only after independently checking the bank, "
+                        "enter the unique received transfer reference "
+                        "(8–160 characters). /cancel to abort.",
+                    ) if decision == "ok" else tr(
+                        "❌ <b>Отклонение платежа</b>\n"
+                        "Укажите причину (5–500 символов). /cancel — отмена.",
+                        "❌ <b>Reject payment</b>\n"
+                        "Enter a reason (5–500 characters). /cancel to abort.",
+                    ),
+                    reply_markup=_keyboard([[_button(
+                        tr("⬅️ Назад", "⬅️ Back"),
+                        "v2proofs:" + page_token,
+                    )]]), message_id=message_id,
+                )
             elif len(tokens) == 3 and tokens[1] == "billing":
                 page_token = tokens[2]
                 if not page_token.isascii() or not page_token.isdecimal():
@@ -1327,6 +1507,10 @@ def create_platform_dashboard_router(
                     nav.append(_button("➡️", f"billing:{page + 1}"))
                 if nav:
                     rows.append(nav)
+                rows.append([_button(
+                    tr("🧾 Чеки на проверку", "🧾 Pending payment proofs"),
+                    "v2proofs:0",
+                )])
                 rows.append([_button(
                     tr("💳 Реквизиты ViMi Pay", "💳 ViMi Pay payment details"),
                     "bankdetails",
