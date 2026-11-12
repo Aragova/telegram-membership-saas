@@ -4,7 +4,6 @@ No buyer-facing Crypto Pay handler exists. The only settlement API reads
 authoritative getInvoices on the app that originally issued the invoice.
 """
 import os
-from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
