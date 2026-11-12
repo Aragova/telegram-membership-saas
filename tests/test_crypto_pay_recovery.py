@@ -339,3 +339,62 @@ async def test_failed_crypto_media_send_recovers_after_backoff():
             assert paid.delivery_attempt_count == 2
     finally:
         await engine.dispose()
+
+
+
+async def test_recovery_overtakes_live_create_invoice_without_false_failure():
+    """Provider accepts first, worker recovers, issuer receives the same link."""
+    Provider.created = []
+    Provider.invoice_data = {}
+    accepted = asyncio.Event()
+    release = asyncio.Event()
+
+    class AcceptedProvider(Provider):
+        async def create_invoice(self, *, currency, amount, payload, description):
+            response = await super().create_invoice(
+                currency=currency, amount=amount,
+                payload=payload, description=description,
+            )
+            # Provider has already created the payable invoice, but the
+            # original HTTP response has not yet reached the issuer.
+            self.invoice_data[response["invoice_id"]]["bot_invoice_url"] = (
+                response["bot_invoice_url"]
+            )
+            accepted.set()
+            await release.wait()
+            return response
+
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        _, project, bot_id, product = await _shop(factory, key)
+        buyer = _tid()
+        invoice_id = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id, buyer_id=buyer,
+            kind="file", target_id=product, currency="RUB",
+        )
+        issuer = asyncio.create_task(issue_reserved_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer, invoice_id=invoice_id,
+            encryption_key=key, client_factory=AcceptedProvider,
+        ))
+        await asyncio.wait_for(accepted.wait(), timeout=10)
+        bot = TelegramStub(bot_id)
+        assert await reconcile_crypto_pay_once(
+            factory, project_id=project, bot=bot, encryption_key=key,
+            client_factory=Provider,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            recovered = await session.get(CryptoPayInvoice, invoice_id)
+            assert recovered.status == "paid"
+            assert recovered.last_delivered_at is not None
+        release.set()
+        issued = await issuer
+        assert issued.id == invoice_id
+        assert issued.url == "https://t.me/CryptoTestnetBot?start=IV123"
+        assert len(Provider.created) == 1
+        assert bot.files == [(buyer, "test-file-id")]
+    finally:
+        release.set()
+        await engine.dispose()
