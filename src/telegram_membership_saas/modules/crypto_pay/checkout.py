@@ -239,37 +239,56 @@ async def reserve_crypto_invoice(
 
         spec = invoice_price_spec(currency, amount)
         if reuse_recent:
-            # Reopening checkout must NOT create another charge while an
-            # identical active invoice is pending from this buyer and app.
-            # The project checkout lock serializes repeated button presses.
+            # File purchases are ONE-TIME, so the invoice identity is
+            # (buyer, bot, product) regardless of future currency/price
+            # choices or merchant credential rotation. Multiple payable
+            # links would allow a buyer to pay twice for one file.
             now = datetime.now(UTC)
-            target_check = (
-                CryptoPayInvoice.plan_price_id == target_id
-                if kind == "subscription"
-                else CryptoPayInvoice.product_id == target_id
-            )
-            older = (await session.scalars(select(CryptoPayInvoice).where(
-                CryptoPayInvoice.project_id == project_id,
-                CryptoPayInvoice.app_id == app.id,
-                CryptoPayInvoice.telegram_bot_id == bot_id,
-                CryptoPayInvoice.telegram_user_id == buyer_id,
-                CryptoPayInvoice.kind == kind,
-                target_check,
-                CryptoPayInvoice.currency_code == currency,
-                CryptoPayInvoice.amount == amount,
-                or_(
-                    and_(CryptoPayInvoice.status == "reserved",
-                         CryptoPayInvoice.created_at >= now - timedelta(minutes=12)),
-                    # A provider invoice is payable until getInvoices
-                    # confirms expiry, NOT merely 25 min after reservation.
-                    # Never issue a second charge while the first can be paid.
-                    CryptoPayInvoice.status == "issued",
-                    CryptoPayInvoice.status == "issuing",
-                ),
-            ).order_by(CryptoPayInvoice.created_at.desc()).limit(1)
-                .with_for_update())).first()
-            if older is not None:
-                return older.id
+            if kind == "file":
+                older = (await session.scalars(select(CryptoPayInvoice).where(
+                    CryptoPayInvoice.project_id == project_id,
+                    CryptoPayInvoice.telegram_bot_id == bot_id,
+                    CryptoPayInvoice.telegram_user_id == buyer_id,
+                    CryptoPayInvoice.kind == "file",
+                    CryptoPayInvoice.product_id == target_id,
+                    or_(
+                        CryptoPayInvoice.status.in_(("issued", "issuing")),
+                        and_(CryptoPayInvoice.status == "reserved",
+                             CryptoPayInvoice.created_at >= now - timedelta(minutes=12)),
+                    ),
+                ).order_by(
+                    CryptoPayInvoice.created_at.desc(),
+                ).limit(1).with_for_update())).first()
+                if older is not None:
+                    if older.app_id != app.id:
+                        raise ValueError(
+                            "Previous Crypto Pay invoice on an old merchant "
+                            "credential must be reconciled before retrying"
+                        )
+                    return older.id
+            else:
+                older = (await session.scalars(select(CryptoPayInvoice).where(
+                    CryptoPayInvoice.project_id == project_id,
+                    CryptoPayInvoice.app_id == app.id,
+                    CryptoPayInvoice.telegram_bot_id == bot_id,
+                    CryptoPayInvoice.telegram_user_id == buyer_id,
+                    CryptoPayInvoice.kind == "subscription",
+                    CryptoPayInvoice.plan_price_id == target_id,
+                    CryptoPayInvoice.currency_code == currency,
+                    CryptoPayInvoice.amount == amount,
+                    or_(
+                        and_(CryptoPayInvoice.status == "reserved",
+                             CryptoPayInvoice.created_at >= now - timedelta(minutes=12)),
+                        # Provider status, not arbitrary local elapsed time,
+                        # determines when the old invoice can be replaced.
+                        CryptoPayInvoice.status == "issued",
+                        CryptoPayInvoice.status == "issuing",
+                    ),
+                ).order_by(
+                    CryptoPayInvoice.created_at.desc(),
+                ).limit(1).with_for_update())).first()
+                if older is not None:
+                    return older.id
         if pending >= 10:
             raise ValueError("Too many pending Crypto Pay invoices")
         order_id = uuid4()
