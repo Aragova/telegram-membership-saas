@@ -220,7 +220,8 @@ async def issue_reserved_crypto_invoice(
 
     A network timeout, process crash or failed DB finalization leaves 'issuing'
     and requires explicit provider reconciliation, NEVER blind createInvoice
-    retry. No buyer-facing route or automatic paid delivery exists yet.
+    retry. The provider recovery worker verifies paid invoices before delivery.
+    Buyer-facing Crypto Pay buttons remain disabled in this slice.
     """
     async with system_project_session_scope(factory, project_id) as session:
         await checkout_retirement_lock(session, project_id)
@@ -328,11 +329,34 @@ async def issue_reserved_crypto_invoice(
             CryptoPayInvoice.telegram_bot_id == bot_id,
             CryptoPayInvoice.telegram_user_id == buyer_id,
         ).with_for_update())
-        if record is None or record.status != "issuing":
+        if record is None:
+            raise CryptoPayError("Crypto Pay issuance changed before finalization")
+        if record.status in ("issued", "paid"):
+            # The recovery worker may have found and verified the exact same
+            # provider invoice while createInvoice was still in flight. This
+            # is successful idempotent finalization, not an issuance error.
+            # Never overwrite a conflicting invoice or retry createInvoice.
+            if (
+                record.provider_invoice_id != response["invoice_id"]
+                or record.invoice_url != response["bot_invoice_url"]
+                or record.payload != payload
+                or record.amount != amount
+                or record.currency_code != currency
+                or record.currency_type != invoice_price_spec(currency, amount)["currency_type"]
+            ):
+                raise CryptoPayError("Crypto Pay issuance conflicts with recovery")
+            return IssuedCryptoInvoice(
+                id=record.id, url=record.invoice_url,
+                amount=record.amount, currency_code=record.currency_code,
+            )
+        if record.status != "issuing":
             raise CryptoPayError("Crypto Pay issuance changed before finalization")
         record.provider_invoice_id = response["invoice_id"]
         record.invoice_url = response["bot_invoice_url"]
         record.status = "issued"
+        # A concurrent poll may have claimed 'issuing' for a 20-minute
+        # uncertainty scan. Now the provider ID is known; poll normally.
+        record.next_check_at = None
         await session.flush()
         return IssuedCryptoInvoice(
             id=record.id, url=record.invoice_url,
@@ -401,6 +425,10 @@ async def recover_uncertain_crypto_invoice(
         record.provider_invoice_id = provider_id
         record.invoice_url = None if expired else link
         record.status = "expired" if expired else "issued"
+        if not expired:
+            # Restore the normal ~1-minute polling cadence for an active
+            # invoice after recovering an uncertain createInvoice outcome.
+            record.next_check_at = None
         await session.flush()
         if expired:
             # Terminal provider evidence frees the buyer's pending quota.

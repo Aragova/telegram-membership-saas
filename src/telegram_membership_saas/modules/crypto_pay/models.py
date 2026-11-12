@@ -1,8 +1,8 @@
 """Tenant-owned Crypto Pay credentials and frozen provider invoice evidence.
 
-There is deliberately NO path that marks an invoice paid in this foundation
-slice: future fulfillment must atomically add the file delivery or membership
-grant *before* changing the order state. No fake paid status or dead button.
+Provider-verified settlement atomically marks paid subscriptions and files.
+The recovery worker polls the ORIGINAL merchant account and retries file media
+after commit. A local reservation or buyer callback never grants access.
 """
 from datetime import datetime
 from decimal import Decimal
@@ -113,6 +113,13 @@ class CryptoPayInvoice(Base):
         ),
         Index("ix_crypto_pay_invoice_pending", "app_id", "status", "created_at"),
         Index(
+            "ix_crypto_pay_recovery_due", "project_id", "telegram_bot_id",
+            "status", "next_check_at",
+        ),
+        CheckConstraint(
+            "delivery_attempt_count >= 0", name="ck_crypto_pay_delivery_attempts",
+        ),
+        Index(
             "ix_crypto_pay_invoice_buyer",
             "project_id", "telegram_bot_id", "telegram_user_id", "created_at",
         ),
@@ -147,6 +154,11 @@ class CryptoPayInvoice(Base):
         JSON, nullable=False, default=list, server_default="[]",
     )
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_delivery_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivery_attempt_count: Mapped[int] = mapped_column(
+        default=0, server_default="0", nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp(),
     )

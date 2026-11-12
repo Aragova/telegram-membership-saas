@@ -238,3 +238,45 @@ automated fulfillment/recovery worker will call the verified service and
 deliver file media after the transaction commits. No commercial SaaS billing
 switch is changed. Never expose a payable invoice until periodic recovery,
 payment history, file delivery and cross-rail tests are complete.
+
+### Durable provider polling and automatic file delivery (PR #138 candidate)
+
+The existing connected-bot supervisor now owns ONE Crypto Pay recovery
+task per running bot, alongside Stars reconciliation and broadcasts. No
+additional supervisor, merchant app, subscription database, or duplicate
+buyer menu is introduced. It only runs when the bot encryption key is
+configured and never logs API tokens.
+
+- Every 45s (+ deterministic startup stagger), claim a bounded batch of
+  due `issued` invoices for this bot. Group claims by their ORIGINAL merchant
+  app credential version, including retired apps, then call provider
+  `getInvoices` once per app/batch. Verify provider invoice ID, frozen payload,
+  amount, currency and paid timestamp. Atomically settle through the existing
+  shared Subscription/Entitlement/Outbox or paid FilePurchase history service.
+  False, unsigned, missing or unrecognised provider replies never grant.
+- One `issuing` uncertainty is reconciled per pass using up to three
+  provider pages. NEVER retry `createInvoice` after ambiguous acceptance.
+  On successful recovery, verify the paid receipt in the same pass.
+  Provider-confirmed expired invoices become terminal and free the buyer
+  outstanding-order slot.
+- `next_check_at` is durable and increases with invoice age (1 minute
+  initially, 5 minutes within 24h, hourly afterward) to bound provider load
+  across 100 bots. No provider work when a bot has zero pending invoices.
+- Paid files are delivered by the existing Telegram file UI and redownload
+  button, with a persisted retry claim and exponential backoff. A failed
+  send, Telegram error or supervisor crash cannot erase a paid purchase.
+  Delivery is **at least once**, because Telegram has no atomic media-send
+  transaction with our DB. A mid-send crash can cause repeated media on
+  retry; `/myfiles` remains available regardless of push status.
+- Migration `0062_crypto_recovery_delivery` introduces durable due/retry
+  timestamps, a delivery attempt count and a per-bot due index; it does
+  not alter other rails, reset orders or delete historic credentials.
+- PostgreSQL/RLS tests cover active vs paid vs expired provider status,
+  automatic Telegram media delivery, duplicate suppression after success,
+  and recovery of a provider-created invoice following a simulated local
+  DB finalization failure.
+
+**Buyer crypto payment buttons remain OFF in this backend slice.**
+Merchant payout and platform 5% commercial billing remain unchanged.
+Next slice: complete buyer Rich subscription/file payment chooser and
+provider-backed checkout after exact-head review and successful staging.
