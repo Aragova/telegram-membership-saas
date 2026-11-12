@@ -293,6 +293,13 @@ def upgrade() -> None:
             IF rate IS NULL OR rate<=0 OR rate>1000000000 THEN
               unresolved:=unresolved+1; CONTINUE;
             END IF;
+            -- The quote is stored in numeric(38,18): round it FIRST so
+            -- both the stored gross and CHECK constraint use precisely
+            -- the same immutable exchange-rate snapshot.
+            rate:=round(rate,18);
+            IF rate<=0 THEN
+              unresolved:=unresolved+1; CONTINUE;
+            END IF;
             SELECT count(*) INTO found_periods
               FROM public.merchant_project_periods mp
               WHERE mp.project_id=original.project_id
