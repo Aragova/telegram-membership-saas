@@ -150,3 +150,8 @@ class CryptoPayInvoice(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp(),
     )
+
+    @property
+    def product_name(self) -> str:
+        """Compatibility with the existing unified paid-file delivery UI."""
+        return self.name_snapshot
