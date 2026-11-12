@@ -149,3 +149,13 @@ and expose the subsequent valid retry. The provider is never contacted
 unless deletion succeeds AND the current verified bot-scoped wizard is live.
 Ordinary commands such as /cancel remain routed normally. Buyer payments
 and access entitlement routes are unchanged.
+
+### Avoid destructive wallet-address false positives (PR #134)
+
+The unconditional post-expiry secret scrubber matches only colon-delimited,
+numeric-prefix Crypto Pay API credential shapes. Generic alphanumeric strings,
+Ethereum/TRON wallet addresses, transaction hashes and ordinary links are NOT
+deleted. When the owner actually has a live bot-scoped Crypto Pay token wizard,
+ALL private non-command text is intercepted and deleted before verification,
+regardless of provider token format. This separates credential protection from
+normal buyer support/payment evidence.

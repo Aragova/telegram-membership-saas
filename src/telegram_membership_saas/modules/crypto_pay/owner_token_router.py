@@ -38,13 +38,23 @@ def _plausible_merchant_token(value: str | None) -> bool:
     # customer chat; they are not merchant API credentials.
     if cleaned.lower().startswith(("https://", "http://", "tg://")):
         return False
+    if (
+        not 20 <= len(cleaned) <= 256
+        or not cleaned.isascii()
+        or any(ch.isspace() for ch in cleaned)
+    ):
+        return False
+    # No unconditional alphanumeric-only detection. Wallet addresses
+    # (Ethereum/TRON) and transaction hashes are PUBLIC buyer payment data,
+    # and must never be deleted from a support conversation.
+    # Outside a live wizard, only numeric-prefix, colon-delimited Crypto
+    # Pay credentials are scrubbed. Inside a live wizard ANY input is deleted
+    # first, so provider token variations remain fully supported there.
+    prefix, separator, secret = cleaned.partition(":")
     return bool(
-        20 <= len(cleaned) <= 256 and cleaned.isascii()
-        and not any(ch.isspace() for ch in cleaned)
-        # Even after a setup timeout/restart a credential-shaped text must
-        # NEVER reach a buyer dialog. Crypto Pay app tokens normally contain
-        # a colon; tolerate long whitespace-free opaque variants as well.
-        and (":" in cleaned or (len(cleaned) >= 32 and cleaned.isalnum()))
+        separator and prefix.isascii() and prefix.isdecimal()
+        and 1 <= len(prefix) <= 20
+        and len(secret) >= 15 and not any(ch.isspace() for ch in secret)
     )
 
 

@@ -376,3 +376,36 @@ async def test_malformed_first_attempt_does_not_disable_secure_retry(
     assert connect.await_count == 2
     consume.assert_awaited_once()
     assert "123456:" not in str(bot.send_message.await_args_list)
+
+
+@pytest.mark.parametrize(
+    "public_data", [
+        "0x" + "a" * 40,              # Ethereum wallet
+        "T" + "a" * 33,               # TRON wallet
+        "c" * 64,                    # transaction hash
+        "ETH:0x" + "a" * 40,          # labeled public address
+        "https://t.me/vimi_support_bot",
+    ],
+)
+async def test_public_crypto_payment_data_is_not_deleted(
+    monkeypatch, public_data,
+):
+    assert not crypto._plausible_merchant_token(public_data)
+    project = uuid4()
+    monkeypatch.setattr(
+        crypto, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        crypto, "active_crypto_pay_secret_prompt", AsyncMock(return_value=False),
+    )
+    guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
+    assert await guard(_message(public_data), SimpleNamespace(id=654321)) is False
+
+
+def test_numeric_prefix_token_is_scrubbed_after_wizard_expiry():
+    assert crypto._plausible_merchant_token(
+        "123456:" + "C" * 35,
+    )
+    assert crypto._plausible_merchant_token(
+        " 123456:" + "C" * 35 + "\n",
+    )
