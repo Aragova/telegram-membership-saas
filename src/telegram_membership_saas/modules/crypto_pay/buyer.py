@@ -1,7 +1,8 @@
 """Project/bot-scoped Crypto Pay buyer choices, sharing existing storefronts.
 
-Buyer checkout is deliberately gated until the 5% commercial sale ledger
-accepts crypto evidence. No new menu, bot or payment-record table is created.
+Buyer checkout requires an explicit release profile plus an active verified
+mainnet merchant app. All paid-order fulfillment runs independently of this
+new-checkout flag; no new menu, bot or payment-record table is created.
 """
 from __future__ import annotations
 
