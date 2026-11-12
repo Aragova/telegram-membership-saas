@@ -283,7 +283,12 @@ def upgrade() -> None:
       SELECT instructions INTO bank
       FROM public.platform_saas_payment_methods_v2
       WHERE currency_code=p_currency AND enabled;
-      IF bank IS NULL AND p_currency='RUB' THEN
+      -- Legacy RUB details are a fallback only when the owner has never
+      -- configured a v2 RUB row. An explicit disabled row always wins.
+      IF bank IS NULL AND p_currency='RUB' AND NOT EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_methods_v2
+        WHERE currency_code='RUB'
+      ) THEN
         SELECT instructions INTO bank
         FROM public.platform_saas_payment_details WHERE id=1;
       END IF;
@@ -584,6 +589,10 @@ def upgrade() -> None:
         SELECT 'RUB'::varchar(3)
         WHERE EXISTS(SELECT 1 FROM public.platform_saas_payment_details
           WHERE id=1 AND instructions IS NOT NULL)
+          AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_payment_methods_v2
+            WHERE currency_code='RUB'
+          )
       ) x;
       RETURN result;
     END; $f$
