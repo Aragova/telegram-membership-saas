@@ -440,6 +440,36 @@ CREATE OR REPLACE FUNCTION public.platform_saas_invoice_currency_snapshot(
     """)
 
 
+    # Voiding is serialized on the invoice row against v2 approval
+    # (which locks that same invoice). Already confirmed money cannot vanish
+    # from an operator/merchant statement when the invoice becomes void.
+    op.execute("""
+      CREATE FUNCTION public.platform_saas_v2_prevent_void_paid()
+      RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path=pg_catalog,public AS $f$
+      BEGIN
+        IF OLD.status='issued' AND NEW.status='void' AND EXISTS(
+          SELECT 1 FROM public.platform_saas_payment_allocations_v2 a
+          WHERE a.invoice_id=OLD.id
+        ) THEN
+          RAISE EXCEPTION 'Cannot void invoice with received partial payment'
+            USING ERRCODE='42501';
+        END IF;
+        RETURN NEW;
+      END; $f$
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_v2_prevent_void_paid
+      BEFORE UPDATE ON public.platform_saas_invoices
+      FOR EACH ROW EXECUTE FUNCTION
+      public.platform_saas_v2_prevent_void_paid()
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+        public.platform_saas_v2_prevent_void_paid() FROM PUBLIC
+    """)
+
+
 def downgrade() -> None:
     raise RuntimeError(
         "Do not roll back outstanding debt and access/hold accounting"
