@@ -136,31 +136,69 @@ async def can_review_file_payments(
         return True
 
 
+# Compact owner editor, no 25-button currency flood. Manual methods retain
+# all their existing currencies; Crypto Pay adds popular fiat/crypto codes.
+CRYPTO_FILE_PRICE_CURRENCIES = frozenset({
+    "RUB", "USD", "EUR", "UAH", "BYN",
+    "USDT", "USDC", "TON", "BTC", "ETH",
+})
+
+
+async def _editable_file_price_currencies(
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+) -> tuple[str, ...]:
+    manual_codes = (await session.scalars(
+        select(PaymentMethodCurrency.currency_code)
+        .join(
+            PaymentMethod,
+            and_(
+                PaymentMethod.id == PaymentMethodCurrency.payment_method_id,
+                PaymentMethod.project_id == PaymentMethodCurrency.project_id,
+            ),
+        )
+        .join(CurrencyAsset, CurrencyAsset.code == PaymentMethodCurrency.currency_code)
+        .where(
+            PaymentMethodCurrency.project_id == project_id,
+            PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+            CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+        ).distinct()
+    )).all()
+    codes = set(manual_codes)
+    from telegram_membership_saas.modules.crypto_pay.buyer import (
+        crypto_merchant_ready,
+    )
+
+    if await crypto_merchant_ready(
+        session, project_id=project_id, bot_id=bot_id,
+        require_buyer_enabled=False,
+    ):
+        supported = (await session.scalars(select(CurrencyAsset.code).where(
+            CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+            CurrencyAsset.code.in_(CRYPTO_FILE_PRICE_CURRENCIES),
+        ))).all()
+        codes.update(supported)
+    priority = ("RUB", "USD", "EUR", "UAH", "BYN", "USDT",
+                "USDC", "TON", "BTC", "ETH")
+    return tuple(sorted(
+        codes,
+        key=lambda code: (
+            priority.index(code) if code in priority else len(priority), code,
+        ),
+    ))
+
+
 async def available_price_currencies(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID,
 ) -> tuple[str, ...]:
-    """Only currently enabled manual payment currencies are offered at creation."""
+    """One editor for shared fiat/file prices, including live Crypto Pay."""
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
         await _owner(session, project_id=project_id, bot_id=bot_id, actor_id=actor_id)
-        return tuple((await session.scalars(
-            select(PaymentMethodCurrency.currency_code)
-            .join(
-                PaymentMethod,
-                and_(PaymentMethod.id == PaymentMethodCurrency.payment_method_id,
-                     PaymentMethod.project_id == PaymentMethodCurrency.project_id),
-            )
-            .join(CurrencyAsset, CurrencyAsset.code == PaymentMethodCurrency.currency_code)
-            .where(
-                PaymentMethodCurrency.project_id == project_id,
-                PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
-                CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
-            )
-            .distinct()
-            .order_by(PaymentMethodCurrency.currency_code)
-        )).all())
+        return await _editable_file_price_currencies(
+            session, project_id=project_id, bot_id=bot_id,
+        )
 
 
 async def price_editor_options(
@@ -172,19 +210,9 @@ async def price_editor_options(
     ) as session:
         await _owner(session, project_id=project_id, bot_id=bot_id, actor_id=actor_id)
         await _product(session, project_id, bot_id, product_id)
-        codes = (await session.scalars(
-            select(PaymentMethodCurrency.currency_code)
-            .join(
-                PaymentMethod,
-                and_(PaymentMethod.id == PaymentMethodCurrency.payment_method_id,
-                     PaymentMethod.project_id == PaymentMethodCurrency.project_id),
-            ).join(CurrencyAsset, CurrencyAsset.code == PaymentMethodCurrency.currency_code)
-            .where(
-                PaymentMethodCurrency.project_id == project_id,
-                PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
-                CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
-            ).distinct().order_by(PaymentMethodCurrency.currency_code)
-        )).all()
+        codes = await _editable_file_price_currencies(
+            session, project_id=project_id, bot_id=bot_id,
+        )
         prices = (await session.scalars(
             select(FileManualPrice).where(
                 FileManualPrice.project_id == project_id,
@@ -229,7 +257,11 @@ async def set_manual_price(
                 PaymentMethodCurrency.currency_code == currency,
             ).limit(1)
         )
-        if valid_method is None:
+        if (valid_method is None and currency not in (
+            await _editable_file_price_currencies(
+                session, project_id=project_id, bot_id=bot_id,
+            )
+        )):
             raise ValueError(tr(
                 "Нет активного способа оплаты для этой валюты",
                 "No active payment method for this currency",
@@ -248,6 +280,27 @@ async def set_manual_price(
                     "Слишком много знаков после запятой для этой валюты",
                     "Too many decimal places for this currency",
                 ))
+        # Fiat Crypto Pay invoices cannot represent fractions of a cent.
+        # Reject invalid quotes before an advertised checkout is published.
+        if currency in CRYPTO_FILE_PRICE_CURRENCIES:
+            from telegram_membership_saas.modules.crypto_pay.buyer import (
+                crypto_merchant_ready,
+            )
+            if await crypto_merchant_ready(
+                session, project_id=project_id, bot_id=bot_id,
+                require_buyer_enabled=False,
+            ):
+                from telegram_membership_saas.modules.crypto_pay.client import (
+                    CryptoPayError,
+                    invoice_price_spec,
+                )
+                try:
+                    invoice_price_spec(currency, amount)
+                except (ValueError, CryptoPayError):
+                    raise ValueError(tr(
+                        "Цена не подходит для счёта Crypto Pay",
+                        "Price cannot be represented in a Crypto Pay invoice",
+                    )) from None
         record = await session.scalar(select(FileManualPrice).where(
             FileManualPrice.project_id == project_id,
             FileManualPrice.product_id == product_id,
