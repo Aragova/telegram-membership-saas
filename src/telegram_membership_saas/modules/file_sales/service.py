@@ -761,6 +761,27 @@ async def paid_file_purchase_id(
         ).limit(1))
 
 
+async def _has_authorized_file_stars(
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+    buyer_id: int, product_id: UUID,
+) -> bool:
+    """Telegram Stars may be charged after precheckout says yes.
+
+    Until a verified Stars transaction resolves this pending authorization,
+    another rail must not issue a payable quote for the same one-time file.
+    This is durable across cold restarts and not guessed from a local timer.
+    """
+    authorized = await session.scalar(select(FilePurchase.id).where(
+        FilePurchase.project_id == project_id,
+        FilePurchase.telegram_bot_id == bot_id,
+        FilePurchase.telegram_user_id == buyer_id,
+        FilePurchase.product_id == product_id,
+        FilePurchase.status == "pending",
+        FilePurchase.stars_authorized_at.is_not(None),
+    ).limit(1))
+    return authorized is not None
+
+
 async def _has_unsettled_crypto_file_invoice(
     session: AsyncSession, *, project_id: UUID, bot_id: int,
     buyer_id: int, product_id: UUID,
@@ -959,12 +980,19 @@ async def precheckout_allowed(
             if disabled is False:
                 return False
             item = await _product(session, project_id, bot_id, purchase.product_id)
-            return item.status == "published" and (
+            allowed = item.status == "published" and (
                 await session.scalar(select(func.count(FileAsset.id)).where(
                     FileAsset.project_id == project_id,
                     FileAsset.product_id == purchase.product_id,
                 )) or 0
             ) > 0
+            if allowed:
+                # Commit authorization BEFORE answering Telegram ok=True.
+                # A later Crypto Pay reservation sees this even if the Stars
+                # successful_payment update is delayed, lost or reordered.
+                purchase.stars_authorized_at = datetime.now(UTC)
+                await session.flush()
+            return allowed
         except (PermissionError, ValueError):
             return False
 
