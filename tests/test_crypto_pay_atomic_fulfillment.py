@@ -34,6 +34,10 @@ from telegram_membership_saas.modules.file_sales.service import (
     purchased_assets,
 )
 from telegram_membership_saas.modules.outbox import OutboxEvent
+from telegram_membership_saas.modules.owner_setup.obligations import (
+    end_owner_subscription,
+    revoke_owner_grant,
+)
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource
@@ -235,5 +239,74 @@ async def test_crypto_subscription_grants_original_resources_and_renews_once():
             assert grants[0].source == "crypto_payment"
             assert len(outbox) == 1
             assert outbox[0].event_type == "access_recalculate"
+    finally:
+        await engine.dispose()
+
+
+
+async def test_owner_termination_revokes_crypto_paid_grants_and_access():
+    """A lifetime or finite crypto grant must not survive owner termination."""
+    _reset_provider()
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        owner, project, bot_id, _ = await _shop(factory, key)
+        async with system_project_session_scope(factory, project) as session:
+            resource_id = await session.scalar(select(Resource.id).where(
+                Resource.project_id == project,
+            ))
+            plan = Plan(
+                project_id=project, name="Lifetime crypto",
+                duration_value=None, duration_unit="lifetime", status="active",
+            )
+            session.add(plan)
+            await session.flush()
+            price = PlanPrice(
+                project_id=project, plan_id=plan.id,
+                currency_code="RUB", version=1,
+                amount=Decimal("1000"), status="active",
+            )
+            session.add_all([
+                price, PlanResource(
+                    project_id=project, plan_id=plan.id, resource_id=resource_id,
+                ),
+            ])
+            await session.flush()
+            price_id = price.id
+        buyer = _tid()
+        invoice_id = await _issue(
+            factory, project=project, bot_id=bot_id, buyer=buyer,
+            kind="subscription", target_id=price_id, key=key,
+        )
+        await settle_crypto_pay_invoice(
+            factory, project_id=project, invoice_id=invoice_id,
+            encryption_key=key, client_factory=Provider,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            sub = await session.scalar(select(Subscription).where(
+                Subscription.project_id == project,
+            ))
+            grant = await session.scalar(select(EntitlementGrant).where(
+                EntitlementGrant.source_id == invoice_id,
+                EntitlementGrant.project_id == project,
+            ))
+            sub_id = sub.id
+            grant_id = grant.id
+            assert grant.valid_until is None
+        with pytest.raises(ValueError, match="Оплаченный доступ"):
+            await revoke_owner_grant(
+                factory, actor_id=owner, project_id=project, grant_id=grant_id,
+            )
+        await end_owner_subscription(
+            factory, actor_id=owner, project_id=project,
+            subscription_id=sub_id,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            sub = await session.get(Subscription, sub_id)
+            grant = await session.get(EntitlementGrant, grant_id)
+            assert sub.status == "cancelled"
+            assert grant.status == "revoked"
+            assert grant.revoked_at is not None
     finally:
         await engine.dispose()
