@@ -1,8 +1,7 @@
 """Crypto Pay reserved/issued invoices are not payment or delivery evidence."""
+import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
-import os
 
 import pytest
 from cryptography.fernet import Fernet
