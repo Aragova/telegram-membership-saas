@@ -6,7 +6,6 @@ or activates commercial billing, checkout or subscriber access.
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
