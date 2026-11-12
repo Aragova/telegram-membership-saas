@@ -963,6 +963,17 @@ async def list_purchases_page(
                 FileManualOrder.telegram_user_id == buyer_id,
                 FileManualOrder.status == "approved",
             ),
+            select(
+                CryptoPayInvoice.id.label("id"),
+                CryptoPayInvoice.name_snapshot.label("product_name"),
+                CryptoPayInvoice.paid_at.label("paid_at"),
+            ).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
+            ),
         ).subquery()
         total = await session.scalar(select(func.count()).select_from(combined)) or 0
         rows = (await session.execute(
@@ -977,7 +988,7 @@ async def list_purchases_page(
 async def purchased_assets(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, purchase_id: UUID,
-) -> tuple[FilePurchase, tuple[FileAsset, ...]]:
+) -> tuple[FilePurchase | FileManualOrder | CryptoPayInvoice, tuple[FileAsset, ...]]:
     """A paid receipt, not membership or public catalog access, unlocks files."""
     async with system_project_session_scope(factory, project_id) as session:
         order = await session.scalar(select(FilePurchase).where(
@@ -994,6 +1005,15 @@ async def purchased_assets(
                 FileManualOrder.telegram_bot_id == bot_id,
                 FileManualOrder.telegram_user_id == buyer_id,
                 FileManualOrder.status == "approved",
+            ))
+        if order is None:
+            order = await session.scalar(select(CryptoPayInvoice).where(
+                CryptoPayInvoice.id == purchase_id,
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
             ))
         if order is None:
             raise PermissionError(tr("Оплаченная покупка не найдена", "Paid purchase not found"))
@@ -1028,6 +1048,15 @@ async def mark_file_delivery(
                 FileManualOrder.telegram_bot_id == bot_id,
                 FileManualOrder.telegram_user_id == buyer_id,
                 FileManualOrder.status == "approved",
+            ).with_for_update())
+        if order is None:
+            order = await session.scalar(select(CryptoPayInvoice).where(
+                CryptoPayInvoice.id == purchase_id,
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
             ).with_for_update())
         if order:
             order.last_delivered_at = datetime.now(UTC)

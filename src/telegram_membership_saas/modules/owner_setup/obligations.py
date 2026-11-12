@@ -20,6 +20,7 @@ from telegram_membership_saas.modules.bots.deletion_service import (
     count_retirement_blockers,
     owner_self_managed_access_predicate,
 )
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
     EntitlementGrantStatus,
@@ -315,9 +316,26 @@ async def end_owner_subscription(
             )
             .with_for_update()
         )).all()
+        crypto_grants = (await session.scalars(
+            select(EntitlementGrant)
+            .join(CryptoPayInvoice, and_(
+                EntitlementGrant.source_id == CryptoPayInvoice.id,
+                EntitlementGrant.project_id == CryptoPayInvoice.project_id,
+            ))
+            .where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.customer_id == sub.customer_id,
+                EntitlementGrant.source == EntitlementSource.CRYPTO_PAYMENT.value,
+                EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+                CryptoPayInvoice.customer_id == sub.customer_id,
+                CryptoPayInvoice.plan_id == sub.plan_id,
+                CryptoPayInvoice.kind == "subscription",
+                CryptoPayInvoice.status == "paid",
+            ).with_for_update()
+        )).all()
         now = datetime.now(UTC)
         targets: set[UUID] = set()
-        for grant in (*grants, *star_grants):
+        for grant in (*grants, *star_grants, *crypto_grants):
             grant.status = EntitlementGrantStatus.REVOKED.value
             grant.revoked_at = max(now, grant.valid_from)
             targets.add(grant.resource_id)
@@ -358,6 +376,7 @@ async def revoke_owner_grant(
         if grant.source in (
             EntitlementSource.PAYMENT.value,
             EntitlementSource.STARS_PAYMENT.value,
+            EntitlementSource.CRYPTO_PAYMENT.value,
         ):
             raise ValueError("Оплаченный доступ закрывается через завершение подписки")
         grant.status = EntitlementGrantStatus.REVOKED.value

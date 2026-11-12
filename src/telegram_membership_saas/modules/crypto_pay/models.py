@@ -9,6 +9,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     CheckConstraint,
     DateTime,
@@ -142,6 +143,15 @@ class CryptoPayInvoice(Base):
         String(16), nullable=False, default="reserved", server_default="reserved",
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resource_ids_snapshot: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]",
+    )
+    last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp(),
     )
+
+    @property
+    def product_name(self) -> str:
+        """Compatibility with the existing unified paid-file delivery UI."""
+        return self.name_snapshot

@@ -145,7 +145,7 @@ async def remove_channel_without_paid_purchases(
         paid_grant = await session.scalar(select(EntitlementGrant.id).where(
             EntitlementGrant.project_id == project_id,
             EntitlementGrant.resource_id == resource_id,
-            EntitlementGrant.source.in_(("payment", "stars_payment")),
+            EntitlementGrant.source.in_(("payment", "stars_payment", "crypto_payment")),
         ).limit(1))
         paid_stars = await session.scalar(select(SubscriptionStarOrder.id).where(
             SubscriptionStarOrder.project_id == project_id,
