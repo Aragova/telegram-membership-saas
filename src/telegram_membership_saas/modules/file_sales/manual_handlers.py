@@ -49,6 +49,7 @@ from telegram_membership_saas.modules.file_sales.rich_ui import (
 )
 from telegram_membership_saas.modules.file_sales.service import (
     mark_file_delivery,
+    paid_file_purchase_id,
     purchased_assets,
     view_product,
 )
@@ -175,6 +176,27 @@ async def show_file_payment_options(
     )
     if not count:
         raise ValueError(tr("У товара пока нет вложений", "This product has no attachments yet"))
+    already_paid = await paid_file_purchase_id(
+        factory, project_id=project_id, bot_id=bot.id, buyer_id=buyer_id,
+        product_id=product_id,
+    )
+    if already_paid is not None:
+        await bot.send_message(
+            buyer_id,
+            tr("✅ Этот файл уже куплен. Оплачивать повторно не нужно.",
+               "✅ You already own this file. There is no need to pay again."),
+            reply_markup=_keyboard([
+                [_button(
+                    tr("📥 Получить файл", "📥 Download file"),
+                    "get:" + encode_uuid(already_paid), "success",
+                )],
+                [InlineKeyboardButton(
+                    text=tr("⬅️ Товары", "⬅️ Products"),
+                    callback_data="fs:folder:" + encode_uuid(product.folder_id),
+                )],
+            ]),
+        )
+        return
     options = await available_methods(
         factory, project_id=project_id, bot_id=bot.id,
         product_id=product_id, buyer_id=buyer_id,
