@@ -902,6 +902,18 @@ async def precheckout_allowed(
             ))
             if purchase is None:
                 return False
+            # A pending Stars invoice must not charge again after an
+            # authenticated Crypto Pay purchase settled for this file.
+            owned_crypto = await session.scalar(select(CryptoPayInvoice.id).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.product_id == purchase.product_id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
+            ).limit(1))
+            if owned_crypto is not None:
+                return False
             disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
                 FileSaleMethodVisibility.project_id == project_id,
                 FileSaleMethodVisibility.telegram_bot_id == bot_id,
