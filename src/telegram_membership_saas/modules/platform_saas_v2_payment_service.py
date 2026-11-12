@@ -43,7 +43,13 @@ async def _rpc(
     query = text(
         "SELECT public." + name + "("
         + ",".join(":" + key for key in keys) + ") AS data"
-    ).columns(data=JSONB)
+    )
+    if name in {
+        "platform_saas_v2_invoice_balance",
+        "platform_saas_v2_create_attempt",
+        "platform_saas_v2_pending_proofs",
+    }:
+        query = query.columns(data=JSONB)
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
