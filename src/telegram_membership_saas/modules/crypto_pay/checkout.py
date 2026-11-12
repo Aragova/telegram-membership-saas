@@ -27,8 +27,16 @@ from telegram_membership_saas.modules.crypto_pay.client import (
 )
 from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp, CryptoPayInvoice
 from telegram_membership_saas.modules.crypto_pay.service import load_crypto_app_token
-from telegram_membership_saas.modules.file_sales.manual_models import FileManualPrice
-from telegram_membership_saas.modules.file_sales.models import FileAsset, FileFolder, FileProduct
+from telegram_membership_saas.modules.file_sales.manual_models import (
+    FileManualOrder,
+    FileManualPrice,
+)
+from telegram_membership_saas.modules.file_sales.models import (
+    FileAsset,
+    FileFolder,
+    FileProduct,
+    FilePurchase,
+)
 from telegram_membership_saas.modules.file_sales.service import _ready
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments.request_service import get_or_create_project_customer
@@ -187,6 +195,32 @@ async def reserve_crypto_invoice(
             ).limit(1))
             if has_asset is None:
                 raise ValueError("This file is not ready for delivery")
+            # File purchases are one-time across ALL payment rails. Never
+            # generate a second payable Crypto invoice for an owned file.
+            paid_stars = await session.scalar(select(FilePurchase.id).where(
+                FilePurchase.project_id == project_id,
+                FilePurchase.telegram_bot_id == bot_id,
+                FilePurchase.telegram_user_id == buyer_id,
+                FilePurchase.product_id == product.id,
+                FilePurchase.status == "paid",
+            ).limit(1))
+            paid_manual = await session.scalar(select(FileManualOrder.id).where(
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.product_id == product.id,
+                FileManualOrder.status == "approved",
+            ).limit(1))
+            paid_crypto = await session.scalar(select(CryptoPayInvoice.id).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.product_id == product.id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
+            ).limit(1))
+            if any(x is not None for x in (paid_stars, paid_manual, paid_crypto)):
+                raise ValueError("This file has already been purchased")
             product_id = product.id
             name, amount = product.name, price.amount
 
