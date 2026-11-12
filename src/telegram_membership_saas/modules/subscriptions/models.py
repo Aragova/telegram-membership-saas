@@ -54,8 +54,15 @@ class Subscription(Base):
             name="fk_subscriptions_last_star_order_project",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["last_crypto_invoice_id", "project_id"],
+            ["crypto_pay_invoices.id", "crypto_pay_invoices.project_id"],
+            name="fk_subscriptions_last_crypto_invoice_project",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
-            "last_payment_id IS NOT NULL OR last_star_order_id IS NOT NULL",
+            "last_payment_id IS NOT NULL OR last_star_order_id IS NOT NULL "
+            "OR last_crypto_invoice_id IS NOT NULL",
             name="ck_subscriptions_last_paid_source",
         ),
         CheckConstraint(
@@ -98,6 +105,7 @@ class Subscription(Base):
     last_star_order_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), nullable=True,
     )
+    last_crypto_invoice_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
