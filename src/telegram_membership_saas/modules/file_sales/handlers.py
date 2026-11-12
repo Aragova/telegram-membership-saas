@@ -19,6 +19,7 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.currency_display import display_currency
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.file_sales.manual_handlers import (
     show_file_payment_options,
@@ -212,8 +213,7 @@ def create_file_sales_router(
         )
         rows = []
         for method in controls:
-            name = (tr("⭐ Автоматическая оплата звёздами (XTR)",
-                       "⭐ Automatic Stars (XTR)")
+            name = (tr("⭐ Telegram Stars", "⭐ Telegram Stars")
                     if method.auto_stars else "💳 " + method.name[:36])
             rows.append([_button(
                 ("🟢 " if method.enabled else "🔴 ") + name,
@@ -239,15 +239,15 @@ def create_file_sales_router(
                 "🟢 Включён · 🔴 Выключен\n\n"
                 "Эти настройки действуют только на продажи файлов "
                 "в данном боте. Подписки и другие боты не затрагиваются.\n"
-                "Ручной метод «Telegram Stars» и автоматическая оплата "
-                "звёздами Telegram (XTR) — разные способы оплаты.\n"
+                "Ручной способ с похожим названием и автоматическая оплата "
+                "⭐ Telegram Stars — разные способы оплаты.\n"
                 "Созданные заявки и оплаченные файлы сохраняются.",
                 "💳 <b>File payment methods</b>\n"
                 "🟢 Enabled · 🔴 Disabled\n\n"
                 "Settings affect file sales in this bot only. "
                 "Subscriptions and other bots are unchanged.\n"
-                "A manual method named Telegram Stars and automatic "
-                "Stars (XTR) are separate payment choices.\n"
+                "A manually named payment method and automatic "
+                "⭐ Telegram Stars are separate payment choices.\n"
                 "Existing orders and paid files remain intact.",
             ),
             parse_mode="HTML", reply_markup=_keyboard(rows),
@@ -1002,7 +1002,7 @@ def create_file_sales_router(
                     "initcurrency:" + code, "success",
                 )] for code in choices]
                 rows.append([_button(
-                    tr("⭐ Звёзды Telegram", "⭐ Telegram Stars"),
+                    tr("⭐ Telegram Stars", "⭐ Telegram Stars"),
                     "initcurrency:XTR",
                 )])
                 await bot.send_message(

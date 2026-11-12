@@ -15,6 +15,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from telegram_membership_saas.currency_display import display_currency
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import PaymentRequest
@@ -214,7 +215,7 @@ def account_list_screen(
             lines.append(
                 "💎 <b>" + escape(item.name) + "</b>\n"
                 + label + " · " + escape(format_amount(item.amount, 18))
-                + " " + escape(item.currency)
+                + " " + escape(display_currency(item.currency))
                 + " · " + reference + "\n"
             )
             if item.status == "waiting_confirmation":

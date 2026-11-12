@@ -14,6 +14,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.types import InlineKeyboardMarkup
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.currency_display import display_currency
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.rich_messages import classic_messages
 
@@ -192,8 +193,8 @@ def rich_admin_product_detail(item, *, file_count: int, prices) -> str:
         + str(file_count) + "</td></tr>",
         "<tr><th>" + tr("📌 Статус", "📌 Status") + "</th><td>"
         + escape(status) + "</td></tr>",
-        "<tr><th>" + tr("⭐ Звёзды", "⭐ Stars") + "</th><td>"
-        + (str(item.stars_price) + " XTR" if item.stars_price is not None
+        "<tr><th>" + tr("⭐ Telegram Stars", "⭐ Telegram Stars") + "</th><td>"
+        + (str(item.stars_price) if item.stars_price is not None
            else tr("Не установлена", "Not set")) + "</td></tr>",
         "</table>",
         "<p><b>" + tr("💱 Ручные цены", "💱 Manual prices") + "</b></p>",
@@ -210,7 +211,7 @@ def rich_admin_product_detail(item, *, file_count: int, prices) -> str:
             value = format(amount, "f")
             if "." in value:
                 value = value.rstrip("0").rstrip(".")
-            lines.append("<tr><td>" + escape(currency) + "</td><td>"
+            lines.append("<tr><td>" + escape(display_currency(currency)) + "</td><td>"
                          + escape(value) + "</td></tr>")
         lines.append("</table>")
     else:

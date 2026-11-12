@@ -17,6 +17,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.currency_display import display_currency
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.identity import ProjectCustomer
@@ -147,7 +148,7 @@ def render_daily_financial_summary(snapshot: DailyFinancialSnapshot) -> str:
     for currency, amount, count in snapshot.approved_totals[:MAX_CURRENCIES]:
         lines.append(
             "💰 <b>" + escape(_amount(amount)) + " "
-            + escape(currency) + "</b> · "
+            + escape(display_currency(currency)) + "</b> · "
             + tr("операций: ", "payments: ") + str(count)
         )
     overflow = len(snapshot.approved_totals) - MAX_CURRENCIES

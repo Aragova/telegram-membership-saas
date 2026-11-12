@@ -312,7 +312,7 @@ def _saas_preview_rich(preview: dict) -> str:
                 else str(record["fee_rub"])
             )
             lines.append(
-                "<tr><td>" + escape(currency) + "</td><td>"
+                "<tr><td>" + escape(display_currency(currency)) + "</td><td>"
                 + escape(amount) + "</td><td>"
                 + str(int(record.get("operations", 0))) + "</td><td>"
                 + escape(fee) + "</td></tr>"
