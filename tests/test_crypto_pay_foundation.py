@@ -26,7 +26,7 @@ from telegram_membership_saas.modules.crypto_pay.service import (
     disconnect_crypto_pay,
     read_crypto_pay_connection,
 )
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
@@ -66,7 +66,7 @@ async def test_crypto_pay_credentials_are_tenant_owner_only_and_versioned():
             other_bot = await session.scalar(select(BotInstance.telegram_bot_id).where(
                 BotInstance.id == other_bot_uuid,
             ))
-        with pytest.raises(PermissionError):
+        with pytest.raises((PermissionError, TenantAccessDenied)):
             await connect_crypto_pay(
                 factory, project_id=project_id, bot_id=bot_id, actor_id=stranger,
                 api_token=TOKEN1, encryption_key=key,
