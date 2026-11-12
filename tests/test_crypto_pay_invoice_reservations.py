@@ -19,6 +19,7 @@ from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.crypto_pay.checkout import (
     inspect_provider_paid_invoice,
     issue_reserved_crypto_invoice,
+    recover_uncertain_crypto_invoice,
     reserve_crypto_invoice,
 )
 from telegram_membership_saas.modules.crypto_pay.client import CryptoPayError
@@ -76,6 +77,9 @@ class Provider:
 
     async def get_invoices(self, invoice_ids):
         return tuple(self.invoice_data[n] for n in invoice_ids)
+
+    async def list_recent_invoices(self, *, offset=0, count=100):
+        return tuple(self.invoice_data.values())[offset:offset + count]
 
 
 async def _fixture(factory, *, owner_id, project_id, bot_id, key):
@@ -291,6 +295,35 @@ async def test_uncertain_crypto_invoice_failure_is_not_retried():
                 encryption_key=key, client_factory=Provider,
             )
         assert Provider.created == []
+        with pytest.raises(CryptoPayError, match="requires further reconciliation"):
+            await recover_uncertain_crypto_invoice(
+                factory, project_id=project, invoice_id=reserved,
+                encryption_key=key, client_factory=Provider,
+            )
+        # Simulate the provider having accepted the timed-out request.
+        async with system_project_session_scope(factory, project) as session:
+            record = await session.scalar(select(CryptoPayInvoice).where(
+                CryptoPayInvoice.id == reserved,
+            ))
+            payload = record.payload
+        Provider.invoice_data[5200] = {
+            "invoice_id": 5200, "payload": payload,
+            "status": "active", "currency_type": "fiat",
+            "fiat": "RUB", "amount": "55.00",
+            "bot_invoice_url": "https://t.me/CryptoTestnetBot?start=IV5200",
+        }
+        recovered = await recover_uncertain_crypto_invoice(
+            factory, project_id=project, invoice_id=reserved,
+            encryption_key=key, client_factory=Provider,
+        )
+        assert recovered.url.endswith("IV5200")
+        async with system_project_session_scope(factory, project) as session:
+            record = await session.scalar(select(CryptoPayInvoice).where(
+                CryptoPayInvoice.id == reserved,
+            ))
+            assert record.status == "issued"
+            assert record.provider_invoice_id == 5200
+            assert record.paid_at is None
     finally:
         await engine.dispose()
 
