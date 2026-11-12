@@ -179,9 +179,12 @@ async def test_invoice_notice_outbox_dedupes_retries_and_stops_after_receipt():
                 assert claimed["kind"] == "issued"
                 assert claimed["recipient"] > 0
                 assert claimed["invoice_id"] == str(invoice)
-                assert "<tag>" in claimed["instructions"]
+                # Notices must never expose outdated payment details. Owners
+                # select active bank credentials on the live invoice screen.
+                assert "instructions" not in claimed
                 assert "<tag>" not in _notice_text(claimed)
-                assert "&lt;tag&gt;" in _notice_text(claimed)
+                assert "TEST PAYMENT DETAILS" not in _notice_text(claimed)
+                assert "ViMi Pay" in _notice_text(claimed)
 
                 delivered = (await admin.execute(text(
                     "SELECT public.platform_saas_notice_finish("

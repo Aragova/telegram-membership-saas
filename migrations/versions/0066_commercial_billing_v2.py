@@ -182,8 +182,15 @@ def upgrade() -> None:
                count(*) FILTER(WHERE billable AND unit_rub IS NULL) AS unrated,
                coalesce(sum(native_amount)
                    FILTER(WHERE billable),0) AS native_gross,
-               coalesce(sum(native_amount*unit_rub*0.05)
-                   FILTER(WHERE billable AND unit_rub IS NOT NULL),0)
+               -- Manual payments have always been rounded per
+               -- accepted purchase. Stars/Crypto keep full sale precision,
+               -- then round only the monthly aggregated payable total.
+               coalesce(sum(
+                 CASE WHEN source_kind IN ('subscription','file_manual')
+                   THEN round(native_amount*unit_rub*0.05,2)
+                   ELSE native_amount*unit_rub*0.05
+                 END
+               ) FILTER(WHERE billable AND unit_rub IS NOT NULL),0)
                  AS commission_unrounded_rub
         FROM all_sales GROUP BY source_kind
       )
