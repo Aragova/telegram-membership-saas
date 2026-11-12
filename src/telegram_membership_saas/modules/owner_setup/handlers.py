@@ -227,17 +227,17 @@ from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_statements,
     merchant_saas_unified_monthly_preview,
 )
-from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
-    saas_v2_available_methods,
-    saas_v2_create_attempt,
-    saas_v2_invoice_balance,
-    saas_v2_submit_proof,
-)
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
     lock_saas_invoice_currency_expected,
     preview_saas_invoice_currency,
     saas_invoice_credit_history,
     saas_invoice_currency_snapshot,
+)
+from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_v2_available_methods,
+    saas_v2_create_attempt,
+    saas_v2_invoice_balance,
+    saas_v2_submit_proof,
 )
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
@@ -3927,7 +3927,11 @@ def create_owner_setup_router(
                 kind = parts[0]
                 invoice_id = decode_uuid(parts[1])
                 page_token = parts[2]
-                if not page_token.isascii() or not page_token.isdecimal()                         or int(page_token) > 100000:
+                if (
+                    not page_token.isascii()
+                    or not page_token.isdecimal()
+                    or int(page_token) > 100000
+                ):
                     raise ValueError("Invalid invoice page")
                 page = int(page_token)
                 balance = await saas_v2_invoice_balance(
