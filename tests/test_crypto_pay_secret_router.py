@@ -77,22 +77,33 @@ async def test_priority_handler_deletes_token_before_authentication_and_never_ec
         return True
 
     async def connect(*_args, **kwargs):
-        assert called == ["deleted", "consumed"]
+        assert called == ["deleted", "read"]
         assert kwargs["api_token"] == "123456:" + "C" * 35
         called.append("connected")
 
-    async def consume(*_args, **kwargs):
+    async def read(*_args, **kwargs):
         assert called == ["deleted"]
-        assert kwargs["reply_message_id"] is None
-        called.append("consumed")
+        called.append("read")
         return SetupFlow(
             "crypto_pay_token", project, {"environment": "mainnet"}, 15,
+            generation="original-gen",
         )
+
+    async def consume(*_args, **kwargs):
+        assert called == ["deleted", "read", "connected"]
+        assert kwargs["generation"] == "original-gen"
+        assert kwargs["discard"] is True
+        called.append("consumed")
 
     monkeypatch.setattr(
         crypto, "ensure_telegram_actor", AsyncMock(return_value=actor),
     )
-    monkeypatch.setattr(crypto, "consume_flow", AsyncMock(side_effect=consume))
+    monkeypatch.setattr(
+        crypto, "read_crypto_pay_secret_prompt", AsyncMock(side_effect=read),
+    )
+    monkeypatch.setattr(
+        crypto, "consume_button_flow", AsyncMock(side_effect=consume),
+    )
     monkeypatch.setattr(crypto, "connect_crypto_pay", AsyncMock(side_effect=connect))
     monkeypatch.setattr(
         crypto, "get_settings",
@@ -104,20 +115,22 @@ async def test_priority_handler_deletes_token_before_authentication_and_never_ec
     bot.send_message = AsyncMock()
     router = crypto.create_crypto_secret_router(MagicMock(), project_id=project)
     await _router_handler(router)(_message(), bot)
-    assert called == ["deleted", "consumed", "connected"]
+    assert called == ["deleted", "read", "connected", "consumed"]
     assert "123456:" not in str(bot.send_message.await_args_list)
 
 
 async def test_failed_secret_deletion_never_reaches_provider(monkeypatch):
     project = uuid4()
-    consume, connect = AsyncMock(), AsyncMock()
-    monkeypatch.setattr(crypto, "consume_flow", consume)
+    consume, read, connect = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(crypto, "consume_button_flow", consume)
+    monkeypatch.setattr(crypto, "read_crypto_pay_secret_prompt", read)
     monkeypatch.setattr(crypto, "connect_crypto_pay", connect)
     bot = MagicMock()
     bot.delete_message = AsyncMock(return_value=False)
     bot.send_message = AsyncMock()
     router = crypto.create_crypto_secret_router(MagicMock(), project_id=project)
     await _router_handler(router)(_message(), bot)
+    read.assert_not_awaited()
     consume.assert_not_awaited()
     connect.assert_not_awaited()
 
@@ -147,12 +160,14 @@ async def test_quoted_padded_merchant_secret_is_deleted_before_connect(
         crypto, "active_crypto_pay_secret_prompt", AsyncMock(return_value=True),
     )
     monkeypatch.setattr(
-        crypto, "consume_flow", AsyncMock(return_value=SetupFlow(
+        crypto, "read_crypto_pay_secret_prompt", AsyncMock(return_value=SetupFlow(
             "crypto_pay_token", project, {"environment": "mainnet"}, 15,
+            generation="original-gen",
         )),
     )
     connected = AsyncMock()
     monkeypatch.setattr(crypto, "connect_crypto_pay", connected)
+    monkeypatch.setattr(crypto, "consume_button_flow", AsyncMock())
     monkeypatch.setattr(
         crypto, "get_settings",
         lambda: SimpleNamespace(bot_token_encryption_key="example-key"),
@@ -170,3 +185,94 @@ async def test_quoted_padded_merchant_secret_is_deleted_before_connect(
     bot.delete_message.assert_awaited_once()
     assert connected.await_args.kwargs["api_token"] == pasted.strip()
     assert pasted.strip() not in str(bot.send_message.await_args_list)
+
+
+async def test_provider_outage_keeps_secret_guard_active_for_retry(
+    monkeypatch,
+):
+    """No token is forwarded after a failed getMe, even when quoting a buyer."""
+    from telegram_membership_saas.modules.crypto_pay.client import CryptoPayError
+
+    project, actor = uuid4(), uuid4()
+    flow = SetupFlow(
+        "crypto_pay_token", project, {"environment": "mainnet"}, 15,
+        generation="original-gen",
+    )
+    # A real persistent owner state remains active through the provider call;
+    # read() does not mutate it, and consume() must run ONLY on success.
+    read = AsyncMock(return_value=flow)
+    connect = AsyncMock(side_effect=[
+        CryptoPayError("Crypto Pay API is temporarily unavailable"),
+        None,
+    ])
+    consume = AsyncMock()
+    monkeypatch.setattr(
+        crypto, "ensure_telegram_actor", AsyncMock(return_value=actor),
+    )
+    monkeypatch.setattr(
+        crypto, "read_crypto_pay_secret_prompt", read,
+    )
+    monkeypatch.setattr(crypto, "connect_crypto_pay", connect)
+    monkeypatch.setattr(crypto, "consume_button_flow", consume)
+    monkeypatch.setattr(
+        crypto, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="example-key"),
+    )
+    bot = MagicMock()
+    bot.id = 654321
+    bot.delete_message = AsyncMock(return_value=True)
+    bot.send_message = AsyncMock()
+    router = crypto.create_crypto_secret_router(
+        MagicMock(), project_id=project,
+    )
+    handler = _router_handler(router)
+    msg = _message()  # Still quotes an old buyer notification.
+    await handler(msg, bot)
+    consume.assert_not_awaited()
+    assert read.await_count == 1
+    assert "Protected input remains active" in str(bot.send_message.await_args)
+    # On retry the same old buyer quote cannot intercept the token.
+    await handler(msg, bot)
+    assert connect.await_count == 2
+    assert read.await_count == 2
+    consume.assert_awaited_once_with(
+        read.await_args.args[0], actor_id=actor,
+        expected_step="crypto_pay_token",
+        generation="original-gen", bot_scope_id=bot.id, discard=True,
+    )
+    assert "123456:" not in str(bot.send_message.await_args_list)
+
+
+async def test_concurrent_owner_navigation_is_not_discarded_after_verification(
+    monkeypatch,
+):
+    project = uuid4()
+    monkeypatch.setattr(
+        crypto, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        crypto, "read_crypto_pay_secret_prompt",
+        AsyncMock(return_value=SetupFlow(
+            "crypto_pay_token", project, {"environment": "mainnet"},
+            15, generation="old",
+        )),
+    )
+    monkeypatch.setattr(crypto, "connect_crypto_pay", AsyncMock())
+    monkeypatch.setattr(
+        crypto, "consume_button_flow", AsyncMock(
+            side_effect=ValueError("A newer owner form replaced this wizard"),
+        ),
+    )
+    monkeypatch.setattr(
+        crypto, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="example-key"),
+    )
+    bot = MagicMock()
+    bot.id = 654321
+    bot.delete_message = AsyncMock(return_value=True)
+    bot.send_message = AsyncMock()
+    await _router_handler(
+        crypto.create_crypto_secret_router(MagicMock(), project_id=project),
+    )(_message(), bot)
+    assert "123456:" not in str(bot.send_message.await_args_list)
+    assert "securely connected" in str(bot.send_message.await_args)
