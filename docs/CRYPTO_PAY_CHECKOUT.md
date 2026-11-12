@@ -123,3 +123,15 @@ Crypto Pay token. Entering /files also cancels the previous owner wizard.
 The priority secret router still protects any actual token sent WHILE
 a Crypto Pay credential wizard is active, including replies to old buyer
 notifications and stale transfer forms.
+
+### Preserve token secrecy across provider failures (PR #134)
+
+The priority secret handler reads but does **not consume** the durable,
+bot-scoped Crypto Pay wizard before calling getMe. When provider verification
+fails (invalid token, timeout, temporary outage), the same private prompt
+and generation remain active; a retry that quotes an old buyer notification
+is still captured and deleted before any other message router. On successful
+getMe and encrypted credential registration, the handler atomically
+discards only that specific wizard generation. If the owner navigated to
+a newer setup while getMe was pending, the newer flow is left untouched.
+Only generic error messages reach Telegram, never raw API tokens or secrets.

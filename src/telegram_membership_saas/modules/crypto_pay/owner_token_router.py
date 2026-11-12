@@ -21,7 +21,8 @@ from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.crypto_pay.service import connect_crypto_pay
 from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.owner_setup.service import (
-    consume_flow,
+    SetupFlow,
+    consume_button_flow,
     ensure_telegram_actor,
 )
 from telegram_membership_saas.tenant_context import TenantContext
@@ -39,21 +40,46 @@ def _plausible_merchant_token(value: str | None) -> bool:
     )
 
 
-async def active_crypto_pay_secret_prompt(
+async def read_crypto_pay_secret_prompt(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, bot_scope_id: int, project_id: UUID,
-) -> bool:
+) -> SetupFlow | None:
+    """Read the live wizard WITHOUT consuming it before provider verification.
+
+    A failed Crypto Pay getMe MUST leave the protected prompt active; otherwise
+    a retry quoting a stale buyer message could forward the merchant secret.
+    The original generation prevents completion of a newer unrelated wizard.
+    """
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id),
     ) as session:
         state = await session.get(OwnerSetupSession, (actor_id, bot_scope_id))
-        return bool(
-            state is not None
-            and state.step == "crypto_pay_token"
-            and state.selected_project_id == project_id
-            and state.prompt_message_id is not None
-            and state.expires_at > datetime.now(UTC)
+        if (
+            state is None
+            or state.step != "crypto_pay_token"
+            or state.selected_project_id != project_id
+            or state.prompt_message_id is None
+            or state.generation is None
+            or state.expires_at <= datetime.now(UTC)
+            or state.payload.get("environment") not in ("mainnet", "testnet")
+        ):
+            return None
+        return SetupFlow(
+            step=state.step, project_id=state.selected_project_id,
+            payload=dict(state.payload),
+            prompt_message_id=state.prompt_message_id,
+            generation=state.generation,
         )
+
+
+async def active_crypto_pay_secret_prompt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, bot_scope_id: int, project_id: UUID,
+) -> bool:
+    return await read_crypto_pay_secret_prompt(
+        factory, actor_id=actor_id, bot_scope_id=bot_scope_id,
+        project_id=project_id,
+    ) is not None
 
 
 class CryptoPaySecretFilter(BaseFilter):
@@ -115,15 +141,11 @@ def create_crypto_secret_router(
             username=message.from_user.username,
             first_name=message.from_user.first_name,
         )
-        flow = await consume_flow(
+        flow = await read_crypto_pay_secret_prompt(
             factory, actor_id=actor,
-            reply_message_id=None, bot_scope_id=bot.id,
+            bot_scope_id=bot.id, project_id=project_id,
         )
-        if (
-            flow is None or flow.step != "crypto_pay_token"
-            or flow.project_id != project_id
-            or flow.payload.get("environment") not in ("mainnet", "testnet")
-        ):
+        if flow is None:
             await bot.send_message(
                 uid, tr("Настройка устарела. Откройте Crypto Pay заново.",
                        "Setup expired. Open Crypto Pay again."),
@@ -137,17 +159,32 @@ def create_crypto_secret_router(
                 testnet=flow.payload["environment"] == "testnet",
             )
         except (RuntimeError, ValueError, PermissionError):
-            # Never log provider exceptions, headers, token or raw payload.
+            # Do not consume or invalidate the original secret prompt on a
+            # failed provider check. Retrying with the same old Telegram
+            # reply target MUST still hit this router before buyer replies.
+            # Never include provider exceptions or the token in responses.
             await bot.send_message(
                 uid,
                 tr(
-                    "⚠️ Приложение Crypto Pay не подключено. "
-                    "Проверьте токен в @CryptoBot и повторите настройку.",
-                    "⚠️ Crypto Pay app wasn't connected. "
-                    "Check the token in @CryptoBot and try again.",
+                    "⚠️ Crypto Pay не подтвердил приложение. "
+                    "Защищённый ввод остаётся активным. Проверьте API-токен "
+                    "в @CryptoBot и отправьте его ещё раз или нажмите /cancel.",
+                    "⚠️ Crypto Pay couldn't verify the app. "
+                    "Protected input remains active. Check the API token "
+                    "in @CryptoBot and send it again, or use /cancel.",
                 ),
             )
             return
+        # Only the original generation may be cleared. Never erase a
+        # different form started while the external API call was pending.
+        try:
+            await consume_button_flow(
+                factory, actor_id=actor, expected_step="crypto_pay_token",
+                generation=flow.generation, bot_scope_id=bot.id,
+                discard=True,
+            )
+        except ValueError:
+            pass  # A newer owner form replaced this one during verification.
         await bot.send_message(
             uid,
             tr("✅ Crypto Pay проверен и защищённо подключён.",
