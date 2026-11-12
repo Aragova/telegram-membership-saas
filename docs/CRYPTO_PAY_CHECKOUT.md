@@ -74,3 +74,17 @@ remain for reconciliation of invoices paid prior to the transfer, but the
 incoming merchant cannot see or reuse them and can register their own app
 without hitting the active-app uniqueness constraint. A real PostgreSQL
 transfer→reconnect test enforces this contract.
+
+### Owner setup UX (PR #134)
+
+A single 💎 Crypto Pay entry is linked under **💳 Способы оплаты /
+Payment methods** in the *connected administrator bot*, not the central
+registry. It displays a non-sensitive current app label and environment,
+provides mainnet/testnet selection, secure one-time API token input and
+versioned disconnect/rotation. The bot deletes the original token message
+BEFORE attempting API validation, refuses to store if deletion fails, and
+never prints the token or ciphertext to Telegram. Setup is owner-only via
+tenant permission and BotInstance identity; moderators cannot substitute
+merchant credentials. File sales and subscription billing will use this
+SAME credential, not separate Crypto Pay settings. No buyer payment option
+is added until automatic verified fulfillment works.
