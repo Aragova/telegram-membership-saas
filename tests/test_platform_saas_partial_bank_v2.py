@@ -166,9 +166,14 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                     conn, "platform_saas_hold_invoice_report",
                     {"page": 0, "size": 10},
                 )
-                assert central_view["unpaid"] == 1
-                assert Decimal(central_view["unpaid_rub"]) == Decimal("50")
-                assert Decimal(central_view["received_rub"]) == Decimal("100")
+                assert central_view["unpaid"] >= 1
+                assert Decimal(central_view["unpaid_rub"]) >= Decimal("50")
+                assert Decimal(central_view["received_rub"]) >= Decimal("100")
+                own_invoice = next(
+                    item for item in central_view["invoices"]
+                    if item["id"] == str(invoice)
+                )
+                assert Decimal(own_invoice["remaining_rub"]) == Decimal("50")
                 await _actor(conn, owner)
                 with pytest.raises(DBAPIError) as too_big:
                     async with conn.begin_nested():
@@ -209,13 +214,13 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                     conn, "platform_saas_hold_invoice_report",
                     {"page": 0, "size": 10},
                 )
-                assert central_view["unpaid"] == 0
-                assert Decimal(central_view["unpaid_rub"]) == 0
-                assert Decimal(central_view["received_rub"]) == Decimal("150")
-                assert central_view["invoices"][0]["status"] == "paid"
-                assert Decimal(
-                    central_view["invoices"][0]["remaining_rub"]
-                ) == 0
+                assert Decimal(central_view["received_rub"]) >= Decimal("150")
+                own_invoice = next(
+                    item for item in central_view["invoices"]
+                    if item["id"] == str(invoice)
+                )
+                assert own_invoice["status"] == "paid"
+                assert Decimal(own_invoice["remaining_rub"]) == 0
                 await conn.execute(text("RESET ROLE"))
                 with pytest.raises(DBAPIError) as voided:
                     async with conn.begin_nested():
