@@ -19,7 +19,7 @@ def upgrade() -> None:
         "crypto_pay_invoices",
         sa.Column(
             "resource_ids_snapshot", sa.JSON(), nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
+            server_default=sa.text("'[]'::json"),
         ),
     )
     op.add_column(
