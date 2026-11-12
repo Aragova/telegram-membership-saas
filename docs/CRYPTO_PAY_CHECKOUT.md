@@ -181,11 +181,17 @@ checking the connected bot, buyer ban, active merchant credential, supported
 currency, and up to 10 outstanding Crypto Pay orders per buyer. Subscription
 reservations capture the project customer and original plan/duration/price.
 The generated `cp:<UUID>` payload is unique. The reservation is committed
-before any external invoice call. A row-locked issuance routine uses exactly
-the issuing merchant's encrypted app credential, freezes the provider ID/link,
-and permits an idempotent repeat. Rotation/disconnection prevents new issuance
-from a retired app, while already issued invoices remain bound to their
-historic credential version. Read-only provider verification uses
+before any external invoice call. An issuance transaction revalidates the
+published product and its assets, or the active subscription and resources,
+then persists `status='issuing'` before contacting the provider. A 15-minute
+reservation TTL and bounded outstanding-order count protect old quotes. If
+Crypto Pay times out or the DB commit fails after provider acceptance, the
+`issuing` state MUST be recovered by querying the original provider app;
+blind re-creation is forbidden. Successful responses store the provider ID
+and URL, and repeating an already-issued request returns the same frozen
+link. Rotation/disconnection prevents new issuance from a retired app, while
+already issued invoices remain bound to their historic credential version.
+Migration `0060_crypto_issuing_guard` adds the durable uncertain state. Read-only provider verification uses
 `getInvoices` and validates immutable invoice ID/payload/amount/currency.
 
 **Important safety gate:** this service deliberately does not mark an order
