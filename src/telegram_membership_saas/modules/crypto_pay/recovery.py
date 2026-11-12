@@ -71,22 +71,32 @@ async def _claim_due_invoice_ids(
 ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
     """Lock and persist next due time before any provider call."""
     async with system_project_session_scope(factory, project_id) as session:
-        rows = (await session.scalars(select(CryptoPayInvoice).where(
+        base = (
             CryptoPayInvoice.project_id == project_id,
             CryptoPayInvoice.telegram_bot_id == bot_id,
-            CryptoPayInvoice.status.in_(("issued", "issuing")),
             or_(
                 CryptoPayInvoice.next_check_at.is_(None),
                 CryptoPayInvoice.next_check_at <= now,
             ),
+        )
+        # Issuance recovery may scan 300 merchant invoices per attempt.
+        # Claim only ONE uncertain order; do not postpone 11 more by
+        # claiming them all while only processing the first.
+        uncertain = (await session.scalars(select(CryptoPayInvoice).where(
+            *base, CryptoPayInvoice.status == "issuing",
         ).order_by(
             CryptoPayInvoice.next_check_at.asc().nullsfirst(),
             CryptoPayInvoice.created_at,
-            CryptoPayInvoice.id,
+        ).limit(1).with_for_update(skip_locked=True))).all()
+        payable = (await session.scalars(select(CryptoPayInvoice).where(
+            *base, CryptoPayInvoice.status == "issued",
+        ).order_by(
+            CryptoPayInvoice.next_check_at.asc().nullsfirst(),
+            CryptoPayInvoice.created_at,
         ).limit(MAX_INVOICES_PER_SCAN).with_for_update(skip_locked=True))).all()
-        issuing = []
-        issued = []
-        for record in rows:
+        issuing: list[UUID] = []
+        issued: list[UUID] = []
+        for record in (*uncertain, *payable):
             record.next_check_at = _next_check(record, now=now)
             (issuing if record.status == "issuing" else issued).append(record.id)
         await session.flush()
@@ -279,7 +289,12 @@ async def reconcile_crypto_pay_once(
                 encryption_key=encryption_key, client_factory=client_factory,
                 max_pages=ISSUING_LIST_PAGES,
             )
-            progress = result is not None
+            if result is not None:
+                # The uncertain invoice may ALREADY be paid. Verify its
+                # getInvoices receipt immediately rather than delaying
+                # access until the next 20-minute uncertainty window.
+                issued = (*issued, result.id)
+                progress = True
         except asyncio.CancelledError:
             raise
         except Exception as exc:
