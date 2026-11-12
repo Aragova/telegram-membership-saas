@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -78,6 +79,7 @@ async def reserve_crypto_invoice(
             CryptoPayInvoice.telegram_bot_id == bot_id,
             CryptoPayInvoice.telegram_user_id == buyer_id,
             CryptoPayInvoice.status.in_(("reserved", "issued")),
+            CryptoPayInvoice.created_at >= datetime.now(UTC) - timedelta(days=1),
         )) or 0
         if pending >= 10:
             raise ValueError("Too many pending Crypto Pay invoices")
@@ -225,6 +227,11 @@ async def issue_reserved_crypto_invoice(
             )
         if record.status != "reserved":
             raise ValueError("Invoice cannot be issued in its current state")
+        await _ready(
+            session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
+        )
+        if record.created_at < datetime.now(UTC) - timedelta(minutes=15):
+            raise ValueError("Crypto Pay checkout reservation has expired")
         app, token = await load_crypto_app_token(
             session, project_id=project_id, app_id=record.app_id,
             encryption_key=encryption_key,
