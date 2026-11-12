@@ -1077,7 +1077,7 @@ async def authorize_file_stars_precheckout(
 async def record_definitive_stars_precheckout_rejection(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int,
-    invoice_payload: str,
+    invoice_payload: str, precheckout_query_id: str,
 ) -> bool:
     """Release only a DEFINITIVELY rejected Stars precheckout acknowledgement.
 
@@ -1097,11 +1097,14 @@ async def record_definitive_stars_precheckout_rejection(
         ))
         if purchase is None:
             return False
+        if not precheckout_query_id:
+            return False
         authorization = await session.scalar(select(
             FileStarAuthorization.purchase_id,
         ).where(
             FileStarAuthorization.project_id == project_id,
             FileStarAuthorization.purchase_id == purchase.id,
+            FileStarAuthorization.precheckout_query_id == precheckout_query_id,
         ))
         if authorization is None:
             return False
