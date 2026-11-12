@@ -175,6 +175,9 @@ jobs:
                       "platform_saas_capture_subscription_star_refunds(integer)",
                       "platform_saas_capture_crypto_sales(integer)",
                       "platform_saas_crypto_project_summary(uuid,date)",
+                      "platform_saas_crypto_refund_candidate(uuid,text)",
+                      "platform_saas_record_crypto_transfer_credit(uuid,bigint,text,bigint,text,numeric,timestamptz)",
+                      "platform_saas_crypto_refund_summary(uuid,date)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
@@ -194,7 +197,8 @@ jobs:
                       "public.platform_saas_star_subscription_credits, "
                       "public.platform_saas_crypto_capture_control, "
                       "public.platform_saas_crypto_scan_cursor, "
-                      "public.platform_saas_crypto_sales "
+                      "public.platform_saas_crypto_sales, "
+                      "public.platform_saas_crypto_transfer_credits "
                       "FROM membership_runtime"
                   )
                   # The original provider rate is append-only. Only the

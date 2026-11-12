@@ -78,6 +78,65 @@ def _invoice_link(link: object, *, testnet: bool) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class CryptoPayTransferReceipt:
+    """Completed refund-labelled payout verified via original merchant app."""
+    transfer_id: int
+    spend_id: str
+    buyer_id: int
+    asset_code: str
+    amount: Decimal
+    completed_at: datetime
+
+
+def verify_completed_transfer(
+    entry: Mapping[str, Any], *, spend_id: str, buyer_id: int,
+    asset_code: str,
+) -> CryptoPayTransferReceipt:
+    """A transfer must be paid, correctly labelled and sent to that buyer.
+
+    An arbitrary merchant outgoing transfer is never purchase refund proof:
+    the spend_id must have been bound to the original purchase beforehand.
+    The DB RPC enforces that immutable invoice-prefixed spend_id and its cap.
+    """
+    transfer_id = entry.get("transfer_id")
+    recipient = entry.get("user_id")
+    if (
+        type(transfer_id) is not int or transfer_id <= 0
+        or type(spend_id) is not str or not spend_id
+        or entry.get("spend_id") != spend_id
+        or entry.get("status") != "completed"
+        or entry.get("asset") != asset_code
+        or type(buyer_id) is not int or buyer_id <= 0
+        or type(recipient) not in (int, str)
+        or str(recipient) != str(buyer_id)
+    ):
+        raise CryptoPayError("Crypto Pay refund transfer identity mismatch")
+    amount = _safe_decimal(entry.get("amount"))
+    # The financial ledger is numeric(38,18); reject extra precision rather
+    # than recording a different amount after implicit PostgreSQL rounding.
+    try:
+        normalized = amount.quantize(Decimal("0.000000000000000001"))
+    except InvalidOperation as exc:
+        raise CryptoPayError("Crypto Pay transfer amount is unrepresentable") from exc
+    if normalized != amount:
+        raise CryptoPayError("Crypto Pay transfer amount has excess precision")
+    raw_time = entry.get("completed_at")
+    if not isinstance(raw_time, str):
+        raise CryptoPayError("Crypto Pay completed transfer timestamp is missing")
+    try:
+        completed = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CryptoPayError("Crypto Pay completed transfer timestamp is invalid") from exc
+    if completed.tzinfo is None or completed > datetime.now(UTC) + timedelta(minutes=5):
+        raise CryptoPayError("Crypto Pay completed transfer timestamp is invalid")
+    return CryptoPayTransferReceipt(
+        transfer_id=transfer_id, spend_id=spend_id, buyer_id=buyer_id,
+        asset_code=asset_code, amount=amount,
+        completed_at=completed.astimezone(UTC),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class CryptoPayInvoiceReceipt:
     invoice_id: int
     paid_at: datetime
@@ -249,6 +308,28 @@ class CryptoPayClient:
             raise CryptoPayError("Crypto Pay returned duplicate invoices")
         if not set(received) <= set(invoice_ids):
             raise CryptoPayError("Crypto Pay returned unrelated invoice data")
+        return tuple(items)
+
+
+    async def get_transfers(self, *, spend_id: str) -> tuple[dict, ...]:
+        """Read-only original-app getTransfers, never initiate money movement.
+
+        A transfer is only refund evidence after the original invoice link,
+        sender app, recipient, amount and completion have been verified.
+        """
+        if not isinstance(spend_id, str) or not 1 <= len(spend_id) <= 100:
+            raise ValueError("Invalid Crypto Pay transfer spend ID")
+        result = await self._call("getTransfers", {"spend_id": spend_id})
+        items = result.get("items") if isinstance(result, dict) else result
+        if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
+            raise CryptoPayError("Crypto Pay transfer lookup is incomplete")
+        if any(x.get("spend_id") != spend_id for x in items):
+            raise CryptoPayError("Crypto Pay transfer listing mismatches spend ID")
+        ids = [x.get("transfer_id") for x in items]
+        if any(type(value) is not int or value <= 0 for value in ids):
+            raise CryptoPayError("Crypto Pay returned invalid transfer IDs")
+        if len(ids) != len(set(ids)) or len(items) > 1:
+            raise CryptoPayError("Crypto Pay returned ambiguous refund transfers")
         return tuple(items)
 
 

@@ -1,3 +1,19 @@
+## 2026-11-12 — #140 deployed and #141 verified Crypto Pay refund slice
+
+PR #140 merged as 2d66a28; staging deploy #33 (run 43263240200)
+successfully migrated 0063 -> 0064 and restarted bot + customer-supervisor.
+No live Crypto Pay buyer checkout or SaaS billing is activated.
+
+#141 starts with a separate backend-only immutable, operator-recorded,
+original-app `getTransfers` verified refund evidence ledger (0065).
+Only crypto-priced purchases with a canonical paid-time USD quote can
+be credited by exact transfer/spend ID, buyer, app, asset, amount and
+completion time. This does NOT send money, regrant/revoke buyer access or
+reduce an existing monthly invoice. Fiat-priced crypto payments and
+month-end application are separate acceptance gates.
+
+---
+
 ## 2026-11-12 — PR #140 missing paid USD quote recovery
 
 The existing per-bot Crypto Pay reconciliation now retries absent original
