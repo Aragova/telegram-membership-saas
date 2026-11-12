@@ -79,7 +79,7 @@ async def test_file_payment_switcher_has_one_dynamic_bulk_button(monkeypatch):
     buttons = _buttons(bot.send_message.await_args.kwargs["reply_markup"])
     assert len(buttons) == 4
     assert any("Telegram Stars ⭐" in b.text for b in buttons)
-    assert any("Автоматическая оплата звёздами" in b.text for b in buttons)
+    assert any("⭐ Telegram Stars" in b.text for b in buttons)
     assert [b.callback_data for b in buttons if "paybulk" in b.callback_data] == [
         "fs:paybulk:off",
     ]

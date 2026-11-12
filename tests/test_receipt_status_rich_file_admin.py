@@ -354,7 +354,8 @@ def test_file_admin_card_shows_stars_exact_currency_prices_and_description(
     assert title in html
     assert "<table bordered compact>" in html
     assert "&lt;Product&gt; &amp; Sale" in html
-    assert "500 XTR" in html
+    assert "<th>⭐ Telegram Stars</th><td>500</td>" in html
+    assert "XTR" not in html
     assert "100" in html and "2.5" in html
     assert "100.00" not in html and "2.50" not in html
     assert "<hello>" not in html and "&lt;hello&gt;" in html
