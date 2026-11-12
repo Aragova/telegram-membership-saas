@@ -65,6 +65,7 @@ from telegram_membership_saas.modules.file_sales.payment_controls import (
     toggle_file_payment_method,
 )
 from telegram_membership_saas.modules.file_sales.service import (
+    authorize_file_stars_precheckout,
     confirm_stars_payment,
     create_stars_order,
     paid_file_purchase_id,
@@ -724,14 +725,37 @@ async def test_definitive_stars_precheckout_rejection_allows_new_invoice():
             factory, project_id=project, bot_id=bot_id,
             buyer_id=buyer_id, product_id=product_id,
         )
-        assert await precheckout_allowed(
+        first = await authorize_file_stars_precheckout(
             factory, project_id=project, bot_id=bot_id,
             buyer_id=buyer_id, invoice_payload=stars.invoice_payload,
             amount=93, currency="XTR",
+            precheckout_query_id="pcq-first",
         )
+        assert first == (True, True)
+        # Telegram may replay the precheckout query after the original
+        # accepted OK. Its own stale-query rejection does NOT release hold.
+        replay = await authorize_file_stars_precheckout(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=stars.invoice_payload,
+            amount=93, currency="XTR",
+            precheckout_query_id="pcq-replay",
+        )
+        assert replay == (True, False)
+        assert not await record_definitive_stars_precheckout_rejection(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=stars.invoice_payload,
+            precheckout_query_id="pcq-replay",
+        )
+        with pytest.raises(ValueError, match="authorized Telegram Stars"):
+            await reserve_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer_id, kind="file", target_id=product_id,
+                currency="RUB", require_mainnet=True,
+            )
         assert await record_definitive_stars_precheckout_rejection(
             factory, project_id=project, bot_id=bot_id,
             buyer_id=buyer_id, invoice_payload=stars.invoice_payload,
+            precheckout_query_id="pcq-first",
         )
         async with system_project_session_scope(factory, project) as session:
             purchase = await session.get(FilePurchase, stars.id)
