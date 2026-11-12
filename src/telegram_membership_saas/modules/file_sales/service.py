@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, delete, func, select, union_all
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
@@ -29,6 +30,7 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileFolder,
     FileProduct,
     FilePurchase,
+    FileStarAuthorization,
 )
 from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
@@ -771,14 +773,18 @@ async def _has_authorized_file_stars(
     another rail must not issue a payable quote for the same one-time file.
     This is durable across cold restarts and not guessed from a local timer.
     """
-    authorized = await session.scalar(select(FilePurchase.id).where(
-        FilePurchase.project_id == project_id,
-        FilePurchase.telegram_bot_id == bot_id,
-        FilePurchase.telegram_user_id == buyer_id,
-        FilePurchase.product_id == product_id,
-        FilePurchase.status == "pending",
-        FilePurchase.stars_authorized_at.is_not(None),
-    ).limit(1))
+    authorized = await session.scalar(select(FileStarAuthorization.purchase_id)
+        .join(FilePurchase, and_(
+            FilePurchase.id == FileStarAuthorization.purchase_id,
+            FilePurchase.project_id == FileStarAuthorization.project_id,
+        ))
+        .where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.product_id == product_id,
+            FilePurchase.status == "pending",
+        ).limit(1))
     return authorized is not None
 
 
@@ -990,8 +996,11 @@ async def precheckout_allowed(
                 # Commit authorization BEFORE answering Telegram ok=True.
                 # A later Crypto Pay reservation sees this even if the Stars
                 # successful_payment update is delayed, lost or reordered.
-                purchase.stars_authorized_at = datetime.now(UTC)
-                await session.flush()
+                await session.execute(insert(FileStarAuthorization).values(
+                    purchase_id=purchase.id, project_id=project_id,
+                ).on_conflict_do_nothing(
+                    index_elements=[FileStarAuthorization.purchase_id],
+                ))
             return allowed
         except (PermissionError, ValueError):
             return False
