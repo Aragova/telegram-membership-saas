@@ -29,6 +29,7 @@ from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments.models import PaymentRequest, PaymentRequestStatus
 from telegram_membership_saas.modules.projects import Project
+from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions.models import Subscription
 from telegram_membership_saas.modules.telegram_access.models import TelegramJoinTicket
 from telegram_membership_saas.project_worker_lock import (
@@ -43,6 +44,7 @@ from telegram_membership_saas.tenant_context import TenantContext
 class RetirementBlockers:
     requests: int = 0
     file_orders: int = 0
+    stars_checkouts: int = 0
     subscriptions: int = 0
     grants: int = 0
     access: int = 0
@@ -52,7 +54,8 @@ class RetirementBlockers:
     @property
     def has_blockers(self) -> bool:
         return any((
-            self.requests, self.file_orders, self.subscriptions, self.grants,
+            self.requests, self.file_orders, self.stars_checkouts,
+            self.subscriptions, self.grants,
             self.access, self.access_actions, self.join_tickets,
         ))
 
@@ -60,6 +63,7 @@ class RetirementBlockers:
         labels = (
             ("незавершённых оплат", self.requests),
             ("незавершённых оплат файлов", self.file_orders),
+            ("Stars-оплат с возможным списанием", self.stars_checkouts),
             ("действующих подписок", self.subscriptions),
             ("действующих прав доступа", self.grants),
             ("неотозванных доступов", self.access),
@@ -129,6 +133,16 @@ async def count_retirement_blockers(
             session, FileManualOrder,
             FileManualOrder.project_id == project_id,
             FileManualOrder.status.in_(("pending", "submitted")),
+        ),
+        stars_checkouts=await _count(
+            session, SubscriptionStarOrder,
+            SubscriptionStarOrder.project_id == project_id,
+            SubscriptionStarOrder.status == "pending",
+            or_(
+                SubscriptionStarOrder.created_at > now - timedelta(minutes=40),
+                SubscriptionStarOrder.precheckout_approved_at
+                > now - timedelta(hours=24),
+            ),
         ),
         subscriptions=await _count(
             session, Subscription,
@@ -264,6 +278,7 @@ async def retire_unreachable_bot_with_orphan_actions(
                 blockers = await count_retirement_blockers(session, project_id=project_id)
                 if (
                     blockers.requests or blockers.file_orders
+                    or blockers.stars_checkouts
                     or blockers.subscriptions or blockers.grants
                     or blockers.access or blockers.join_tickets
                 ):

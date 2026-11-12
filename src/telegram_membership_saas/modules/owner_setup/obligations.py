@@ -36,6 +36,7 @@ from telegram_membership_saas.modules.payments import (
 )
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.projects import Project
+from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import Subscription, SubscriptionStatus
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
@@ -296,9 +297,27 @@ async def end_owner_subscription(
                    Payment.customer_id == sub.customer_id)
             .with_for_update()
         )).all()
+        # Native Stars purchases belong to the SAME customer and plan.
+        # Revoking a subscription must not leave lifetime Stars grants live.
+        star_grants = (await session.scalars(
+            select(EntitlementGrant)
+            .join(SubscriptionStarOrder, and_(
+                EntitlementGrant.source_id == SubscriptionStarOrder.id,
+                EntitlementGrant.project_id == SubscriptionStarOrder.project_id,
+            ))
+            .where(
+                EntitlementGrant.project_id == project_id,
+                EntitlementGrant.customer_id == sub.customer_id,
+                EntitlementGrant.source == EntitlementSource.STARS_PAYMENT.value,
+                EntitlementGrant.status == EntitlementGrantStatus.ACTIVE.value,
+                SubscriptionStarOrder.customer_id == sub.customer_id,
+                SubscriptionStarOrder.plan_id == sub.plan_id,
+            )
+            .with_for_update()
+        )).all()
         now = datetime.now(UTC)
         targets: set[UUID] = set()
-        for grant in grants:
+        for grant in (*grants, *star_grants):
             grant.status = EntitlementGrantStatus.REVOKED.value
             grant.revoked_at = max(now, grant.valid_from)
             targets.add(grant.resource_id)
@@ -336,7 +355,10 @@ async def revoke_owner_grant(
             raise ValueError("Право доступа не найдено")
         if grant.status == EntitlementGrantStatus.REVOKED.value:
             return OwnerChange(False, None, "Право уже отозвано")
-        if grant.source == EntitlementSource.PAYMENT.value:
+        if grant.source in (
+            EntitlementSource.PAYMENT.value,
+            EntitlementSource.STARS_PAYMENT.value,
+        ):
             raise ValueError("Оплаченный доступ закрывается через завершение подписки")
         grant.status = EntitlementGrantStatus.REVOKED.value
         grant.revoked_at = max(datetime.now(UTC), grant.valid_from)

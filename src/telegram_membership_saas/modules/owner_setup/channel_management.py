@@ -16,9 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.entitlements import EntitlementGrant
+from telegram_membership_saas.modules.merchant_revenue import merchant_confirmed_sales
 from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import Subscription
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
@@ -70,23 +72,22 @@ async def read_channel_insights(
             Plan.project_id == project_id, Plan.id.in_(ids),
             Plan.status == "active", Plan.removed_at.is_(None),
         )) or 0)
+        sales = merchant_confirmed_sales(project_id)
         paid_query = select(
-            Payment.currency_code,
-            func.sum(Payment.final_amount),
-            func.count(Payment.id),
+            sales.c.currency_code,
+            func.sum(sales.c.amount),
+            func.count(),
         ).where(
-            Payment.project_id == project_id,
-            Payment.plan_id.in_(_linked_plans(project_id, resource_id)),
-        ).group_by(Payment.currency_code).order_by(Payment.currency_code)
+            sales.c.plan_id.in_(_linked_plans(project_id, resource_id)),
+        ).group_by(sales.c.currency_code).order_by(sales.c.currency_code)
         totals = tuple(
             (currency, Decimal(amount), int(count))
             for currency, amount, count in (await session.execute(paid_query)).all()
         )
         customers = int(await session.scalar(select(
-            func.count(distinct(Payment.customer_id)),
+            func.count(distinct(sales.c.customer_id)),
         ).where(
-            Payment.project_id == project_id,
-            Payment.plan_id.in_(_linked_plans(project_id, resource_id)),
+            sales.c.plan_id.in_(_linked_plans(project_id, resource_id)),
         )) or 0)
         active = int(await session.scalar(select(
             func.count(distinct(Subscription.customer_id)),
@@ -144,9 +145,14 @@ async def remove_channel_without_paid_purchases(
         paid_grant = await session.scalar(select(EntitlementGrant.id).where(
             EntitlementGrant.project_id == project_id,
             EntitlementGrant.resource_id == resource_id,
-            EntitlementGrant.source == "payment",
+            EntitlementGrant.source.in_(("payment", "stars_payment")),
         ).limit(1))
-        if paid is not None or paid_grant is not None:
+        paid_stars = await session.scalar(select(SubscriptionStarOrder.id).where(
+            SubscriptionStarOrder.project_id == project_id,
+            SubscriptionStarOrder.plan_id.in_(_linked_plans(project_id, resource_id)),
+            SubscriptionStarOrder.status == "paid",
+        ).limit(1))
+        if paid is not None or paid_grant is not None or paid_stars is not None:
             raise ValueError(
                 "В канале есть подтверждённые покупки. Удаление запрещено: "
                 "нужно сохранить историю платежей и доступ покупателей."

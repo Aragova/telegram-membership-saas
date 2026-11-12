@@ -1925,6 +1925,7 @@ def create_owner_setup_router(
         for grant in data.grants[:8]:
             label = {
                 "payment": tr("Оплата", "Paid"),
+                "stars_payment": tr("Оплата Stars", "Stars paid"),
                 "manual": tr("Ручной", "Manual"),
                 "owner_service": tr("Служебный", "Service"),
             }.get(grant.source, grant.source)
@@ -2276,7 +2277,7 @@ def create_owner_setup_router(
                 + (":" + str(page) if page else ""), "danger",
             )])
         for item in snapshot.grants:
-            if item.source == "payment":
+            if item.source in ("payment", "stars_payment"):
                 continue
             lines.append(
                 "🔑 " + escape(item.source) + " · " + str(item.telegram_user_id)
@@ -2575,15 +2576,17 @@ def create_owner_setup_router(
             lines.append(tr("Цена ещё не указана.", "No price has been set yet."))
         for price in data.prices:
             lines.append(
-                ("✅ " if price.method_count else "⚠️ ")
+                ("✅ " if price.method_count or price.currency == "XTR" else "⚠️ ")
                 + escape(
                     format_amount(price.amount, price.precision)
                     + " " + price.currency
                 )
                 + (
+                    tr(" · ⭐ Telegram Stars", " · ⭐ Telegram Stars")
+                    if price.currency == "XTR" else
                     tr(" · оплата настроена", " · payment ready")
-                    if price.method_count
-                    else tr(" · нужен способ оплаты", " · payment method required")
+                    if price.method_count else
+                    tr(" · нужен способ оплаты", " · payment method required")
                 )
             )
         rows.extend([
@@ -2594,7 +2597,8 @@ def create_owner_setup_router(
             tr("➕ Другая валюта", "➕ Another currency"),
             "currencyadd:price:" + plan_id.hex,
         )])
-        if any(not price.method_count for price in data.prices):
+        if any(not price.method_count and price.currency != "XTR"
+               for price in data.prices):
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
             ])
@@ -4973,7 +4977,8 @@ def create_owner_setup_router(
                 active_ids = {
                     "pay": {item.id for item in snapshot.payments},
                     "sub": {item.id for item in snapshot.subscriptions},
-                    "grant": {item.id for item in snapshot.grants if item.source != "payment"},
+                    "grant": {item.id for item in snapshot.grants
+                              if item.source not in ("payment", "stars_payment")},
                     "sync": {item.id for item in snapshot.access},
                 }
                 if verb == "ob":

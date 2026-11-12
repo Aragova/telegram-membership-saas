@@ -927,7 +927,9 @@ async def publish_owner_plan(
                 PaymentMethodCurrency.currency_code.in_(priced),
             ).limit(1)
         )
-        if available is None:
+        # Telegram Stars is an in-app native payment rail. It must never
+        # require invented bank details or a manual payment method.
+        if available is None and "XTR" not in priced:
             raise ValueError(
                 "Добавьте действующий способ оплаты для валюты тарифа"
             )

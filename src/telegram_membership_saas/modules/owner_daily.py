@@ -1,6 +1,6 @@
 """Optional project-local 10:00 financial summary for a verified project owner.
 
-Only confirmed Payment rows count as approved sales. Pending invoices,
+Only confirmed manual Payments and native Stars orders count as sales. Pending invoices,
 screenshots, and noncommercial access never become revenue. Monetary values
 remain in their original currencies without a fabricated FX conversion.
 """
@@ -20,13 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.identity import ProjectCustomer
+from telegram_membership_saas.modules.merchant_revenue import merchant_confirmed_sales
 from telegram_membership_saas.modules.owner_expiry import _due_time
 from telegram_membership_saas.modules.owner_notifications import (
     _owner_telegram_id,
     _queue,
     read_owner_settings,
 )
-from telegram_membership_saas.modules.payments import Payment, PaymentRequest
+from telegram_membership_saas.modules.payments import PaymentRequest
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.subscriptions import Subscription
 
@@ -65,20 +66,20 @@ async def read_daily_financial_snapshot(
 ) -> DailyFinancialSnapshot:
     """Read-only, strictly single-project SQL aggregates at delivery time."""
     begin, end = previous_local_day_window(report_date, project.timezone)
+    sales = merchant_confirmed_sales(project.id)
     payments = (
         await session.execute(
             select(
-                Payment.currency_code,
-                func.sum(Payment.final_amount),
-                func.count(Payment.id),
+                sales.c.currency_code,
+                func.sum(sales.c.amount),
+                func.count(),
             )
             .where(
-                Payment.project_id == project.id,
-                Payment.approved_at >= begin,
-                Payment.approved_at < end,
+                sales.c.paid_at >= begin,
+                sales.c.paid_at < end,
             )
-            .group_by(Payment.currency_code)
-            .order_by(Payment.currency_code)
+            .group_by(sales.c.currency_code)
+            .order_by(sales.c.currency_code)
         )
     ).all()
     totals = tuple(
@@ -176,10 +177,10 @@ def render_daily_financial_summary(snapshot: DailyFinancialSnapshot) -> str:
         + f"{snapshot.as_of.astimezone(ZoneInfo(snapshot.timezone)):%d.%m.%Y %H:%M}",
         "",
         tr(
-            "Суммы — только оплаты, подтверждённые администратором. "
-            "Они не заменяют проверку поступлений в банке.",
-            "Amounts are admin-approved payments only, not verification "
-            "of funds received in the bank.",
+            "Суммы — ручные оплаты и подтверждённые Telegram Stars. "
+            "Проверяйте поступления в банке отдельно.",
+            "Amounts include approved manual payments and Telegram Stars. "
+            "Verify bank deposits separately.",
         ),
     ])
     return "\n".join(lines)

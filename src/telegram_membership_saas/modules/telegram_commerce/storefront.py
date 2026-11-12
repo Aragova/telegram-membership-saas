@@ -33,7 +33,7 @@ PAGE_SIZE = 7
 CURRENCIES_PER_ROW = 5
 CURRENCY_ORDER = (
     "RUB", "USD", "EUR", "UAH", "BYN", "KZT", "AED", "GBP",
-    "CNY", "JPY", "PLN", "USDT", "TON",
+    "CNY", "JPY", "PLN", "USDT", "TON", "XTR",
 )
 CURRENCY_ICONS = {
     "RUB": "🇷🇺", "USD": "🇺🇸", "EUR": "🇪🇺", "UAH": "🇺🇦",
@@ -42,6 +42,7 @@ CURRENCY_ICONS = {
     "CAD": "🇨🇦", "AUD": "🇦🇺", "TRY": "🇹🇷", "INR": "🇮🇳",
     "BRL": "🇧🇷", "KRW": "🇰🇷", "UZS": "🇺🇿", "GEL": "🇬🇪",
     "USDT": "💠", "TON": "💎", "BTC": "₿", "ETH": "◆",
+    "XTR": "⭐",
 }
 
 

@@ -48,6 +48,16 @@ class Subscription(Base):
             ["payments.id", "payments.project_id"],
             name="fk_subscriptions_last_payment_project",
         ),
+        ForeignKeyConstraint(
+            ["last_star_order_id", "project_id"],
+            ["subscription_star_orders.id", "subscription_star_orders.project_id"],
+            name="fk_subscriptions_last_star_order_project",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "last_payment_id IS NOT NULL OR last_star_order_id IS NOT NULL",
+            name="ck_subscriptions_last_paid_source",
+        ),
         CheckConstraint(
             "status IN ('active', 'expired', 'cancelled')",
             name="ck_subscriptions_status",
@@ -82,7 +92,12 @@ class Subscription(Base):
         DateTime(timezone=True),
         nullable=True,
     )
-    last_payment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    last_payment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True,
+    )
+    last_star_order_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

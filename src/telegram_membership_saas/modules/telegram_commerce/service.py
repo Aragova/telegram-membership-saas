@@ -295,6 +295,8 @@ def _catalog_statement(project_id: UUID):
             PlanPrice.status == PlanPriceStatus.ACTIVE.value,
             CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
             PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+            PaymentMethod.provider == "manual_settlement",
+            PlanPrice.currency_code != "XTR",
         )
         .order_by(
             Plan.sort_order,
@@ -331,7 +333,37 @@ async def list_checkout_options(
     # Catalog inspection is needed by the owner dashboard even while a bot
     # is deleting; only *new checkout creation* must be blocked.
     rows = (await session.execute(_catalog_statement(project_id))).all()
-    return tuple(_option_from_row(row) for row in rows)
+    options = [_option_from_row(row) for row in rows]
+    # Native Stars does not require a bank method. The all-zero UUID is an
+    # internal callback sentinel only, never written to a Payment foreign key.
+    # XTR prices remain immutable versioned PlanPrice rows like fiat ones.
+    star_rows = (await session.execute(
+        select(Plan, PlanPrice)
+        .join(PlanPrice, (PlanPrice.project_id == Plan.project_id)
+              & (PlanPrice.plan_id == Plan.id))
+        .join(CurrencyAsset, CurrencyAsset.code == PlanPrice.currency_code)
+        .where(
+            Plan.project_id == project_id,
+            Plan.status == PlanStatus.ACTIVE.value,
+            Plan.removed_at.is_(None),
+            PlanPrice.currency_code == "XTR",
+            PlanPrice.status == PlanPriceStatus.ACTIVE.value,
+            CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+        ).order_by(Plan.sort_order, Plan.name),
+    )).all()
+    for plan, price in star_rows:
+        if (price.amount != price.amount.to_integral_value()
+                or not 1 <= price.amount <= 250000):
+            continue
+        options.append(CheckoutOption(
+            plan_id=plan.id, plan_name=plan.name,
+            duration_value=plan.duration_value, duration_unit=plan.duration_unit,
+            plan_price_id=price.id, currency_code="XTR",
+            amount=price.amount, currency_precision=0,
+            payment_method_id=UUID(int=0),
+            payment_method_name="⭐ Telegram Stars",
+        ))
+    return tuple(options)
 
 
 async def _load_checkout_option(
