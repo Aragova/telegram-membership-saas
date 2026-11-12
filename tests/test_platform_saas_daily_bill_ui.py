@@ -120,15 +120,15 @@ def test_stars_price_grouped_table_without_file_names(lang):
         html = _saas_stars_rich(stars)
     finally:
         _language.reset(token)
-    assert "100 ⭐" in html and "500 ⭐" in html
+    assert "100 ⭐ Telegram Stars" in html and "500 ⭐ Telegram Stars" in html
     assert "2000" in html and "$1.30" in html
     assert "JPEG" not in html
     assert "<table bordered compact>" in html
 
 
 @pytest.mark.parametrize("lang,expected", [
-    ("ru", "Возвраты Stars"),
-    ("en", "Stars refunds"),
+    ("ru", "⭐ Telegram Stars · Возвраты"),
+    ("en", "⭐ Telegram Stars · Refunds"),
 ])
 def test_real_stars_refunds_show_separate_unapplied_credits(lang, expected):
     stars = {
@@ -149,7 +149,7 @@ def test_real_stars_refunds_show_separate_unapplied_credits(lang, expected):
         _language.reset(token)
     assert expected in html
     assert "$1.30" in html
-    assert "2000 ⭐" in html
+    assert "2000 ⭐ Telegram Stars" in html
     assert "Credits are not yet applied" in html if lang == "en" else (
         "Кредиты ещё не зачтены" in html
     )

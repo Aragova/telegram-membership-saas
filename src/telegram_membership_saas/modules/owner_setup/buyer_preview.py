@@ -11,6 +11,7 @@ from uuid import UUID
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from telegram_membership_saas.currency_display import display_price
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.payments.service import render_manual_instruction
 from telegram_membership_saas.modules.telegram_commerce.service import (
@@ -150,7 +151,7 @@ def preview_method_screen(
             else "💎 <b>" + escape(option.plan_name) + "</b>\n"
         )
         + "⏳ " + escape(period) + "\n"
-        + "💰 <b>" + escape(amount + " " + option.currency_code) + "</b>\n"
+        + "💰 <b>" + escape(display_price(amount, option.currency_code)) + "</b>\n"
         + tr("Способ: ", "Method: ")
         + escape(selected.payment_method_name) + "\n\n"
     )

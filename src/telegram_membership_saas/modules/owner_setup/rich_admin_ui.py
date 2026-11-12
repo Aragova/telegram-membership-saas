@@ -14,6 +14,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
 from aiogram.types import InlineKeyboardMarkup
 
+from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.owner_setup.channel_management import ChannelInsights
 from telegram_membership_saas.modules.owner_setup.statistics import OwnerStatistics
@@ -116,7 +117,7 @@ def rich_channel_card(metrics: ChannelInsights, *, members_text: str) -> str:
         ])
         for currency, amount, count in metrics.sales_by_currency:
             body.append(
-                "<tr><td>" + _safe(currency) + "</td><td>"
+                "<tr><td>" + _safe(display_currency(currency)) + "</td><td>"
                 + _safe(_money(amount)) + "</td><td>" + str(count)
                 + "</td></tr>"
             )
@@ -161,7 +162,7 @@ def rich_owner_statistics(stats: OwnerStatistics) -> str:
         ])
         for currency, amount, count in stats.currency_totals:
             body.append(
-                "<tr><td>" + _safe(currency) + "</td><td>" + _safe(_money(amount))
+                "<tr><td>" + _safe(display_currency(currency)) + "</td><td>" + _safe(_money(amount))
                 + "</td><td>" + str(count) + "</td></tr>"
             )
         body.append("</table>")
@@ -236,7 +237,7 @@ def rich_subscriber_card(data: SubscriberDetail, *, who: str) -> str:
         for paid in data.payments[:5]:
             lines.append(_row(
                 _safe(paid.plan_name[:28]),
-                _safe(format_amount(Decimal(paid.amount), 18) + " " + paid.currency)
+                _safe(display_price(format_amount(Decimal(paid.amount), 18), paid.currency))
                 + " · " + _customer_date(
                     paid.approved_at, data.project_timezone,
                 ),
@@ -322,7 +323,7 @@ def rich_subscriber_invoices(data: SubscriberInvoicePage, *, who: str) -> str:
         lines.append(
             "<tr><td>" + icon + " " + invoice.id.hex[:10].upper()
             + "</td><td>" + _safe(invoice.plan_name[:30]) + "</td><td>"
-            + _safe(amount + " " + invoice.currency) + "<br>"
+            + _safe(display_price(amount, invoice.currency)) + "<br>"
             + _safe(status) + "<br>"
             + _customer_date(invoice.created_at, data.project_timezone)
             + "</td></tr>"

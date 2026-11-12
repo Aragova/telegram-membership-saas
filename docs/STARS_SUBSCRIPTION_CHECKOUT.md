@@ -167,3 +167,13 @@ earlier/later ordering. A later-created paid invoice is never allowed
 to extend its own earlier refunded predecessor when deriving virtual
 periods. Confirmation replays all same-second purchases chronologically,
 without double-counting the newly authenticated charge.
+
+## Visible Stars branding (UI-only)
+
+All customer, administrator, Rich, file sales and financial screens display
+the currency as **⭐ Telegram Stars**, never as the technical code XTR.
+The single `currency_display` helper converts codes only at presentation
+boundaries. Bot API invoices, `currency="XTR"`, original `PlanPrice`
+currency codes, financial snapshots, payment provider callbacks and order
+storage remain XTR. Existing tariffs, invoices and charges do not need
+migration or price changes.

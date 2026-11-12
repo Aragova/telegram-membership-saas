@@ -32,6 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
@@ -311,7 +312,7 @@ def _saas_preview_rich(preview: dict) -> str:
                 else str(record["fee_rub"])
             )
             lines.append(
-                "<tr><td>" + escape(currency) + "</td><td>"
+                "<tr><td>" + escape(display_currency(currency)) + "</td><td>"
                 + escape(amount) + "</td><td>"
                 + str(int(record.get("operations", 0))) + "</td><td>"
                 + escape(fee) + "</td></tr>"
@@ -372,7 +373,8 @@ def _saas_preview_rich(preview: dict) -> str:
 def _saas_stars_rich(stars: dict) -> str:
     """Price-grouped Stars sales; no visible CBR rates or duplicated menus."""
     lines = [
-        "<h4>" + tr("⭐ Продажи за Stars", "⭐ Telegram Stars sales") + "</h4>",
+        "<h4>" + display_currency("XTR") + " · "
+        + tr("Продажи", "Sales") + "</h4>",
         "<table bordered compact>",
         "<tr><th>" + tr("Источник", "Source") + "</th><th>"
         + tr("Цена", "Price") + "</th><th>"
@@ -385,12 +387,15 @@ def _saas_stars_rich(stars: dict) -> str:
                 "Файлы" if entry["source"] == "file_stars" else "Подписки",
                 "Files" if entry["source"] == "file_stars" else "Subscriptions",
             ) + "</td><td>" + str(int(entry["price_stars"]))
-            + " ⭐</td><td>" + str(int(entry["sold"])) + "</td><td>"
-            + str(int(entry["total_stars"])) + " ⭐</td></tr>"
+            + " " + display_currency("XTR") + "</td><td>"
+            + str(int(entry["sold"])) + "</td><td>"
+            + str(int(entry["total_stars"])) + " "
+            + display_currency("XTR") + "</td></tr>"
         )
     lines.append("</table>")
     lines.extend([
-        "<p>⭐ " + str(int(stars["stars"])) + " · "
+        "<p>" + display_currency("XTR") + ": "
+        + str(int(stars["stars"])) + " · "
         + tr("Эквивалент вознаграждения: ", "Developer reward equivalent: ")
         + "$" + escape(format(Decimal(str(stars["reward_usd"])), ".2f"))
         + " · 5%: "
@@ -406,9 +411,11 @@ def _saas_stars_rich(stars: dict) -> str:
     refunds = int(stars.get("refunds", 0))
     if refunds:
         lines.append(
-            "<p>↩️ " + tr("Возвраты Stars: ", "Stars refunds: ")
+            "<p>↩️ " + display_currency("XTR") + " · "
+            + tr("Возвраты: ", "Refunds: ")
             + str(refunds) + " · "
-            + str(int(stars["refunded_stars"])) + " ⭐ · "
+            + str(int(stars["refunded_stars"])) + " "
+            + display_currency("XTR") + " · "
             + tr("Кредит по комиссии: ", "Commission credit: ")
             + "$" + escape(format(
                 Decimal(str(stars["commission_credit_usd"])), ".2f",
@@ -423,8 +430,8 @@ def _saas_stars_rich(stars: dict) -> str:
         )
     if int(stars.get("pending_reconciliation", 0)):
         lines.append("<p>⚠️ " + tr(
-            "Есть оплаты Stars, ожидающие учёта: ",
-            "Stars purchases awaiting reconciliation: ",
+            "Оплаты Telegram Stars ожидают учёта: ",
+            "Telegram Stars purchases awaiting reconciliation: ",
         ) + str(int(stars["pending_reconciliation"])) + "</p>")
     lines.append("<p><i>" + tr(
         "Продажи и возвраты сохраняются отдельно по официальному "
@@ -535,7 +542,7 @@ def _saas_preview_classic(preview: dict) -> str:
     ]
     for item in preview.get("rows", []):
         amount = escape(str(item["gross"]))
-        currency = escape(str(item["currency"]))
+        currency = escape(display_currency(str(item["currency"])))
         is_missing = int(item.get("missing", 0))
         fee = (
             tr("освобождён", "exempt") if preview["is_platform_owner"]
@@ -557,10 +564,12 @@ def _saas_preview_classic(preview: dict) -> str:
         + escape(str(preview["next_bot_fee_rub"])) + " ₽",
     ])
     if preview["stars_need_reconciliation"]:
-        lines.append(tr(
-            "⭐ Stars: нужна сверка возвратов и стоимости вывода.",
-            "⭐ Stars: refunds and reward value need reconciliation.",
-        ))
+        lines.append(
+            display_currency("XTR") + ": " + tr(
+                "нужна сверка возвратов и стоимости вывода.",
+                "refunds and reward value need reconciliation.",
+            )
+        )
     if int(preview["missing_daily_rates"]):
         lines.append(tr(
             "⚠️ Курсы на даты продаж неполные. Итог не готов.",
@@ -1081,8 +1090,10 @@ def create_owner_setup_router(
                 + _saas_invoices_rich(report),
                 classic_html=_saas_preview_classic(preview) + "\n"
                 + (
-                    tr("⭐ Продано: ", "⭐ Stars sold: ")
-                    + str(stars["stars"]) + " ⭐ · "
+                    display_currency("XTR") + " · "
+                    + tr("Продано: ", "Sold: ")
+                    + str(stars["stars"]) + " "
+                    + display_currency("XTR") + " · "
                     + tr("Возвратов: ", "Refunds: ")
                     + str(int(stars.get("refunds", 0))) + " · "
                     + tr("Кредит: ", "Credit: ")
@@ -1379,7 +1390,7 @@ def create_owner_setup_router(
         )
         sales = (
             "\n".join(
-                f"• {escape(currency)}: {_statistics_amount(amount)}"
+                f"• {escape(display_currency(currency))}: {_statistics_amount(amount)}"
                 f" · {count}"
                 for currency, amount, count in stats.currency_totals
             )
@@ -2472,7 +2483,7 @@ def create_owner_setup_router(
             return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
 
         revenues = "\n".join(
-            f"• {escape(currency)}: {precise_amount(amount)} ({count})"
+            f"• {escape(display_currency(currency))}: {precise_amount(amount)} ({count})"
             for currency, amount, count in metrics.sales_by_currency
         ) or tr("Нет подтверждённых продаж", "No confirmed sales")
         type_label = tr("Канал", "Channel") if metrics.resource_type == (
@@ -2577,12 +2588,11 @@ def create_owner_setup_router(
         for price in data.prices:
             lines.append(
                 ("✅ " if price.method_count or price.currency == "XTR" else "⚠️ ")
-                + escape(
-                    format_amount(price.amount, price.precision)
-                    + " " + price.currency
-                )
+                + escape(display_price(
+                    format_amount(price.amount, price.precision), price.currency,
+                ))
                 + (
-                    tr(" · ⭐ Telegram Stars", " · ⭐ Telegram Stars")
+                    ""
                     if price.currency == "XTR" else
                     tr(" · оплата настроена", " · payment ready")
                     if price.method_count else
@@ -2590,7 +2600,7 @@ def create_owner_setup_router(
                 )
             )
         rows.extend([
-            [_button("💰 " + code, "price:" + plan_id.hex + ":" + code)]
+            [_button("💰 " + display_currency(code), "price:" + plan_id.hex + ":" + code)]
             for code in codes
         ])
         rows.append([_button(
@@ -3046,7 +3056,7 @@ def create_owner_setup_router(
         )
         rows = [
             [_button(
-                code, f"methodcurrency:{code}" if mode == "method"
+                display_currency(code), f"methodcurrency:{code}" if mode == "method"
                 else f"price:{plan_id.hex}:{code}"
             )]
             for code in codes
@@ -5660,8 +5670,8 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, step="price_amount",
                     payload={"plan_id": plan_hex, "currency": currency},
                     text=tr(
-                        f"💰 Укажите цену в {currency} (например, 499 или 9.99):",
-                        f"💰 Enter the price in {currency} (e.g. 499 or 9.99):",
+                        f"💰 Укажите цену в {display_currency(currency)} (например, 499 или 9.99):",
+                        f"💰 Enter the price in {display_currency(currency)} (e.g. 499 or 9.99):",
                     ),
                 )
             elif action.startswith("publish:"):
@@ -5732,13 +5742,13 @@ def create_owner_setup_router(
                 )
                 rows = [
                     [_button(
-                        "➕ " + code,
+                        "➕ " + display_currency(code),
                         "methodattach:" + method_id.hex + ":" + code,
                     )] for code in codes if code not in method.currencies
                 ]
                 rows.extend([
                     [_button(
-                        tr("➖ " + code, "➖ " + code),
+                        "➖ " + display_currency(code),
                         "methodremoveask:" + encode_uuid(method_id) + ":" + code,
                         "danger",
                     )] for code in method.currencies

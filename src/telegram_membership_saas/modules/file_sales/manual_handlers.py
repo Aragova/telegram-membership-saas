@@ -18,6 +18,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas import receipt_intents
+from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.manual_checkout_ui import (
     manual_checkout_rich_html,
@@ -181,7 +182,10 @@ async def show_file_payment_options(
     if codes:
         buttons = [
             _button(
-                ("🟢" if c == chosen else "") + CURRENCY_ICONS.get(c, "🌐") + c,
+                ("🟢" if c == chosen else "") + (
+                    display_currency(c) if c == "XTR"
+                    else CURRENCY_ICONS.get(c, "🌐") + c
+                ),
                 "currency:" + code + ":" + c,
                 "success" if c == chosen else "primary",
             ) for c in codes
@@ -196,8 +200,8 @@ async def show_file_payment_options(
         )])
     if product.stars_price is not None and stars_enabled:
         rows.append([InlineKeyboardButton(
-            text=tr("⭐ Звёзды Telegram · ", "⭐ Telegram Stars · ")
-            + str(product.stars_price) + " XTR",
+            text=tr("⭐ Telegram Stars · ", "⭐ Telegram Stars · ")
+            + str(product.stars_price),
             callback_data="fs:buy:" + code,
             style="success",
         )])
@@ -206,9 +210,9 @@ async def show_file_payment_options(
         callback_data="fs:folder:" + encode_uuid(product.folder_id),
     )])
     price_label = (
-        next((money(x.amount, x.precision) + " " + chosen
+        next((display_price(money(x.amount, x.precision), chosen)
               for x in options if x.currency == chosen), "")
-        if chosen else str(product.stars_price) + " ⭐"
+        if chosen else display_price(str(product.stars_price), "XTR")
     )
     legacy_html = (
         tr("💎 <b>Оформление покупки файла</b>\n\n",
@@ -382,7 +386,7 @@ def create_manual_file_router(
                            "💎 <b>File purchase checkout</b>\n")
                         + "📦 <b>" + escape(order.product_name) + "</b>\n"
                         + "💰 <b>" + escape(amount)
-                        + " " + escape(order.currency_code) + "</b>\n"
+                        + " " + escape(display_currency(order.currency_code)) + "</b>\n"
                         + tr("💳 Способ: ", "💳 Method: ")
                         + escape(order.payment_method_name) + "\n\n"
                         + escape(order.instruction) + "\n\n"
@@ -500,7 +504,7 @@ def create_manual_file_router(
                 rows = [[_button(
                     ("🕓 " if item.status == "pending" else "📨 ")
                     + item.product_name[:26] + " · "
-                    + _short_amount(item.amount) + " " + item.currency_code,
+                    + display_price(_short_amount(item.amount), item.currency_code),
                     "review:" + encode_uuid(item.id),
                 )] for item in items]
                 navigation = []
@@ -551,7 +555,7 @@ def create_manual_file_router(
                     legacy_text=(
                         "📦 <b>" + escape(order.product_name) + "</b>\n"
                         + "💰 " + escape(_short_amount(order.amount)) + " "
-                        + escape(order.currency_code) + "\n"
+                        + escape(display_currency(order.currency_code)) + "\n"
                         + "💳 " + escape(order.payment_method_name)
                     ),
                     parse_mode="HTML",
@@ -779,7 +783,7 @@ def create_manual_file_router(
                         legacy_text=(
                             "🧾 <b>" + escape(order.product_name) + "</b>\n"
                             + "💰 " + escape(_short_amount(order.amount)) + " "
-                            + escape(order.currency_code) + "\n"
+                            + escape(display_currency(order.currency_code)) + "\n"
                             + tr("Проверьте поступление средств.",
                                  "Verify receipt of funds.")
                         ),
