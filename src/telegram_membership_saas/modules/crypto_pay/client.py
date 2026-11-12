@@ -224,3 +224,56 @@ class CryptoPayClient:
         if not set(received) <= set(invoice_ids):
             raise CryptoPayError("Crypto Pay returned unrelated invoice data")
         return tuple(items)
+
+
+    async def list_recent_invoices(
+        self, *, offset: int = 0, count: int = 100,
+    ) -> tuple[dict, ...]:
+        """Bounded provider listing for recovering uncertain createInvoice calls.
+
+        Crypto Pay does not offer a documented invoice-payload lookup or
+        idempotency key. Never blindly recreate an uncertain request.
+        """
+        if type(offset) is not int or not 0 <= offset <= 10_000:
+            raise ValueError("Invalid Crypto Pay invoice page offset")
+        if type(count) is not int or not 1 <= count <= 100:
+            raise ValueError("Invalid Crypto Pay invoice page size")
+        result = await self._call("getInvoices", {"offset": offset, "count": count})
+        items = result.get("items") if isinstance(result, dict) else result
+        if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
+            raise CryptoPayError("Crypto Pay invoice listing is incomplete")
+        ids = [entry.get("invoice_id") for entry in items]
+        if any(type(i) is not int or i <= 0 for i in ids):
+            raise CryptoPayError("Crypto Pay invoice listing contains invalid IDs")
+        if len(set(ids)) != len(ids):
+            raise CryptoPayError("Crypto Pay invoice listing contains duplicate IDs")
+        return tuple(items)
+
+
+def verify_created_invoice_snapshot(
+    provider_invoice: Mapping[str, Any], *,
+    payload: str, amount: Decimal, currency_code: str,
+    currency_type: str, testnet: bool,
+) -> tuple[int, str]:
+    """Bind recovered provider invoice to the original local frozen quote.
+
+    A paid invoice is still NOT a grant; it requires atomic settlement.
+    """
+    invoice_id = provider_invoice.get("invoice_id")
+    if (type(invoice_id) is not int or invoice_id <= 0
+        or provider_invoice.get("payload") != payload
+        or provider_invoice.get("status") not in ("active", "paid")
+        or provider_invoice.get("currency_type") != currency_type):
+        raise CryptoPayError("Crypto Pay recovered invoice identity mismatch")
+    field = "fiat" if currency_type == "fiat" else "asset"
+    if (provider_invoice.get(field) != currency_code
+        or _safe_decimal(provider_invoice.get("amount")) != _safe_decimal(amount)):
+        raise CryptoPayError("Crypto Pay recovered invoice price mismatch")
+    link = _invoice_link(provider_invoice.get("bot_invoice_url"), testnet=testnet)
+    if provider_invoice.get("status") == "paid":
+        verify_paid_invoice(
+            provider_invoice, invoice_id=invoice_id, payload=payload,
+            amount=amount, currency_code=currency_code,
+            currency_type=currency_type,
+        )
+    return invoice_id, link
