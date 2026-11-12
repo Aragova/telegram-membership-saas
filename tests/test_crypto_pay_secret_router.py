@@ -39,7 +39,7 @@ def test_secret_router_precedes_all_composer_and_owner_routes():
     assert names.index("crypto-pay-secret-guard") < names.index("digital-file-sales")
     assert names.index("crypto-pay-secret-guard") < names.index("manual-file-checkout")
     assert names.index("crypto-pay-secret-guard") < names.index("owner-tenant")
-    assert names.index("crypto-pay-secret-guard") < names.index("moderator-support")
+    assert names.index("crypto-pay-secret-guard") < names.index("project-support")
 
 
 async def test_secret_filter_only_intercepts_plausible_active_merchant_token(
