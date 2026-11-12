@@ -18,24 +18,30 @@ def upgrade() -> None:
     # The source is still verified by the existing immutable invoice guards.
     op.execute("""
       ALTER TABLE public.platform_saas_invoice_lines
-        ALTER COLUMN source_kind TYPE varchar(24);
+      ALTER COLUMN source_kind TYPE varchar(24)
+    """)
+    op.execute("""
       ALTER TABLE public.platform_saas_invoice_lines
-        DROP CONSTRAINT ck_saas_line_kind;
+      DROP CONSTRAINT ck_saas_line_kind
+    """)
+    op.execute("""
       ALTER TABLE public.platform_saas_invoice_lines
-        ADD CONSTRAINT ck_saas_line_kind CHECK(
-           source_kind IN (
-             'bot_fee','subscription','file_manual',
-             'file_stars','subscription_stars',
-             'file_crypto','subscription_crypto'
-           )
-        );
-      DROP INDEX public.uq_saas_once_per_paid_source;
+      ADD CONSTRAINT ck_saas_line_kind CHECK(
+        source_kind IN (
+          'bot_fee','subscription','file_manual',
+          'file_stars','subscription_stars',
+          'file_crypto','subscription_crypto'
+        )
+      )
+    """)
+    op.execute("DROP INDEX public.uq_saas_once_per_paid_source")
+    op.execute("""
       CREATE UNIQUE INDEX uq_saas_once_per_paid_source
-        ON public.platform_saas_invoice_lines(source_kind,source_id)
-        WHERE source_kind IN (
-          'subscription','file_manual','file_stars',
-          'subscription_stars','file_crypto','subscription_crypto'
-        );
+      ON public.platform_saas_invoice_lines(source_kind,source_id)
+      WHERE source_kind IN (
+        'subscription','file_manual','file_stars',
+        'subscription_stars','file_crypto','subscription_crypto'
+      )
     """)
     op.execute("""CREATE OR REPLACE FUNCTION public.platform_saas_line_guard()
         RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
