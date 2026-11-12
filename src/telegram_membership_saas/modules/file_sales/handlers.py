@@ -68,7 +68,9 @@ from telegram_membership_saas.modules.file_sales.service import (
 )
 from telegram_membership_saas.modules.owner_setup.service import (
     can_manage_project,
+    cancel_owner_flow,
     ensure_telegram_actor,
+    is_expected_prompt,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
@@ -135,10 +137,14 @@ async def _deliver(
 
 
 class FileEditorFilter(BaseFilter):
-    def __init__(self, pending: dict[int, dict]):
+    def __init__(
+        self, pending: dict[int, dict],
+        factory: async_sessionmaker[AsyncSession],
+    ):
         self.pending = pending
+        self.factory = factory
 
-    async def __call__(self, message: Message) -> bool:
+    async def __call__(self, message: Message, bot: Bot) -> bool:
         if message.from_user is None or message.chat.type != "private":
             return False
         # A pending admin editor must never swallow a Stars successful_payment
@@ -153,6 +159,21 @@ class FileEditorFilter(BaseFilter):
             self.pending.pop(message.from_user.id, None)
             return False
         if message.text and message.text.startswith("/"):
+            return False
+        # A merchant API secret must NEVER be swallowed by an older file
+        # editor. The owner setup state is persistent and bot-scoped; the
+        # file draft's in-memory pending dictionary is not. Give live owner
+        # forms priority and retire the stale draft editor immediately.
+        actor = await ensure_telegram_actor(
+            self.factory, telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+        if await is_expected_prompt(
+            self.factory, actor_id=actor, bot_scope_id=bot.id,
+            reply_message_id=None,
+        ):
+            self.pending.pop(message.from_user.id, None)
             return False
         return True
 
@@ -220,6 +241,13 @@ def create_file_sales_router(
                 "paytoggle:" + method.method_id.hex,
                 "success" if method.enabled else "danger",
             )])
+        # Same merchant configuration as subscription payments: one settings
+        # screen, no extra file-specific Crypto Pay token or provider.
+        rows.append([InlineKeyboardButton(
+            text=tr("💎 Crypto Pay · настроить", "💎 Crypto Pay · configure"),
+            callback_data="own:cryptopay",
+            style="primary",
+        )])
         # Exactly one bulk button; its label changes when any method is off.
         any_disabled = any(not method.enabled for method in controls)
         rows.append([_button(
@@ -524,7 +552,11 @@ def create_file_sales_router(
         if message.from_user is None or message.chat.type != "private":
             return
         pending.pop(message.from_user.id, None)
-        admin, _ = await is_owner(message.from_user, bot)
+        admin, actor_id = await is_owner(message.from_user, bot)
+        if admin:
+            await cancel_owner_flow(
+                factory, actor_id=actor_id, bot_scope_id=bot.id,
+            )
         await home(bot, message.from_user.id, admin)
 
     @router.message(Command("myfiles"))
@@ -546,6 +578,20 @@ def create_file_sales_router(
         admin, who = await is_owner(query.from_user, bot)
         action = query.data[3:]
         try:
+            # Opening a NEW file editor is an explicit change of workflow.
+            # Retire older Crypto Pay/owner token input first; otherwise its
+            # valid persistent setup state can swallow the newly requested
+            # file name, description or price.
+            if admin and (
+                action == "newfolder"
+                or action.startswith((
+                    "newproduct:", "editname:", "editdescription:",
+                    "editprice:", "upload:",
+                ))
+            ):
+                await cancel_owner_flow(
+                    factory, actor_id=who, bot_scope_id=bot.id,
+                )
             if action == "home":
                 pending.pop(uid, None)
                 await home(bot, uid, admin)
@@ -954,7 +1000,7 @@ def create_file_sales_router(
             await query.answer(tr("Ошибка Telegram. Попробуйте снова.",
                                   "Telegram error. Try again."), show_alert=True)
 
-    @router.message(FileEditorFilter(pending))
+    @router.message(FileEditorFilter(pending, factory))
     async def editor_message(message: Message, bot: Bot) -> None:
         if message.from_user is None:
             return

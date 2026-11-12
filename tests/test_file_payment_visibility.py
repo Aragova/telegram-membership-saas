@@ -77,7 +77,9 @@ async def test_file_payment_switcher_has_one_dynamic_bulk_button(monkeypatch):
 
     await handler(_query("paymethods"), bot)
     buttons = _buttons(bot.send_message.await_args.kwargs["reply_markup"])
-    assert len(buttons) == 4
+    # One shared Crypto Pay SETUP link; bulk control remains a single toggle.
+    assert len(buttons) == 5
+    assert any(button.callback_data == "own:cryptopay" for button in buttons)
     assert any("Telegram Stars ⭐" in b.text for b in buttons)
     assert any("⭐ Telegram Stars" in b.text for b in buttons)
     assert [b.callback_data for b in buttons if "paybulk" in b.callback_data] == [

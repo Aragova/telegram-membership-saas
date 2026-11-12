@@ -74,3 +74,101 @@ remain for reconciliation of invoices paid prior to the transfer, but the
 incoming merchant cannot see or reuse them and can register their own app
 without hitting the active-app uniqueness constraint. A real PostgreSQL
 transfer→reconnect test enforces this contract.
+
+### Owner setup UX (PR #134)
+
+A single 💎 Crypto Pay entry is linked under **💳 Способы оплаты /
+Payment methods** in the *connected administrator bot*, not the central
+registry. It displays a non-sensitive current app label and environment,
+provides mainnet/testnet selection, secure one-time API token input and
+versioned disconnect/rotation. The bot deletes the original token message
+BEFORE attempting API validation, refuses to store if deletion fails, and
+never prints the token or ciphertext to Telegram. Setup is owner-only via
+tenant permission and BotInstance identity; moderators cannot substitute
+merchant credentials. File sales and subscription billing will use this
+SAME credential, not separate Crypto Pay settings. No buyer payment option
+is added until automatic verified fulfillment works.
+
+### Secret input precedence vs stale editors (PR #134)
+
+File sales draft editors and file price editors are registered BEFORE owner
+setup in aiogram. They now check the active owner setup prompt for the same
+user AND connected bot, and drop their stale in-memory editor when any
+current owner wizard is awaiting input. This prevents merchant secrets being
+saved as a product title, description or price. The actual owner input
+handler deletes token messages BEFORE contacting Crypto Pay. Regressions
+exercise both file-sale routers and ensure normal editors remain usable.
+
+### Priority secret-ingress security (PR #134)
+
+The first connected-bot router after language handles ONLY plausible
+merchant API credential messages with an authenticated, unexpired, bot- and
+project-scoped `crypto_pay_token` setup state. It runs BEFORE moderator
+message composers, file editors, manual receipt workflows and the buyer/owner
+conversation replies. Thus even an old quoted subscriber notification cannot
+forward a secret, and old product drafts cannot store it. This handler
+deletes the Telegram token message BEFORE consuming the wizard or validating
+the token. Failed deletion blocks registration. Non-token chat messages
+avoid an extra credential-flow DB lookup for efficient 50-100 bot operation.
+All existing file editor checks remain as defense in depth.
+
+### Switching back to file editors
+
+When the merchant deliberately opens a new file title/description/upload
+editor or a manual file price editor, the bot first clears any previously
+active merchant credential/owner setup wizard for that bot (using the same
+persistent, generation-safe cancel function as /cancel). The new editor can
+then accept ordinary file text without accidentally deleting it as a stale
+Crypto Pay token. Entering /files also cancels the previous owner wizard.
+The priority secret router still protects any actual token sent WHILE
+a Crypto Pay credential wizard is active, including replies to old buyer
+notifications and stale transfer forms.
+
+### Preserve token secrecy across provider failures (PR #134)
+
+The priority secret handler reads but does **not consume** the durable,
+bot-scoped Crypto Pay wizard before calling getMe. When provider verification
+fails (invalid token, timeout, temporary outage), the same private prompt
+and generation remain active; a retry that quotes an old buyer notification
+is still captured and deleted before any other message router. On successful
+getMe and encrypted credential registration, the handler atomically
+discards only that specific wizard generation. If the owner navigated to
+a newer setup while getMe was pending, the newer flow is left untouched.
+Only generic error messages reach Telegram, never raw API tokens or secrets.
+
+### Strict secret interception across expired/alternate flows (PR #134)
+
+The secret guard is the first connected-bot message route after language.
+Any credential-shaped private text is **always deleted first**, even if the
+owner's 15-minute wizard expired, was cancelled, or was successfully consumed.
+This avoids forwarding late API tokens through stale Telegram buyer replies.
+During an active `crypto_pay_token` flow, the guard also intercepts
+malformed or truncated non-command input: a wrong first attempt cannot
+make the alternate owner setup handler consume the durable secret wizard
+and expose the subsequent valid retry. The provider is never contacted
+unless deletion succeeds AND the current verified bot-scoped wizard is live.
+Ordinary commands such as /cancel remain routed normally. Buyer payments
+and access entitlement routes are unchanged.
+
+### Avoid destructive wallet-address false positives (PR #134)
+
+The unconditional post-expiry secret scrubber matches only colon-delimited,
+numeric-prefix Crypto Pay API credential shapes. Generic alphanumeric strings,
+Ethereum/TRON wallet addresses, transaction hashes and ordinary links are NOT
+deleted. When the owner actually has a live bot-scoped Crypto Pay token wizard,
+ALL private non-command text is intercepted and deleted before verification,
+regardless of provider token format. This separates credential protection from
+normal buyer support/payment evidence.
+
+### Owner-only hot-path optimization (PR #134)
+
+The first secret router still deletes a correctly shaped API token before all
+other message handlers without any database lookup. For ordinary private text,
+it checks a short-lived, project-scoped owner identity cache and immediately
+skips buyer messages. On cache miss, it performs ONE read-only project-owner
+identity query (no Telegram user upsert) and caches it briefly. Only the
+identified current owner's text incurs a tenant-scoped wizard read. An
+authorized Crypto Pay setup callback warms the local owner hint immediately
+after binding the durable prompt, including after ownership transfer. All
+authorization and active generation checks still occur in the database;
+the in-process hint is NEVER used to grant credentials or payment rights.

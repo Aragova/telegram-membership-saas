@@ -50,7 +50,11 @@ from telegram_membership_saas.modules.file_sales.service import (
     purchased_assets,
     view_product,
 )
-from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.owner_setup.service import (
+    cancel_owner_flow,
+    ensure_telegram_actor,
+    is_expected_prompt,
+)
 from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     CURRENCY_ICONS,
@@ -125,10 +129,14 @@ class ActiveFileReceiptFilter(BaseFilter):
 
 
 class ManualPriceFilter(BaseFilter):
-    def __init__(self, pending: dict[int, dict]):
+    def __init__(
+        self, pending: dict[int, dict],
+        factory: async_sessionmaker[AsyncSession],
+    ):
         self.pending = pending
+        self.factory = factory
 
-    async def __call__(self, message: Message) -> bool:
+    async def __call__(self, message: Message, bot: Bot) -> bool:
         if message.chat.type != "private" or message.from_user is None:
             return False
         if getattr(message, "successful_payment", None) is not None:
@@ -139,6 +147,17 @@ class ManualPriceFilter(BaseFilter):
         if entry is None:
             return False
         if entry["expires"] <= monotonic():
+            self.pending.pop(message.from_user.id, None)
+            return False
+        actor = await ensure_telegram_actor(
+            self.factory, telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+        if await is_expected_prompt(
+            self.factory, actor_id=actor, bot_scope_id=bot.id,
+            reply_message_id=None,
+        ):
             self.pending.pop(message.from_user.id, None)
             return False
         return True
@@ -478,6 +497,11 @@ def create_manual_file_router(
                         factory, project_id=project_id, bot_id=bot.id,
                         product_id=product_id, actor_id=actor,
                     )
+                    # Explicitly entering a new file price editor cancels
+                    # an old merchant-secret prompt in this same bot.
+                    await cancel_owner_flow(
+                        factory, actor_id=actor, bot_scope_id=bot.id,
+                    )
                     editor[uid] = {
                         "product": product_id, "currency": currency,
                         "expires": monotonic() + ENTRY_SECONDS,
@@ -808,7 +832,7 @@ def create_manual_file_router(
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[support_button()]]),
         )
 
-    @router.message(ManualPriceFilter(editor))
+    @router.message(ManualPriceFilter(editor, factory))
     async def price_reply(message: Message, bot: Bot) -> None:
         if message.from_user is None or message.text is None:
             return

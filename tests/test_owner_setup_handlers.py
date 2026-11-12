@@ -255,3 +255,76 @@ def test_readiness_does_not_count_drafts_or_disabled_resources():
     assert "📝 Черновик" == ui._status("draft")
 
 
+
+
+async def test_crypto_pay_api_token_deleted_before_verification(monkeypatch):
+    """Owner private setup must never echo or persist a plaintext API token."""
+    owner, project = uuid4(), uuid4()
+    token = "123456:" + "C" * 35
+    calls = []
+
+    async def delete(*_):
+        calls.append("deleted")
+        return True
+
+    async def connected(*_args, **kwargs):
+        assert calls == ["deleted"]
+        assert kwargs["project_id"] == project
+        assert kwargs["api_token"] == token
+        assert kwargs["testnet"] is True
+        calls.append("verified")
+
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "consume_flow", AsyncMock(return_value=SetupFlow(
+        "crypto_pay_token", project, {"environment": "testnet"}, 999,
+    )))
+    monkeypatch.setattr(ui, "connect_crypto_pay", AsyncMock(side_effect=connected))
+    monkeypatch.setattr(ui, "read_crypto_pay_connection", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        ui, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="test-key"),
+    )
+    router = ui.create_owner_setup_router(
+        MagicMock(), fixed_project_id=project,
+    )
+    handler = next(
+        x.callback for x in router.message.handlers
+        if x.callback.__name__ == "owner_reply_handler"
+    )
+    bot = _bot()
+    bot.delete_message = AsyncMock(side_effect=delete)
+    message = _message(text=token)
+    message.message_id = 1234
+    message.reply_to_message = SimpleNamespace(
+        message_id=999, from_user=SimpleNamespace(id=bot.id),
+    )
+    await handler(message, bot)
+    assert calls == ["deleted", "verified"]
+    for call in bot.send_message.await_args_list:
+        assert token not in str(call)
+
+
+async def test_crypto_pay_token_deletion_failure_prevents_registration(monkeypatch):
+    owner, project = uuid4(), uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "consume_flow", AsyncMock(return_value=SetupFlow(
+        "crypto_pay_token", project, {"environment": "mainnet"}, 999,
+    )))
+    connect = AsyncMock()
+    monkeypatch.setattr(ui, "connect_crypto_pay", connect)
+    bot = _bot()
+    bot.delete_message.return_value = False
+    message = _message(text="123456:" + "C" * 35)
+    message.message_id = 1234
+    message.reply_to_message = SimpleNamespace(
+        message_id=999, from_user=SimpleNamespace(id=bot.id),
+    )
+    router = ui.create_owner_setup_router(
+        MagicMock(), fixed_project_id=project,
+    )
+    handler = next(
+        x.callback for x in router.message.handlers
+        if x.callback.__name__ == "owner_reply_handler"
+    )
+    await handler(message, bot)
+    connect.assert_not_awaited()

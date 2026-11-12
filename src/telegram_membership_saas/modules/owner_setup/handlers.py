@@ -49,6 +49,14 @@ from telegram_membership_saas.modules.bots.service import (
     register_customer_bot,
 )
 from telegram_membership_saas.modules.broadcasts.service import cancel_draft
+from telegram_membership_saas.modules.crypto_pay.owner_token_router import (
+    remember_crypto_pay_owner,
+)
+from telegram_membership_saas.modules.crypto_pay.service import (
+    connect_crypto_pay,
+    disconnect_crypto_pay,
+    read_crypto_pay_connection,
+)
 from telegram_membership_saas.modules.owner_notifications import (
     read_owner_settings,
     set_owner_setting,
@@ -2786,6 +2794,9 @@ def create_owner_setup_router(
                     + encode_uuid(project_id),
                     "success" if bulk.enable_action else "danger",
                 )])
+        rows.append([_button(
+            "💎 Crypto Pay", "cryptopay", "success",
+        )])
         rows.append([_button("➕ Добавить способ", "newmethod", "success")])
         if methods or page > 0:
             rows.append([_button("➡️ Перейти к тарифам", "plans")])
@@ -2795,6 +2806,57 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+
+    async def show_crypto_pay(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        """One owner-only Crypto Pay setup screen for subscriptions and files."""
+        if fixed_project_id != project_id:
+            raise PermissionError("Configure merchant payments in the connected bot")
+        app = await read_crypto_pay_connection(
+            factory, project_id=project_id, bot_id=bot.id, actor_id=actor_id,
+        )
+        status = (
+            tr("🟢 Подключено", "🟢 Connected") + " · "
+            + escape(app.app_label) + " · " + escape(app.environment)
+            if app is not None else
+            tr("⚪ Не подключено", "⚪ Not connected")
+        )
+        rows = [
+            [_button(
+                tr("🔑 Подключить Crypto Pay", "🔑 Connect Crypto Pay")
+                if app is None else
+                tr("🔄 Сменить приложение / токен", "🔄 Replace app / token"),
+                "cryptonet", "success",
+            )],
+        ]
+        if app is not None:
+            rows.append([_button(
+                tr("⏸️ Отключить новые счета", "⏸️ Disable new invoices"),
+                "cryptoffask", "danger",
+            )])
+        rows.append([_button(
+            tr("⬅️ Способы оплаты", "⬅️ Payment methods"), "methods",
+        )])
+        await bot.send_message(
+            user_id, tr(
+                "💎 <b>Crypto Pay</b>\n",
+                "💎 <b>Crypto Pay</b>\n",
+            ) + status + tr(
+                "\n\nПолучите API-токен в @CryptoBot → Crypto Pay → "
+                "Создать приложение. Средства поступают непосредственно "
+                "в Crypto Pay вашего аккаунта. Для тестов используйте "
+                "@CryptoTestnetBot.\n\n"
+                "Подключение не включает оплату у покупателей до запуска "
+                "полной автоматической выдачи подписок и файлов.",
+                "\n\nCreate an API token in @CryptoBot → Crypto Pay → "
+                "Create App. Funds go directly to your own Crypto Pay app. "
+                "Use @CryptoTestnetBot for testing.\n\n"
+                "Connecting the app will not activate buyer checkout until "
+                "verified subscription and file delivery are deployed.",
+            ),
+            parse_mode="HTML", reply_markup=_markup(rows),
+        )
 
     async def show_method_card(
         bot: Bot, user_id: int, actor_id: UUID,
@@ -5717,6 +5779,87 @@ def create_owner_setup_router(
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action == "methods":
                 await show_methods(bot, user_id, actor_id, project_id)
+            elif action == "cryptopay":
+                await show_crypto_pay(bot, user_id, actor_id, project_id)
+            elif action == "cryptonet":
+                if fixed_project_id != project_id:
+                    raise PermissionError("Open the connected administrator bot")
+                # An actual provider token is requested only after owner
+                # chooses the correct API environment.
+                await read_crypto_pay_connection(
+                    factory, project_id=project_id,
+                    bot_id=bot.id, actor_id=actor_id,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr("💎 <b>Выберите сеть Crypto Pay</b>",
+                       "💎 <b>Choose Crypto Pay environment</b>"),
+                    parse_mode="HTML",
+                    reply_markup=_markup([
+                        [_button("💎 Crypto Pay · @CryptoBot",
+                                 "cryptonet:mainnet", "success")],
+                        [_button("🧪 Testnet · @CryptoTestnetBot",
+                                 "cryptonet:testnet")],
+                        [_button(tr("⬅️ Назад", "⬅️ Back"), "cryptopay")],
+                    ]),
+                )
+            elif action.startswith("cryptonet:"):
+                env = action.split(":", 1)[1]
+                if env not in ("mainnet", "testnet"):
+                    raise ValueError("Invalid Crypto Pay environment")
+                if fixed_project_id != project_id:
+                    raise PermissionError("Open the connected administrator bot")
+                await read_crypto_pay_connection(
+                    factory, project_id=project_id,
+                    bot_id=bot.id, actor_id=actor_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id,
+                    step="crypto_pay_token", payload={"environment": env},
+                    text=tr(
+                        "🔐 <b>Отправьте API-токен вашего приложения Crypto Pay.</b>\n"
+                        "Сообщение будет удалено до проверки. Никому не передавайте "
+                        "токен. При ошибке удаления токен придётся сменить.\n"
+                        "Нажмите /cancel, чтобы выйти.",
+                        "🔐 <b>Send your Crypto Pay app API token.</b>\n"
+                        "Your message will be deleted before verification. "
+                        "Never share the token. If deletion fails, rotate it.\n"
+                        "Use /cancel to exit.",
+                    ),
+                )
+                remember_crypto_pay_owner(
+                    project_id=project_id, bot_id=bot.id,
+                    actor_id=actor_id, telegram_user_id=user_id,
+                )
+            elif action == "cryptoffask":
+                if fixed_project_id != project_id:
+                    raise PermissionError("Open the connected administrator bot")
+                await read_crypto_pay_connection(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=actor_id,
+                )
+                await bot.send_message(
+                    user_id,
+                    tr(
+                        "⏸️ Отключить Crypto Pay для новых счетов? "
+                        "Старые счета и зашифрованные ключи останутся в истории.",
+                        "⏸️ Disable new Crypto Pay invoices? Existing invoices "
+                        "and encrypted credentials will remain for reconciliation.",
+                    ),
+                    reply_markup=_markup([
+                        [_button(tr("✅ Подтвердить", "✅ Confirm"),
+                                 "cryptoffok", "danger")],
+                        [_button(tr("⬅️ Назад", "⬅️ Back"), "cryptopay")],
+                    ]),
+                )
+            elif action == "cryptoffok":
+                if fixed_project_id != project_id:
+                    raise PermissionError("Open the connected administrator bot")
+                await disconnect_crypto_pay(
+                    factory, project_id=project_id, bot_id=bot.id,
+                    actor_id=actor_id,
+                )
+                await show_crypto_pay(bot, user_id, actor_id, project_id)
             elif action.startswith("methodpage:"):
                 page = int(action.split(":", 1)[1])
                 await show_methods(
@@ -6223,10 +6366,12 @@ def create_owner_setup_router(
         # Always delete BotFather credential messages before validating or storing
         # anything, even if the credential was typed incorrectly.
         unexpected_secret = bool(
-            flow.step not in ("bot_token", "new_bot_token")
+            flow.step not in ("bot_token", "new_bot_token", "crypto_pay_token")
             and TOKEN_PATTERN.fullmatch(text)
         )
-        if flow.step in ("bot_token", "new_bot_token") or unexpected_secret:
+        if flow.step in (
+            "bot_token", "new_bot_token", "crypto_pay_token",
+        ) or unexpected_secret:
             try:
                 deleted = await bot.delete_message(
                     message.chat.id, message.message_id
@@ -6236,8 +6381,10 @@ def create_owner_setup_router(
             if not deleted:
                 await bot.send_message(
                     message.chat.id,
-                    tr("⚠️ Не удалось удалить токен. Смените его в BotFather.",
-                       "⚠️ Could not delete your bot token. Rotate it in BotFather."),
+                    tr("⚠️ Не удалось удалить секретное сообщение. Смените токен "
+                       "в @CryptoBot или BotFather и попробуйте снова.",
+                       "⚠️ Could not delete the secret message. Rotate the token "
+                       "in @CryptoBot or BotFather before retrying."),
                 )
                 return
             if unexpected_secret:
@@ -6272,7 +6419,28 @@ def create_owner_setup_router(
             )
             return
         try:
-            if flow.step == "moderator_add":
+            if flow.step == "crypto_pay_token":
+                if (
+                    fixed_project_id is None or flow.project_id != fixed_project_id
+                    or flow.payload.get("environment") not in ("mainnet", "testnet")
+                ):
+                    raise PermissionError("Crypto Pay setup belongs to a connected bot")
+                await connect_crypto_pay(
+                    factory, project_id=fixed_project_id, bot_id=bot.id,
+                    actor_id=actor_id, api_token=text,
+                    encryption_key=get_settings().bot_token_encryption_key,
+                    testnet=flow.payload["environment"] == "testnet",
+                )
+                # Only a non-secret success notification; do not echo the token.
+                await bot.send_message(
+                    message.chat.id,
+                    tr("✅ Приложение Crypto Pay проверено и защищённо подключено.",
+                       "✅ Crypto Pay app verified and securely connected."),
+                )
+                await show_crypto_pay(
+                    bot, message.chat.id, actor_id, fixed_project_id,
+                )
+            elif flow.step == "moderator_add":
                 if fixed_project_id is None or flow.project_id != fixed_project_id:
                     raise PermissionError("Нельзя назначать модератора другого бота")
                 if (
