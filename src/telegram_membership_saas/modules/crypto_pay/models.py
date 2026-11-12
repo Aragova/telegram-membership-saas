@@ -97,11 +97,12 @@ class CryptoPayInvoice(Base):
             name="ck_crypto_pay_invoice_currency_type",
         ),
         CheckConstraint(
-            "status IN ('reserved','issued','paid','expired','cancelled')",
+            "status IN ('reserved','issuing','issued','paid','expired','cancelled')",
             name="ck_crypto_pay_invoice_status",
         ),
         CheckConstraint(
-            "(status='reserved' AND provider_invoice_id IS NULL AND paid_at IS NULL) "
+            "(status IN ('reserved','issuing') AND provider_invoice_id IS NULL "
+            "AND paid_at IS NULL) "
             "OR (status='issued' AND provider_invoice_id IS NOT NULL "
             "AND paid_at IS NULL) "
             "OR (status='paid' AND provider_invoice_id IS NOT NULL "

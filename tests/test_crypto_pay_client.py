@@ -11,6 +11,7 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayClient,
     CryptoPayError,
     invoice_price_spec,
+    verify_created_invoice_snapshot,
     verify_paid_invoice,
     verify_webhook_signature,
 )
@@ -202,3 +203,73 @@ async def test_official_legacy_cryptobot_invoice_link_is_allowed():
             payload="cp:oldlink", description="Payment",
         )
         assert invoice["invoice_id"] == 35
+
+
+async def test_recent_invoice_listing_is_bounded_and_requires_valid_provider_ids():
+    import json
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        args = json.loads(request.content)
+        assert args == {"offset": 100, "count": 50}
+        return httpx.Response(200, json={
+            "ok": True, "result": {"items": [
+                {"invoice_id": 42, "payload": "cp:original"},
+            ], "count": 1},
+        })
+
+    async with CryptoPayClient(
+        TOKEN, testnet=True, transport=httpx.MockTransport(handler),
+    ) as api:
+        assert (await api.list_recent_invoices(offset=100, count=50))[0][
+            "invoice_id"
+        ] == 42
+        with pytest.raises(ValueError):
+            await api.list_recent_invoices(offset=-1, count=50)
+        with pytest.raises(ValueError):
+            await api.list_recent_invoices(count=1001)
+
+
+def test_uncertain_invoice_recovery_checks_price_payload_and_official_url():
+    template = {
+        "invoice_id": 42,
+        "status": "active", "payload": "cp:unique",
+        "currency_type": "fiat", "fiat": "RUB", "amount": "100",
+        "bot_invoice_url": "https://t.me/CryptoTestnetBot?start=IV42",
+    }
+    kwargs = dict(
+        payload="cp:unique", amount=Decimal("100.00"),
+        currency_code="RUB", currency_type="fiat", testnet=True,
+    )
+    assert verify_created_invoice_snapshot(template, **kwargs)[0] == 42
+    for field, replacement in (
+        ("payload", "cp:other"),
+        ("amount", "101"),
+        ("fiat", "EUR"),
+        ("bot_invoice_url", "https://invalid.example/pay"),
+    ):
+        invalid = {**template, field: replacement}
+        with pytest.raises(CryptoPayError):
+            verify_created_invoice_snapshot(invalid, **kwargs)
+
+
+
+def test_recovered_expired_invoice_is_terminal_without_a_payment_link():
+    snapshot = {
+        "invoice_id": 93, "payload": "cp:expired", "status": "expired",
+        "currency_type": "fiat", "fiat": "EUR", "amount": "15.00",
+    }
+    expected = dict(
+        payload="cp:expired", amount=Decimal("15.00"),
+        currency_code="EUR", currency_type="fiat", testnet=False,
+    )
+    # Provider may omit bot_invoice_url on expired invoices.
+    # Never surface an old or malformed payment URL after expiry.
+    assert verify_created_invoice_snapshot(snapshot, **expected) == (93, None)
+    for change in (
+        {"amount": "15.01"}, {"fiat": "USD"},
+        {"payload": "cp:someone-else"},
+        {"status": "cancelled"}, {"paid_at": datetime.now(UTC).isoformat()},
+    ):
+        altered = {**snapshot, **change}
+        with pytest.raises(CryptoPayError):
+            verify_created_invoice_snapshot(altered, **expected)

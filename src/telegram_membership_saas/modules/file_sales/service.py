@@ -19,6 +19,7 @@ from telegram_membership_saas.db import (
 )
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanceStatus
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
 from telegram_membership_saas.modules.file_sales.manual_models import (
     FileManualOrder,
     FileManualPrice,
@@ -447,7 +448,7 @@ async def _has_orders(
     session: AsyncSession, *, project_id: UUID, product_id: UUID,
 ) -> bool:
     """All orders, including canceled/rejected/pending, protect their product."""
-    for model in (FilePurchase, FileManualOrder):
+    for model in (FilePurchase, FileManualOrder, CryptoPayInvoice):
         exists = await session.scalar(select(model.id).where(
             model.project_id == project_id,
             model.product_id == product_id,
@@ -473,7 +474,15 @@ async def _has_paid_purchase(
         FileManualOrder.product_id == product_id,
         FileManualOrder.status == "approved",
     ).limit(1))
-    return manual is not None
+    if manual is not None:
+        return True
+    crypto = await session.scalar(select(CryptoPayInvoice.id).where(
+        CryptoPayInvoice.project_id == project_id,
+        CryptoPayInvoice.product_id == product_id,
+        CryptoPayInvoice.kind == "file",
+        CryptoPayInvoice.status == "paid",
+    ).limit(1))
+    return crypto is not None
 
 
 async def delete_unsold_product(

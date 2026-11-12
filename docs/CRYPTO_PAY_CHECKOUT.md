@@ -172,3 +172,42 @@ authorized Crypto Pay setup callback warms the local owner hint immediately
 after binding the durable prompt, including after ownership transfer. All
 authorization and active generation checks still occur in the database;
 the in-process hint is NEVER used to grant credentials or payment rights.
+
+### Checkout reservation and provider verification service (in progress, #135)
+
+Backend-only `crypto_pay.checkout` creates a **frozen local reservation** for a
+published file with actual assets or a live subscription plan/price/resource,
+checking the connected bot, buyer ban, active merchant credential, supported
+currency, and up to 10 outstanding Crypto Pay orders per buyer. Subscription
+reservations capture the project customer and original plan/duration/price.
+The generated `cp:<UUID>` payload is unique. The reservation is committed
+before any external invoice call. An issuance transaction revalidates the
+published product and its assets, or the active subscription and resources,
+then persists `status='issuing'` before contacting the provider. A 15-minute
+reservation TTL and bounded outstanding-order count protect old quotes. If
+Crypto Pay times out or the DB commit fails after provider acceptance, the
+`issuing` state MUST be recovered by querying the original provider app;
+blind re-creation is forbidden. A bounded `getInvoices` listing (five
+100-invoice pages by default) can recover a matching payload from the
+original credential version, after validating the same amount, currency
+and payload. Provider-confirmed `expired` invoices are recorded with the
+original provider ID and a local terminal `expired` status, WITHOUT exposing
+a payable link or granting a file/subscription. This releases the buyer's
+pending-invoice slot. Expired provider invoices may omit payment links, so
+only active/paid invoices require a safe official URL. Conflicting paid
+evidence on a supposedly expired invoice is rejected. If the invoice cannot
+be found, its uncertain state is retained and no second provider bill is
+created.
+Successful responses store the provider ID
+and URL, and repeating an already-issued request returns the same frozen
+link. Rotation/disconnection prevents new issuance from a retired app, while
+already issued invoices remain bound to their historic credential version.
+Migration `0060_crypto_issuing_guard` adds the durable uncertain state. Read-only provider verification uses
+`getInvoices` and validates immutable invoice ID/payload/amount/currency.
+
+**Important safety gate:** this service deliberately does not mark an order
+paid, credit platform fees, create entitlements, or deliver a file, and NO
+buyer-facing Crypto Pay option is registered. The remaining #135 work is the
+single-transaction fulfillment path, delivery outbox, periodic reconciliation,
+UX integration and exact-head safety tests. Do not switch on a payable buyer
+button until every step works after a crash/retry.
