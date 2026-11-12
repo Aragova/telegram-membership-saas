@@ -178,6 +178,14 @@ jobs:
                       "platform_saas_crypto_refund_candidate(uuid,text)",
                       "platform_saas_record_crypto_transfer_credit(uuid,bigint,text,bigint,text,numeric,timestamptz)",
                       "platform_saas_crypto_refund_summary(uuid,date)",
+                      "platform_saas_unified_monthly_preview(uuid,date,uuid)",
+                      "platform_saas_v2_bank_method(text,text)",
+                      "platform_saas_v2_invoice_balance(uuid)",
+                      "platform_saas_v2_create_attempt(uuid,numeric,text)",
+                      "platform_saas_v2_submit_proof(uuid,bigint,bigint,text,text)",
+                      "platform_saas_v2_approve_attempt(uuid,text)",
+                      "platform_saas_v2_reject_attempt(uuid,text)",
+                      "platform_saas_v2_pending_proofs(integer)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
@@ -198,7 +206,12 @@ jobs:
                       "public.platform_saas_crypto_capture_control, "
                       "public.platform_saas_crypto_scan_cursor, "
                       "public.platform_saas_crypto_sales, "
-                      "public.platform_saas_crypto_transfer_credits "
+                      "public.platform_saas_crypto_transfer_credits, "
+                      "public.platform_saas_payment_methods_v2, "
+                      "public.platform_saas_payment_attempts_v2, "
+                      "public.platform_saas_payment_proofs_v2, "
+                      "public.platform_saas_payment_allocations_v2, "
+                      "public.platform_saas_payment_rejections_v2 "
                       "FROM membership_runtime"
                   )
                   # The original provider rate is append-only. Only the
