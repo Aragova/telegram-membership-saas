@@ -278,10 +278,14 @@ def catalog_screen(
             )
             else option.plan_name[:23] + " · " + period
         )
+        # Preserve the COMPLETE provider name, even for long plan titles.
+        # Telegram's 64-character limit applies to the entire button.
+        price_label = display_price(price, chosen)
+        button_plan = button_plan[:max(
+            0, 64 - len("💎  · ") - len(price_label),
+        )].rstrip(" ·")
         rows.append([InlineKeyboardButton(
-            text=(
-                "💎 " + button_plan + " · " + display_price(price, chosen)
-            )[:64],
+            text="💎 " + button_plan + " · " + price_label,
             callback_data=(
                 f"offer:{encode_uuid(option.plan_price_id)}:{current_page}"
             ),

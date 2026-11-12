@@ -373,7 +373,8 @@ def _saas_preview_rich(preview: dict) -> str:
 def _saas_stars_rich(stars: dict) -> str:
     """Price-grouped Stars sales; no visible CBR rates or duplicated menus."""
     lines = [
-        "<h4>" + tr("⭐ Продажи за Stars", "⭐ Telegram Stars sales") + "</h4>",
+        "<h4>" + display_currency("XTR") + " · "
+        + tr("Продажи", "Sales") + "</h4>",
         "<table bordered compact>",
         "<tr><th>" + tr("Источник", "Source") + "</th><th>"
         + tr("Цена", "Price") + "</th><th>"
@@ -386,12 +387,15 @@ def _saas_stars_rich(stars: dict) -> str:
                 "Файлы" if entry["source"] == "file_stars" else "Подписки",
                 "Files" if entry["source"] == "file_stars" else "Subscriptions",
             ) + "</td><td>" + str(int(entry["price_stars"]))
-            + " ⭐</td><td>" + str(int(entry["sold"])) + "</td><td>"
-            + str(int(entry["total_stars"])) + " ⭐</td></tr>"
+            + " " + display_currency("XTR") + "</td><td>"
+            + str(int(entry["sold"])) + "</td><td>"
+            + str(int(entry["total_stars"])) + " "
+            + display_currency("XTR") + "</td></tr>"
         )
     lines.append("</table>")
     lines.extend([
-        "<p>⭐ " + str(int(stars["stars"])) + " · "
+        "<p>" + display_currency("XTR") + ": "
+        + str(int(stars["stars"])) + " · "
         + tr("Эквивалент вознаграждения: ", "Developer reward equivalent: ")
         + "$" + escape(format(Decimal(str(stars["reward_usd"])), ".2f"))
         + " · 5%: "
@@ -407,9 +411,11 @@ def _saas_stars_rich(stars: dict) -> str:
     refunds = int(stars.get("refunds", 0))
     if refunds:
         lines.append(
-            "<p>↩️ " + tr("Возвраты Stars: ", "Stars refunds: ")
+            "<p>↩️ " + display_currency("XTR") + " · "
+            + tr("Возвраты: ", "Refunds: ")
             + str(refunds) + " · "
-            + str(int(stars["refunded_stars"])) + " ⭐ · "
+            + str(int(stars["refunded_stars"])) + " "
+            + display_currency("XTR") + " · "
             + tr("Кредит по комиссии: ", "Commission credit: ")
             + "$" + escape(format(
                 Decimal(str(stars["commission_credit_usd"])), ".2f",
@@ -424,8 +430,8 @@ def _saas_stars_rich(stars: dict) -> str:
         )
     if int(stars.get("pending_reconciliation", 0)):
         lines.append("<p>⚠️ " + tr(
-            "Есть оплаты Stars, ожидающие учёта: ",
-            "Stars purchases awaiting reconciliation: ",
+            "Оплаты Telegram Stars ожидают учёта: ",
+            "Telegram Stars purchases awaiting reconciliation: ",
         ) + str(int(stars["pending_reconciliation"])) + "</p>")
     lines.append("<p><i>" + tr(
         "Продажи и возвраты сохраняются отдельно по официальному "

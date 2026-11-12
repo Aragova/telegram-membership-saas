@@ -319,8 +319,8 @@ def create_file_sales_router(
         text = (
             "📦 <b>" + escape(item.name) + "</b>\n"
             + (escape(item.description) + "\n" if item.description else "")
-            + (tr("⭐ Цена в звёздах Telegram: ", "⭐ Telegram Stars price: ")
-               + str(item.stars_price) + " ⭐\n"
+            + (tr("⭐ Telegram Stars · Цена: ", "⭐ Telegram Stars · Price: ")
+               + str(item.stars_price) + "\n"
                if item.stars_price is not None else "")
             + tr("📎 Файлов: ", "📎 Files: ") + str(count)
         )
@@ -336,7 +336,7 @@ def create_file_sales_router(
                     escape(
                         (format(amount, "f").rstrip("0").rstrip(".")
                          if "." in format(amount, "f") else str(amount))
-                        + " " + code
+                        + " " + display_currency(code)
                     )
                     for code, amount in prices if amount is not None
                 )

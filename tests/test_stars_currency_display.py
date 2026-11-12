@@ -1,5 +1,6 @@
 """Telegram Stars always has one human label; the Bot API keeps XTR."""
 
+from dataclasses import replace
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -78,3 +79,21 @@ def test_stars_catalog_offer_and_rich_have_no_visible_xtr():
     offer_rich = rich_subscription_offer_html(offer)
     assert "500 ⭐ Telegram Stars" in offer_rich
     assert "XTR" not in offer_rich
+
+
+def test_long_star_plan_button_keeps_complete_branding():
+    offer = _stars_offer()
+    option = replace(
+        offer.option,
+        plan_name="X" * 23,
+        duration_value=100,
+        amount=Decimal("250000"),
+    )
+    longer = replace(offer, option=option, methods=(option,))
+    catalog, keys = catalog_screen((longer,), currency="XTR")
+    labels = [button.text for row in keys.inline_keyboard for button in row]
+    plan_button = next(x for x in labels if x.startswith("💎 "))
+    assert len(plan_button) <= 64
+    assert plan_button.endswith("250000 ⭐ Telegram Stars")
+    assert "XTR" not in plan_button
+    assert "250000 ⭐ Telegram Stars" in catalog
