@@ -1,3 +1,17 @@
+## 2026-11-12 — Single integrated commercial billing release PR
+
+The existing connected-bot `🧾 Счёт` will replace duplicative FX and
+Stars preview cards with one immutable-source read-only month summary across
+approved manual subscriptions/files, verified native Stars sales, verified
+Crypto Pay sales, and separate refund evidence. Sale-day CBR RUB conversion
+is required; an unresolved rate remains visible, never zero or fabricated.
+The 72-hour one-owner trial and activation cutoff determine fee eligibility.
+This migration is strictly read-only until the SAME PR also supplies monthly
+invoice source issuance, partial bank attempts/review/allocations, effective
+holds and full E2E. DO NOT turn on SaaS billing from the preview alone.
+
+---
+
 ## 2026-11-12 — Crypto Pay #141A refund evidence (not live billing)
 
 The official @CryptoBot Crypto Pay API has no direct refundInvoice endpoint.

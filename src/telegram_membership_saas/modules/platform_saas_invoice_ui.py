@@ -226,3 +226,96 @@ def issued_quote_classic(quote: dict) -> str:
             "Currency and rate become immutable. This does not confirm payment.",
         ) + "</i>",
     ])
+
+
+def unified_monthly_rich(report: dict) -> str:
+    """Compact verified-source commission snapshot, not an issued invoice."""
+    if not isinstance(report.get("rails"), list):
+        raise ValueError("Missing unified financial sources")
+    labels = {
+        "subscription": tr("Подписки · переводы", "Subscriptions · manual"),
+        "file_manual": tr("Файлы · переводы", "Files · manual"),
+        "file_stars": tr("Файлы · Stars", "Files · Stars"),
+        "subscription_stars": tr("Подписки · Stars", "Subscriptions · Stars"),
+        "file_crypto": tr("Файлы · Crypto Pay", "Files · Crypto Pay"),
+        "subscription_crypto": tr("Подписки · Crypto Pay", "Subscriptions · Crypto Pay"),
+    }
+    html = [
+        "<h3>" + tr("📊 Начисления ViMi Pay", "📊 ViMi Pay accruals") + "</h3>",
+        "<p>" + _safe(str(report["month"])[:7]) + " · "
+        + (tr("Предпросмотр, начисления отключены",
+              "Preview, commercial billing is disabled")
+           if not report["billing_enabled"] else
+           tr("Только предварительные начисления",
+              "Provisional charges only")) + "</p>",
+        "<table bordered compact>",
+        "<tr><th>" + tr("Продажи", "Sales") + "</th><th>"
+        + tr("Кол-во", "Count") + "</th><th>"
+        + tr("Комиссия ₽", "Commission ₽") + "</th></tr>",
+    ]
+    for item in report["rails"]:
+        html.append(
+            "<tr><td>" + labels.get(item["kind"], _safe(item["kind"]))
+            + "</td><td>" + str(int(item["sold"]))
+            + "</td><td>" + _money(item["commission_rub"])
+            + "</td></tr>"
+        )
+    html.extend([
+        "</table>",
+        "<p>" + tr("5% предварительно: ", "5% provisional: ")
+        + "<b>" + _money(report["commission_rub"]) + " ₽</b></p>",
+    ])
+    if report["unrated_billable"] or report["uncaptured_crypto"]:
+        html.append("<p>" + tr(
+            "⚠️ Требуют подтверждения: ", "⚠️ Needs verification: "
+        ) + str(int(report["unrated_billable"])) + " FX · "
+        + str(int(report["uncaptured_crypto"])) + " Crypto Pay</p>")
+    star_credit = Decimal(str(report["star_refund_credit_usd"]))
+    crypto_credit = Decimal(str(report["crypto_refund_credit_usd"]))
+    if star_credit or crypto_credit:
+        html.append(
+            "<p>" + tr("↩️ Возвраты: Stars $", "↩️ Refunds: Stars $")
+            + _money(star_credit)
+            + tr(" · Crypto Pay $", " · Crypto Pay $")
+            + _money(crypto_credit)
+            + tr(" (ещё не зачтены)", " (not yet applied)") + "</p>"
+        )
+    return "\n".join(html)
+
+
+def unified_monthly_classic(report: dict) -> str:
+    """HTML fallback shares exactly the data in the Rich card."""
+    if not isinstance(report.get("rails"), list):
+        raise ValueError("Missing unified financial sources")
+    labels = {
+        "subscription": tr("Подписки · переводы", "Subscriptions · manual"),
+        "file_manual": tr("Файлы · переводы", "Files · manual"),
+        "file_stars": tr("Файлы · Stars", "Files · Stars"),
+        "subscription_stars": tr("Подписки · Stars", "Subscriptions · Stars"),
+        "file_crypto": tr("Файлы · Crypto Pay", "Files · Crypto Pay"),
+        "subscription_crypto": tr("Подписки · Crypto Pay", "Subscriptions · Crypto Pay"),
+    }
+    rows = [
+        tr("📊 <b>Начисления ViMi Pay</b>",
+           "📊 <b>ViMi Pay accruals</b>"),
+        _safe(str(report["month"])[:7]),
+    ]
+    for item in report["rails"]:
+        rows.append(
+            "• " + labels.get(item["kind"], _safe(item["kind"]))
+            + " · " + str(int(item["sold"])) + " · "
+            + _money(item["commission_rub"]) + " ₽"
+        )
+    rows.extend([
+        tr("5% предварительно: ", "5% provisional: ")
+        + "<b>" + _money(report["commission_rub"]) + " ₽</b>",
+        tr("ℹ️ Это не выставленный счёт.",
+           "ℹ️ This is not an issued invoice."),
+    ])
+    if report["unrated_billable"] or report["uncaptured_crypto"]:
+        rows.append(
+            tr("⚠️ Неоценённых источников: ", "⚠️ Unvalued sources: ")
+            + str(int(report["unrated_billable"])
+                  + int(report["uncaptured_crypto"]))
+        )
+    return "\n".join(rows)

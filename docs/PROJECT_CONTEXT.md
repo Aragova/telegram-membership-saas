@@ -1,3 +1,17 @@
+## 2026-11-12 — One PR for commercial billing release
+
+Implementing a single integrated release branch
+`feat/144-commercial-billing-unified-release`. First backend gate: a
+read-only, owner-scoped monthly commercial preview from manual + Stars
++ Crypto Pay and verified refunds, source-date USD/RUB, and pending
+unvalued sales. Same branch continues through source-linked invoicing,
+partial bank proof and operator approval, merchant service activation,
+trial/holds, RU/EN Rich, regression tests. SaaS billing remains OFF
+until verified acceptance and an explicit future effective date.
+No retroactive charges or access revocations.
+
+---
+
 ## 2026-11-12 — #143 Crypto Pay buyer release (single PR)
 
 Prior stages #133-#142 already supply merchant credential configuration,
