@@ -631,6 +631,29 @@ async def review_manual_order(
                 "Авторизована оплата Stars. Сначала проверьте её результат.",
                 "Stars payment is authorized. Reconcile it before approval.",
             ))
+        if approve:
+            confirmed_crypto = await session.scalar(select(CryptoPayInvoice.id).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == order.telegram_user_id,
+                CryptoPayInvoice.product_id == order.product_id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
+            ).limit(1))
+            confirmed_stars = await session.scalar(select(FilePurchase.id).where(
+                FilePurchase.project_id == project_id,
+                FilePurchase.telegram_bot_id == bot_id,
+                FilePurchase.telegram_user_id == order.telegram_user_id,
+                FilePurchase.product_id == order.product_id,
+                FilePurchase.status == "paid",
+            ).limit(1))
+            if confirmed_crypto is not None or confirmed_stars is not None:
+                raise ValueError(tr(
+                    "Файл уже куплен другим способом. Проверьте возврат "
+                    "или разбор ручного перевода, не подтверждая оплату повторно.",
+                    "File already purchased through another payment method. "
+                    "Reconcile or refund the manual transfer, do not approve twice.",
+                ))
         if approve and await _has_unsettled_crypto_file_invoice(
             session, project_id=project_id, bot_id=bot_id,
             buyer_id=order.telegram_user_id, product_id=order.product_id,
