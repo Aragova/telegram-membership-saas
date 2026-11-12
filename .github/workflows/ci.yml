@@ -193,6 +193,7 @@ jobs:
                       "public.platform_saas_star_refund_credits, "
                       "public.platform_saas_star_subscription_credits, "
                       "public.platform_saas_crypto_capture_control, "
+                      "public.platform_saas_crypto_scan_cursor, "
                       "public.platform_saas_crypto_sales "
                       "FROM membership_runtime"
                   )
