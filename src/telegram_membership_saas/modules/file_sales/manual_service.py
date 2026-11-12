@@ -14,6 +14,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
@@ -371,7 +372,7 @@ async def create_manual_order(
         ).limit(1))
         if crypto_paid is not None:
             return crypto_paid, True
-        if await _has_authorized_file_stars(
+        if get_settings().crypto_pay_buyer_enabled and await _has_authorized_file_stars(
             session, project_id=project_id, bot_id=bot_id,
             buyer_id=buyer_id, product_id=product_id,
         ):
@@ -623,10 +624,11 @@ async def review_manual_order(
                 "Проверять можно только заявку с чеком",
                 "Only requests with a receipt can be reviewed",
             ))
-        if approve and await _has_authorized_file_stars(
+        if (approve and get_settings().crypto_pay_buyer_enabled
+                and await _has_authorized_file_stars(
             session, project_id=project_id, bot_id=bot_id,
             buyer_id=order.telegram_user_id, product_id=order.product_id,
-        ):
+        )):
             raise ValueError(tr(
                 "Авторизована оплата Stars. Сначала проверьте её результат.",
                 "Stars payment is authorized. Reconcile it before approval.",
