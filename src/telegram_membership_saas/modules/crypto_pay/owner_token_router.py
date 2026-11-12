@@ -34,6 +34,10 @@ def _plausible_merchant_token(value: str | None) -> bool:
     # Classify the same normalized text the credential handler consumes,
     # BEFORE any earlier file/transfer/buyer-message router can see it.
     cleaned = value.strip() if isinstance(value, str) else ""
+    # Ordinary https:// channel/support links must remain available to
+    # customer chat; they are not merchant API credentials.
+    if cleaned.lower().startswith(("https://", "http://", "tg://")):
+        return False
     return bool(
         20 <= len(cleaned) <= 256 and cleaned.isascii()
         and not any(ch.isspace() for ch in cleaned)

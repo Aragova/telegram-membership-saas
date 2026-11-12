@@ -144,6 +144,12 @@ def test_plain_messages_do_not_trigger_secret_db_filter(payload):
     assert not crypto._plausible_merchant_token(payload)
 
 
+def test_ordinary_telegram_links_are_not_scrubbed_as_api_tokens():
+    assert not crypto._plausible_merchant_token(
+        "https://t.me/vimi_support_bot",
+    )
+
+
 @pytest.mark.parametrize(
     "pasted", [
         "  123456:" + "C" * 35 + "\n",
@@ -309,7 +315,7 @@ async def test_expired_token_cannot_fall_through_to_old_buyer_reply(
     bot.send_message = AsyncMock()
     message = _message("  123456:" + "C" * 35 + "\n")
     router = crypto.create_crypto_secret_router(MagicMock(), project_id=project)
-    filt = router.message.handlers[0].filters[0].callback
+    filt = crypto.CryptoPaySecretFilter(MagicMock(), project)
     assert await filt(message, bot) is True
     await _router_handler(router)(message, bot)
 
@@ -352,7 +358,7 @@ async def test_malformed_first_attempt_does_not_disable_secure_retry(
     bot.delete_message = AsyncMock(return_value=True)
     bot.send_message = AsyncMock()
     router = crypto.create_crypto_secret_router(MagicMock(), project_id=project)
-    filt = router.message.handlers[0].filters[0].callback
+    filt = crypto.CryptoPaySecretFilter(MagicMock(), project)
     handler = _router_handler(router)
 
     # Bad input is deleted and not routed to alternate owner SetupReplyFilter.
