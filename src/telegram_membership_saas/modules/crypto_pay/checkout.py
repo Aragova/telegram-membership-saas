@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayError,
     CryptoPayInvoiceReceipt,
     invoice_price_spec,
+    verify_created_invoice_snapshot,
     verify_paid_invoice,
 )
 from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp, CryptoPayInvoice
@@ -326,6 +327,72 @@ async def issue_reserved_crypto_invoice(
         return IssuedCryptoInvoice(
             id=record.id, url=record.invoice_url,
             amount=record.amount, currency_code=record.currency_code,
+        )
+
+
+
+async def recover_uncertain_crypto_invoice(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, invoice_id: UUID, encryption_key: SecretStr | None,
+    client_factory: Callable[..., CryptoPayClient] = CryptoPayClient,
+    max_pages: int = 5,
+) -> IssuedCryptoInvoice:
+    """Find a timed-out createInvoice by its unique frozen payload.
+
+    Scans up to 500 recent invoices on the original app. Absence in a
+    bounded page scan is NEVER proof the provider did not create the invoice:
+    leave the durable 'issuing' row for later/manual recovery.
+    """
+    if type(max_pages) is not int or not 1 <= max_pages <= 10:
+        raise ValueError("Crypto Pay reconciliation page limit is invalid")
+    async with system_project_session_scope(factory, project_id) as session:
+        record = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.id == invoice_id,
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.status == "issuing",
+        ))
+        if record is None:
+            raise CryptoPayError("Crypto Pay has no uncertain invoice to reconcile")
+        app, token = await load_crypto_app_token(
+            session, project_id=project_id, app_id=record.app_id,
+            encryption_key=encryption_key,
+        )
+        payload = record.payload
+        amount, code, currency_type = (
+            record.amount, record.currency_code, record.currency_type,
+        )
+        testnet = app.environment == "testnet"
+        app_id = app.id
+    found: list[dict] = []
+    async with client_factory(token, testnet=testnet) as provider:
+        for page in range(max_pages):
+            invoices = await provider.list_recent_invoices(
+                offset=page * 100, count=100,
+            )
+            found.extend(invoice for invoice in invoices if invoice.get("payload") == payload)
+            if len(invoices) < 100:
+                break
+    if len(found) != 1:
+        raise CryptoPayError("Uncertain Crypto Pay invoice requires further reconciliation")
+    provider_id, link = verify_created_invoice_snapshot(
+        found[0], payload=payload, amount=amount,
+        currency_code=code, currency_type=currency_type, testnet=testnet,
+    )
+    async with system_project_session_scope(factory, project_id) as session:
+        record = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.id == invoice_id,
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.app_id == app_id,
+        ).with_for_update())
+        if (record is None or record.status != "issuing" or record.payload != payload
+                or record.amount != amount or record.currency_code != code):
+            raise CryptoPayError("Invoice changed during provider reconciliation")
+        record.provider_invoice_id = provider_id
+        record.invoice_url = link
+        record.status = "issued"
+        await session.flush()
+        return IssuedCryptoInvoice(
+            id=invoice_id, url=link, amount=amount, currency_code=code,
         )
 
 
