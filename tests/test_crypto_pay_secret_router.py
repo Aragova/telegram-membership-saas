@@ -54,17 +54,19 @@ async def test_secret_filter_only_intercepts_plausible_active_merchant_token(
     guard = crypto.CryptoPaySecretFilter(MagicMock(), project)
     bot = SimpleNamespace(id=654321)
 
+    active.return_value = False
     assert await guard(_message("ordinary buyer text"), bot) is False
-    active.assert_not_awaited()
-
-    assert await guard(_message(), bot) is True
-    # Same secret, pasted with spaces/newline while quoting an old buyer
-    # notification, MUST still be captured and deleted before forwarding.
-    assert await guard(_message("  123456:" + "C" * 35 + "\n"), bot) is True
     assert active.await_args.kwargs["project_id"] == project
     assert active.await_args.kwargs["bot_scope_id"] == bot.id
-    active.return_value = False
-    assert await guard(_message(), bot) is False
+
+    # Credential-shaped text must be deleted EVEN when the old wizard expired.
+    assert await guard(_message(), bot) is True
+    assert await guard(_message("  123456:" + "C" * 35 + "\n"), bot) is True
+    # Short malformed input is also captured if the secret wizard is active.
+    active.return_value = True
+    assert await guard(_message("short"), bot) is True
+    assert await guard(_message("normal file description"), bot) is True
+    assert await guard(_message("/cancel"), bot) is False
 
 
 async def test_priority_handler_deletes_token_before_authentication_and_never_echoes(
@@ -282,3 +284,89 @@ async def test_concurrent_owner_navigation_is_not_discarded_after_verification(
         label in str(bot.send_message.await_args)
         for label in ("защищённо подключён", "securely connected")
     )
+
+
+async def test_expired_token_cannot_fall_through_to_old_buyer_reply(
+    monkeypatch,
+):
+    """A credential-shaped message is deleted after the wizard's TTL."""
+    project = uuid4()
+    actor = uuid4()
+    monkeypatch.setattr(
+        crypto, "ensure_telegram_actor", AsyncMock(return_value=actor),
+    )
+    monkeypatch.setattr(
+        crypto, "active_crypto_pay_secret_prompt", AsyncMock(return_value=False),
+    )
+    read = AsyncMock(return_value=None)
+    monkeypatch.setattr(crypto, "read_crypto_pay_secret_prompt", read)
+    connect = AsyncMock()
+    monkeypatch.setattr(crypto, "connect_crypto_pay", connect)
+
+    bot = MagicMock()
+    bot.id = 654321
+    bot.delete_message = AsyncMock(return_value=True)
+    bot.send_message = AsyncMock()
+    message = _message("  123456:" + "C" * 35 + "\n")
+    router = crypto.create_crypto_secret_router(MagicMock(), project_id=project)
+    filt = router.message.handlers[0].filters[0].callback
+    assert await filt(message, bot) is True
+    await _router_handler(router)(message, bot)
+
+    bot.delete_message.assert_awaited_once()
+    read.assert_awaited_once()
+    connect.assert_not_awaited()
+    assert "123456:" not in str(bot.send_message.await_args_list)
+    assert any(
+        word in str(bot.send_message.await_args)
+        for word in ("удалено", "deleted")
+    )
+
+
+async def test_malformed_first_attempt_does_not_disable_secure_retry(
+    monkeypatch,
+):
+    project, actor = uuid4(), uuid4()
+    flow = SetupFlow(
+        "crypto_pay_token", project, {"environment": "testnet"},
+        17, generation="still-active",
+    )
+    monkeypatch.setattr(
+        crypto, "ensure_telegram_actor", AsyncMock(return_value=actor),
+    )
+    active = AsyncMock(return_value=True)
+    monkeypatch.setattr(crypto, "active_crypto_pay_secret_prompt", active)
+    read = AsyncMock(return_value=flow)
+    monkeypatch.setattr(crypto, "read_crypto_pay_secret_prompt", read)
+    connect = AsyncMock(side_effect=[ValueError("invalid token"), None])
+    monkeypatch.setattr(crypto, "connect_crypto_pay", connect)
+    consume = AsyncMock()
+    monkeypatch.setattr(crypto, "consume_button_flow", consume)
+    monkeypatch.setattr(
+        crypto, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="example-key"),
+    )
+
+    bot = MagicMock()
+    bot.id = 654321
+    bot.delete_message = AsyncMock(return_value=True)
+    bot.send_message = AsyncMock()
+    router = crypto.create_crypto_secret_router(MagicMock(), project_id=project)
+    filt = router.message.handlers[0].filters[0].callback
+    handler = _router_handler(router)
+
+    # Bad input is deleted and not routed to alternate owner SetupReplyFilter.
+    assert await filt(_message("short"), bot)
+    await handler(_message("short"), bot)
+    consume.assert_not_awaited()
+    assert read.await_count == 1
+
+    # Subsequent valid input quoting stale buyer notification still
+    # reaches this first router and completes exactly once.
+    good = _message()
+    assert await filt(good, bot)
+    await handler(good, bot)
+    assert read.await_count == 2
+    assert connect.await_count == 2
+    consume.assert_awaited_once()
+    assert "123456:" not in str(bot.send_message.await_args_list)
