@@ -394,7 +394,7 @@ async def _send_catalog(
     """Build a fresh, project-isolated catalog and edit the current screen."""
     async with system_project_session_scope(session_factory, project_id) as session:
         offers = await list_buyer_offers(
-            session, project_id=project_id, bot_id=bot.id,
+            session, project_id=project_id, bot_id=getattr(bot, "id", None),
         )
     if price_id is not None:
         rendered = offer_screen(offers, price_id=price_id, page=page)
