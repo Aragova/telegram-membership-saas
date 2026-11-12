@@ -69,6 +69,7 @@ from telegram_membership_saas.modules.file_sales.service import (
 from telegram_membership_saas.modules.owner_setup.service import (
     can_manage_project,
     ensure_telegram_actor,
+    is_expected_prompt,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
@@ -135,10 +136,14 @@ async def _deliver(
 
 
 class FileEditorFilter(BaseFilter):
-    def __init__(self, pending: dict[int, dict]):
+    def __init__(
+        self, pending: dict[int, dict],
+        factory: async_sessionmaker[AsyncSession],
+    ):
         self.pending = pending
+        self.factory = factory
 
-    async def __call__(self, message: Message) -> bool:
+    async def __call__(self, message: Message, bot: Bot) -> bool:
         if message.from_user is None or message.chat.type != "private":
             return False
         # A pending admin editor must never swallow a Stars successful_payment
@@ -153,6 +158,21 @@ class FileEditorFilter(BaseFilter):
             self.pending.pop(message.from_user.id, None)
             return False
         if message.text and message.text.startswith("/"):
+            return False
+        # A merchant API secret must NEVER be swallowed by an older file
+        # editor. The owner setup state is persistent and bot-scoped; the
+        # file draft's in-memory pending dictionary is not. Give live owner
+        # forms priority and retire the stale draft editor immediately.
+        actor = await ensure_telegram_actor(
+            self.factory, telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+        if await is_expected_prompt(
+            self.factory, actor_id=actor, bot_scope_id=bot.id,
+            reply_message_id=None,
+        ):
+            self.pending.pop(message.from_user.id, None)
             return False
         return True
 
@@ -961,7 +981,7 @@ def create_file_sales_router(
             await query.answer(tr("Ошибка Telegram. Попробуйте снова.",
                                   "Telegram error. Try again."), show_alert=True)
 
-    @router.message(FileEditorFilter(pending))
+    @router.message(FileEditorFilter(pending, factory))
     async def editor_message(message: Message, bot: Bot) -> None:
         if message.from_user is None:
             return

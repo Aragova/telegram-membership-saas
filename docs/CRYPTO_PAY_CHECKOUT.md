@@ -88,3 +88,13 @@ tenant permission and BotInstance identity; moderators cannot substitute
 merchant credentials. File sales and subscription billing will use this
 SAME credential, not separate Crypto Pay settings. No buyer payment option
 is added until automatic verified fulfillment works.
+
+### Secret input precedence vs stale editors (PR #134)
+
+File sales draft editors and file price editors are registered BEFORE owner
+setup in aiogram. They now check the active owner setup prompt for the same
+user AND connected bot, and drop their stale in-memory editor when any
+current owner wizard is awaiting input. This prevents merchant secrets being
+saved as a product title, description or price. The actual owner input
+handler deletes token messages BEFORE contacting Crypto Pay. Regressions
+exercise both file-sale routers and ensure normal editors remain usable.
