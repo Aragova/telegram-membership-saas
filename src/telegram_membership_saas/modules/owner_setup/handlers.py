@@ -542,7 +542,7 @@ def _saas_preview_classic(preview: dict) -> str:
     ]
     for item in preview.get("rows", []):
         amount = escape(str(item["gross"]))
-        currency = escape(str(item["currency"]))
+        currency = escape(display_currency(str(item["currency"])))
         is_missing = int(item.get("missing", 0))
         fee = (
             tr("освобождён", "exempt") if preview["is_platform_owner"]
@@ -1088,8 +1088,10 @@ def create_owner_setup_router(
                 + _saas_invoices_rich(report),
                 classic_html=_saas_preview_classic(preview) + "\n"
                 + (
-                    tr("⭐ Продано: ", "⭐ Stars sold: ")
-                    + str(stars["stars"]) + " ⭐ · "
+                    display_currency("XTR") + " · "
+                    + tr("Продано: ", "Sold: ")
+                    + str(stars["stars"]) + " "
+                    + display_currency("XTR") + " · "
                     + tr("Возвратов: ", "Refunds: ")
                     + str(int(stars.get("refunds", 0))) + " · "
                     + tr("Кредит: ", "Credit: ")
