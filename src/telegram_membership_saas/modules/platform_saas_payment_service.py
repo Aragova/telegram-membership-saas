@@ -84,6 +84,40 @@ async def configure_platform_saas_payment(
             raise RuntimeError("Platform payment configuration unavailable")
 
 
+
+async def merchant_saas_unified_monthly_preview(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, month: date,
+    project_id: UUID | None = None,
+) -> dict:
+    """One read-only monthly preview across manual, Stars and Crypto Pay.
+
+    Missing official rates stay visibly unresolved; receipts and paid
+    purchases are never modified by a report request.
+    """
+    if month.day != 1:
+        raise ValueError("The billing month must start on day one")
+    stmt = text(
+        "SELECT public.platform_saas_unified_monthly_preview("
+        ":owner,:month,:project) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        if project_id is not None:
+            holder = await session.scalar(select(Project.owner_user_id).where(
+                Project.id == project_id
+            ))
+            if holder != actor_user_id:
+                raise PermissionError("Only project owner may read sale history")
+        data = (await session.execute(stmt, {
+            "owner": actor_user_id, "month": month, "project": project_id,
+        })).scalar_one()
+    if not isinstance(data, dict) or not isinstance(data.get("rails"), list):
+        raise RuntimeError("Invalid unified ViMi Pay commission preview")
+    return data
+
+
 async def merchant_saas_project_preview(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID, project_id: UUID, month: date,

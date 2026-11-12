@@ -44,6 +44,8 @@ async def test_issued_bill_card_works_without_selected_project(monkeypatch, lang
     })
     monkeypatch.setattr(ui, "saas_invoice_currency_snapshot", snapshot)
     monkeypatch.setattr(ui, "saas_invoice_credit_history", credit)
+    balance = AsyncMock(return_value={"remaining_rub": "150.00"})
+    monkeypatch.setattr(ui, "saas_v2_invoice_balance", balance)
     router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=None)
     callback_handler = next(
         h.callback for h in router.callback_query.handlers
@@ -67,6 +69,8 @@ async def test_issued_bill_card_works_without_selected_project(monkeypatch, lang
     get_project.assert_not_awaited()
     snapshot.assert_awaited_once()
     credit.assert_awaited_once()
+    balance.assert_awaited_once()
+    assert balance.await_args.kwargs["project_id"] is None
     get_statements.assert_awaited_once()
     assert get_statements.await_args.kwargs["project_id"] is None
     assert get_statements.await_args.kwargs["actor_user_id"] == actor_id
