@@ -322,3 +322,53 @@ false on staging/production until Crypto Pay sale-source classification,
 sale-date FX, reversals and commission tests are integrated. No SaaS invoice
 issuance or subscription hold is enabled by this PR. End-to-end migration
 and recovery tests remain mandatory for launch.
+
+### USD commission evidence for Crypto Pay, preview-only (PR #140)
+
+PR #140 adds **an independent source-linked accounting record** to the
+existing ViMi Pay SaaS financial architecture. It does **not** add a second
+buyer order, monthly invoice, payment method, collection bot or supervisor.
+
+- The original `Crypto Pay getInvoices` paid response is still verified
+  against seller app, original invoice ID, payload, asset, amount and paid_at
+  before the buyer receives a subscription or file. When the invoice was
+  denominated in crypto, the official **`paid_usd_rate` from that exact
+  paid invoice** is saved in `crypto_pay_paid_usd_rates` in the SAME DB
+  transaction, append-only and RLS-scoped. Never use current market quotes
+  to backdate a payment. If the API omits `paid_usd_rate`, the buyer still
+  receives the purchase; finance stays `pending_valuation` until authoritative
+  payment-time rate evidence is available.
+- Invoices denominated in fiat: USD is 1:1; RUB/EUR/UAH/BYN/etc use the
+  existing **CBR sale-date**, Moscow timezone, published daily FX rows.
+  Conversion is `amount * RUB_per_source / RUB_per_USD`. A missing
+  official rate blocks the accounting record, NOT fulfilment. BTC/TON/USDT/
+  USDC/ETH invoices instead use the actual provider `paid_usd_rate`.
+  Stablecoins are never presumed to be exactly $1.
+- Once per five minutes, the EXISTING shard-zero supervisor runs a bounded,
+  owner-authorized `platform_saas_capture_crypto_sales` SQL function.
+  Each verified paid original source produces at most one immutable USD
+  snapshot in `platform_saas_crypto_sales`: paid timestamp, owner/merchant
+  from historical project periods, historical bot and creator exemption,
+  original amount, source quotation, exact gross USD and **5% USD** fee.
+  Triggers protect this ledger and project isolation; normal customer bots
+  have no direct read/write access to this global SaaS sale record.
+- The platform owner's own projects, 72h trial, unstarted billing,
+  historical bot mismatch and unverified rates are NEVER silently billed.
+  `platform_saas_crypto_project_summary` is **owner-only, preview-only**,
+  reports `gross_usd`, `commission_usd`, `billable_commission_usd` and
+  `pending_valuation`. No customer access depends on these reports.
+- New migration `0064_crypto_sale_usd_evidence` creates the trusted
+  payment USD evidence, immutable SaaS crypto sale ledger, start cutoff,
+  RLS/grants and read-only functions. It leaves existing manual/Stars
+  payment and SaaS invoice schemas intact. Existing historical paid
+  testnet and pre-cutoff invoices are not backbilled.
+
+**Launch gate remains CLOSED.** This PR only records auditable 5% USD
+evidence. The existing monthly RUB invoice issuance function does NOT yet
+incorporate crypto sales; refunds, corrections and provider dispute
+reconciliation require explicit commercial credit handling before billing
+can be activated. Do NOT set `TMS_CRYPTO_PAY_BUYER_ENABLED=true`, activate
+SaaS invoicing, charge real merchant accounts or deploy automatically based
+only on this source-ledger PR. Follow-up PR must include immutable crypto
+refund credits, authoritative monthly invoice aggregation/conversion and
+full live E2E before the owner can approve buyer activation.
