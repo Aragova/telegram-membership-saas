@@ -602,6 +602,9 @@ async def review_manual_order(
     order_id: UUID, approve: bool,
 ) -> tuple[FileManualOrder, bool]:
     async with system_project_session_scope(factory, project_id) as session:
+        # Serialize human approval with Crypto Pay reserve/issue and Stars
+        # precheckout; none may authorize a competing charge meanwhile.
+        await checkout_retirement_lock(session, project_id)
         await require_payment_permission(
             session, project_id=project_id, actor_user_id=actor_id,
             permission=Permission.PAYMENT_APPROVE if approve else Permission.PAYMENT_REJECT,
