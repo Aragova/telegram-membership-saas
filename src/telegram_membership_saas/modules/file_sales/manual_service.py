@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
 from telegram_membership_saas.modules.file_sales.manual_models import (
     FileManualOrder,
     FileManualPrice,
@@ -321,7 +322,7 @@ async def create_manual_order(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, product_id: UUID,
     currency: str, method_id: UUID,
-) -> tuple[FileManualOrder | FilePurchase, bool]:
+) -> tuple[FileManualOrder | FilePurchase | CryptoPayInvoice, bool]:
     async with system_project_session_scope(factory, project_id) as session:
         # Serialize manual checkout against transfer finalization and bot retirement.
         await checkout_retirement_lock(session, project_id)
@@ -354,6 +355,16 @@ async def create_manual_order(
         ).limit(1))
         if approved:
             return approved, True
+        crypto_paid = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+            CryptoPayInvoice.product_id == product_id,
+            CryptoPayInvoice.kind == "file",
+            CryptoPayInvoice.status == "paid",
+        ).limit(1))
+        if crypto_paid is not None:
+            return crypto_paid, True
         options = await _methods(
             session, project_id=project_id, bot_id=bot_id,
             product_id=product_id,
