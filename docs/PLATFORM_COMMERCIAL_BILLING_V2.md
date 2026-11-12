@@ -1,3 +1,17 @@
+## 2026-11-12 — Crypto Pay #141A refund evidence (not live billing)
+
+The official @CryptoBot Crypto Pay API has no direct refundInvoice endpoint.
+An explicitly labelled, completed original-merchant `getTransfers`
+payout to the same buyer and same crypto asset can be recorded as an
+immutable partial/full commission credit, using the **original paid sale**
+USD rate, with caps/idempotency. Its preview is **unapplied**: no
+invoice offsets, paid-status changes, holds, or buyer re-entitlements.
+Only crypto-denominated invoices with verified transferred asset are
+supported. Crypto Pay buyer activation and commercial billing remain OFF
+until fiat paid-asset refunds and monthly invoice integration are reviewed.
+
+---
+
 ## PR #129 — Native Stars refunds without subscription-access regressions (2026-11-11)
 
 Migration `0056_saas_star_refunds` adds an immutable, tenant-scoped record

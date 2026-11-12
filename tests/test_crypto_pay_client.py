@@ -12,6 +12,7 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayError,
     invoice_price_spec,
     verify_created_invoice_snapshot,
+    verify_completed_transfer,
     verify_paid_invoice,
     verify_webhook_signature,
 )
@@ -273,3 +274,55 @@ def test_recovered_expired_invoice_is_terminal_without_a_payment_link():
         altered = {**snapshot, **change}
         with pytest.raises(CryptoPayError):
             verify_created_invoice_snapshot(altered, **expected)
+
+
+async def test_verified_crypto_refund_transfer_requires_original_spend_and_buyer():
+    spend_id = "vimi-refund:11111111-1111-4111-8111-111111111111:abcd1234"
+    paid_at = datetime.now(UTC).isoformat()
+    response = {
+        "transfer_id": 1703, "spend_id": spend_id,
+        "status": "completed", "user_id": "741852",
+        "asset": "TON", "amount": "0.25", "completed_at": paid_at,
+    }
+    result = verify_completed_transfer(
+        response, spend_id=spend_id, buyer_id=741852, asset_code="TON",
+    )
+    assert result.transfer_id == 1703
+    assert result.amount == Decimal("0.25")
+    for mutated in (
+        {"spend_id": "other"}, {"user_id": "123"}, {"asset": "BTC"},
+        {"status": "pending"}, {"transfer_id": -1},
+        {"completed_at": "2026-11-12T10:00:00"},
+        {"amount": "0.0000000000000000001"},
+    ):
+        with pytest.raises(CryptoPayError):
+            verify_completed_transfer(
+                {**response, **mutated}, spend_id=spend_id,
+                buyer_id=741852, asset_code="TON",
+            )
+
+
+async def test_readonly_crypto_transfer_query_is_bounded_and_safe():
+    spend_id = "vimi-refund:11111111-1111-4111-8111-111111111111:abcd1234"
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        import json
+
+        assert request.url.host == "testnet-pay.crypt.bot"
+        assert request.url.path.endswith("/getTransfers")
+        assert json.loads(request.content) == {"spend_id": spend_id}
+        return httpx.Response(200, json={"ok": True, "result": {"items": [{
+            "transfer_id": 1703, "spend_id": spend_id,
+            "status": "completed", "user_id": "741852",
+            "asset": "TON", "amount": "0.25",
+            "completed_at": datetime.now(UTC).isoformat(),
+        }]}})
+
+    async with CryptoPayClient(
+        TOKEN, testnet=True, transport=httpx.MockTransport(fake),
+    ) as provider:
+        rows = await provider.get_transfers(spend_id=spend_id)
+        assert len(rows) == 1
+        with pytest.raises(ValueError):
+            await provider.get_transfers(spend_id="")
+

@@ -69,6 +69,27 @@ async def capture_crypto_sale_evidence(
     return result
 
 
+async def crypto_refund_project_summary(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, project_id: UUID, billing_month: date,
+) -> dict:
+    """Owner-scoped transfer-backed refund credits, not netted against bills."""
+    if billing_month.day != 1:
+        raise ValueError("Crypto Pay refund month must start on day one")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        data = (await session.execute(text(
+            "SELECT public.platform_saas_crypto_refund_summary("
+            ":project,:month) AS data"
+        ).columns(data=JSONB), {
+            "project": project_id, "month": billing_month,
+        })).scalar_one()
+    if not isinstance(data, dict) or "commission_credit_usd" not in data:
+        raise RuntimeError("Invalid Crypto Pay refund report")
+    return data
+
+
 async def crypto_sale_project_summary(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID,

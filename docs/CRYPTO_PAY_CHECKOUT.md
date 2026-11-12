@@ -382,3 +382,35 @@ SaaS invoicing, charge real merchant accounts or deploy automatically based
 only on this source-ledger PR. Follow-up PR must include immutable crypto
 refund credits, authoritative monthly invoice aggregation/conversion and
 full live E2E before the owner can approve buyer activation.
+
+
+### #141A: verified original-app crypto refund ledger (migration 0065)
+
+A refund is **not** automatically inferred from a merchant transfer or from
+an invoice status. The official @CryptoBot Crypto Pay API exposes
+`getTransfers`, not the unrelated third-party API `refundInvoice`.
+For crypto-denominated purchases only, an explicitly invoice-prefixed
+`vimi-refund:<original-invoice-uuid>:<8-16-hex-nonce>` spend ID can
+be independently looked up with the ORIGINAL Crypto Pay app token (retired
+credentials remain usable for historical verification). The returned transfer
+must be `completed`, sent to the original Telegram buyer, match the same
+crypto asset and have a completion time after the original paid purchase.
+This read-only verification never sends funds or charges a seller.
+
+A platform-owner-only, append-only `platform_saas_crypto_transfer_credits`
+ledger records the original source's historical project, app, owner,
+transfer/spend IDs, exact transferred asset amount, original sale USD rate
+and 5% commission credit. The source row is locked to prevent partial-refund
+races; the original purchase amount and fee are hard caps, and repeated
+provider evidence is idempotent. No credit can be created for an unrelated
+transfer, paid source not captured in #140, testnet purchase, unknown buyer
+or invoice without original USD valuation. Accounts with a fiat-priced
+Crypto Pay invoice require separate paid-asset provenance and are deliberately
+unsupported by this crypto-denominated credit verification path.
+
+Project-owner refund summaries show **unapplied** credit by Moscow refund
+month. Nothing touches the immutable paid purchase, already delivered file,
+entitlements, existing invoice or monthly payment allocation. This is
+backend-only until merchant refund initiation/review and the next monthly
+invoice integration are implemented and E2E tested. Buyer Crypto Pay, live
+SaaS billing and holds remain disabled; no separate worker, bot or menu.
