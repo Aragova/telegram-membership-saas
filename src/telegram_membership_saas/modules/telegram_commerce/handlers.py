@@ -177,7 +177,10 @@ def _acceptable_receipt(message: Message) -> bool:
 def _option_label(option: CheckoutOption) -> str:
     return (
         f"{option.plan_name} · {format_period(option.duration_value, option.duration_unit)} · "
-        f"{display_price(format_amount(option.amount, option.currency_precision), option.currency_code)} · "
+        + display_price(
+            format_amount(option.amount, option.currency_precision),
+            option.currency_code,
+        ) + " · "
         f"{option.payment_method_name}"
     )
 
