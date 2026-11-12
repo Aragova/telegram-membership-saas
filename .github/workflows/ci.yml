@@ -173,6 +173,8 @@ jobs:
                       "platform_saas_star_project_refund_summary(uuid,date)",
                       "platform_saas_capture_new_subscription_stars(integer)",
                       "platform_saas_capture_subscription_star_refunds(integer)",
+                      "platform_saas_capture_crypto_sales(integer)",
+                      "platform_saas_crypto_project_summary(uuid,date)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
@@ -189,8 +191,16 @@ jobs:
                       "public.platform_saas_star_capture_control, "
                       "public.platform_saas_star_sales, "
                       "public.platform_saas_star_refund_credits, "
-                      "public.platform_saas_star_subscription_credits "
+                      "public.platform_saas_star_subscription_credits, "
+                      "public.platform_saas_crypto_capture_control, "
+                      "public.platform_saas_crypto_sales "
                       "FROM membership_runtime"
+                  )
+                  # The original provider rate is append-only. Only the
+                  # trusted per-project settlement service may read/insert.
+                  await connection.execute(
+                      "REVOKE UPDATE,DELETE ON "
+                      "public.crypto_pay_paid_usd_rates FROM membership_runtime"
                   )
 
                   # Match production: migration 0029 explicitly denies
