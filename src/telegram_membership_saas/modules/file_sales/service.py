@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, delete, func, select, union_all
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import (
@@ -29,6 +30,8 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileFolder,
     FileProduct,
     FilePurchase,
+    FileStarAuthorization,
+    FileStarAuthorizationRejection,
 )
 from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
@@ -47,6 +50,7 @@ from telegram_membership_saas.modules.projects.models import Project, ProjectSta
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
 )
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
 
 ASSET_LIMIT = 20
@@ -722,12 +726,103 @@ async def _load_paid(
     )
 
 
+async def paid_file_purchase_id(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    bot_id: int, buyer_id: int, product_id: UUID,
+) -> UUID | None:
+    """Return any rail's already-paid purchase; files are bought only once.
+
+    A confirmed crypto invoice is identical ownership evidence to a paid
+    Stars order or approved bank transfer. Purchase history remains durable.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        stars = await session.scalar(select(FilePurchase.id).where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.product_id == product_id,
+            FilePurchase.status == "paid",
+        ).limit(1))
+        if stars is not None:
+            return stars
+        manual = await session.scalar(select(FileManualOrder.id).where(
+            FileManualOrder.project_id == project_id,
+            FileManualOrder.telegram_bot_id == bot_id,
+            FileManualOrder.telegram_user_id == buyer_id,
+            FileManualOrder.product_id == product_id,
+            FileManualOrder.status == "approved",
+        ).limit(1))
+        if manual is not None:
+            return manual
+        return await session.scalar(select(CryptoPayInvoice.id).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+            CryptoPayInvoice.product_id == product_id,
+            CryptoPayInvoice.kind == "file",
+            CryptoPayInvoice.status == "paid",
+        ).limit(1))
+
+
+async def _has_authorized_file_stars(
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+    buyer_id: int, product_id: UUID,
+) -> bool:
+    """Telegram Stars may be charged after precheckout says yes.
+
+    Until a verified Stars transaction resolves this pending authorization,
+    another rail must not issue a payable quote for the same one-time file.
+    This is durable across cold restarts and not guessed from a local timer.
+    """
+    authorized = await session.scalar(select(FileStarAuthorization.purchase_id)
+        .join(FilePurchase, and_(
+            FilePurchase.id == FileStarAuthorization.purchase_id,
+            FilePurchase.project_id == FileStarAuthorization.project_id,
+        ))
+        .where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.product_id == product_id,
+            FilePurchase.status == "pending",
+            ~select(FileStarAuthorizationRejection.purchase_id).where(
+                FileStarAuthorizationRejection.purchase_id
+                == FileStarAuthorization.purchase_id,
+                FileStarAuthorizationRejection.project_id
+                == FileStarAuthorization.project_id,
+            ).exists(),
+        ).limit(1))
+    return authorized is not None
+
+
+async def _has_unsettled_crypto_file_invoice(
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+    buyer_id: int, product_id: UUID,
+) -> bool:
+    """A one-time file cannot get a second charge while Crypto Pay is payable.
+
+    Only Crypto Pay itself may end 'issuing' or 'issued', after provider
+    verification. An old button or local timer never makes its link safe.
+    """
+    existing = await session.scalar(select(CryptoPayInvoice.id).where(
+        CryptoPayInvoice.project_id == project_id,
+        CryptoPayInvoice.telegram_bot_id == bot_id,
+        CryptoPayInvoice.telegram_user_id == buyer_id,
+        CryptoPayInvoice.product_id == product_id,
+        CryptoPayInvoice.kind == "file",
+        CryptoPayInvoice.status.in_(("issuing", "issued")),
+    ).limit(1))
+    return existing is not None
+
+
 @translate_commercial_hold
 async def create_stars_order(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, product_id: UUID,
 ) -> DigitalOrder:
     async with system_project_session_scope(factory, project_id) as session:
+        # Serialize new Stars orders with crypto invoice reservation.
+        await checkout_retirement_lock(session, project_id)
         await _ready(
             session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
         )
@@ -776,6 +871,30 @@ async def create_stars_order(
                 product_name=manual_paid.product_name,
                 amount=item.stars_price, invoice_payload="", paid=True,
             )
+        crypto_paid = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+            CryptoPayInvoice.product_id == product_id,
+            CryptoPayInvoice.kind == "file",
+            CryptoPayInvoice.status == "paid",
+        ).limit(1))
+        if crypto_paid is not None:
+            return DigitalOrder(
+                id=crypto_paid.id, product_id=product_id,
+                product_name=crypto_paid.name_snapshot,
+                amount=item.stars_price, invoice_payload="", paid=True,
+            )
+        if await _has_unsettled_crypto_file_invoice(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        ):
+            raise ValueError(tr(
+                "Для файла уже открыт счёт Crypto Pay. Дождитесь оплаты или "
+                "подтверждённого истечения счёта, прежде чем платить Stars.",
+                "This file has an outstanding Crypto Pay invoice. Wait for "
+                "payment or confirmed expiry before paying with Stars.",
+            ))
         # A disabled storefront method cannot create a new Stars invoice.
         # Already-paid orders above remain downloadable.
         disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
@@ -794,6 +913,10 @@ async def create_stars_order(
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.product_id == product_id,
             FilePurchase.status == "pending",
+            ~select(FileStarAuthorizationRejection.purchase_id).where(
+                FileStarAuthorizationRejection.purchase_id == FilePurchase.id,
+                FileStarAuthorizationRejection.project_id == FilePurchase.project_id,
+            ).exists(),
         ).order_by(FilePurchase.created_at.desc()).limit(1))
         if pending and pending.stars_amount == item.stars_price:
             return DigitalOrder(
@@ -806,6 +929,10 @@ async def create_stars_order(
             FilePurchase.telegram_bot_id == bot_id,
             FilePurchase.telegram_user_id == buyer_id,
             FilePurchase.status == "pending",
+            ~select(FileStarAuthorizationRejection.purchase_id).where(
+                FileStarAuthorizationRejection.purchase_id == FilePurchase.id,
+                FileStarAuthorizationRejection.project_id == FilePurchase.project_id,
+            ).exists(),
         )) or 0
         if total >= PENDING_ORDER_LIMIT:
             raise ValueError(tr(
@@ -828,15 +955,17 @@ async def create_stars_order(
         )
 
 
-async def precheckout_allowed(
+async def _file_stars_precheckout_decision(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int,
     invoice_payload: str, amount: int, currency: str,
-) -> bool:
+    precheckout_query_id: str | None,
+) -> tuple[bool, bool]:
     if not invoice_payload.startswith("fs:") or currency != "XTR":
-        return False
+        return False, False
     async with system_project_session_scope(factory, project_id) as session:
         try:
+            await checkout_retirement_lock(session, project_id)
             await _ready(
                 session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
             )
@@ -849,23 +978,142 @@ async def precheckout_allowed(
                 FilePurchase.stars_amount == amount,
             ))
             if purchase is None:
-                return False
+                return False, False
+            rejected = await session.scalar(select(
+                FileStarAuthorizationRejection.purchase_id,
+            ).where(
+                FileStarAuthorizationRejection.purchase_id == purchase.id,
+                FileStarAuthorizationRejection.project_id == project_id,
+            ))
+            if rejected is not None:
+                # This invoice's previous precheckout was DEFINITIVELY
+                # rejected. Never reauthorize its old payment link.
+                return False, False
+            # A pending Stars invoice must not charge again after an
+            # authenticated Crypto Pay purchase settled for this file.
+            owned_crypto = await session.scalar(select(CryptoPayInvoice.id).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.product_id == purchase.product_id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
+            ).limit(1))
+            if owned_crypto is not None or await _has_unsettled_crypto_file_invoice(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=purchase.product_id,
+            ):
+                return False, False
             disabled = await session.scalar(select(FileSaleMethodVisibility.enabled).where(
                 FileSaleMethodVisibility.project_id == project_id,
                 FileSaleMethodVisibility.telegram_bot_id == bot_id,
                 FileSaleMethodVisibility.method_id == UUID(int=0),
             ))
             if disabled is False:
-                return False
+                return False, False
             item = await _product(session, project_id, bot_id, purchase.product_id)
-            return item.status == "published" and (
+            allowed = item.status == "published" and (
                 await session.scalar(select(func.count(FileAsset.id)).where(
                     FileAsset.project_id == project_id,
                     FileAsset.product_id == purchase.product_id,
                 )) or 0
             ) > 0
+            first_authorization = False
+            if allowed:
+                # The first positive precheckout response inserts an
+                # immutable, Telegram-query-scoped claim. A replay does NOT
+                # receive permission to resolve an earlier accepted claim
+                # if its new acknowledgement is rejected as stale.
+                inserted = await session.scalar(
+                    insert(FileStarAuthorization).values(
+                        purchase_id=purchase.id, project_id=project_id,
+                        precheckout_query_id=precheckout_query_id,
+                    ).on_conflict_do_nothing(
+                        index_elements=[FileStarAuthorization.purchase_id],
+                    ).returning(FileStarAuthorization.purchase_id)
+                )
+                first_authorization = inserted is not None
+            return allowed, first_authorization
         except (PermissionError, ValueError):
+            return False, False
+
+
+async def precheckout_allowed(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, buyer_id: int,
+    invoice_payload: str, amount: int, currency: str,
+) -> bool:
+    """Compatibility for existing Stars validation callers."""
+    allowed, _ = await _file_stars_precheckout_decision(
+        factory, project_id=project_id, bot_id=bot_id,
+        buyer_id=buyer_id, invoice_payload=invoice_payload,
+        amount=amount, currency=currency, precheckout_query_id=None,
+    )
+    return allowed
+
+
+async def authorize_file_stars_precheckout(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, buyer_id: int,
+    invoice_payload: str, amount: int, currency: str,
+    precheckout_query_id: str,
+) -> tuple[bool, bool]:
+    """Return (allowed, new_claim_created) for the REAL Telegram query ID.
+
+    Only the first claim is eligible for definitive rejection resolution.
+    Replayed authorizations may already have charged the buyer and must not
+    be cleared based on a subsequent error response.
+    """
+    if not precheckout_query_id or len(precheckout_query_id) > 256:
+        return False, False
+    return await _file_stars_precheckout_decision(
+        factory, project_id=project_id, bot_id=bot_id,
+        buyer_id=buyer_id, invoice_payload=invoice_payload,
+        amount=amount, currency=currency,
+        precheckout_query_id=precheckout_query_id,
+    )
+
+
+async def record_definitive_stars_precheckout_rejection(
+    factory: async_sessionmaker[AsyncSession], *,
+    project_id: UUID, bot_id: int, buyer_id: int,
+    invoice_payload: str, precheckout_query_id: str,
+) -> bool:
+    """Release only a DEFINITIVELY rejected Stars precheckout acknowledgement.
+
+    This may only be called when Telegram's API explicitly returns a
+    negative, non-ambiguous answer for our positive precheckout response.
+    An ambiguous network timeout keeps the safety claim until independent
+    provider reconciliation. Financial purchase data is never modified.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        await checkout_retirement_lock(session, project_id)
+        purchase = await session.scalar(select(FilePurchase).where(
+            FilePurchase.project_id == project_id,
+            FilePurchase.telegram_bot_id == bot_id,
+            FilePurchase.telegram_user_id == buyer_id,
+            FilePurchase.invoice_payload == invoice_payload,
+            FilePurchase.status == "pending",
+        ))
+        if purchase is None:
             return False
+        if not precheckout_query_id:
+            return False
+        authorization = await session.scalar(select(
+            FileStarAuthorization.purchase_id,
+        ).where(
+            FileStarAuthorization.project_id == project_id,
+            FileStarAuthorization.purchase_id == purchase.id,
+            FileStarAuthorization.precheckout_query_id == precheckout_query_id,
+        ))
+        if authorization is None:
+            return False
+        await session.execute(insert(FileStarAuthorizationRejection).values(
+            purchase_id=purchase.id, project_id=project_id,
+        ).on_conflict_do_nothing(
+            index_elements=[FileStarAuthorizationRejection.purchase_id],
+        ))
+        return True
 
 
 async def confirm_stars_payment(

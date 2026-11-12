@@ -27,9 +27,23 @@ from telegram_membership_saas.modules.crypto_pay.client import (
 )
 from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp, CryptoPayInvoice
 from telegram_membership_saas.modules.crypto_pay.service import load_crypto_app_token
-from telegram_membership_saas.modules.file_sales.manual_models import FileManualPrice
-from telegram_membership_saas.modules.file_sales.models import FileAsset, FileFolder, FileProduct
-from telegram_membership_saas.modules.file_sales.service import _ready
+from telegram_membership_saas.modules.file_sales.manual_models import (
+    FileManualOrder,
+    FileManualPrice,
+)
+from telegram_membership_saas.modules.file_sales.models import (
+    FileAsset,
+    FileFolder,
+    FileProduct,
+    FilePurchase,
+)
+from telegram_membership_saas.modules.file_sales.payment_control_models import (
+    FileSaleMethodVisibility,
+)
+from telegram_membership_saas.modules.file_sales.service import (
+    _has_authorized_file_stars,
+    _ready,
+)
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments.request_service import get_or_create_project_customer
 from telegram_membership_saas.modules.plans import Plan, PlanResource
@@ -52,6 +66,7 @@ async def reserve_crypto_invoice(
     project_id: UUID, bot_id: int, buyer_id: int, kind: str,
     target_id: UUID, currency: str, username: str | None = None,
     first_name: str | None = None,
+    reuse_recent: bool = False, require_mainnet: bool = False,
 ) -> UUID:
     """Freeze a currently saleable file/plan in its seller's active app.
 
@@ -72,8 +87,26 @@ async def reserve_crypto_invoice(
             CryptoPayApp.owner_user_id == Project.owner_user_id,
             CryptoPayApp.status == "active",
         ).with_for_update(of=CryptoPayApp))
-        if app is None:
+        if app is None or (require_mainnet and app.environment != "mainnet"):
             raise ValueError("The seller has not enabled Crypto Pay")
+        if kind == "file" and require_mainnet:
+            if await _has_authorized_file_stars(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=target_id,
+            ):
+                raise ValueError(
+                    "An authorized Telegram Stars file invoice must be "
+                    "reconciled before opening Crypto Pay"
+                )
+            file_crypto_enabled = await session.scalar(select(
+                FileSaleMethodVisibility.enabled,
+            ).where(
+                FileSaleMethodVisibility.project_id == project_id,
+                FileSaleMethodVisibility.telegram_bot_id == bot_id,
+                FileSaleMethodVisibility.method_id == UUID(int=1),
+            ))
+            if file_crypto_enabled is False:
+                raise PermissionError("Crypto Pay is disabled for file sales")
 
         pending = await session.scalar(select(func.count(CryptoPayInvoice.id)).where(
             CryptoPayInvoice.project_id == project_id,
@@ -87,9 +120,6 @@ async def reserve_crypto_invoice(
                 ),
             ),
         )) or 0
-        if pending >= 10:
-            raise ValueError("Too many pending Crypto Pay invoices")
-
         customer_id = None
         plan_id = None
         plan_price_id = None
@@ -189,10 +219,89 @@ async def reserve_crypto_invoice(
             ).limit(1))
             if has_asset is None:
                 raise ValueError("This file is not ready for delivery")
+            # File purchases are one-time across ALL payment rails. Never
+            # generate a second payable Crypto invoice for an owned file.
+            paid_stars = await session.scalar(select(FilePurchase.id).where(
+                FilePurchase.project_id == project_id,
+                FilePurchase.telegram_bot_id == bot_id,
+                FilePurchase.telegram_user_id == buyer_id,
+                FilePurchase.product_id == product.id,
+                FilePurchase.status == "paid",
+            ).limit(1))
+            paid_manual = await session.scalar(select(FileManualOrder.id).where(
+                FileManualOrder.project_id == project_id,
+                FileManualOrder.telegram_bot_id == bot_id,
+                FileManualOrder.telegram_user_id == buyer_id,
+                FileManualOrder.product_id == product.id,
+                FileManualOrder.status == "approved",
+            ).limit(1))
+            paid_crypto = await session.scalar(select(CryptoPayInvoice.id).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.product_id == product.id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
+            ).limit(1))
+            if any(x is not None for x in (paid_stars, paid_manual, paid_crypto)):
+                raise ValueError("This file has already been purchased")
             product_id = product.id
             name, amount = product.name, price.amount
 
         spec = invoice_price_spec(currency, amount)
+        if reuse_recent:
+            # File purchases are ONE-TIME, so the invoice identity is
+            # (buyer, bot, product) regardless of future currency/price
+            # choices or merchant credential rotation. Multiple payable
+            # links would allow a buyer to pay twice for one file.
+            now = datetime.now(UTC)
+            if kind == "file":
+                older = (await session.scalars(select(CryptoPayInvoice).where(
+                    CryptoPayInvoice.project_id == project_id,
+                    CryptoPayInvoice.telegram_bot_id == bot_id,
+                    CryptoPayInvoice.telegram_user_id == buyer_id,
+                    CryptoPayInvoice.kind == "file",
+                    CryptoPayInvoice.product_id == target_id,
+                    or_(
+                        CryptoPayInvoice.status.in_(("issued", "issuing")),
+                        and_(CryptoPayInvoice.status == "reserved",
+                             CryptoPayInvoice.created_at >= now - timedelta(minutes=12)),
+                    ),
+                ).order_by(
+                    CryptoPayInvoice.created_at.desc(),
+                ).limit(1).with_for_update())).first()
+                if older is not None:
+                    if older.app_id != app.id:
+                        raise ValueError(
+                            "Previous Crypto Pay invoice on an old merchant "
+                            "credential must be reconciled before retrying"
+                        )
+                    return older.id
+            else:
+                older = (await session.scalars(select(CryptoPayInvoice).where(
+                    CryptoPayInvoice.project_id == project_id,
+                    CryptoPayInvoice.app_id == app.id,
+                    CryptoPayInvoice.telegram_bot_id == bot_id,
+                    CryptoPayInvoice.telegram_user_id == buyer_id,
+                    CryptoPayInvoice.kind == "subscription",
+                    CryptoPayInvoice.plan_price_id == target_id,
+                    CryptoPayInvoice.currency_code == currency,
+                    CryptoPayInvoice.amount == amount,
+                    or_(
+                        and_(CryptoPayInvoice.status == "reserved",
+                             CryptoPayInvoice.created_at >= now - timedelta(minutes=12)),
+                        # Provider status, not arbitrary local elapsed time,
+                        # determines when the old invoice can be replaced.
+                        CryptoPayInvoice.status == "issued",
+                        CryptoPayInvoice.status == "issuing",
+                    ),
+                ).order_by(
+                    CryptoPayInvoice.created_at.desc(),
+                ).limit(1).with_for_update())).first()
+                if older is not None:
+                    return older.id
+        if pending >= 10:
+            raise ValueError("Too many pending Crypto Pay invoices")
         order_id = uuid4()
         record = CryptoPayInvoice(
             id=order_id, project_id=project_id, app_id=app.id,
@@ -215,6 +324,7 @@ async def issue_reserved_crypto_invoice(
     project_id: UUID, bot_id: int, buyer_id: int, invoice_id: UUID,
     encryption_key: SecretStr | None,
     client_factory: Callable[..., CryptoPayClient] = CryptoPayClient,
+    require_mainnet: bool = False,
 ) -> IssuedCryptoInvoice:
     """Commit 'issuing' BEFORE contacting Crypto Pay to prevent duplicate bills.
 
@@ -233,6 +343,37 @@ async def issue_reserved_crypto_invoice(
         ).with_for_update())
         if record is None:
             raise PermissionError("Invoice does not belong to this buyer and bot")
+        if require_mainnet and record.kind == "file":
+            if await _has_authorized_file_stars(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=record.product_id,
+            ):
+                raise ValueError(
+                    "An authorized Telegram Stars file invoice must be "
+                    "reconciled before opening Crypto Pay"
+                )
+            file_crypto_enabled = await session.scalar(select(
+                FileSaleMethodVisibility.enabled,
+            ).where(
+                FileSaleMethodVisibility.project_id == project_id,
+                FileSaleMethodVisibility.telegram_bot_id == bot_id,
+                FileSaleMethodVisibility.method_id == UUID(int=1),
+            ))
+            if file_crypto_enabled is False:
+                raise PermissionError("Crypto Pay is disabled for file sales")
+        if require_mainnet:
+            mainnet = await session.scalar(select(CryptoPayApp.id).join(
+                Project, Project.id == CryptoPayApp.project_id,
+            ).where(
+                CryptoPayApp.id == record.app_id,
+                CryptoPayApp.project_id == project_id,
+                CryptoPayApp.telegram_bot_id == bot_id,
+                CryptoPayApp.owner_user_id == Project.owner_user_id,
+                CryptoPayApp.status == "active",
+                CryptoPayApp.environment == "mainnet",
+            ))
+            if mainnet is None:
+                raise PermissionError("Live Crypto Pay is unavailable")
         if record.status == "issued" and record.invoice_url:
             return IssuedCryptoInvoice(
                 id=record.id, url=record.invoice_url,
@@ -271,6 +412,27 @@ async def issue_reserved_crypto_invoice(
             ).limit(1))
             if available is None or asset is None:
                 raise ValueError("Reserved file has been removed or is unavailable")
+            # The customer may have paid through Stars or received approval
+            # for a manual transfer AFTER this invoice was reserved. All
+            # three sources are rechecked under the same project checkout
+            # lock immediately BEFORE making an external payable invoice.
+            for model, paid_status in (
+                (FilePurchase, "paid"),
+                (FileManualOrder, "approved"),
+                (CryptoPayInvoice, "paid"),
+            ):
+                paid_purchase = await session.scalar(select(model.id).where(
+                    model.project_id == project_id,
+                    model.telegram_bot_id == bot_id,
+                    model.telegram_user_id == buyer_id,
+                    model.product_id == record.product_id,
+                    model.status == paid_status,
+                ).limit(1))
+                if paid_purchase is not None:
+                    raise ValueError(
+                        "This file was already purchased; cannot issue "
+                        "another payable Crypto Pay invoice"
+                    )
         elif record.kind == "subscription":
             available = await session.scalar(select(Plan.id).join(
                 PlanPrice,

@@ -103,10 +103,19 @@ def build_buyer_offers(
 
 
 async def list_buyer_offers(
-    session: AsyncSession, *, project_id: UUID,
+    session: AsyncSession, *, project_id: UUID, bot_id: int | None = None,
 ) -> tuple[BuyerOffer, ...]:
     """Use only checkout-eligible offers and current resource memberships."""
-    options = await list_checkout_options(session, project_id=project_id)
+    options = list(await list_checkout_options(session, project_id=project_id))
+    if bot_id is not None:
+        # Same price, existing offer and keyboard. Crypto is an additional
+        # checkout rail, not a duplicate catalog entry or settings screen.
+        from telegram_membership_saas.modules.crypto_pay.buyer import (
+            subscription_crypto_options,
+        )
+        options.extend(await subscription_crypto_options(
+            session, project_id=project_id, bot_id=bot_id,
+        ))
     if not options:
         return ()
     plan_ids = tuple({item.plan_id for item in options})
@@ -359,12 +368,15 @@ def offer_screen(
              "👇 <b>How would you like to pay?</b>")
     )
     for method in current.methods:
+        crypto = method.payment_method_id.int == 1
         rows.append([InlineKeyboardButton(
-            text="💳 " + method.payment_method_name[:55],
+            text=("💎 Crypto Pay" if crypto else
+                  "💳 " + method.payment_method_name[:55]),
             callback_data=(
                 f"buy:{encode_uuid(option.plan_price_id)}:"
                 f"{encode_uuid(method.payment_method_id)}"
             ),
+            style="success" if crypto else None,
         )])
     rows.append([InlineKeyboardButton(
         text=tr("⬅️ Все тарифы", "⬅️ All plans"),

@@ -393,7 +393,9 @@ async def _send_catalog(
 ) -> bool:
     """Build a fresh, project-isolated catalog and edit the current screen."""
     async with system_project_session_scope(session_factory, project_id) as session:
-        offers = await list_buyer_offers(session, project_id=project_id)
+        offers = await list_buyer_offers(
+            session, project_id=project_id, bot_id=getattr(bot, "id", None),
+        )
     if price_id is not None:
         rendered = offer_screen(offers, price_id=price_id, page=page)
         if rendered is None:
@@ -766,6 +768,45 @@ def create_telegram_commerce_router(
             _, price_token, method_token = callback.data.split(":", 2)
             plan_price_id = decode_uuid(price_token)
             payment_method_id = decode_uuid(method_token)
+            if payment_method_id.int == 1:
+                # Synthetic provider token one is Crypto Pay, never a bank
+                # PaymentMethod. Use original seller app and price snapshot.
+                if not _buyer_screen_callback(callback):
+                    raise PermissionError("Open the bot's private chat")
+                from telegram_membership_saas.config import get_settings
+                from telegram_membership_saas.modules.crypto_pay.buyer import (
+                    begin_buyer_crypto_checkout,
+                )
+                from telegram_membership_saas.modules.crypto_pay.buyer_ui import (
+                    send_buyer_crypto_invoice_screen,
+                )
+
+                await callback.answer()
+                try:
+                    invoice = await begin_buyer_crypto_checkout(
+                        session_factory, project_id=project_id, bot_id=bot.id,
+                        buyer_id=callback.from_user.id, kind="subscription",
+                        target_id=plan_price_id,
+                        username=callback.from_user.username,
+                        first_name=callback.from_user.first_name,
+                        encryption_key=get_settings().bot_token_encryption_key,
+                    )
+                except (ValueError, PermissionError, RuntimeError):
+                    # Never display provider raw errors, API tokens or state.
+                    await bot.send_message(callback.from_user.id, tr(
+                        "⏳ Не удалось открыть счёт Crypto Pay. Если счёт "
+                        "создаётся, бот восстановит его автоматически. "
+                        "Повторите попытку немного позже.",
+                        "⏳ Crypto Pay invoice is not ready. If an invoice "
+                        "was created, the bot will recover it automatically. "
+                        "Please retry later.",
+                    ))
+                    return
+                await send_buyer_crypto_invoice_screen(
+                    bot, buyer_id=callback.from_user.id, invoice=invoice,
+                    back_callback="offer:" + price_token + ":0",
+                )
+                return
             if payment_method_id.int == 0:
                 # Synthetic provider token zero is the native XTR rail,
                 # NEVER a PaymentMethod foreign key or a manual bank transfer.

@@ -14,8 +14,10 @@ from uuid import UUID
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import system_project_session_scope, tenant_session_scope
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
 from telegram_membership_saas.modules.file_sales.manual_models import (
     FileManualOrder,
     FileManualPrice,
@@ -28,7 +30,13 @@ from telegram_membership_saas.modules.file_sales.models import (
 from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
 )
-from telegram_membership_saas.modules.file_sales.service import _owner, _product, _ready
+from telegram_membership_saas.modules.file_sales.service import (
+    _has_authorized_file_stars,
+    _has_unsettled_crypto_file_invoice,
+    _owner,
+    _product,
+    _ready,
+)
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.payments import (
     PaymentMethod,
@@ -136,31 +144,69 @@ async def can_review_file_payments(
         return True
 
 
+# Compact owner editor, no 25-button currency flood. Manual methods retain
+# all their existing currencies; Crypto Pay adds popular fiat/crypto codes.
+CRYPTO_FILE_PRICE_CURRENCIES = frozenset({
+    "RUB", "USD", "EUR", "UAH", "BYN",
+    "USDT", "USDC", "TON", "BTC", "ETH",
+})
+
+
+async def _editable_file_price_currencies(
+    session: AsyncSession, *, project_id: UUID, bot_id: int,
+) -> tuple[str, ...]:
+    manual_codes = (await session.scalars(
+        select(PaymentMethodCurrency.currency_code)
+        .join(
+            PaymentMethod,
+            and_(
+                PaymentMethod.id == PaymentMethodCurrency.payment_method_id,
+                PaymentMethod.project_id == PaymentMethodCurrency.project_id,
+            ),
+        )
+        .join(CurrencyAsset, CurrencyAsset.code == PaymentMethodCurrency.currency_code)
+        .where(
+            PaymentMethodCurrency.project_id == project_id,
+            PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+            CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+        ).distinct()
+    )).all()
+    codes = set(manual_codes)
+    from telegram_membership_saas.modules.crypto_pay.buyer import (
+        crypto_merchant_ready,
+    )
+
+    if await crypto_merchant_ready(
+        session, project_id=project_id, bot_id=bot_id,
+        require_buyer_enabled=False,
+    ):
+        supported = (await session.scalars(select(CurrencyAsset.code).where(
+            CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
+            CurrencyAsset.code.in_(CRYPTO_FILE_PRICE_CURRENCIES),
+        ))).all()
+        codes.update(supported)
+    priority = ("RUB", "USD", "EUR", "UAH", "BYN", "USDT",
+                "USDC", "TON", "BTC", "ETH")
+    return tuple(sorted(
+        codes,
+        key=lambda code: (
+            priority.index(code) if code in priority else len(priority), code,
+        ),
+    ))
+
+
 async def available_price_currencies(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, actor_id: UUID,
 ) -> tuple[str, ...]:
-    """Only currently enabled manual payment currencies are offered at creation."""
+    """One editor for shared fiat/file prices, including live Crypto Pay."""
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
         await _owner(session, project_id=project_id, bot_id=bot_id, actor_id=actor_id)
-        return tuple((await session.scalars(
-            select(PaymentMethodCurrency.currency_code)
-            .join(
-                PaymentMethod,
-                and_(PaymentMethod.id == PaymentMethodCurrency.payment_method_id,
-                     PaymentMethod.project_id == PaymentMethodCurrency.project_id),
-            )
-            .join(CurrencyAsset, CurrencyAsset.code == PaymentMethodCurrency.currency_code)
-            .where(
-                PaymentMethodCurrency.project_id == project_id,
-                PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
-                CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
-            )
-            .distinct()
-            .order_by(PaymentMethodCurrency.currency_code)
-        )).all())
+        return await _editable_file_price_currencies(
+            session, project_id=project_id, bot_id=bot_id,
+        )
 
 
 async def price_editor_options(
@@ -172,19 +218,9 @@ async def price_editor_options(
     ) as session:
         await _owner(session, project_id=project_id, bot_id=bot_id, actor_id=actor_id)
         await _product(session, project_id, bot_id, product_id)
-        codes = (await session.scalars(
-            select(PaymentMethodCurrency.currency_code)
-            .join(
-                PaymentMethod,
-                and_(PaymentMethod.id == PaymentMethodCurrency.payment_method_id,
-                     PaymentMethod.project_id == PaymentMethodCurrency.project_id),
-            ).join(CurrencyAsset, CurrencyAsset.code == PaymentMethodCurrency.currency_code)
-            .where(
-                PaymentMethodCurrency.project_id == project_id,
-                PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
-                CurrencyAsset.status == CurrencyAssetStatus.ACTIVE.value,
-            ).distinct().order_by(PaymentMethodCurrency.currency_code)
-        )).all()
+        codes = await _editable_file_price_currencies(
+            session, project_id=project_id, bot_id=bot_id,
+        )
         prices = (await session.scalars(
             select(FileManualPrice).where(
                 FileManualPrice.project_id == project_id,
@@ -229,7 +265,11 @@ async def set_manual_price(
                 PaymentMethodCurrency.currency_code == currency,
             ).limit(1)
         )
-        if valid_method is None:
+        if (valid_method is None and currency not in (
+            await _editable_file_price_currencies(
+                session, project_id=project_id, bot_id=bot_id,
+            )
+        )):
             raise ValueError(tr(
                 "Нет активного способа оплаты для этой валюты",
                 "No active payment method for this currency",
@@ -248,6 +288,27 @@ async def set_manual_price(
                     "Слишком много знаков после запятой для этой валюты",
                     "Too many decimal places for this currency",
                 ))
+        # Fiat Crypto Pay invoices cannot represent fractions of a cent.
+        # Reject invalid quotes before an advertised checkout is published.
+        if currency in CRYPTO_FILE_PRICE_CURRENCIES:
+            from telegram_membership_saas.modules.crypto_pay.buyer import (
+                crypto_merchant_ready,
+            )
+            if await crypto_merchant_ready(
+                session, project_id=project_id, bot_id=bot_id,
+                require_buyer_enabled=False,
+            ):
+                from telegram_membership_saas.modules.crypto_pay.client import (
+                    CryptoPayError,
+                    invoice_price_spec,
+                )
+                try:
+                    invoice_price_spec(currency, amount)
+                except (ValueError, CryptoPayError):
+                    raise ValueError(tr(
+                        "Цена не подходит для счёта Crypto Pay",
+                        "Price cannot be represented in a Crypto Pay invoice",
+                    )) from None
         record = await session.scalar(select(FileManualPrice).where(
             FileManualPrice.project_id == project_id,
             FileManualPrice.product_id == product_id,
@@ -268,7 +329,7 @@ async def create_manual_order(
     factory: async_sessionmaker[AsyncSession], *,
     project_id: UUID, bot_id: int, buyer_id: int, product_id: UUID,
     currency: str, method_id: UUID,
-) -> tuple[FileManualOrder | FilePurchase, bool]:
+) -> tuple[FileManualOrder | FilePurchase | CryptoPayInvoice, bool]:
     async with system_project_session_scope(factory, project_id) as session:
         # Serialize manual checkout against transfer finalization and bot retirement.
         await checkout_retirement_lock(session, project_id)
@@ -301,6 +362,36 @@ async def create_manual_order(
         ).limit(1))
         if approved:
             return approved, True
+        crypto_paid = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+            CryptoPayInvoice.product_id == product_id,
+            CryptoPayInvoice.kind == "file",
+            CryptoPayInvoice.status == "paid",
+        ).limit(1))
+        if crypto_paid is not None:
+            return crypto_paid, True
+        if get_settings().crypto_pay_buyer_enabled and await _has_authorized_file_stars(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        ):
+            raise ValueError(tr(
+                "Для этого файла уже разрешена оплата Stars. "
+                "Сначала проверьте результат оплаты.",
+                "Stars payment is already authorized for this file. "
+                "Reconcile its result before using another method.",
+            ))
+        if await _has_unsettled_crypto_file_invoice(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        ):
+            raise ValueError(tr(
+                "Для этого файла уже открыт счёт Crypto Pay. "
+                "Дождитесь его оплаты или подтверждённого истечения.",
+                "This file already has an active Crypto Pay invoice. "
+                "Wait for its payment or confirmed expiry.",
+            ))
         options = await _methods(
             session, project_id=project_id, bot_id=bot_id,
             product_id=product_id,
@@ -512,6 +603,9 @@ async def review_manual_order(
     order_id: UUID, approve: bool,
 ) -> tuple[FileManualOrder, bool]:
     async with system_project_session_scope(factory, project_id) as session:
+        # Serialize human approval with Crypto Pay reserve/issue and Stars
+        # precheckout; none may authorize a competing charge meanwhile.
+        await checkout_retirement_lock(session, project_id)
         await require_payment_permission(
             session, project_id=project_id, actor_user_id=actor_id,
             permission=Permission.PAYMENT_APPROVE if approve else Permission.PAYMENT_REJECT,
@@ -529,6 +623,48 @@ async def review_manual_order(
             raise ValueError(tr(
                 "Проверять можно только заявку с чеком",
                 "Only requests with a receipt can be reviewed",
+            ))
+        if (approve and get_settings().crypto_pay_buyer_enabled
+                and await _has_authorized_file_stars(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=order.telegram_user_id, product_id=order.product_id,
+        )):
+            raise ValueError(tr(
+                "Авторизована оплата Stars. Сначала проверьте её результат.",
+                "Stars payment is authorized. Reconcile it before approval.",
+            ))
+        if approve:
+            confirmed_crypto = await session.scalar(select(CryptoPayInvoice.id).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == order.telegram_user_id,
+                CryptoPayInvoice.product_id == order.product_id,
+                CryptoPayInvoice.kind == "file",
+                CryptoPayInvoice.status == "paid",
+            ).limit(1))
+            confirmed_stars = await session.scalar(select(FilePurchase.id).where(
+                FilePurchase.project_id == project_id,
+                FilePurchase.telegram_bot_id == bot_id,
+                FilePurchase.telegram_user_id == order.telegram_user_id,
+                FilePurchase.product_id == order.product_id,
+                FilePurchase.status == "paid",
+            ).limit(1))
+            if confirmed_crypto is not None or confirmed_stars is not None:
+                raise ValueError(tr(
+                    "Файл уже куплен другим способом. Проверьте возврат "
+                    "или разбор ручного перевода, не подтверждая оплату повторно.",
+                    "File already purchased through another payment method. "
+                    "Reconcile or refund the manual transfer, do not approve twice.",
+                ))
+        if approve and await _has_unsettled_crypto_file_invoice(
+            session, project_id=project_id, bot_id=bot_id,
+            buyer_id=order.telegram_user_id, product_id=order.product_id,
+        ):
+            raise ValueError(tr(
+                "Есть незавершённый счёт Crypto Pay. Сначала проверьте его "
+                "оплату или истечение, чтобы не выдать файл дважды.",
+                "There is an outstanding Crypto Pay invoice. Verify "
+                "payment or expiry before approving this file.",
             ))
         order.status = target
         order.reviewed_at = datetime.now(UTC)

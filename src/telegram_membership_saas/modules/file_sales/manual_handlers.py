@@ -19,12 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas import receipt_intents
 from telegram_membership_saas.currency_display import display_currency, display_price
+from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.manual_checkout_ui import (
     manual_checkout_rich_html,
     retire_cancelled_checkout,
     send_manual_checkout,
 )
+from telegram_membership_saas.modules.crypto_pay.buyer import file_crypto_prices
 from telegram_membership_saas.modules.file_sales.manual_service import (
     available_methods,
     close_pending_manual_order,
@@ -47,6 +49,7 @@ from telegram_membership_saas.modules.file_sales.rich_ui import (
 )
 from telegram_membership_saas.modules.file_sales.service import (
     mark_file_delivery,
+    paid_file_purchase_id,
     purchased_assets,
     view_product,
 )
@@ -173,6 +176,32 @@ async def show_file_payment_options(
     )
     if not count:
         raise ValueError(tr("У товара пока нет вложений", "This product has no attachments yet"))
+    from telegram_membership_saas.config import get_settings
+
+    crypto_buyer_live = get_settings().crypto_pay_buyer_enabled
+    already_paid = (
+        await paid_file_purchase_id(
+            factory, project_id=project_id, bot_id=bot.id, buyer_id=buyer_id,
+            product_id=product_id,
+        ) if crypto_buyer_live else None
+    )
+    if already_paid is not None:
+        await bot.send_message(
+            buyer_id,
+            tr("✅ Этот файл уже куплен. Оплачивать повторно не нужно.",
+               "✅ You already own this file. There is no need to pay again."),
+            reply_markup=_keyboard([
+                [_button(
+                    tr("📥 Получить файл", "📥 Download file"),
+                    "get:" + encode_uuid(already_paid), "success",
+                )],
+                [InlineKeyboardButton(
+                    text=tr("⬅️ Товары", "⬅️ Products"),
+                    callback_data="fs:folder:" + encode_uuid(product.folder_id),
+                )],
+            ]),
+        )
+        return
     options = await available_methods(
         factory, project_id=project_id, bot_id=bot.id,
         product_id=product_id, buyer_id=buyer_id,
@@ -180,7 +209,15 @@ async def show_file_payment_options(
     stars_enabled = await file_stars_enabled(
         factory, project_id=project_id, bot_id=bot.id,
     )
-    if not options and (product.stars_price is None or not stars_enabled):
+    crypto_prices = ()
+    if crypto_buyer_live and get_settings().bot_token_encryption_key is not None:
+        async with system_project_session_scope(factory, project_id) as session:
+            crypto_prices = await file_crypto_prices(
+                session, project_id=project_id, bot_id=bot.id,
+                product_id=product_id,
+            )
+    if (not options and not crypto_prices
+            and (product.stars_price is None or not stars_enabled)):
         await bot.send_message(
             buyer_id, tr(
                 "⏸️ Способы оплаты этого файла временно отключены.",
@@ -192,9 +229,13 @@ async def show_file_payment_options(
             )]]),
         )
         return
-    codes = tuple(sorted({option.currency for option in options}, key=lambda c: (
-        CURRENCY_ORDER.index(c) if c in CURRENCY_ORDER else 99, c,
-    )))
+    codes = tuple(sorted(
+        {option.currency for option in options}
+        | {price.currency for price in crypto_prices},
+        key=lambda c: (
+            CURRENCY_ORDER.index(c) if c in CURRENCY_ORDER else 99, c,
+        ),
+    ))
     chosen = currency if currency in codes else (codes[0] if codes else None)
     code = encode_uuid(product_id)
     rows: list[list[InlineKeyboardButton]] = []
@@ -217,6 +258,17 @@ async def show_file_payment_options(
             "💳 " + option.method_name[:36],
             "method:" + code + ":" + chosen + ":" + encode_uuid(option.method_id),
         )])
+    crypto_price = next(
+        (entry for entry in crypto_prices if entry.currency == chosen),
+        None,
+    )
+    if crypto_price is not None and chosen is not None:
+        rows.append([_button(
+            "💎 Crypto Pay · " + display_price(
+                money(crypto_price.amount, crypto_price.precision), chosen,
+            ),
+            "crypto:" + code + ":" + chosen, "success",
+        )])
     if product.stars_price is not None and stars_enabled:
         rows.append([InlineKeyboardButton(
             text=tr("⭐ Telegram Stars · ", "⭐ Telegram Stars · ")
@@ -230,7 +282,10 @@ async def show_file_payment_options(
     )])
     price_label = (
         next((display_price(money(x.amount, x.precision), chosen)
-              for x in options if x.currency == chosen), "")
+              for x in options if x.currency == chosen),
+             display_price(
+                 money(crypto_price.amount, crypto_price.precision), chosen,
+             ) if crypto_price is not None and chosen is not None else "")
         if chosen else display_price(str(product.stars_price), "XTR")
     )
     legacy_html = (
@@ -374,6 +429,38 @@ def create_manual_file_router(
                     bot, factory=factory, project_id=project_id, buyer_id=uid,
                     product_id=decode_uuid(token), currency=currency,
                 )
+            elif action.startswith("crypto:"):
+                _, token, currency = action.split(":", 2)
+                from telegram_membership_saas.config import get_settings
+                from telegram_membership_saas.modules.crypto_pay.buyer import (
+                    begin_buyer_crypto_checkout,
+                )
+                from telegram_membership_saas.modules.crypto_pay.buyer_ui import (
+                    send_buyer_crypto_invoice_screen,
+                )
+                await query.answer()
+                try:
+                    invoice = await begin_buyer_crypto_checkout(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        buyer_id=uid, kind="file",
+                        target_id=decode_uuid(token), currency=currency,
+                        username=query.from_user.username,
+                        first_name=query.from_user.first_name,
+                        encryption_key=get_settings().bot_token_encryption_key,
+                    )
+                except (ValueError, PermissionError, RuntimeError):
+                    await bot.send_message(uid, tr(
+                        "⏳ Счёт Crypto Pay пока не готов. Если он создаётся, "
+                        "бот восстановит его автоматически. Попробуйте позже.",
+                        "⏳ Crypto Pay invoice is not ready. If it was created, "
+                        "the bot will recover it automatically. Try again later.",
+                    ))
+                    return
+                await send_buyer_crypto_invoice_screen(
+                    bot, buyer_id=uid, invoice=invoice,
+                    back_callback="fs:pay:" + token,
+                )
+                return
             elif action.startswith("method:"):
                 _, token, currency, method = action.split(":")
                 order, paid = await create_manual_order(

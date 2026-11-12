@@ -7,7 +7,7 @@ from time import monotonic
 from uuid import UUID
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import AiogramError
+from aiogram.exceptions import AiogramError, TelegramBadRequest
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
@@ -49,6 +49,7 @@ from telegram_membership_saas.modules.file_sales.rich_ui import (
 from telegram_membership_saas.modules.file_sales.service import (
     add_folder,
     add_product_asset,
+    authorize_file_stars_precheckout,
     change_product_status,
     confirm_stars_payment,
     create_product,
@@ -61,8 +62,8 @@ from telegram_membership_saas.modules.file_sales.service import (
     list_products,
     list_purchases_page,
     mark_file_delivery,
-    precheckout_allowed,
     purchased_assets,
+    record_definitive_stars_precheckout_rejection,
     update_draft_product,
     view_product,
 )
@@ -79,6 +80,20 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
 
 log = logging.getLogger(__name__)
 ENTRY_SECONDS = 900
+
+
+def _definitively_rejected_stars_precheckout(error: str) -> bool:
+    """Only explicit 'not accepted' Telegram responses release the hold.
+
+    Network errors and 'already answered' replies are ambiguous: they may
+    represent a real successful authorization and MUST keep the claim.
+    """
+    message = error.casefold()
+    return (
+        "query is too old" in message
+        or "query_id_invalid" in message
+        or "query id is invalid" in message
+    )
 
 
 def _button(text: str, action: str, style: str = "primary") -> InlineKeyboardButton:
@@ -234,8 +249,11 @@ def create_file_sales_router(
         )
         rows = []
         for method in controls:
-            name = (display_currency("XTR")
-                    if method.auto_stars else "💳 " + method.name[:36])
+            name = (
+                display_currency("XTR") if method.auto_stars
+                else "💎 Crypto Pay" if method.auto_crypto
+                else "💳 " + method.name[:36]
+            )
             rows.append([_button(
                 ("🟢 " if method.enabled else "🔴 ") + name,
                 "paytoggle:" + method.method_id.hex,
@@ -267,15 +285,15 @@ def create_file_sales_router(
                 "🟢 Включён · 🔴 Выключен\n\n"
                 "Эти настройки действуют только на продажи файлов "
                 "в данном боте. Подписки и другие боты не затрагиваются.\n"
-                "Ручной способ с похожим названием и автоматическая оплата "
-                "⭐ Telegram Stars — разные способы оплаты.\n"
+                "Ручные переводы, ⭐ Telegram Stars и 💎 Crypto Pay "
+                "управляются отдельно.\n"
                 "Созданные заявки и оплаченные файлы сохраняются.",
                 "💳 <b>File payment methods</b>\n"
                 "🟢 Enabled · 🔴 Disabled\n\n"
                 "Settings affect file sales in this bot only. "
                 "Subscriptions and other bots are unchanged.\n"
-                "A manually named payment method and automatic "
-                "⭐ Telegram Stars are separate payment choices.\n"
+                "Manual transfer, ⭐ Telegram Stars and 💎 Crypto Pay "
+                "are managed independently.\n"
                 "Existing orders and paid files remain intact.",
             ),
             parse_mode="HTML", reply_markup=_keyboard(rows),
@@ -1132,18 +1150,41 @@ def create_file_sales_router(
     async def file_pre_checkout(query: PreCheckoutQuery, bot: Bot) -> None:
         if not query.invoice_payload.startswith("fs:"):
             return
-        allowed = await precheckout_allowed(
+        allowed, fresh_authorization = await authorize_file_stars_precheckout(
             factory, project_id=project_id, bot_id=bot.id,
             buyer_id=query.from_user.id, invoice_payload=query.invoice_payload,
             amount=query.total_amount, currency=query.currency,
+            precheckout_query_id=query.id,
         )
-        await bot.answer_pre_checkout_query(
-            pre_checkout_query_id=query.id, ok=allowed,
-            error_message=None if allowed else tr(
-                "Товар недоступен или сумма изменилась.",
-                "This product or amount is no longer available.",
-            ),
-        )
+        try:
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query_id=query.id, ok=allowed,
+                error_message=None if allowed else tr(
+                    "Товар недоступен или сумма изменилась.",
+                    "This product or amount is no longer available.",
+                ),
+            )
+        except TelegramBadRequest as exc:
+            if (allowed and fresh_authorization
+                    and _definitively_rejected_stars_precheckout(str(exc))):
+                # The provider explicitly rejected this authorization.
+                # Resolve only THIS invoice, in an immutable evidence row.
+                try:
+                    await record_definitive_stars_precheckout_rejection(
+                        factory, project_id=project_id, bot_id=bot.id,
+                        buyer_id=query.from_user.id,
+                        invoice_payload=query.invoice_payload,
+                        precheckout_query_id=query.id,
+                    )
+                except Exception:
+                    log.exception(
+                        "CRITICAL: could not persist definitive Stars "
+                        "precheckout rejection"
+                    )
+                return
+            # Timeouts, 'already answered' and other ambiguous errors keep
+            # the durable hold; buyer payment history must be reconciled.
+            raise
 
     @router.message(F.refunded_payment.invoice_payload.startswith("fs:"))
     async def file_refund_notice(message: Message, bot: Bot) -> None:

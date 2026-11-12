@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     rich_subscription_checkout_bot_ids: str = ""
     # Project-wide Rich UI. Set false to restore classic HTML for all bots.
     rich_messages_enabled: bool = True
+    # Remain OFF until Crypto Pay sales are included in the platform 5% ledger.
+    # The worker continues settling historical paid orders regardless.
+    crypto_pay_buyer_enabled: bool = False
     customer_supervisor_max_bots: int = Field(default=10, ge=1, le=128)
     customer_supervisor_lease_mode: Literal["per_project", "shared"] = "per_project"
     customer_supervisor_shard_count: int = Field(default=1, ge=1, le=256)

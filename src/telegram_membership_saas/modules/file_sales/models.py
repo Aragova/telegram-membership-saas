@@ -118,6 +118,7 @@ class FilePurchase(Base):
                         name="ck_file_purchase_status"),
         CheckConstraint("stars_amount BETWEEN 1 AND 250000",
                         name="ck_file_purchase_stars"),
+        UniqueConstraint("id", "project_id", name="uq_file_purchase_id_project"),
         UniqueConstraint("invoice_payload", name="uq_file_purchase_payload"),
         UniqueConstraint("telegram_charge_id", name="uq_file_purchase_charge"),
         Index("ix_file_purchase_buyer", "project_id", "telegram_user_id", "status"),
@@ -142,6 +143,64 @@ class FilePurchase(Base):
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FileStarAuthorization(Base):
+    """Immutable, bot/project-scoped record of Telegram precheckout approval.
+
+    Stored separately: the paid file purchase row remains protected by its
+    immutable financial trigger and is only updated by actual Stars evidence.
+    """
+    __tablename__ = "file_sale_star_authorizations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["purchase_id", "project_id"],
+            ["file_sale_purchases.id", "file_sale_purchases.project_id"],
+            ondelete="RESTRICT", name="fk_file_star_auth_purchase_project",
+        ),
+        UniqueConstraint(
+            "purchase_id", "project_id", name="uq_file_star_auth_project",
+        ),
+    )
+
+    purchase_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    # First Telegram request authorized for this purchase, never a replay.
+    precheckout_query_id: Mapped[str | None] = mapped_column(
+        String(256), nullable=True,
+    )
+    authorized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+class FileStarAuthorizationRejection(Base):
+    """Append-only proof that a specific Stars precheckout was rejected by Telegram.
+
+    Only an explicitly definitive Telegram API rejection authorizes insertion.
+    Old invoices with rejection evidence may not be re-authorized; buyers
+    must obtain a new invoice if they still want to use Stars.
+    """
+    __tablename__ = "file_sale_star_authorization_rejections"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["purchase_id", "project_id"],
+            [
+                "file_sale_star_authorizations.purchase_id",
+                "file_sale_star_authorizations.project_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_file_star_auth_rejection_project",
+        ),
+    )
+
+    purchase_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    rejected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
 
 
 class FileStarRefund(Base):

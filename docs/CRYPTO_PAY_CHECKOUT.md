@@ -280,3 +280,45 @@ configured and never logs API tokens.
 Merchant payout and platform 5% commercial billing remain unchanged.
 Next slice: complete buyer Rich subscription/file payment chooser and
 provider-backed checkout after exact-head review and successful staging.
+
+### Gated buyer Crypto Pay checkout in the SAME storefronts (PR #139)
+
+This stage renders Crypto Pay alongside manual transfers and ⭐ Telegram Stars,
+without duplicating the existing buyer menu or customer purchase database.
+
+- Crypto Pay appears only for an **active mainnet** merchant credential
+  belonging to the current connected-bot project owner. The global environment
+  variable `TMS_CRYPTO_PAY_BUYER_ENABLED` defaults **false** until full
+  commercial 5% sales evidence and acceptance testing are ready. The API
+  encryption key must already be present. Retired/testnet credentials are
+  never selectable by real buyers, but old invoices still reconcile.
+- **Subscriptions:** existing RU/EN Rich offer pages gain one 💎 Crypto Pay
+  method per saleable versioned PlanPrice with an accepted fiat or crypto
+  currency. A subscription can be listed with Crypto Pay alone, with no bank
+  account required. The existing single plan/currency selection is retained.
+- **Files:** existing currency/payment chooser gains 💎 Crypto Pay for
+  compatible published FileManualPrice rows. The same admin price editor
+  also offers popular RUB/USD/EUR/UAH/BYN and USDT/USDC/TON/BTC/ETH prices
+  with an active mainnet merchant, even without a manual transfer method.
+  The existing per-bot bulk and individual method switches include one
+  independent Crypto Pay entry; no new file sales submenu.
+- The private-chat handler calls the original reservation + verified
+  `createInvoice`, rechecks buyer, project, merchant, immutable product and
+  price before any provider call, then displays one real URL button in the
+  common Rich/HTML checkout card. No "I paid" shortcut, no untrusted upload
+  and no screenshot-based crypto approval.
+- Repeated opens of the **same** still-valid original app/price/order reuse
+  the already issued or reserved invoice, without a second createInvoice.
+  An ambiguous in-flight request stays in `issuing` and is recovered by
+  the independent #138 worker, never blindly reissued. Different buyers,
+  products, currencies and after-paid renewals remain independent.
+- File delivery and subscriptions continue to use the same single paid
+  invoice, Subscription, EntitlementGrant and /myfiles history as #137/#138.
+  Existing manual, Stars and owner-only merchant settings remain unchanged.
+
+**Launch blocker:** The platform-wide 5% financial commission calculations
+do not yet include Crypto Pay payments. The buyer feature flag MUST stay
+false on staging/production until Crypto Pay sale-source classification,
+sale-date FX, reversals and commission tests are integrated. No SaaS invoice
+issuance or subscription hold is enabled by this PR. End-to-end migration
+and recovery tests remain mandatory for launch.
