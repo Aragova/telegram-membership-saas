@@ -231,6 +231,133 @@ def upgrade() -> None:
     """)
 
 
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_create_attempt(
+      p_invoice uuid,p_requested_rub numeric,p_currency text
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      actor uuid;
+      item record;
+      paid numeric;
+      due numeric;
+      rate numeric;
+      fx_day date;
+      day date;
+      bank text;
+      converted numeric;
+      snapped_rub numeric;
+      attempt uuid;
+      deadline timestamptz;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      IF actor IS NULL OR p_invoice IS NULL
+         OR p_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
+         OR p_requested_rub IS NULL OR p_requested_rub<=0
+         OR p_requested_rub<>round(p_requested_rub,2) THEN
+        RAISE EXCEPTION 'Invalid payment amount/currency'
+          USING ERRCODE='22023';
+      END IF;
+      SELECT * INTO item FROM public.platform_saas_invoices
+        WHERE id=p_invoice FOR UPDATE;
+      IF item.id IS NULL OR item.status<>'issued'
+         OR item.owner_user_id IS DISTINCT FROM actor THEN
+        RAISE EXCEPTION 'Account invoice is not payable'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT coalesce(sum(amount_rub),0) INTO paid
+      FROM public.platform_saas_receipts WHERE invoice_id=p_invoice;
+      SELECT paid+coalesce(sum(allocated_rub),0) INTO paid
+      FROM public.platform_saas_payment_allocations_v2
+      WHERE invoice_id=p_invoice;
+      due:=item.total_rub-paid;
+      IF p_requested_rub>due THEN
+        RAISE EXCEPTION 'Requested amount exceeds unpaid invoice'
+          USING ERRCODE='23514';
+      END IF;
+      SELECT instructions INTO bank
+      FROM public.platform_saas_payment_methods_v2
+      WHERE currency_code=p_currency AND enabled;
+      IF bank IS NULL AND p_currency='RUB' THEN
+        SELECT instructions INTO bank
+        FROM public.platform_saas_payment_details WHERE id=1;
+      END IF;
+      IF bank IS NULL THEN
+        RAISE EXCEPTION 'Platform bank details not published'
+          USING ERRCODE='42501';
+      END IF;
+      day:=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
+      IF p_currency='RUB' THEN rate:=1;fx_day:=NULL;
+      ELSE
+        SELECT rub_per_unit,source_date INTO rate,fx_day
+        FROM public.platform_saas_daily_fx_rates
+        WHERE rate_date=day AND currency_code=p_currency
+          AND source_name='CBR' AND source_date<=day
+          AND source_date>=day-interval '14 days';
+      END IF;
+      IF rate IS NULL OR rate<=0 THEN
+        RAISE EXCEPTION 'Verified bank currency conversion unavailable'
+          USING ERRCODE='42501';
+      END IF;
+      converted:=round(p_requested_rub/rate,2);
+      snapped_rub:=round(converted*rate,2);
+      IF converted<=0 OR snapped_rub<=0 OR snapped_rub>due THEN
+        RAISE EXCEPTION 'Converted payment amount outside remaining debt'
+          USING ERRCODE='23514';
+      END IF;
+      deadline:=clock_timestamp()+interval '48 hours';
+      attempt:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_attempts_v2(
+        id,invoice_id,owner_user_id,amount_rub,currency_code,
+        rub_per_unit,amount_currency,quote_date,source_date,
+        instructions_snapshot,expires_at
+      ) VALUES(
+        attempt,item.id,actor,snapped_rub,p_currency,rate,
+        converted,day,fx_day,bank,deadline
+      );
+      RETURN jsonb_build_object(
+        'id',attempt,'invoice_id',item.id,'amount_rub',snapped_rub::text,
+        'currency',p_currency,'amount',converted::text,
+        'rub_per_unit',rate::text,'quote_date',day,
+        'source_date',fx_day,'expires_at',deadline,
+        'instructions',bank,'remaining_before',due::text
+      );
+    END; $f$
+    """)
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_v2_submit_proof(
+      p_attempt uuid,p_bot bigint,p_message bigint,
+      p_file_id text,p_kind text
+    ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE actor uuid; original record; existing uuid; proof uuid;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      SELECT * INTO original
+      FROM public.platform_saas_payment_attempts_v2 WHERE id=p_attempt;
+      IF original.id IS NULL OR original.owner_user_id IS DISTINCT FROM actor
+         OR p_bot IS NULL OR p_bot<=0 OR p_message IS NULL OR p_message<=0
+         OR length(coalesce(p_file_id,'')) NOT BETWEEN 8 AND 512
+         OR p_kind NOT IN ('photo','document')
+         OR clock_timestamp()>original.expires_at THEN
+        RAISE EXCEPTION 'Original payer proof is unavailable'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT id INTO existing FROM public.platform_saas_payment_proofs_v2
+      WHERE attempt_id=p_attempt;
+      IF existing IS NOT NULL THEN RETURN existing; END IF;
+      proof:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_proofs_v2(
+        id,attempt_id,source_bot_id,source_message_id,
+        source_file_id,file_type
+      ) VALUES(
+        proof,p_attempt,p_bot,p_message,p_file_id,p_kind
+      );
+      RETURN proof;
+    END; $f$
+    """)
+
+
 def downgrade() -> None:
     raise RuntimeError(
         "Do not roll back append-only ViMi Pay payment evidence"
