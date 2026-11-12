@@ -52,6 +52,7 @@ async def reserve_crypto_invoice(
     project_id: UUID, bot_id: int, buyer_id: int, kind: str,
     target_id: UUID, currency: str, username: str | None = None,
     first_name: str | None = None,
+    reuse_recent: bool = False, require_mainnet: bool = False,
 ) -> UUID:
     """Freeze a currently saleable file/plan in its seller's active app.
 
@@ -72,7 +73,7 @@ async def reserve_crypto_invoice(
             CryptoPayApp.owner_user_id == Project.owner_user_id,
             CryptoPayApp.status == "active",
         ).with_for_update(of=CryptoPayApp))
-        if app is None:
+        if app is None or (require_mainnet and app.environment != "mainnet"):
             raise ValueError("The seller has not enabled Crypto Pay")
 
         pending = await session.scalar(select(func.count(CryptoPayInvoice.id)).where(
@@ -193,6 +194,37 @@ async def reserve_crypto_invoice(
             name, amount = product.name, price.amount
 
         spec = invoice_price_spec(currency, amount)
+        if reuse_recent:
+            # Reopening checkout must NOT create another charge while an
+            # identical active invoice is pending from this buyer and app.
+            # The project checkout lock serializes repeated button presses.
+            now = datetime.now(UTC)
+            target_check = (
+                CryptoPayInvoice.plan_price_id == target_id
+                if kind == "subscription"
+                else CryptoPayInvoice.product_id == target_id
+            )
+            older = (await session.scalars(select(CryptoPayInvoice).where(
+                CryptoPayInvoice.project_id == project_id,
+                CryptoPayInvoice.app_id == app.id,
+                CryptoPayInvoice.telegram_bot_id == bot_id,
+                CryptoPayInvoice.telegram_user_id == buyer_id,
+                CryptoPayInvoice.kind == kind,
+                target_check,
+                CryptoPayInvoice.currency_code == currency,
+                CryptoPayInvoice.amount == amount,
+                or_(
+                    and_(CryptoPayInvoice.status == "reserved",
+                         CryptoPayInvoice.created_at >= now - timedelta(minutes=12)),
+                    and_(CryptoPayInvoice.status == "issued",
+                         CryptoPayInvoice.created_at >= now - timedelta(minutes=25)),
+                    and_(CryptoPayInvoice.status == "issuing",
+                         CryptoPayInvoice.created_at >= now - timedelta(days=1)),
+                ),
+            ).order_by(CryptoPayInvoice.created_at.desc()).limit(1)
+                .with_for_update())).first()
+            if older is not None:
+                return older.id
         order_id = uuid4()
         record = CryptoPayInvoice(
             id=order_id, project_id=project_id, app_id=app.id,
@@ -215,6 +247,7 @@ async def issue_reserved_crypto_invoice(
     project_id: UUID, bot_id: int, buyer_id: int, invoice_id: UUID,
     encryption_key: SecretStr | None,
     client_factory: Callable[..., CryptoPayClient] = CryptoPayClient,
+    require_mainnet: bool = False,
 ) -> IssuedCryptoInvoice:
     """Commit 'issuing' BEFORE contacting Crypto Pay to prevent duplicate bills.
 
@@ -233,6 +266,19 @@ async def issue_reserved_crypto_invoice(
         ).with_for_update())
         if record is None:
             raise PermissionError("Invoice does not belong to this buyer and bot")
+        if require_mainnet:
+            mainnet = await session.scalar(select(CryptoPayApp.id).join(
+                Project, Project.id == CryptoPayApp.project_id,
+            ).where(
+                CryptoPayApp.id == record.app_id,
+                CryptoPayApp.project_id == project_id,
+                CryptoPayApp.telegram_bot_id == bot_id,
+                CryptoPayApp.owner_user_id == Project.owner_user_id,
+                CryptoPayApp.status == "active",
+                CryptoPayApp.environment == "mainnet",
+            ))
+            if mainnet is None:
+                raise PermissionError("Live Crypto Pay is unavailable")
         if record.status == "issued" and record.invoice_url:
             return IssuedCryptoInvoice(
                 id=record.id, url=record.invoice_url,
