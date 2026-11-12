@@ -118,6 +118,7 @@ class FilePurchase(Base):
                         name="ck_file_purchase_status"),
         CheckConstraint("stars_amount BETWEEN 1 AND 250000",
                         name="ck_file_purchase_stars"),
+        UniqueConstraint("id", "project_id", name="uq_file_purchase_id_project"),
         UniqueConstraint("invoice_payload", name="uq_file_purchase_payload"),
         UniqueConstraint("telegram_charge_id", name="uq_file_purchase_charge"),
         Index("ix_file_purchase_buyer", "project_id", "telegram_user_id", "status"),
@@ -141,11 +142,31 @@ class FilePurchase(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Durable Telegram precheckout approval. A sent ok=True can charge Stars
-    # before successful_payment reaches this bot; Crypto Pay must not issue
-    # a second payable link during that unresolved interval.
-    stars_authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FileStarAuthorization(Base):
+    """Immutable, bot/project-scoped record of Telegram precheckout approval.
+
+    Stored separately: the paid file purchase row remains protected by its
+    immutable financial trigger and is only updated by actual Stars evidence.
+    """
+    __tablename__ = "file_sale_star_authorizations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["purchase_id", "project_id"],
+            ["file_sale_purchases.id", "file_sale_purchases.project_id"],
+            ondelete="RESTRICT", name="fk_file_star_auth_purchase_project",
+        ),
+    )
+
+    purchase_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    authorized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
 
 
 class FileStarRefund(Base):
