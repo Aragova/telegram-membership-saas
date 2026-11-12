@@ -4,8 +4,9 @@ All temporary platform-operator grants, FX rates and sales evidence are
 rolled back in this test. No SaaS bill or customer hold is activated.
 """
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -343,4 +344,124 @@ async def test_crypto_paid_asset_rate_persists_atomically_and_replays_safely():
             assert invoice.status == "paid"
             assert quote is None  # unresolved finance, valid purchase
     finally:
+        await engine.dispose()
+
+
+
+async def test_crypto_audit_cursor_wraps_even_as_new_paid_invoices_arrive():
+    """A fixed high-water mark retries old unpriced sales under steady traffic.
+
+    Synthetic provider-paid rows exist ONLY within this privileged rollback
+    transaction to exercise the SQL scan protocol. No real payment is made.
+    """
+    cfg = Settings()
+    engine = build_engine(cfg)
+    factory = build_session_factory(engine)
+    admin = create_async_engine(cfg.migration_database_url)
+    try:
+        owner, project_id, bot_id, product_id = await _shop(
+            factory, SecretStr(Fernet.generate_key().decode("ascii")),
+        )
+        operator_tg = _tid()
+        operator = await ensure_telegram_actor(
+            factory, telegram_id=operator_tg,
+            username=None, first_name=None,
+        )
+        async with admin.connect() as conn:
+            tx = await conn.begin()
+            try:
+                app_id = (await conn.execute(text(
+                    "SELECT id FROM crypto_pay_apps WHERE project_id=:project"
+                ), {"project": project_id})).scalar_one()
+                await conn.execute(text(
+                    "UPDATE crypto_pay_apps SET environment='mainnet' "
+                    "WHERE id=:id"
+                ), {"id": app_id})
+                await conn.execute(text(
+                    "INSERT INTO platform_operators(telegram_user_id,role)"
+                    " VALUES(:tg,'owner')"
+                ), {"tg": operator_tg})
+                cutoff = (await conn.execute(text(
+                    "SELECT started_at FROM platform_saas_crypto_capture_control"
+                    " WHERE id=1"
+                ))).scalar_one()
+                # Different timestamps ensure no rows appear between A and B.
+                # All are newer than the audit capture cutoff, older than
+                # normal test-created sales (migrations happen first).
+                when_a = cutoff + timedelta(milliseconds=1)
+                when_b = cutoff + timedelta(milliseconds=2)
+                when_c = cutoff + timedelta(milliseconds=3)
+                invoice_a, invoice_b, invoice_c = uuid4(), uuid4(), uuid4()
+
+                async def insert_unpriced_invoice(invoice, when, number):
+                    await conn.execute(text(
+                        "INSERT INTO crypto_pay_invoices("
+                        "id,project_id,app_id,telegram_bot_id,telegram_user_id,"
+                        "kind,product_id,name_snapshot,amount,currency_code,"
+                        "currency_type,payload,provider_invoice_id,status,paid_at"
+                        ") VALUES("
+                        ":id,:project,:app,:bot,:buyer,'file',:product,"
+                        "'Audit test',1,'TON','crypto',:payload,:provider,"
+                        "'paid',:paid)"
+                    ), {
+                        "id": invoice, "project": project_id,
+                        "app": app_id, "bot": bot_id, "buyer": _tid(),
+                        "product": product_id,
+                        "payload": "cp:" + invoice.hex,
+                        "provider": 54000 + number,
+                        "paid": when,
+                    })
+
+                await insert_unpriced_invoice(invoice_a, when_a, 1)
+                await insert_unpriced_invoice(invoice_b, when_b, 2)
+                # Simulate a scan in progress: A was visited but its USD
+                # quote was unavailable; B is the frozen end of this pass.
+                await conn.execute(text(
+                    "UPDATE platform_saas_crypto_scan_cursor "
+                    "SET last_paid_at=:a,last_invoice_id=:aid,"
+                    "max_paid_at=:b,max_invoice_id=:bid WHERE id=1"
+                ), {
+                    "a": when_a, "aid": invoice_a,
+                    "b": when_b, "bid": invoice_b,
+                })
+                # Continuous new traffic beyond the original high-water
+                # bound must NOT prevent returning to A later.
+                await insert_unpriced_invoice(invoice_c, when_c, 3)
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(operator)})
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                rpc = text(
+                    "SELECT public.platform_saas_capture_crypto_sales(1) AS data"
+                ).columns(data=JSONB)
+                first = (await conn.execute(rpc)).scalar_one()
+                assert first["examined"] == 1
+                assert first["unresolved"] == 1
+                await conn.execute(text("RESET ROLE"))
+                cursor = (await conn.execute(text(
+                    "SELECT last_paid_at,last_invoice_id,max_paid_at,max_invoice_id "
+                    "FROM platform_saas_crypto_scan_cursor WHERE id=1"
+                ))).one()
+                assert all(item is None for item in cursor)
+                # The very next scan restarts from old unpriced A despite C
+                # being newer and still outstanding: no idle period required.
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                second = (await conn.execute(rpc)).scalar_one()
+                assert second["examined"] == 1
+                assert second["unresolved"] == 1
+                await conn.execute(text("RESET ROLE"))
+                restarted = (await conn.execute(text(
+                    "SELECT last_invoice_id,max_invoice_id "
+                    "FROM platform_saas_crypto_scan_cursor WHERE id=1"
+                ))).one()
+                assert restarted.last_invoice_id == invoice_a
+                assert restarted.max_invoice_id == invoice_c
+                assert (await conn.execute(text(
+                    "SELECT COUNT(*) FROM platform_saas_crypto_sales "
+                    "WHERE project_id=:project"
+                ), {"project": project_id})).scalar_one() == 0
+            finally:
+                await tx.rollback()
+    finally:
+        await admin.dispose()
         await engine.dispose()
