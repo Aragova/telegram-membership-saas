@@ -172,3 +172,25 @@ authorized Crypto Pay setup callback warms the local owner hint immediately
 after binding the durable prompt, including after ownership transfer. All
 authorization and active generation checks still occur in the database;
 the in-process hint is NEVER used to grant credentials or payment rights.
+
+### Checkout reservation and provider verification service (in progress, #135)
+
+Backend-only `crypto_pay.checkout` creates a **frozen local reservation** for a
+published file with actual assets or a live subscription plan/price/resource,
+checking the connected bot, buyer ban, active merchant credential, supported
+currency, and up to 10 outstanding Crypto Pay orders per buyer. Subscription
+reservations capture the project customer and original plan/duration/price.
+The generated `cp:<UUID>` payload is unique. The reservation is committed
+before any external invoice call. A row-locked issuance routine uses exactly
+the issuing merchant's encrypted app credential, freezes the provider ID/link,
+and permits an idempotent repeat. Rotation/disconnection prevents new issuance
+from a retired app, while already issued invoices remain bound to their
+historic credential version. Read-only provider verification uses
+`getInvoices` and validates immutable invoice ID/payload/amount/currency.
+
+**Important safety gate:** this service deliberately does not mark an order
+paid, credit platform fees, create entitlements, or deliver a file, and NO
+buyer-facing Crypto Pay option is registered. The remaining #135 work is the
+single-transaction fulfillment path, delivery outbox, periodic reconciliation,
+UX integration and exact-head safety tests. Do not switch on a payable buyer
+button until every step works after a crash/retry.
