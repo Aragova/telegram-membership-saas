@@ -142,7 +142,11 @@ async def test_release_mainnet_file_and_subscription_complete_through_one_worker
         )
         # Local payload is cp:<UUID> with hyphens, never rely on Telegram
         # buyer input or a screenshot as payment evidence.
-        Provider.invoice_data[provider_file_id]["status"] = "active"
+        original_paid_at = Provider.invoice_data[provider_file_id].pop("paid_at")
+        Provider.invoice_data[provider_file_id].update({
+            "status": "active",
+            "bot_invoice_url": "https://t.me/CryptoBot?start=IV123",
+        })
         assert await reconcile_crypto_pay_once(
             factory, project_id=project_id, bot=telegram,
             encryption_key=key, client_factory=MainnetProvider,
@@ -162,7 +166,9 @@ async def test_release_mainnet_file_and_subscription_complete_through_one_worker
             ))).all()
             assert len(grants) == 1
 
-        Provider.invoice_data[provider_file_id]["status"] = "paid"
+        Provider.invoice_data[provider_file_id].update({
+            "status": "paid", "paid_at": original_paid_at,
+        })
         assert await reconcile_crypto_pay_once(
             factory, project_id=project_id, bot=telegram,
             encryption_key=key, client_factory=MainnetProvider,
