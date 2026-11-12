@@ -1,3 +1,15 @@
+## 2026-11-12 — PR #140 missing paid USD quote recovery
+
+The existing per-bot Crypto Pay reconciliation now retries absent original
+paid-time USD quotes with a bounded due queue. It verifies the paid response
+against the original merchant token and immutable invoice identity before
+appending missing USD evidence. Previously fulfilled file/subscription
+purchases are never replayed. Provider outage or missing quotation cannot
+block delivery. Crypto consumer activation, live SaaS billing and holds
+remain OFF. See docs/CRYPTO_PAY_CHECKOUT.md.
+
+---
+
 ## 2026-11-12 — #135 crypto atomic settlement backend after #136
 
 PR #136 was merged as `a99c344` and deployed via staging workflow #43219753620,
