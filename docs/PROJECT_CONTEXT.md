@@ -1,3 +1,16 @@
+## 2026-11-12 — #143 Crypto Pay buyer release (single PR)
+
+Prior stages #133-#142 already supply merchant credential configuration,
+atomic paid orders, bot delivery/reconciliation and sale-date USD commission
+evidence. #143 must deliver and enable the EXISTING buyer payment chooser for
+BOTH subscriptions and files in the same shared light100 staging runtime,
+with a single opt-out flag and a migrated Postgres/RLS buyer-to-fulfillment
+test. No new bot or duplicate UI. Only the buyer checkout gate opens; 5%
+SaaS monthly invoice collection/holds stay disabled. A verified real-merchant
+transaction is still required before claiming live payment success.
+
+---
+
 ## 2026-11-12 — #140 deployed and #141 verified Crypto Pay refund slice
 
 PR #140 merged as 2d66a28; staging deploy #33 (run 43263240200)

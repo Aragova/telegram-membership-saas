@@ -9,6 +9,11 @@ services:
       TMS_CUSTOMER_SUPERVISOR_MAX_BOTS: "100"
       TMS_CUSTOMER_SUPERVISOR_SHARD_COUNT: "1"
       TMS_CUSTOMER_SUPERVISOR_SHARD_ID: "0"
+      # One release gate for BOTH subscriptions and file purchases.
+      # Only actively bound, enabled MAINNET merchant apps appear to buyers.
+      # Set TMS_CRYPTO_PAY_BUYER_ENABLED=false to instantly hide NEW checkout.
+      # Provider reconciliation/delivery of already-paid orders keeps running.
+      TMS_CRYPTO_PAY_BUYER_ENABLED: ${TMS_CRYPTO_PAY_BUYER_ENABLED:-true}
       # Quiet channels do not need a PostgreSQL access/outbox scan every second.
       # New access/revocation actions may be delayed by up to this interval.
       TMS_TELEGRAM_WORKER_POLL_SECONDS: "5"

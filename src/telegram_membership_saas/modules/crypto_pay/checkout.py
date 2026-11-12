@@ -331,7 +331,7 @@ async def issue_reserved_crypto_invoice(
     A network timeout, process crash or failed DB finalization leaves 'issuing'
     and requires explicit provider reconciliation, NEVER blind createInvoice
     retry. The provider recovery worker verifies paid invoices before delivery.
-    Buyer-facing Crypto Pay buttons remain disabled in this slice.
+    Buyer links are enabled only by the separately gated mainnet storefront.
     """
     async with system_project_session_scope(factory, project_id) as session:
         await checkout_retirement_lock(session, project_id)

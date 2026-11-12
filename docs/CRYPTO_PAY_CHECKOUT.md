@@ -414,3 +414,57 @@ entitlements, existing invoice or monthly payment allocation. This is
 backend-only until merchant refund initiation/review and the next monthly
 invoice integration are implemented and E2E tested. Buyer Crypto Pay, live
 SaaS billing and holds remain disabled; no separate worker, bot or menu.
+
+
+### #143: Single-PR buyer checkout release in light100 staging
+
+**Release scope:** same customer-bot storefronts and seller app for files and
+subscriptions; no new payment bot, no new payment database, no duplicated
+administration screens or middleware. The crypto source accounting in #140
+and immutable refund audit in #142 already exist.
+
+The live light100 customer-supervisor deployment profile now explicitly sets
+`TMS_CRYPTO_PAY_BUYER_ENABLED=${TMS_CRYPTO_PAY_BUYER_ENABLED:-true}`.
+That setting enables **only new buyer checkout UI**. Local/standalone
+`Settings` and base Compose customer profiles still default to FALSE.
+If an operator needs an emergency checkout pause, set
+`TMS_CRYPTO_PAY_BUYER_ENABLED=false` in the deploy environment and
+redeploy the same customer supervisor; previously issued invoices still
+settle and deliver through the always-on original-app recovery worker.
+
+Crypto Pay is offered **only** when the seller's connected bot has a
+current-owner-bound ACTIVE MAINNET Crypto Pay app, encrypted API credentials
+are present and a matching active file/plan currency price exists. Its
+existing mainnet token is configured once via the connected admin bot under
+`💳 Способы оплаты → 💎 Crypto Pay`. Retired/testnet tokens are never exposed
+to buyers. File payment toggles in the existing owner settings still apply;
+Stars/manual methods remain independent. A no-bank crypto-only plan/file
+is purchasable through the SAME offer/currency screen.
+
+Buyer path: offer → currency / 💎 Crypto Pay → signed original
+`createInvoice` deep link → official `getInvoices` verification under the
+original encrypted merchant credential → paid canonical invoice → exactly
+one Subscription+Entitlement+access outbox or paid file+retryable delivery.
+Buyer receives native RU/EN Rich (with HTML fallback), no check-upload
+buttons, no fake "I paid" state. A repeated open reuses the original
+payable invoice; a lost createInvoice response stays uncertain until
+the existing polling worker recovers the original ID. `/myfiles` and
+renewal/payment timelines remain available. Valid paid buyers are
+fulfilled even if an optional original USD quote or published CBR rate
+is missing; financial evidence retries separately.
+
+**Commercial separation:** Verified crypto sale evidence + 5% USD
+commission preview exist, but platform monthly RUB invoice incorporation
+and automatic SaaS charging/holds remain OFF. Do not claim that monthly
+commission collection, fiat-denominated Crypto Pay refunds or cash payout
+automations are enabled. These require separate financial controls, not
+new buyer menus. No platform money moves through ViMi Pay: buyer money
+goes to the seller's own Crypto Pay app.
+
+**Release acceptance:** CI runs the real PostgreSQL/RLS buyer-to-fulfillment
+end-to-end for subscription and file; false-pay and repeated-invoice tests;
+worker delayed settlement and duplicate delivery checks; Compose validates
+light100 startup with the feature enabled and fallback disable flag.
+Live merchant-money verification still requires an authorized owner
+test transaction with an actual MAINNET merchant token after staging deploy;
+CI uses a fake Crypto Pay provider and never transfers real money.
