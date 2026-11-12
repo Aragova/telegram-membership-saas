@@ -211,3 +211,30 @@ buyer-facing Crypto Pay option is registered. The remaining #135 work is the
 single-transaction fulfillment path, delivery outbox, periodic reconciliation,
 UX integration and exact-head safety tests. Do not switch on a payable buyer
 button until every step works after a crash/retry.
+
+### Verified atomic payment ledger and historical resources (next #135 slice)
+
+Crypto Pay settlement is now implemented as a **trusted backend-only** function
+that performs an authoritative `getInvoices` lookup on the exact issuing
+merchant credential before it may touch customer purchases. It revalidates
+provider ID, unique payload, amount, currency, paid timestamp and the
+project-scoped invoice under the shared checkout/retirement lock. No Telegram
+buyer message, screenshot, or unchecked webhook can settle an invoice.
+
+For files, the existing `crypto_pay_invoices` record is the one canonical
+purchase. A verified paid invoice unlocks the existing /myfiles paid-history,
+download and delivery-mark flow; no additional files purchase database is
+introduced. For subscriptions, migration `0061_crypto_paid_sources` adds a
+native `last_crypto_invoice_id` source to the shared Subscription projection
+and `crypto_payment` to EntitlementGrant sources. Resource IDs sold at
+reservation time are persisted; exact grants and access recalculation outbox
+events are committed with the paid invoice in one project transaction.
+Manual, Stars and Crypto sources share the same historical renewal timeline
+to avoid silently losing cross-rail access on a later Stars refund.
+
+**Rollout gate remains CLOSED**: there is no buyer Crypto Pay button, no
+automated provider reconciliation polling or file push worker yet. A new
+automated fulfillment/recovery worker will call the verified service and
+deliver file media after the transaction commits. No commercial SaaS billing
+switch is changed. Never expose a payable invoice until periodic recovery,
+payment history, file delivery and cross-rail tests are complete.
