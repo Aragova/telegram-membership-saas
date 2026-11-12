@@ -60,8 +60,13 @@ def test_crypto_paid_rate_is_provider_payment_time_not_current_spot():
     missing = verify_paid_invoice({**paid, "paid_usd_rate": None}, **values)
     assert missing.paid_usd_rate is None  # no fake spot-rate fallback
     for invalid in ("0", "-1", "NaN", "99999999999"):
-        with pytest.raises(CryptoPayError):
-            verify_paid_invoice({**paid, "paid_usd_rate": invalid}, **values)
+        # An unusable OPTIONAL accounting quote may not prevent fulfillment.
+        unpriced = verify_paid_invoice(
+            {**paid, "paid_usd_rate": invalid}, **values,
+        )
+        assert unpriced.paid_usd_rate is None
+    with pytest.raises(CryptoPayError):
+        verify_paid_invoice({**paid, "invoice_id": 777}, **values)
     fiat = verify_paid_invoice({
         **paid, "currency_type": "fiat", "fiat": "USD",
         "amount": "4.00",
