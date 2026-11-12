@@ -91,7 +91,37 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                     "(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date,"
                     ":operator) ON CONFLICT DO NOTHING"
                 ), {"operator": operator})
+                # Legacy RUB details must never override an explicit v2
+                # disable, even when a buyer has an issued account invoice.
+                await conn.execute(text(
+                    "UPDATE platform_saas_payment_details SET "
+                    "instructions='Legacy RUB account (retired)' WHERE id=1"
+                ))
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await _actor(conn, operator)
+                assert await _call(conn, "platform_saas_v2_bank_method", {
+                    "currency": "RUB", "instructions": None,
+                })
+                await _actor(conn, owner)
+                methods = await _call(
+                    conn, "platform_saas_v2_available_methods",
+                    {"invoice": invoice},
+                )
+                assert "RUB" not in methods
+                assert "USD" in methods
+                with pytest.raises(DBAPIError) as retired:
+                    async with conn.begin_nested():
+                        await _call(
+                            conn, "platform_saas_v2_create_attempt",
+                            {"invoice": invoice,
+                             "amount_rub": Decimal("100"),
+                             "currency": "RUB"},
+                        )
+                assert getattr(retired.value.orig, "sqlstate", None) == "42501"
+                await _actor(conn, operator)
+                assert await _call(conn, "platform_saas_v2_bank_method", {
+                    "currency": "RUB", "instructions": "ViMi bank RUB test details",
+                })
                 await _actor(conn, owner)
                 usd_quote = await _call(
                     conn, "platform_saas_v2_create_attempt",
