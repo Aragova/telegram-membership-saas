@@ -114,8 +114,8 @@ async def test_unauthorized_owner_controls_are_denied(monkeypatch):
 
 async def test_wrong_stars_checkout_is_declined_without_delivery(monkeypatch):
     router = ui.create_file_sales_router(MagicMock(), project_id=uuid4())
-    denied = AsyncMock(return_value=False)
-    monkeypatch.setattr(ui, "precheckout_allowed", denied)
+    denied = AsyncMock(return_value=(False, False))
+    monkeypatch.setattr(ui, "authorize_file_stars_precheckout", denied)
     bot = _bot()
     bot.id = 9999
     bot.answer_pre_checkout_query = AsyncMock()
