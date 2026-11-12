@@ -42,10 +42,12 @@ from telegram_membership_saas.modules.crypto_pay.settlement import (
 from telegram_membership_saas.modules.file_sales.manual_handlers import (
     show_file_payment_options,
 )
+from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
 from telegram_membership_saas.modules.file_sales.manual_service import (
     available_price_currencies,
     create_manual_order,
     price_editor_options,
+    review_manual_order,
     set_manual_price,
 )
 from telegram_membership_saas.modules.file_sales.models import FileProduct, FilePurchase
@@ -591,5 +593,87 @@ async def test_durable_stars_precheckout_authorization_blocks_new_crypto_charge(
                 target_id=product_id, currency="RUB",
                 require_mainnet=True,
             )
+    finally:
+        await engine.dispose()
+
+
+
+async def test_crypto_issuance_rechecks_paid_manual_order_after_reservation():
+    """Approval between reserve and external issue cannot create two bills."""
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        owner, project, bot_id, product_id = await _shop(factory, key)
+        buyer_a, buyer_b = _tid(), _tid()
+        async with system_project_session_scope(factory, project) as session:
+            app = await session.scalar(select(CryptoPayApp).where(
+                CryptoPayApp.project_id == project,
+            ))
+            app.environment = "mainnet"
+
+        async def new_manual_order(uid):
+            async with system_project_session_scope(factory, project) as session:
+                order = FileManualOrder(
+                    project_id=project, product_id=product_id,
+                    telegram_bot_id=bot_id, telegram_user_id=uid,
+                    product_name="File", amount=Decimal("55"),
+                    currency_code="RUB", payment_method_id=uuid4(),
+                    payment_method_name="Bank", instruction="Transfer",
+                    status="submitted", receipt_kind="photo",
+                    receipt_file_id="receipt-file-id",
+                )
+                session.add(order)
+                await session.flush()
+                return order.id
+
+        # Manual paid first, then previously reserved crypto attempts issue.
+        local_id = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_a, kind="file", target_id=product_id,
+            currency="RUB", require_mainnet=True,
+        )
+        manual_id = await new_manual_order(buyer_a)
+        approved, changed = await review_manual_order(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, order_id=manual_id, approve=True,
+        )
+        assert changed and approved.status == "approved"
+        with pytest.raises(ValueError, match="already purchased"):
+            await issue_reserved_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer_a, invoice_id=local_id,
+                encryption_key=key, require_mainnet=True,
+                client_factory=MainnetProvider,
+            )
+        assert Provider.created == []
+        async with system_project_session_scope(factory, project) as session:
+            record = await session.get(CryptoPayInvoice, local_id)
+            assert record.status == "reserved"
+
+        # Reverse order: Crypto Pay is already payable, so the moderator
+        # cannot approve a competing bank payment for that same buyer/file.
+        invoice_b = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_b, kind="file", target_id=product_id,
+            currency="RUB", require_mainnet=True,
+        )
+        await issue_reserved_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_b, invoice_id=invoice_b,
+            encryption_key=key, require_mainnet=True,
+            client_factory=MainnetProvider,
+        )
+        manual_b = await new_manual_order(buyer_b)
+        with pytest.raises(ValueError, match="Crypto Pay"):
+            await review_manual_order(
+                factory, project_id=project, bot_id=bot_id,
+                actor_id=owner, order_id=manual_b, approve=True,
+            )
+        async with system_project_session_scope(factory, project) as session:
+            order = await session.get(FileManualOrder, manual_b)
+            assert order.status == "submitted"
     finally:
         await engine.dispose()
