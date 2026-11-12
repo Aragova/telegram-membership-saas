@@ -22,7 +22,7 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayError,
     invoice_price_spec,
 )
-from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp
+from telegram_membership_saas.modules.crypto_pay.models import CryptoPayApp, CryptoPayInvoice
 from telegram_membership_saas.modules.file_sales.manual_models import FileManualPrice
 from telegram_membership_saas.modules.file_sales.models import (
     FileAsset,
@@ -39,6 +39,18 @@ from telegram_membership_saas.modules.resources import Resource
 
 CRYPTO_METHOD_ID = UUID(int=1)
 CRYPTO_CURRENCIES = frozenset(FIAT | CRYPTO)
+
+
+@dataclass(frozen=True, slots=True)
+class BuyerCryptoInvoice:
+    id: UUID
+    url: str
+    name: str
+    kind: str
+    amount: Decimal
+    currency: str
+    duration_value: int | None
+    duration_unit: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,8 +257,24 @@ async def begin_buyer_crypto_checkout(
         username=username, first_name=first_name,
         reuse_recent=True, require_mainnet=True,
     )
-    return await issue_reserved_crypto_invoice(
+    issued = await issue_reserved_crypto_invoice(
         factory, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
         invoice_id=local_id, encryption_key=encryption_key,
         require_mainnet=True,
     )
+    async with system_project_session_scope(factory, project_id) as session:
+        original = await session.scalar(select(CryptoPayInvoice).where(
+            CryptoPayInvoice.id == issued.id,
+            CryptoPayInvoice.project_id == project_id,
+            CryptoPayInvoice.telegram_bot_id == bot_id,
+            CryptoPayInvoice.telegram_user_id == buyer_id,
+        ))
+        if original is None or original.invoice_url != issued.url:
+            raise CryptoPayError("The original Crypto Pay invoice changed")
+        return BuyerCryptoInvoice(
+            id=issued.id, url=issued.url,
+            name=original.name_snapshot, kind=original.kind,
+            amount=original.amount, currency=original.currency_code,
+            duration_value=original.duration_value,
+            duration_unit=original.duration_unit,
+        )
