@@ -1,3 +1,24 @@
+## 2026-11-12 — Current Crypto Pay state and next slice
+
+PR #134 was merged to `main` as `64fdc22`: single owner-only 💎 Crypto Pay
+setup in the connected admin bot, secure token deletion before API validation,
+mainnet/testnet, encryption, rotation/disconnect and shared file/subscription
+settings. CI for the merge is green; staging requires a separate manual
+GitHub Actions `staging-deploy.yml` dispatch and must not be assumed deployed.
+
+Issue #135 / branch `feat/135-crypto-pay-issued-invoice-reservations`:
+backend-only reservation, provider issuance and read-only evidence validation
+for both sale types. **No buyer Crypto Pay button and no paid delivery yet.**
+Implement atomic verified fulfillment, file/access outbox, bounded recovery,
+RU/EN Rich integration and CI/Codex before deployment. Existing manual/Stars
+payments are unchanged and platform SaaS billing is OFF.
+
+Earlier #130 is **merged**, not an open draft. #133 is merged and provides
+the encrypted merchant/provider foundation. See
+`docs/CRYPTO_PAY_CHECKOUT.md` and `docs/STAGING_GITHUB_ACTIONS.md`.
+
+---
+
 ## PR #133 — Crypto Pay merchant checkout foundation (2026-11-12)
 
 Build the merchant-owned Crypto Pay rail after native Stars. Each connected
