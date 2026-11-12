@@ -331,9 +331,14 @@ async def test_paid_crypto_file_cannot_be_billed_again_by_crypto_manual_or_stars
                 CryptoPayApp.project_id == project,
             ))
             app.environment = "mainnet"
-        monkeypatch.setattr(buyer, "get_settings", lambda: Settings(
+        enabled_settings = Settings(
             bot_token_encryption_key=key, crypto_pay_buyer_enabled=True,
-        ))
+        )
+        monkeypatch.setattr(buyer, "get_settings", lambda: enabled_settings)
+        monkeypatch.setattr(
+            "telegram_membership_saas.config.get_settings",
+            lambda: enabled_settings,
+        )
         with pytest.raises(ValueError, match="already been purchased"):
             await reserve_crypto_invoice(
                 factory, project_id=project, bot_id=bot_id,
