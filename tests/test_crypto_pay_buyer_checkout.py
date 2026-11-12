@@ -39,6 +39,9 @@ from telegram_membership_saas.modules.crypto_pay.models import (
 from telegram_membership_saas.modules.crypto_pay.settlement import (
     settle_crypto_pay_invoice,
 )
+from telegram_membership_saas.modules.file_sales.handlers import (
+    _definitively_rejected_stars_precheckout,
+)
 from telegram_membership_saas.modules.file_sales.manual_handlers import (
     show_file_payment_options,
 )
@@ -54,6 +57,7 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileProduct,
     FilePurchase,
     FileStarAuthorization,
+    FileStarAuthorizationRejection,
 )
 from telegram_membership_saas.modules.file_sales.payment_controls import (
     AUTO_CRYPTO_ID,
@@ -65,6 +69,7 @@ from telegram_membership_saas.modules.file_sales.service import (
     create_stars_order,
     paid_file_purchase_id,
     precheckout_allowed,
+    record_definitive_stars_precheckout_rejection,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
@@ -681,5 +686,120 @@ async def test_crypto_issuance_rechecks_paid_manual_order_after_reservation():
         async with system_project_session_scope(factory, project) as session:
             order = await session.get(FileManualOrder, manual_b)
             assert order.status == "submitted"
+    finally:
+        await engine.dispose()
+
+
+
+async def test_definitive_stars_precheckout_rejection_allows_new_invoice():
+    """Only authenticated negative Telegram API evidence releases claim."""
+    assert _definitively_rejected_stars_precheckout(
+        "Bad Request: QUERY_ID_INVALID"
+    )
+    assert _definitively_rejected_stars_precheckout(
+        "Bad Request: query is too old"
+    )
+    assert not _definitively_rejected_stars_precheckout(
+        "Bad Request: query already answered"
+    )
+    assert not _definitively_rejected_stars_precheckout("network timeout")
+
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        _, project, bot_id, product_id = await _shop(factory, key)
+        buyer_id = _tid()
+        async with system_project_session_scope(factory, project) as session:
+            product = await session.get(FileProduct, product_id)
+            product.stars_price = 93
+            app = await session.scalar(select(CryptoPayApp).where(
+                CryptoPayApp.project_id == project,
+            ))
+            app.environment = "mainnet"
+
+        stars = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        )
+        assert await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=stars.invoice_payload,
+            amount=93, currency="XTR",
+        )
+        assert await record_definitive_stars_precheckout_rejection(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=stars.invoice_payload,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            purchase = await session.get(FilePurchase, stars.id)
+            rejected = await session.get(FileStarAuthorizationRejection, stars.id)
+            assert purchase.status == "pending"  # guarded financial history intact
+            assert rejected is not None
+            assert rejected.rejected_at is not None
+        # Do not reauthorize a rejected old Stars invoice.
+        assert not await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=stars.invoice_payload,
+            amount=93, currency="XTR",
+        )
+        reopened = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        )
+        assert reopened.id != stars.id
+        assert reopened.invoice_payload != stars.invoice_payload
+        # The original claim no longer blocks a buyer's alternative rail.
+        reserved = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, kind="file", target_id=product_id,
+            currency="RUB", require_mainnet=True,
+        )
+        assert reserved is not None
+    finally:
+        await engine.dispose()
+
+
+async def test_manual_file_approval_refuses_already_settled_crypto_purchase():
+    """Manual reviewer must reconcile potential double transfer, not grant twice."""
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        owner, project, bot_id, product_id = await _shop(factory, key)
+        buyer_id = _tid()
+        crypto_id = await _issue(
+            factory, project=project, bot_id=bot_id, buyer=buyer_id,
+            kind="file", target_id=product_id, key=key,
+        )
+        async with system_project_session_scope(factory, project) as session:
+            manual = FileManualOrder(
+                project_id=project, product_id=product_id,
+                telegram_bot_id=bot_id, telegram_user_id=buyer_id,
+                product_name="File", amount=Decimal("55"),
+                currency_code="RUB", payment_method_id=uuid4(),
+                payment_method_name="Bank", instruction="Transfer",
+                status="submitted", receipt_kind="photo",
+                receipt_file_id="receipt-id",
+            )
+            session.add(manual)
+            await session.flush()
+            manual_id = manual.id
+        assert (await settle_crypto_pay_invoice(
+            factory, project_id=project, invoice_id=crypto_id,
+            encryption_key=key, client_factory=Provider,
+        )).changed
+        with pytest.raises(ValueError, match="another payment method"):
+            await review_manual_order(
+                factory, project_id=project, bot_id=bot_id,
+                actor_id=owner, order_id=manual_id, approve=True,
+            )
+        async with system_project_session_scope(factory, project) as session:
+            unchanged = await session.get(FileManualOrder, manual_id)
+            assert unchanged.status == "submitted"
     finally:
         await engine.dispose()
