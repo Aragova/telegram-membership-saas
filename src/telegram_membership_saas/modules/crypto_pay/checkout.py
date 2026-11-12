@@ -37,6 +37,9 @@ from telegram_membership_saas.modules.file_sales.models import (
     FileProduct,
     FilePurchase,
 )
+from telegram_membership_saas.modules.file_sales.payment_control_models import (
+    FileSaleMethodVisibility,
+)
 from telegram_membership_saas.modules.file_sales.service import _ready
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments.request_service import get_or_create_project_customer
@@ -83,6 +86,16 @@ async def reserve_crypto_invoice(
         ).with_for_update(of=CryptoPayApp))
         if app is None or (require_mainnet and app.environment != "mainnet"):
             raise ValueError("The seller has not enabled Crypto Pay")
+        if kind == "file" and require_mainnet:
+            file_crypto_enabled = await session.scalar(select(
+                FileSaleMethodVisibility.enabled,
+            ).where(
+                FileSaleMethodVisibility.project_id == project_id,
+                FileSaleMethodVisibility.telegram_bot_id == bot_id,
+                FileSaleMethodVisibility.method_id == UUID(int=1),
+            ))
+            if file_crypto_enabled is False:
+                raise PermissionError("Crypto Pay is disabled for file sales")
 
         pending = await session.scalar(select(func.count(CryptoPayInvoice.id)).where(
             CryptoPayInvoice.project_id == project_id,
@@ -247,10 +260,11 @@ async def reserve_crypto_invoice(
                 or_(
                     and_(CryptoPayInvoice.status == "reserved",
                          CryptoPayInvoice.created_at >= now - timedelta(minutes=12)),
-                    and_(CryptoPayInvoice.status == "issued",
-                         CryptoPayInvoice.created_at >= now - timedelta(minutes=25)),
-                    and_(CryptoPayInvoice.status == "issuing",
-                         CryptoPayInvoice.created_at >= now - timedelta(days=1)),
+                    # A provider invoice is payable until getInvoices
+                    # confirms expiry, NOT merely 25 min after reservation.
+                    # Never issue a second charge while the first can be paid.
+                    CryptoPayInvoice.status == "issued",
+                    CryptoPayInvoice.status == "issuing",
                 ),
             ).order_by(CryptoPayInvoice.created_at.desc()).limit(1)
                 .with_for_update())).first()
@@ -299,6 +313,16 @@ async def issue_reserved_crypto_invoice(
         ).with_for_update())
         if record is None:
             raise PermissionError("Invoice does not belong to this buyer and bot")
+        if require_mainnet and record.kind == "file":
+            file_crypto_enabled = await session.scalar(select(
+                FileSaleMethodVisibility.enabled,
+            ).where(
+                FileSaleMethodVisibility.project_id == project_id,
+                FileSaleMethodVisibility.telegram_bot_id == bot_id,
+                FileSaleMethodVisibility.method_id == UUID(int=1),
+            ))
+            if file_crypto_enabled is False:
+                raise PermissionError("Crypto Pay is disabled for file sales")
         if require_mainnet:
             mainnet = await session.scalar(select(CryptoPayApp.id).join(
                 Project, Project.id == CryptoPayApp.project_id,
