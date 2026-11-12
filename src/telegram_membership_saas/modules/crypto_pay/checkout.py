@@ -40,7 +40,10 @@ from telegram_membership_saas.modules.file_sales.models import (
 from telegram_membership_saas.modules.file_sales.payment_control_models import (
     FileSaleMethodVisibility,
 )
-from telegram_membership_saas.modules.file_sales.service import _ready
+from telegram_membership_saas.modules.file_sales.service import (
+    _has_authorized_file_stars,
+    _ready,
+)
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.payments.request_service import get_or_create_project_customer
 from telegram_membership_saas.modules.plans import Plan, PlanResource
@@ -87,6 +90,14 @@ async def reserve_crypto_invoice(
         if app is None or (require_mainnet and app.environment != "mainnet"):
             raise ValueError("The seller has not enabled Crypto Pay")
         if kind == "file" and require_mainnet:
+            if await _has_authorized_file_stars(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=target_id,
+            ):
+                raise ValueError(
+                    "An authorized Telegram Stars file invoice must be "
+                    "reconciled before opening Crypto Pay"
+                )
             file_crypto_enabled = await session.scalar(select(
                 FileSaleMethodVisibility.enabled,
             ).where(
@@ -333,6 +344,14 @@ async def issue_reserved_crypto_invoice(
         if record is None:
             raise PermissionError("Invoice does not belong to this buyer and bot")
         if require_mainnet and record.kind == "file":
+            if await _has_authorized_file_stars(
+                session, project_id=project_id, bot_id=bot_id,
+                buyer_id=buyer_id, product_id=record.product_id,
+            ):
+                raise ValueError(
+                    "An authorized Telegram Stars file invoice must be "
+                    "reconciled before opening Crypto Pay"
+                )
             file_crypto_enabled = await session.scalar(select(
                 FileSaleMethodVisibility.enabled,
             ).where(
