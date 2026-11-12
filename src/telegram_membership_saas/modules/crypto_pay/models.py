@@ -167,3 +167,49 @@ class CryptoPayInvoice(Base):
     def product_name(self) -> str:
         """Compatibility with the existing unified paid-file delivery UI."""
         return self.name_snapshot
+
+class CryptoPayPaidUsdRate(Base):
+    """Append-only original Crypto Pay asset USD price captured at settlement.
+
+    A missing paid_usd_rate is not guessed: access is granted normally but
+    the commercial capture reports the sale as pending valuation. Direct
+    ledger table access is restricted by the database's project RLS.
+    """
+
+    __tablename__ = "crypto_pay_paid_usd_rates"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["invoice_id", "project_id"],
+            ["crypto_pay_invoices.id", "crypto_pay_invoices.project_id"],
+            ondelete="RESTRICT", name="fk_crypto_paid_usd_invoice_project",
+        ),
+        CheckConstraint(
+            "usd_per_asset > 0 AND usd_per_asset <= 1000000000",
+            name="ck_crypto_paid_usd_price",
+        ),
+        CheckConstraint(
+            "source_name = 'crypto_pay_paid_usd_rate'",
+            name="ck_crypto_paid_usd_source",
+        ),
+    )
+
+    invoice_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    asset_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    usd_per_asset: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False,
+    )
+    paid_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    source_name: Mapped[str] = mapped_column(
+        String(40), nullable=False,
+        default="crypto_pay_paid_usd_rate",
+        server_default="crypto_pay_paid_usd_rate",
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        server_default=func.clock_timestamp(),
+    )
