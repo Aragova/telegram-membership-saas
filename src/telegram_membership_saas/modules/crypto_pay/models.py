@@ -101,7 +101,8 @@ class CryptoPayInvoice(Base):
             name="ck_crypto_pay_invoice_status",
         ),
         CheckConstraint(
-            "(status IN ('reserved','issuing') AND provider_invoice_id IS NULL AND paid_at IS NULL) "
+            "(status IN ('reserved','issuing') AND provider_invoice_id IS NULL "
+            "AND paid_at IS NULL) "
             "OR (status='issued' AND provider_invoice_id IS NOT NULL "
             "AND paid_at IS NULL) "
             "OR (status='paid' AND provider_invoice_id IS NOT NULL "
