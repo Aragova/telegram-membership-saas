@@ -1,5 +1,6 @@
 """Mainnet Crypto Pay appears in existing buyer storefronts only when enabled."""
 import os
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -26,6 +27,10 @@ from telegram_membership_saas.modules.crypto_pay.buyer import (
 )
 from telegram_membership_saas.modules.crypto_pay.buyer_ui import (
     send_buyer_crypto_invoice_screen,
+)
+from telegram_membership_saas.modules.crypto_pay.checkout import (
+    issue_reserved_crypto_invoice,
+    reserve_crypto_invoice,
 )
 from telegram_membership_saas.modules.crypto_pay.models import (
     CryptoPayApp,
@@ -147,6 +152,14 @@ async def test_crypto_only_subscription_and_no_duplicate_invoice(monkeypatch):
         second = await begin_buyer_crypto_checkout(factory, **kwargs)
         assert first == second and first.url.endswith("IV123")
         assert len(Provider.created) == 1
+        # Local reservation age does not prove provider expiry. An already
+        # issued invoice 29+ minutes old must not become a second charge.
+        async with system_project_session_scope(factory, project) as session:
+            invoice = await session.get(CryptoPayInvoice, first.id)
+            invoice.created_at = datetime.now(UTC) - timedelta(minutes=35)
+        still_original = await begin_buyer_crypto_checkout(factory, **kwargs)
+        assert still_original.id == first.id
+        assert len(Provider.created) == 1
         async with system_project_session_scope(factory, project) as session:
             invoices = (await session.scalars(select(CryptoPayInvoice).where(
                 CryptoPayInvoice.project_id == project,
@@ -194,10 +207,32 @@ async def test_crypto_file_prices_without_manual_bank_and_owner_toggle(monkeypat
             factory, project_id=project, bot_id=bot_id, actor_id=owner,
         )
         assert any(c.method_id == AUTO_CRYPTO_ID for c in controls)
+        # Reserve while enabled, then switch off before provider I/O.
+        # Old callback and stale reserved invoices must NOT issue charges.
+        uid = _tid()
+        unpaid_id = await reserve_crypto_invoice(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=uid, kind="file", target_id=product,
+            currency="RUB", require_mainnet=True,
+        )
         assert not await toggle_file_payment_method(
             factory, project_id=project, bot_id=bot_id,
             actor_id=owner, method_id=AUTO_CRYPTO_ID,
         )
+        with pytest.raises(PermissionError, match="disabled"):
+            await reserve_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=uid, kind="file", target_id=product,
+                currency="RUB", require_mainnet=True,
+            )
+        with pytest.raises(PermissionError, match="disabled"):
+            await issue_reserved_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=uid, invoice_id=unpaid_id,
+                encryption_key=key, require_mainnet=True,
+                client_factory=MainnetProvider,
+            )
+        assert not Provider.created
         async with system_project_session_scope(factory, project) as session:
             assert not await file_crypto_prices(
                 session, project_id=project, bot_id=bot_id,
