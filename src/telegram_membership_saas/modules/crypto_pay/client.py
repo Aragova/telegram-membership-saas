@@ -254,23 +254,30 @@ def verify_created_invoice_snapshot(
     provider_invoice: Mapping[str, Any], *,
     payload: str, amount: Decimal, currency_code: str,
     currency_type: str, testnet: bool,
-) -> tuple[int, str]:
-    """Bind recovered provider invoice to the original local frozen quote.
+) -> tuple[int, str | None]:
+    """Bind provider evidence to its immutable original local order.
 
-    A paid invoice is still NOT a grant; it requires atomic settlement.
+    An expired invoice is terminal: its identity can be recorded without
+    returning a payable link. A paid invoice is still NOT an access grant.
     """
     invoice_id = provider_invoice.get("invoice_id")
+    status = provider_invoice.get("status")
     if (type(invoice_id) is not int or invoice_id <= 0
         or provider_invoice.get("payload") != payload
-        or provider_invoice.get("status") not in ("active", "paid")
+        or status not in ("active", "paid", "expired")
         or provider_invoice.get("currency_type") != currency_type):
         raise CryptoPayError("Crypto Pay recovered invoice identity mismatch")
     field = "fiat" if currency_type == "fiat" else "asset"
     if (provider_invoice.get(field) != currency_code
         or _safe_decimal(provider_invoice.get("amount")) != _safe_decimal(amount)):
         raise CryptoPayError("Crypto Pay recovered invoice price mismatch")
+    if status == "expired":
+        # Do not mistake contradictory paid evidence for a terminal expiration.
+        if provider_invoice.get("paid_at") not in (None, ""):
+            raise CryptoPayError("Crypto Pay invoice has conflicting paid evidence")
+        return invoice_id, None
     link = _invoice_link(provider_invoice.get("bot_invoice_url"), testnet=testnet)
-    if provider_invoice.get("status") == "paid":
+    if status == "paid":
         verify_paid_invoice(
             provider_invoice, invoice_id=invoice_id, payload=payload,
             amount=amount, currency_code=currency_code,
