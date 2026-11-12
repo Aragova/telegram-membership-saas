@@ -1,8 +1,8 @@
 """Tenant-owned Crypto Pay credentials and frozen provider invoice evidence.
 
-There is deliberately NO path that marks an invoice paid in this foundation
-slice: future fulfillment must atomically add the file delivery or membership
-grant *before* changing the order state. No fake paid status or dead button.
+Provider-verified settlement atomically marks paid subscriptions and files.
+The recovery worker polls the ORIGINAL merchant account and retries file media
+after commit. A local reservation or buyer callback never grants access.
 """
 from datetime import datetime
 from decimal import Decimal
