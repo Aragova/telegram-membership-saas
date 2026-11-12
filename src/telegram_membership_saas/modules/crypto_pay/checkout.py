@@ -329,7 +329,27 @@ async def issue_reserved_crypto_invoice(
             CryptoPayInvoice.telegram_bot_id == bot_id,
             CryptoPayInvoice.telegram_user_id == buyer_id,
         ).with_for_update())
-        if record is None or record.status != "issuing":
+        if record is None:
+            raise CryptoPayError("Crypto Pay issuance changed before finalization")
+        if record.status in ("issued", "paid"):
+            # The recovery worker may have found and verified the exact same
+            # provider invoice while createInvoice was still in flight. This
+            # is successful idempotent finalization, not an issuance error.
+            # Never overwrite a conflicting invoice or retry createInvoice.
+            if (
+                record.provider_invoice_id != response["invoice_id"]
+                or record.invoice_url != response["bot_invoice_url"]
+                or record.payload != payload
+                or record.amount != amount
+                or record.currency_code != currency
+                or record.currency_type != invoice_price_spec(currency, amount)["currency_type"]
+            ):
+                raise CryptoPayError("Crypto Pay issuance conflicts with recovery")
+            return IssuedCryptoInvoice(
+                id=record.id, url=record.invoice_url,
+                amount=record.amount, currency_code=record.currency_code,
+            )
+        if record.status != "issuing":
             raise CryptoPayError("Crypto Pay issuance changed before finalization")
         record.provider_invoice_id = response["invoice_id"]
         record.invoice_url = response["bot_invoice_url"]
