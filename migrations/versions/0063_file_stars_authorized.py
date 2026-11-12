@@ -34,28 +34,45 @@ def upgrade() -> None:
             ["file_sale_purchases.id", "file_sale_purchases.project_id"],
             name="fk_file_star_auth_purchase_project", ondelete="RESTRICT",
         ),
+        sa.UniqueConstraint(
+            "purchase_id", "project_id", name="uq_file_star_auth_project",
+        ),
     )
-    op.execute("""
-        ALTER TABLE public.file_sale_star_authorizations
-        ENABLE ROW LEVEL SECURITY
-    """)
-    op.execute("""
-        ALTER TABLE public.file_sale_star_authorizations
-        FORCE ROW LEVEL SECURITY
-    """)
-    op.execute("""
-        CREATE POLICY file_sale_star_authorizations_scope
-        ON public.file_sale_star_authorizations FOR ALL
-        USING (
-          project_id = NULLIF(
-            current_setting('app.current_project_id',true),''
-          )::uuid
-        ) WITH CHECK (
-          project_id = NULLIF(
-            current_setting('app.current_project_id',true),''
-          )::uuid
-        )
-    """)
+    op.create_table(
+        "file_sale_star_authorization_rejections",
+        sa.Column("purchase_id", sa.Uuid(), primary_key=True),
+        sa.Column("project_id", sa.Uuid(), nullable=False),
+        sa.Column(
+            "rejected_at", sa.DateTime(timezone=True),
+            nullable=False, server_default=sa.func.now(),
+        ),
+        sa.ForeignKeyConstraint(
+            ["purchase_id", "project_id"],
+            [
+                "file_sale_star_authorizations.purchase_id",
+                "file_sale_star_authorizations.project_id",
+            ],
+            name="fk_file_star_auth_rejection_project", ondelete="RESTRICT",
+        ),
+    )
+    for table in (
+        "file_sale_star_authorizations",
+        "file_sale_star_authorization_rejections",
+    ):
+        op.execute(f"ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY")
+        op.execute(f"""
+            CREATE POLICY {table}_scope ON public.{table}
+            FOR ALL USING (
+                project_id = NULLIF(
+                    current_setting('app.current_project_id',true),''
+                )::uuid
+            ) WITH CHECK (
+                project_id = NULLIF(
+                    current_setting('app.current_project_id',true),''
+                )::uuid
+            )
+        """)
     op.execute("""
         CREATE FUNCTION public.guard_file_star_authorization_immutable()
         RETURNS trigger LANGUAGE plpgsql
@@ -72,12 +89,21 @@ def upgrade() -> None:
           public.guard_file_star_authorization_immutable()
     """)
     op.execute("""
+        CREATE TRIGGER trg_file_star_auth_rejection_immutable
+        BEFORE UPDATE OR DELETE ON public.file_sale_star_authorization_rejections
+        FOR EACH ROW EXECUTE FUNCTION
+          public.guard_file_star_authorization_immutable()
+    """)
+    op.execute("""
         DO $grants$
         BEGIN
           IF EXISTS (
               SELECT 1 FROM pg_roles WHERE rolname='membership_runtime'
           ) THEN
             GRANT SELECT,INSERT ON public.file_sale_star_authorizations
+              TO membership_runtime;
+            GRANT SELECT,INSERT
+              ON public.file_sale_star_authorization_rejections
               TO membership_runtime;
           END IF;
         END $grants$
