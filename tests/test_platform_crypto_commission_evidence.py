@@ -28,6 +28,9 @@ from telegram_membership_saas.modules.crypto_pay.client import (
     CryptoPayError,
     verify_paid_invoice,
 )
+from telegram_membership_saas.modules.crypto_pay.models import (
+    CryptoPayPaidUsdRate,
+)
 from telegram_membership_saas.modules.crypto_pay.settlement import (
     settle_crypto_pay_invoice,
 )
@@ -236,4 +239,109 @@ async def test_crypto_fiat_usd_and_rub_sale_evidence_is_owner_only_and_idempoten
                 await tx.rollback()
     finally:
         await admin.dispose()
+        await engine.dispose()
+
+
+
+class CryptoAssetProvider(Provider):
+    """Actual crypto-denominated getInvoices fixture with original USD rate."""
+    created = []
+    invoice_data = {}
+    paid_rate = "3.1234567890123456789"
+
+    async def create_invoice(self, *, currency, amount, payload, description):
+        self.created.append((self.token, currency, amount, payload, description))
+        provider_id = len(self.created) + 41000
+        self.invoice_data[provider_id] = {
+            "invoice_id": provider_id,
+            "payload": payload,
+            "currency_type": "crypto",
+            "asset": currency,
+            "amount": format(amount, "f"),
+            "status": "paid",
+            "paid_at": datetime.now(UTC).isoformat(),
+            "paid_usd_rate": self.paid_rate,
+        }
+        return {
+            **self.invoice_data[provider_id],
+            "status": "active",
+            "bot_invoice_url": "https://t.me/CryptoTestnetBot?start=IV321",
+        }
+
+
+async def test_crypto_paid_asset_rate_persists_atomically_and_replays_safely():
+    """Real PostgreSQL snapshot belongs to original verified paid invoice."""
+    from telegram_membership_saas.modules.crypto_pay.checkout import (
+        reserve_crypto_invoice,
+        issue_reserved_crypto_invoice,
+    )
+    from telegram_membership_saas.modules.crypto_pay.models import CryptoPayInvoice
+
+    CryptoAssetProvider.created = []
+    CryptoAssetProvider.invoice_data = {}
+    CryptoAssetProvider.paid_rate = "3.1234567890123456789"
+    cfg = Settings()
+    engine = build_engine(cfg)
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        _, project_id, bot_id, product_id = await _shop(factory, key)
+        async with system_project_session_scope(factory, project_id) as session:
+            session.add(FileManualPrice(
+                project_id=project_id, product_id=product_id,
+                currency_code="TON", amount=Decimal("1.5"),
+            ))
+        first_buyer = _tid()
+        local_id = await reserve_crypto_invoice(
+            factory, project_id=project_id, bot_id=bot_id,
+            buyer_id=first_buyer, kind="file",
+            target_id=product_id, currency="TON",
+        )
+        await issue_reserved_crypto_invoice(
+            factory, project_id=project_id, bot_id=bot_id,
+            buyer_id=first_buyer, invoice_id=local_id,
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        result = await settle_crypto_pay_invoice(
+            factory, project_id=project_id, invoice_id=local_id,
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        replay = await settle_crypto_pay_invoice(
+            factory, project_id=project_id, invoice_id=local_id,
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        assert result.changed and not replay.changed
+        async with system_project_session_scope(factory, project_id) as session:
+            paid = await session.get(CryptoPayInvoice, local_id)
+            quote = await session.get(CryptoPayPaidUsdRate, local_id)
+            assert paid.status == "paid"
+            assert quote is not None and quote.asset_code == "TON"
+            assert quote.usd_per_asset == Decimal("3.123456789012345679")
+            assert quote.paid_at == paid.paid_at
+
+        # The real payment and file access must STILL settle when the
+        # provider's optional paid USD quote underflows DB precision.
+        CryptoAssetProvider.paid_rate = "0.0000000000000000001"
+        second_buyer = _tid()
+        unpriced_id = await reserve_crypto_invoice(
+            factory, project_id=project_id, bot_id=bot_id,
+            buyer_id=second_buyer, kind="file",
+            target_id=product_id, currency="TON",
+        )
+        await issue_reserved_crypto_invoice(
+            factory, project_id=project_id, bot_id=bot_id,
+            buyer_id=second_buyer, invoice_id=unpriced_id,
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        paid = await settle_crypto_pay_invoice(
+            factory, project_id=project_id, invoice_id=unpriced_id,
+            encryption_key=key, client_factory=CryptoAssetProvider,
+        )
+        assert paid.changed
+        async with system_project_session_scope(factory, project_id) as session:
+            invoice = await session.get(CryptoPayInvoice, unpriced_id)
+            quote = await session.get(CryptoPayPaidUsdRate, unpriced_id)
+            assert invoice.status == "paid"
+            assert quote is None  # unresolved finance, valid purchase
+    finally:
         await engine.dispose()
