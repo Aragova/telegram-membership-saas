@@ -5,6 +5,7 @@ accepts crypto evidence. No new menu, bot or payment-record table is created.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
@@ -19,6 +20,7 @@ from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.crypto_pay.client import (
     CRYPTO,
     FIAT,
+    CryptoPayClient,
     CryptoPayError,
     invoice_price_spec,
 )
@@ -222,7 +224,8 @@ async def begin_buyer_crypto_checkout(
     currency: str | None = None, username: str | None = None,
     first_name: str | None = None,
     encryption_key: SecretStr | None = None,
-):
+    client_factory: Callable[..., CryptoPayClient] = CryptoPayClient,
+) -> BuyerCryptoInvoice:
     """Complete only real mainnet buyer invoices; do not use a fake paid flag.
 
     Every attempt rechecks the feature gate, current merchant binding,
@@ -260,7 +263,7 @@ async def begin_buyer_crypto_checkout(
     issued = await issue_reserved_crypto_invoice(
         factory, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
         invoice_id=local_id, encryption_key=encryption_key,
-        require_mainnet=True,
+        require_mainnet=True, client_factory=client_factory,
     )
     async with system_project_session_scope(factory, project_id) as session:
         original = await session.scalar(select(CryptoPayInvoice).where(
