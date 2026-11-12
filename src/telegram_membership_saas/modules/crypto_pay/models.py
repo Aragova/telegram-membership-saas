@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -142,6 +143,10 @@ class CryptoPayInvoice(Base):
         String(16), nullable=False, default="reserved", server_default="reserved",
     )
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resource_ids_snapshot: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]",
+    )
+    last_delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.clock_timestamp(),
     )
