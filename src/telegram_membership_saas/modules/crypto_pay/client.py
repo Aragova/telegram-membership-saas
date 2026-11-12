@@ -85,6 +85,10 @@ class CryptoPayInvoiceReceipt:
     amount: Decimal
     currency_code: str
     currency_type: str
+    # Crypto Pay's immutable asset valuation at payment (not today's spot).
+    # Optional: payments missing a signed provider rate remain unpriced,
+    # but still settle and deliver the original purchase.
+    paid_usd_rate: Decimal | None = None
 
 
 def verify_paid_invoice(
@@ -114,10 +118,20 @@ def verify_paid_invoice(
         raise CryptoPayError("Crypto Pay paid timestamp is invalid") from exc
     if paid_at.tzinfo is None or paid_at > datetime.now(UTC) + timedelta(minutes=5):
         raise CryptoPayError("Crypto Pay paid timestamp is invalid")
+    # The official getInvoices Invoice.paid_usd_rate is the USD price of
+    # the paid asset AT PAYMENT. Never use getExchangeRates(now) to value
+    # a historical crypto-denominated sale. Missing rates remain unresolved.
+    rate_value = provider_invoice.get("paid_usd_rate")
+    paid_usd_rate = (
+        _safe_decimal(rate_value) if rate_value not in (None, "") else None
+    )
+    if paid_usd_rate is not None and paid_usd_rate > Decimal("1000000000"):
+        raise CryptoPayError("Crypto Pay paid USD rate is out of bounds")
     return CryptoPayInvoiceReceipt(
         invoice_id=invoice_id, paid_at=paid_at.astimezone(UTC),
         payload=payload, amount=_safe_decimal(amount),
         currency_code=currency_code, currency_type=currency_type,
+        paid_usd_rate=paid_usd_rate if currency_type == "crypto" else None,
     )
 
 
