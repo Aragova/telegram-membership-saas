@@ -8,7 +8,7 @@ import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy import select
-from test_crypto_pay_atomic_fulfillment import _shop
+from test_crypto_pay_atomic_fulfillment import _issue, _shop
 from test_crypto_pay_invoice_reservations import Provider, _tid
 
 from telegram_membership_saas.config import Settings
@@ -36,15 +36,28 @@ from telegram_membership_saas.modules.crypto_pay.models import (
     CryptoPayApp,
     CryptoPayInvoice,
 )
+from telegram_membership_saas.modules.crypto_pay.settlement import (
+    settle_crypto_pay_invoice,
+)
+from telegram_membership_saas.modules.file_sales.manual_handlers import (
+    show_file_payment_options,
+)
 from telegram_membership_saas.modules.file_sales.manual_service import (
     available_price_currencies,
+    create_manual_order,
     price_editor_options,
     set_manual_price,
 )
+from telegram_membership_saas.modules.file_sales.models import FileProduct
 from telegram_membership_saas.modules.file_sales.payment_controls import (
     AUTO_CRYPTO_ID,
     list_file_payment_controls,
     toggle_file_payment_method,
+)
+from telegram_membership_saas.modules.file_sales.service import (
+    create_stars_order,
+    paid_file_purchase_id,
+    precheckout_allowed,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
@@ -260,3 +273,90 @@ async def test_crypto_checkout_fallback_has_real_link_and_only_back():
     buttons = kwargs["reply_markup"].inline_keyboard
     assert buttons[0][0].url == invoice.url
     assert buttons[1][0].callback_data.startswith("fs:pay:")
+
+
+
+async def test_paid_crypto_file_cannot_be_billed_again_by_crypto_manual_or_stars(
+    monkeypatch,
+):
+    Provider.created = []
+    Provider.invoice_data = {}
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    key = SecretStr(Fernet.generate_key().decode("ascii"))
+    try:
+        _, project, bot_id, product_id = await _shop(factory, key)
+        buyer_id = _tid()
+        async with system_project_session_scope(factory, project) as session:
+            item = await session.get(FileProduct, product_id)
+            item.stars_price = 100
+        # An already issued Stars invoice must stop at precheckout once
+        # Crypto Pay has settled the same digital good.
+        old_stars = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        )
+        assert not old_stars.paid
+        crypto_id = await _issue(
+            factory, project=project, bot_id=bot_id, buyer=buyer_id,
+            kind="file", target_id=product_id, key=key,
+        )
+        assert (await settle_crypto_pay_invoice(
+            factory, project_id=project, invoice_id=crypto_id,
+            encryption_key=key, client_factory=Provider,
+        )).changed
+        assert await paid_file_purchase_id(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        ) == crypto_id
+        assert not await precheckout_allowed(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, invoice_payload=old_stars.invoice_payload,
+            amount=100, currency="XTR",
+        )
+        manual, paid = await create_manual_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+            currency="RUB", method_id=uuid4(),
+        )
+        assert paid and manual.id == crypto_id
+        stars = await create_stars_order(
+            factory, project_id=project, bot_id=bot_id,
+            buyer_id=buyer_id, product_id=product_id,
+        )
+        assert stars.paid and stars.id == crypto_id
+
+        async with system_project_session_scope(factory, project) as session:
+            app = await session.scalar(select(CryptoPayApp).where(
+                CryptoPayApp.project_id == project,
+            ))
+            app.environment = "mainnet"
+        monkeypatch.setattr(buyer, "get_settings", lambda: Settings(
+            bot_token_encryption_key=key, crypto_pay_buyer_enabled=True,
+        ))
+        with pytest.raises(ValueError, match="already been purchased"):
+            await reserve_crypto_invoice(
+                factory, project_id=project, bot_id=bot_id,
+                buyer_id=buyer_id, kind="file",
+                target_id=product_id, currency="RUB", require_mainnet=True,
+            )
+
+        class FileBot:
+            id = bot_id
+            def __init__(self):
+                self.sent = []
+            async def send_message(self, chat_id, text, **kwargs):
+                self.sent.append((chat_id, text, kwargs))
+
+        bot = FileBot()
+        await show_file_payment_options(
+            bot, factory=factory, project_id=project,
+            buyer_id=buyer_id, product_id=product_id,
+        )
+        assert len(bot.sent) == 1
+        markup = bot.sent[0][2]["reply_markup"]
+        assert markup.inline_keyboard[0][0].callback_data.startswith("fm:get:")
+        assert all("Crypto Pay" not in button.text
+                   for row in markup.inline_keyboard for button in row)
+    finally:
+        await engine.dispose()
