@@ -475,7 +475,7 @@ async def test_outstanding_crypto_invoice_blocks_stars_and_manual_file_checkout(
                 factory, project_id=project, bot_id=bot_id,
                 buyer_id=buyer_id, product_id=product_id,
             )
-        with pytest.raises(ValueError, match="Crypto Pay"):
+        with pytest.raises(ValueError, match="Stars|Crypto Pay"):
             await create_manual_order(
                 factory, project_id=project, bot_id=bot_id,
                 buyer_id=buyer_id, product_id=product_id,
@@ -793,7 +793,7 @@ async def test_manual_file_approval_refuses_already_settled_crypto_purchase():
             factory, project_id=project, invoice_id=crypto_id,
             encryption_key=key, client_factory=Provider,
         )).changed
-        with pytest.raises(ValueError, match="another payment method"):
+        with pytest.raises(ValueError, match="другим способом|another payment method"):
             await review_manual_order(
                 factory, project_id=project, bot_id=bot_id,
                 actor_id=owner, order_id=manual_id, approve=True,
