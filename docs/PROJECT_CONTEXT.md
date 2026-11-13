@@ -12,9 +12,15 @@ debts from a transferred bot to its incoming owner. A native $3 monthly
 service profile must still cost $3 when a later payment attempt is made in USD,
 not the issue-day RUB amount divided by a later FX rate.
 
-Verified refund credit allocation (Stars and Crypto Pay) is a hard gate for
-activating collection/holds, and PR #145 remains Draft pending resolution,
-exact-HEAD CI/review, and explicit owner approval. Do not merge or deploy early.
+PR #145 now includes migrations 0073 (immutable activation windows preserve
+old commissions and hold eligibility through STOP/ARM) and 0074 (provider
+verified Stars/Crypto refund claims and immutable allocations reducing actual
+SaaS invoice balances). The single existing Rich invoice shows the verified
+credit and net remaining amount. Original sales, receipts and already-paid
+access remain immutable. No manual refund issuing, new test screens, or
+per-bot timers were added. Run exact-HEAD PostgreSQL CI, review every open
+financial discussion, obtain the owner's explicit merge approval, then deploy
+main to staging. Commercial collection remains OFF until separately armed.
 
 ---
 
