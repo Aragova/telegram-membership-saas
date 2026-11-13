@@ -176,6 +176,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     choose_project,
     consume_button_flow,
     consume_flow,
+    create_one_month_stars_plan,
     create_owner_payment_method,
     create_owner_plan,
     create_owner_project,
@@ -639,7 +640,9 @@ def _next_setup_step(snapshot) -> tuple[str, str] | None:
     """One contextual action at a time, not an error-driven wizard."""
     if not any(status == "active" for _, _, status in snapshot.resources):
         return tr("📢 1. Подключить канал", "📢 1. Connect a channel"), "resources"
-    if not any(status == "active" for _, _, status in snapshot.methods):
+    if not any(status == "active" for _, _, status in snapshot.methods) and (
+        not snapshot.sales_configured
+    ):
         return tr("💳 2. Настроить оплату", "💳 2. Set up payments"), "methods"
     if not any(status == "active" for _, _, status in snapshot.plans):
         return tr("📦 3. Подготовить тариф", "📦 3. Create a plan"), "plans"
@@ -662,7 +665,9 @@ def _progress(snapshot) -> tuple[str, ...]:
         (tr("Канал / группа", "Channel / group"),
          any(s == "active" for _, _, s in snapshot.resources)),
         (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
-        (tr("Способ оплаты", "Payment method"), any(s == "active" for _, _, s in snapshot.methods)),
+        (tr("Способ оплаты", "Payment method"),
+         any(s == "active" for _, _, s in snapshot.methods)
+         or snapshot.sales_configured),
         (tr("Бот принимает покупателей", "Bot accepts buyers"), bool(snapshot.live_bot_username)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
@@ -2622,7 +2627,7 @@ def create_owner_setup_router(
                 "danger" if active else "success",
             )])
         rows.append([_button("➕ Создать тариф", "newplan", "success")])
-        if not data.methods:
+        if not data.methods and not getattr(data, "sales_configured", False):
             lines.append(tr(
                 "\n💳 Настройте оплату, затем публикуйте тарифы.",
                 "\n💳 Configure payments before publishing plans.",
@@ -2902,8 +2907,22 @@ def create_owner_setup_router(
             "",
         ]
         rows: list[list[InlineKeyboardButton]] = []
-        if not current:
-            lines.append(tr("Тарифов пока нет.", "No plans yet."))
+        if not plans:
+            lines.append(tr(
+                "📦 Тарифов пока нет.\n\n"
+                "Создайте первый тариф на <b>1 месяц</b> с оплатой ⭐ Stars. "
+                "Цену вы укажете сами. После сохранения тариф будет опубликован.",
+                "📦 No plans yet.\n\n"
+                "Create your first <b>1-month</b> plan with ⭐ Stars. "
+                "You set the price; the plan is published after saving.",
+            ))
+            rows.append([_button(
+                tr("✨ Создать тариф на 1 месяц", "✨ Create 1-month plan"),
+                "starsnew", "success",
+            )])
+        elif not current:
+            lines.append(tr("На этой странице тарифов нет.",
+                            "No plans on this page."))
         for plan_id, plan_name, plan_status in current:
             info = await get_owner_plan_info(
                 factory, actor_id=actor_id, project_id=project_id,
@@ -2946,6 +2965,30 @@ def create_owner_setup_router(
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
+        )
+
+    async def prompt_first_stars_month(
+        bot: Bot, user_id: int, actor_id: UUID, resource_id: UUID,
+        *, source_flow: SetupFlow | None = None, retry: bool = False,
+    ) -> None:
+        warning = (
+            tr("⚠️ Цена должна быть целым числом от 1 до 250000.\n\n",
+               "⚠️ Enter a whole number between 1 and 250000.\n\n")
+            if retry else ""
+        )
+        await prompt(
+            bot, user_id, actor_id,
+            step="stars_month_price",
+            source_flow=source_flow,
+            payload={"resource_id": resource_id.hex},
+            text=warning + tr(
+                "⭐ <b>Тариф «1 месяц»</b>\n\n"
+                "Введите цену подписки в звёздах: целое число от 1 до 250000. "
+                "После сохранения тариф автоматически появится в продаже.",
+                "⭐ <b>1-month plan</b>\n\n"
+                "Enter a whole number of Stars from 1 to 250000. "
+                "Saving will publish the plan automatically.",
+            ),
         )
 
     async def show_crypto_pay(
@@ -6185,6 +6228,93 @@ def create_owner_setup_router(
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action == "methods":
                 await show_methods(bot, user_id, actor_id, project_id)
+            elif action == "starsnew":
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if overview.plans:
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id,
+                    )
+                else:
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⭐ <b>Создать тариф на 1 месяц?</b>\n\n"
+                            "После ввода вашей цены в звёздах ViMi Pay "
+                            "создаст тариф, привяжет его к каналу "
+                            "и включит для новых покупок. "
+                            "До ввода цены ничего не создаётся.",
+                            "⭐ <b>Create a 1-month plan?</b>\n\n"
+                            "Once you enter your Stars price, ViMi Pay "
+                            "will create the plan, link it to a channel, "
+                            "and enable new purchases. Nothing is "
+                            "created until you enter the price.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("✅ Продолжить", "✅ Continue"),
+                                "starsnewok", "success",
+                            )],
+                            [_button(
+                                tr("⬅️ Отмена", "⬅️ Cancel"), "starspage:0",
+                            )],
+                        ]),
+                    )
+            elif action == "starsnewok" or action.startswith("starsnewres:"):
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if overview.plans:
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id,
+                    )
+                else:
+                    resources = [
+                        (rid, name) for rid, name, status in overview.resources
+                        if status == "active"
+                    ]
+                    if not resources:
+                        await bot.send_message(
+                            user_id, tr(
+                                "📢 Сначала подключите канал для этого тарифа.",
+                                "📢 Connect a channel before creating a plan.",
+                            ),
+                            reply_markup=_markup([[_button(
+                                tr("📢 Подключить канал", "📢 Connect channel"),
+                                "resources", "success",
+                            )], [_button(
+                                tr("⬅️ Назад", "⬅️ Back"), "starspage:0",
+                            )]]),
+                        )
+                    elif action == "starsnewok" and len(resources) > 1:
+                        await bot.send_message(
+                            user_id,
+                            tr("📢 Какой канал откроет тариф на 1 месяц?",
+                               "📢 Which channel will the 1-month plan unlock?"),
+                            reply_markup=_markup([
+                                [_button(
+                                    "📢 " + name[:38], "starsnewres:" + rid.hex,
+                                )] for rid, name in resources
+                            ] + [[_button(
+                                tr("⬅️ Назад", "⬅️ Back"), "starspage:0",
+                            )]]),
+                        )
+                    else:
+                        selected = (
+                            UUID(hex=action.split(":", 1)[1])
+                            if action.startswith("starsnewres:")
+                            else resources[0][0]
+                        )
+                        if selected not in {rid for rid, _ in resources}:
+                            raise ValueError(tr(
+                                "Канал изменился. Выберите действующий канал.",
+                                "Channel changed. Select an active channel.",
+                            ))
+                        await prompt_first_stars_month(
+                            bot, user_id, actor_id, selected,
+                        )
             elif action.startswith("starspage:"):
                 page_token = action.split(":", 1)[1]
                 if not page_token.isascii() or not page_token.isdecimal():
@@ -7108,6 +7238,34 @@ def create_owner_setup_router(
                     )
                 else:
                     raise ValueError("Шаг выбора валюты устарел")
+            elif flow.step == "stars_month_price":
+                valid_stars = (
+                    text.isascii() and text.isdecimal()
+                    and 1 <= int(text) <= 250000
+                )
+                if not valid_stars:
+                    await prompt_first_stars_month(
+                        bot, message.chat.id, actor_id,
+                        UUID(hex=flow.payload["resource_id"]),
+                        source_flow=flow, retry=True,
+                    )
+                    return
+                plan_id = await create_one_month_stars_plan(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    resource_id=UUID(hex=flow.payload["resource_id"]),
+                    stars_amount=text,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr(
+                        "✅ <b>Тариф на 1 месяц опубликован!</b>\n⭐ Цена: ",
+                        "✅ <b>1-month plan published!</b>\n⭐ Price: ",
+                    ) + escape(text.strip()) + " ⭐",
+                    parse_mode="HTML",
+                )
+                await show_stars_payments(
+                    bot, message.chat.id, actor_id, project_id,
+                )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
                 await save_owner_price(
@@ -7196,6 +7354,7 @@ def create_owner_setup_router(
         except (ValueError, PermissionError, RuntimeError) as exc:
             destination = {
                 "plan_name": "plans",
+                "stars_month_price": "starspage:0",
                 "plan_duration": "plans",
                 "plan_resource": "plans",
                 "resource_reference": "resources",

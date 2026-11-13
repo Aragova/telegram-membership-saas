@@ -832,6 +832,69 @@ async def create_owner_plan(
         return plan.id
 
 
+async def create_one_month_stars_plan(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, resource_id: UUID,
+    stars_amount: str,
+) -> UUID:
+    """Publish the first month-long Stars plan in one authorized transaction.
+
+    The quick setup is available only on a project with NO existing plan,
+    even a draft. A double click or repeated price message cannot create
+    a second tariff. No Stars price is invented on behalf of the owner.
+    """
+    price = stars_amount.strip()
+    if not price.isascii() or not price.isdecimal() or not (
+        1 <= int(price) <= 250000
+    ):
+        raise ValueError("Укажите целое число звёзд от 1 до 250000")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id)
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        # Serialize repeated shortcut submissions for this project.
+        project = await session.scalar(
+            select(Project.id).where(Project.id == project_id).with_for_update()
+        )
+        if project is None:
+            raise ValueError("Бот больше не подключён")
+        existing = await session.scalar(select(Plan.id).where(
+            Plan.project_id == project_id,
+            Plan.removed_at.is_(None),
+        ).limit(1))
+        if existing is not None:
+            raise ValueError("Тариф уже создан. Настройте Stars в его карточке")
+        channel = await session.scalar(select(Resource.id).where(
+            Resource.id == resource_id,
+            Resource.project_id == project_id,
+            Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
+        ))
+        if channel is None:
+            raise ValueError("Сначала выберите подключённый активный канал")
+        plan = Plan(
+            project_id=project_id,
+            name=default_period_plan_name(1, "month"),
+            duration_value=1, duration_unit="month", status="draft",
+        )
+        session.add(plan)
+        await session.flush()
+        session.add(PlanResource(
+            project_id=project_id, plan_id=plan.id, resource_id=resource_id,
+        ))
+        await session.flush()
+        await replace_active_plan_price(
+            session, project_id=project_id, plan_id=plan.id,
+            currency_code="XTR", amount=price,
+        )
+        plan.status = "active"
+        await session.flush()
+        return plan.id
+
+
 async def save_owner_price(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, plan_id: UUID,
