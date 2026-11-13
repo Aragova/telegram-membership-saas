@@ -1,3 +1,23 @@
+## 2026-11-13 — ViMi Pay commercial billing PR #145 (Draft)
+
+Commercial release remains one integrated PR, no new test modes or standalone
+test buttons. Current network is ~50 bots, ~30 platform-owned and exempt.
+The commercial control remains OFF until the owner explicitly activates
+it after complete financial accounting, including verified refund credits.
+The existing customer supervisor performs bounded automatic service/commission
+billing, maintaining durable rotation across the network and old deferred
+months. Enroll first-bot owners connected during the activation grace delay,
+preserve free-grant quota enrollment across STOP/ARM, and never pass historical
+debts from a transferred bot to its incoming owner. A native $3 monthly
+service profile must still cost $3 when a later payment attempt is made in USD,
+not the issue-day RUB amount divided by a later FX rate.
+
+Verified refund credit allocation (Stars and Crypto Pay) is a hard gate for
+activating collection/holds, and PR #145 remains Draft pending resolution,
+exact-HEAD CI/review, and explicit owner approval. Do not merge or deploy early.
+
+---
+
 ## 2026-11-12 — One PR for commercial billing release
 
 Implementing a single integrated release branch
