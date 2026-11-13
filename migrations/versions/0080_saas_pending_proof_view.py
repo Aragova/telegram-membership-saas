@@ -5,7 +5,9 @@ Revises: 0079_saas_payment_catalog
 
 Returns no token, media bytes or tenant-secret field. The central operator
 may load a proof through its original bot only while the proof is awaiting
-a bank decision and that bot is still registered. A NULL project also permits a genuine central-bot proof,\nwhich is verified against the live central Bot ID in the handler.\nNo billing switches change.
+a bank decision. A NULL project also permits a genuine central-bot
+proof, verified against the active central Bot ID in the handler.
+No billing switches change.
 """
 from collections.abc import Sequence
 
