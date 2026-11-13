@@ -79,6 +79,7 @@ async def test_platform_navigation_leaves_bank_editor_even_without_dispatcher(mo
             "holds_enabled": False,
         }),
     )
+    monkeypatch.setattr(ui, "saas_catalog_read", AsyncMock(return_value=[]))
     router = ui.create_platform_dashboard_router(
         MagicMock(), settings=Settings(platform_owner_telegram_id=7777),
         bank_navigation=navigation,
@@ -95,11 +96,41 @@ async def test_platform_navigation_leaves_bank_editor_even_without_dispatcher(mo
     monkeypatch.setattr(CallbackQuery, "answer", answer)
     edit = _callback("plat:bankedit")
     await handler(edit, bot)
-    assert 7777 in navigation.pending
+    assert 7777 not in navigation.pending
     navigate = _callback("plat:bankdetails")
     await handler(navigate, bot)
     assert 7777 not in navigation.pending
     assert answer.await_count == 2
+
+
+async def test_obsolete_bank_callbacks_only_open_canonical_catalog(monkeypatch):
+    navigation = ui.PlatformBankNavigationMiddleware()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(ui, "saas_catalog_read", AsyncMock(return_value=[]))
+    legacy_write = AsyncMock()
+    v2_write = AsyncMock()
+    monkeypatch.setattr(ui, "configure_platform_saas_payment", legacy_write)
+    monkeypatch.setattr(ui, "saas_v2_configure_method", v2_write)
+    router = ui.create_platform_dashboard_router(
+        MagicMock(), settings=Settings(platform_owner_telegram_id=7777),
+        bank_navigation=navigation,
+    )
+    handler = next(
+        record.callback for record in router.callback_query.handlers
+        if record.callback.__name__ == "platform_callback"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    monkeypatch.setattr(CallbackQuery, "answer", AsyncMock())
+    for callback in (
+        "plat:bankedit", "plat:bankclearask", "plat:bankclearok",
+        "plat:v2methods", "plat:v2method:RUB",
+    ):
+        navigation.pending.add(7777)
+        await handler(_callback(callback), bot)
+        assert 7777 not in navigation.pending
+    legacy_write.assert_not_awaited()
+    v2_write.assert_not_awaited()
 
 
 async def test_editor_accepts_cancel_forms_but_never_writes_bank_details(monkeypatch):
