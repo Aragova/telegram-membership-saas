@@ -1,7 +1,7 @@
 """Shared RU/EN Rich cards and classic fallback for issued SaaS invoices.
 
-No synthetic invoices or bank details. Credit notes remain unapplied until a
-separately reviewed financial allocation policy exists.
+No synthetic invoices or bank details. Verified Stars/Crypto credits reduce
+real balances; historical manual notes remain separate.
 """
 from __future__ import annotations
 
@@ -58,11 +58,15 @@ def _state_label(value: str) -> str:
     )
 
 
-def _audit_rows(invoice: dict, snapshot: dict, credits: dict) -> list[tuple[str, str]]:
+def _audit_rows(
+    invoice: dict, snapshot: dict, credits: dict, balance: dict | None = None,
+) -> list[tuple[str, str]]:
     amount_rub = invoice.get("amount_rub", invoice.get("total_rub", "0"))
     rows = [
         (tr("Тип", "Type"), _type_label(str(invoice["kind"]))),
-        (tr("Статус", "Status"), _state_label(str(invoice["status"]))),
+        (tr("Статус", "Status"), _state_label(
+            "paid" if balance and balance.get("paid") else str(invoice["status"])
+        )),
         (tr("Базовая сумма", "RUB base"), _money(amount_rub) + " ₽"),
         (tr("Оплатить до", "Due"), _safe(str(invoice["due_at"])[:10])),
     ]
@@ -70,7 +74,7 @@ def _audit_rows(invoice: dict, snapshot: dict, credits: dict) -> list[tuple[str,
         currency = _safe(snapshot["currency"])
         rows.extend([
             (tr("Валюта зафиксирована", "Locked currency"), currency),
-            (tr("Сумма к оплате", "Locked amount"),
+            (tr("Историческая сумма фиксации", "Historical locked amount"),
              _money(snapshot["amount"]) + " " + currency),
             (tr("Курс", "FX rate"),
              "1 " + currency + " = " + _safe(snapshot["rub_per_unit"]) + " ₽"),
@@ -85,14 +89,26 @@ def _audit_rows(invoice: dict, snapshot: dict, credits: dict) -> list[tuple[str,
             tr("Валюта платежа", "Payment currency"),
             tr("Не выбрана", "Not selected"),
         ))
+    if balance is not None:
+        rows.extend([
+            (tr("Зачтённые возвраты Stars/Crypto",
+                "Applied Stars/Crypto refunds"),
+             _money(balance.get("verified_refund_credit_rub", 0)) + " ₽"),
+            (tr("Остаток к оплате", "Remaining due"),
+             "<b>" + _money(balance.get("remaining_rub", 0)) + " ₽</b>"),
+        ])
     rows.append((
-        tr("Возвраты по счёту", "Invoice refund credits"),
+        tr("Отдельные корректировки (не зачтены)",
+           "Separate manual adjustments (unapplied)"),
         _money(credits.get("total_credited_rub", 0)) + " ₽",
     ))
     return rows
 
 
-def issued_invoice_rich(invoice: dict, snapshot: dict, credits: dict) -> str:
+def issued_invoice_rich(
+    invoice: dict, snapshot: dict, credits: dict,
+    balance: dict | None = None,
+) -> str:
     """Native Rich tables, with all external contents HTML-escaped."""
     lines = [
         "<h3>" + tr("🧾 ViMi Pay · Выставленный счёт",
@@ -102,7 +118,7 @@ def issued_invoice_rich(invoice: dict, snapshot: dict, credits: dict) -> str:
         "<tr><th>" + tr("Показатель", "Field") + "</th><th>"
         + tr("Значение", "Value") + "</th></tr>",
     ]
-    for label, value in _audit_rows(invoice, snapshot, credits):
+    for label, value in _audit_rows(invoice, snapshot, credits, balance):
         lines.append("<tr><td>" + label + "</td><td>" + value + "</td></tr>")
     lines.append("</table>")
     if credits.get("entries"):
@@ -121,10 +137,10 @@ def issued_invoice_rich(invoice: dict, snapshot: dict, credits: dict) -> str:
             )
         lines.append("</table>")
     lines.append("<p><i>" + tr(
-        "Корректировки пока не вычитаются автоматически из выставленных "
-        "счетов и не снимают ограничения. Исходные суммы сохраняются.",
-        "Credit notes are not automatically deducted from issued bills "
-        "or used to release holds. Original amounts remain unchanged.",
+        "Проверенные возвраты Stars/Crypto уже учтены в остатке. "
+        "Отдельные ручные корректировки сохраняются как история.",
+        "Verified Stars/Crypto refunds reduce the balance. "
+        "Separate manual adjustments remain historical notes.",
     ) + "</i></p>")
     if snapshot.get("locked") and snapshot["currency"] != "RUB":
         lines.append("<p>⚠️ " + tr(
@@ -136,13 +152,16 @@ def issued_invoice_rich(invoice: dict, snapshot: dict, credits: dict) -> str:
     return "\n".join(lines)
 
 
-def issued_invoice_classic(invoice: dict, snapshot: dict, credits: dict) -> str:
+def issued_invoice_classic(
+    invoice: dict, snapshot: dict, credits: dict,
+    balance: dict | None = None,
+) -> str:
     lines = [
         tr("<b>🧾 ViMi Pay · Выставленный счёт</b>",
            "<b>🧾 ViMi Pay · Issued invoice</b>"),
         "№ <code>" + _safe(invoice["id"]) + "</code>",
     ]
-    for label, value in _audit_rows(invoice, snapshot, credits):
+    for label, value in _audit_rows(invoice, snapshot, credits, balance):
         lines.append(label + ": " + value)
     for credit in credits.get("entries", []):
         lines.append(
@@ -151,8 +170,8 @@ def issued_invoice_classic(invoice: dict, snapshot: dict, credits: dict) -> str:
             + _money(credit["credit_rub"]) + " ₽"
         )
     lines.append("<i>" + tr(
-        "Возвраты сохранены отдельно; они ещё не уменьшают сумму счёта.",
-        "Credits are audited separately and do not yet reduce this invoice.",
+        "Возвраты Stars/Crypto учитываются в остатке, ручные корректировки отдельно.",
+        "Stars/Crypto refunds reduce the balance; manual adjustments remain separate.",
     ) + "</i>")
     if snapshot.get("locked") and snapshot["currency"] != "RUB":
         lines.append("⚠️ " + tr(
@@ -278,7 +297,8 @@ def unified_monthly_rich(report: dict) -> str:
             + _money(star_credit)
             + tr(" · Crypto Pay $", " · Crypto Pay $")
             + _money(crypto_credit)
-            + tr(" (ещё не зачтены)", " (not yet applied)") + "</p>"
+            + tr(" (зачёт см. в выставленных счетах)",
+               " (see issued invoices for applied credits)") + "</p>"
         )
     return "\n".join(html)
 
