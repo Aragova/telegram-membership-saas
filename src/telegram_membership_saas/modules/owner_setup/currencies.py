@@ -21,6 +21,8 @@ from telegram_membership_saas.modules.pricing import (
     PlanPrice,
     ProjectEnabledCurrency,
 )
+from telegram_membership_saas.modules.pricing.service import retire_active_plan_price
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -98,6 +100,7 @@ async def list_owner_currencies(
 async def enable_owner_currency(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, code: str,
+    fiat_only: bool = False,
 ) -> str:
     """Enable an official catalog currency for just one project.
 
@@ -122,6 +125,11 @@ async def enable_owner_currency(
                 "Валюта не найдена в справочнике ISO 4217 / "
                 "поддерживаемых криптовалют. Проверьте трёхбуквенный код."
             )
+        if fiat_only and asset.asset_type != "fiat":
+            raise ValueError(
+                "Для тарифов доступны только обычные валюты. "
+                "⭐ Telegram Stars и 💎 Crypto Pay настройте в «Способах оплаты»."
+            )
         if code in PRIMARY_CURRENCIES:
             return code
         already = await session.scalar(select(ProjectEnabledCurrency.currency_code).where(
@@ -143,3 +151,51 @@ async def enable_owner_currency(
             )
         )
         return code
+
+
+async def list_owner_fiat_currencies(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID,
+) -> tuple[str, ...]:
+    """Only fiat prices on tariff cards; native payment rails have own UI.
+
+    Keep existing XTR and crypto price rows and purchase history untouched.
+    """
+    selected = await list_owner_currencies(
+        factory, actor_id=actor_id, project_id=project_id,
+    )
+    if not selected:
+        return ()
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        active_fiat = set((await session.scalars(
+            select(CurrencyAsset.code).where(
+                CurrencyAsset.code.in_(selected),
+                CurrencyAsset.asset_type == "fiat",
+                CurrencyAsset.status == "active",
+            )
+        )).all())
+    return tuple(code for code in selected if code in active_fiat)
+
+
+async def disable_owner_stars_price(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, plan_id: UUID,
+) -> bool:
+    """Disable future native Stars orders; retain historical price evidence."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        retired = await retire_active_plan_price(
+            session, project_id=project_id,
+            plan_id=plan_id, currency_code="XTR",
+        )
+        return retired is not None
