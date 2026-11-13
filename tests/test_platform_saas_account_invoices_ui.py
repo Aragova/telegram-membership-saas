@@ -36,6 +36,10 @@ async def test_central_account_invoice_button_does_not_require_project(
         },), page=0,
     ))
     monkeypatch.setattr(ui, "merchant_saas_statements", get_statements)
+    monkeypatch.setattr(
+        ui, "merchant_saas_trial_status",
+        AsyncMock(return_value={"state": "ended"}),
+    )
     monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
         return_value={"currency": "RUB", "monthly_amount": "150.00"},
     ))
