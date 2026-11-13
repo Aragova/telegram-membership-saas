@@ -1163,16 +1163,8 @@ def create_owner_setup_router(
                 "saasv2pay:" + encode_uuid(invoice_id) + ":" + str(page),
                 "success",
             )])
-        if (
-            not snapshot.get("locked")
-            and item["status"] == "unpaid"
-            and Decimal(str(balance.get("partial_rub", 0))) == 0
-        ):
-            buttons.append([_button(
-                tr("💱 Зафиксировать валюту", "💱 Lock invoice currency"),
-                "saasbillchoose:" + encode_uuid(invoice_id) + ":" + str(page),
-                "success",
-            )])
+        # New payments use one full/partial v2 path. Historical locked
+        # currency snapshots remain visible, but no new legacy lock is offered.
         buttons.append([_button(
             tr("⬅️ К счетам", "⬅️ Invoices"),
             "saasinvoices:" + str(page),
