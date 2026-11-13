@@ -85,6 +85,33 @@ async def configure_platform_saas_payment(
 
 
 
+async def merchant_saas_trial_status(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, project_id: UUID | None = None,
+) -> dict:
+    """Account's actual immutable 72h trial claim, never a guessed start date.
+
+    Same owner/project scope as the existing billing screen. SQL holds all
+    platform financial tables behind an authorized SECURITY DEFINER RPC.
+    """
+    stmt = text(
+        "SELECT public.platform_saas_owner_trial_status() AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        if project_id is not None:
+            holder = await session.scalar(
+                select(Project.owner_user_id).where(Project.id == project_id)
+            )
+            if holder != actor_user_id:
+                raise PermissionError("Only project owner may view trial state")
+        result = (await session.execute(stmt)).scalar_one()
+    if not isinstance(result, dict) or not isinstance(result.get("state"), str):
+        raise RuntimeError("Invalid ViMi Pay trial state")
+    return result
+
+
 async def merchant_saas_unified_monthly_preview(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID, month: date,
