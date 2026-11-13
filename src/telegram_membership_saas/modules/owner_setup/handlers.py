@@ -486,7 +486,9 @@ def _saas_invoices_rich(report) -> str:
         "<tr><td>" + tr("Все неоплаченные", "All unpaid") + "</td><td>"
         + str(report.unpaid) + "</td></tr>",
         "<tr><td>" + tr("К оплате сейчас", "Due now") + "</td><td>"
-        + escape(format(getattr(report, "due_now_rub", report.outstanding_rub), ".2f")) + " ₽</td></tr>",
+        + escape(format(
+            getattr(report, "due_now_rub", report.outstanding_rub), ".2f",
+        )) + " ₽</td></tr>",
         "<tr><td>" + tr("Предстоящие счета", "Upcoming invoices") + "</td><td>"
         + str(getattr(report, "upcoming_count", 0)) + " · "
         + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽</td></tr>",
