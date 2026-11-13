@@ -40,6 +40,16 @@ async def _rpc(
         "platform_saas_v2_pending_proofs": ("page",),
         "platform_saas_price_profile_read": (),
         "platform_saas_price_profile_set": ("currency",),
+        "platform_saas_catalog_read": (),
+        "platform_saas_catalog_create": ("name","instructions","currency"),
+        "platform_saas_catalog_update": ("id","name","instructions"),
+        "platform_saas_catalog_currency_set": ("id","currency","enabled"),
+        "platform_saas_catalog_toggle": ("id","enabled"),
+        "platform_saas_catalog_remove": ("id",),
+        "platform_saas_catalog_for_invoice": ("invoice",),
+        "platform_saas_v3_create_attempt": (
+            "invoice","amount_rub","currency","method",
+        ),
     }
     keys = names.get(name)
     if keys is None or set(arguments) != set(keys):
@@ -56,6 +66,9 @@ async def _rpc(
         "platform_saas_v2_pending_proofs",
         "platform_saas_price_profile_read",
         "platform_saas_price_profile_set",
+        "platform_saas_catalog_read",
+        "platform_saas_catalog_for_invoice",
+        "platform_saas_v3_create_attempt",
     }:
         query = query.columns(data=JSONB)
     async with tenant_session_scope(
@@ -238,3 +251,121 @@ async def saas_v2_reject_attempt(
         name="platform_saas_v2_reject_attempt",
         arguments={"attempt": attempt_id, "reason": reason.strip()},
     )))
+
+
+async def saas_catalog_read(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int,
+    settings: Settings | None = None,
+) -> tuple[dict, ...]:
+    """Central operator's only catalog, not one duplicate per channel."""
+    _check_actor(actor_telegram_id, settings)
+    value = await _rpc(factory, actor_id=actor_id,
+                       name="platform_saas_catalog_read", arguments={})
+    if not isinstance(value, list):
+        raise RuntimeError("Invalid central payment catalog")
+    return tuple(value)
+
+
+async def saas_catalog_create(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int,
+    name: str, instructions: str, currency: str,
+    settings: Settings | None = None,
+) -> UUID:
+    _check_actor(actor_telegram_id, settings)
+    if currency not in PAYMENT_CURRENCIES:
+        raise ValueError("Unknown method currency")
+    value = await _rpc(
+        factory, actor_id=actor_id, name="platform_saas_catalog_create",
+        arguments={"name":name,"instructions":instructions,"currency":currency},
+    )
+    return UUID(str(value))
+
+
+async def saas_catalog_update(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int, method_id: UUID,
+    name: str, instructions: str,
+    settings: Settings | None = None,
+) -> bool:
+    _check_actor(actor_telegram_id, settings)
+    return bool(await _rpc(
+        factory, actor_id=actor_id, name="platform_saas_catalog_update",
+        arguments={"id":method_id,"name":name,"instructions":instructions},
+    ))
+
+
+async def saas_catalog_currency_set(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int, method_id: UUID,
+    currency: str, enabled: bool,
+    settings: Settings | None = None,
+) -> bool:
+    _check_actor(actor_telegram_id, settings)
+    if currency not in PAYMENT_CURRENCIES:
+        raise ValueError("Unknown method currency")
+    return bool(await _rpc(
+        factory, actor_id=actor_id, name="platform_saas_catalog_currency_set",
+        arguments={"id":method_id,"currency":currency,"enabled":enabled},
+    ))
+
+
+async def saas_catalog_toggle(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int, method_id: UUID, enabled: bool,
+    settings: Settings | None = None,
+) -> bool:
+    _check_actor(actor_telegram_id, settings)
+    return bool(await _rpc(
+        factory, actor_id=actor_id, name="platform_saas_catalog_toggle",
+        arguments={"id":method_id,"enabled":enabled},
+    ))
+
+
+async def saas_catalog_remove(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int, method_id: UUID,
+    settings: Settings | None = None,
+) -> bool:
+    _check_actor(actor_telegram_id, settings)
+    return bool(await _rpc(
+        factory, actor_id=actor_id, name="platform_saas_catalog_remove",
+        arguments={"id":method_id},
+    ))
+
+
+async def saas_catalog_for_invoice(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, invoice_id: UUID, project_id: UUID | None = None,
+) -> tuple[dict, ...]:
+    data = await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name="platform_saas_catalog_for_invoice",
+        arguments={"invoice":invoice_id},
+    )
+    if not isinstance(data, list):
+        raise RuntimeError("Invalid invoice method catalog")
+    return tuple(data)
+
+
+async def saas_v3_create_attempt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, invoice_id: UUID, rub: Decimal, currency: str,
+    method_id: UUID, project_id: UUID | None = None,
+) -> dict:
+    if currency not in PAYMENT_CURRENCIES or not rub.is_finite() or rub<=0:
+        raise ValueError("Invalid invoice amount/currency")
+    if rub!=rub.quantize(Decimal("0.01")):
+        raise ValueError("Use 2 decimal digits in RUB amount")
+    data=await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name="platform_saas_v3_create_attempt",
+        arguments={
+            "invoice":invoice_id,"amount_rub":rub,
+            "currency":currency,"method":method_id,
+        },
+    )
+    if not isinstance(data,dict) or not data.get("id"):
+        raise RuntimeError("Invalid platform payment attempt")
+    return data
