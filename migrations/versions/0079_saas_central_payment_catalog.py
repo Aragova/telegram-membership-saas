@@ -29,6 +29,8 @@ def upgrade() -> None:
         sa.Column("name",sa.String(80),nullable=False),
         sa.Column("instructions",sa.Text(),nullable=False),
         sa.Column("enabled",sa.Boolean(),nullable=False,server_default=sa.true()),
+        # Stable identity of an imported legacy method, even after rename.
+        sa.Column("legacy_source",sa.String(16),unique=True),
         sa.Column("removed_at",sa.DateTime(timezone=True)),
         sa.Column("created_by",sa.Uuid()),
         sa.Column("created_at",sa.DateTime(timezone=True),nullable=False,
@@ -67,11 +69,11 @@ def upgrade() -> None:
     op.execute("""
       WITH legacy AS (
         INSERT INTO public.platform_saas_payment_catalog_methods(
-          id,name,instructions,enabled,created_by
+          id,name,instructions,enabled,created_by,legacy_source
         )
         SELECT gen_random_uuid(),
           ('💳 '||currency_code)::varchar(80),instructions,
-          enabled,updated_by
+          enabled,updated_by,'v2:'||currency_code
         FROM public.platform_saas_payment_methods_v2
         RETURNING id,name
       )
@@ -83,9 +85,9 @@ def upgrade() -> None:
     op.execute("""
       WITH legacy AS (
         INSERT INTO public.platform_saas_payment_catalog_methods(
-          id,name,instructions,enabled
+          id,name,instructions,enabled,legacy_source
         )
-        SELECT gen_random_uuid(),'💳 RUB',d.instructions,true
+        SELECT gen_random_uuid(),'💳 RUB',d.instructions,true,'bank:RUB'
         FROM public.platform_saas_payment_details d
         WHERE d.id=1 AND d.instructions IS NOT NULL
           AND length(btrim(d.instructions)) BETWEEN 8 AND 900
@@ -414,24 +416,31 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_bank_method(
       FROM public.platform_saas_payment_catalog_methods m
       JOIN public.platform_saas_payment_catalog_currencies c
         ON c.method_id=m.id AND c.currency_code=p_currency
-      WHERE m.name='💳 '||p_currency AND m.removed_at IS NULL
-      ORDER BY m.created_at,m.id LIMIT 1;
+      WHERE m.removed_at IS NULL
+        AND (m.legacy_source='v2:'||p_currency
+          OR (p_currency='RUB' AND m.legacy_source='bank:RUB'))
+      ORDER BY CASE WHEN m.legacy_source='v2:'||p_currency
+                    THEN 0 ELSE 1 END
+      LIMIT 1 FOR UPDATE OF m;
       IF p_instructions IS NULL THEN
         IF match_id IS NOT NULL THEN
           UPDATE public.platform_saas_payment_catalog_methods
-          SET enabled=false,updated_at=clock_timestamp()
+          SET enabled=false,legacy_source='v2:'||p_currency,
+              updated_at=clock_timestamp()
           WHERE id=match_id;
         END IF;
       ELSIF match_id IS NOT NULL THEN
         UPDATE public.platform_saas_payment_catalog_methods
         SET instructions=btrim(p_instructions),enabled=true,
+            legacy_source='v2:'||p_currency,
             updated_at=clock_timestamp() WHERE id=match_id;
       ELSE
         match_id:=gen_random_uuid();
         INSERT INTO public.platform_saas_payment_catalog_methods(
-          id,name,instructions,enabled,created_by
+          id,name,instructions,enabled,created_by,legacy_source
         ) VALUES(
-          match_id,'💳 '||p_currency,btrim(p_instructions),true,actor
+          match_id,'💳 '||p_currency,btrim(p_instructions),true,actor,
+          'v2:'||p_currency
         );
         INSERT INTO public.platform_saas_payment_catalog_currencies(
           method_id,currency_code
@@ -585,6 +594,171 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
         'instructions',bank,'remaining_before',due::text
       );
     END; $f$
+    """)
+    # The legacy bank edit RPC may still be invoked by older clients.
+    # Update its single imported method by stable provenance (not mutable name).
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_payment_details_set(p_text text)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $fn$
+DECLARE actor uuid;
+BEGIN
+  actor:=public.platform_saas_require_owner();
+  IF p_text IS NOT NULL AND (
+     length(btrim(p_text))<8 OR length(p_text)>900
+  ) THEN
+    RAISE EXCEPTION 'Invalid platform bank instructions'
+      USING ERRCODE='22023';
+  END IF;
+  UPDATE public.platform_saas_payment_details
+    SET instructions=NULLIF(btrim(p_text),''),
+        updated_at=clock_timestamp(),updated_by=actor
+  WHERE id=1;
+  IF NOT FOUND THEN RETURN false; END IF;
+  -- Stale legacy calls cannot silently leave a previously imported RUB
+  -- method advertising old data. Only the original bank import is touched.
+  -- A catalog-disabled method is NEVER implicitly re-enabled by an old edit.
+  UPDATE public.platform_saas_payment_catalog_methods
+    SET instructions=CASE WHEN p_text IS NULL THEN instructions
+                          ELSE btrim(p_text) END,
+        enabled=enabled AND p_text IS NOT NULL,
+        updated_at=clock_timestamp()
+  WHERE legacy_source='bank:RUB' AND removed_at IS NULL;
+  RETURN true;
+END; $fn$
+    """)
+    # Both scheduling and claiming use the authoritative catalog. There
+    # must be no reminders after all named methods are disabled/archived.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_notice_schedule()
+        RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $fn$
+        DECLARE
+          started timestamptz;
+          now_at timestamptz := clock_timestamp();
+          notice_count integer := 0;
+        BEGIN
+          PERFORM public.platform_saas_require_owner();
+          SELECT effective_from INTO started
+          FROM public.platform_saas_billing_control
+          WHERE id=1 AND enabled=true;
+          -- Refund offsets are sourced before any due/overdue notice.
+          IF started IS NOT NULL AND started<=now_at THEN
+            PERFORM public.platform_saas_reconcile_verified_refunds(NULL);
+            started:=coalesce(public.platform_saas_first_activation(),started);
+          END IF;
+          -- Payment reminders must use the same live catalog as checkout.
+          IF started IS NULL OR started>now_at
+              OR NOT EXISTS (
+                SELECT 1 FROM public.platform_saas_payment_catalog_methods m
+                JOIN public.platform_saas_payment_catalog_currencies c
+                  ON c.method_id=m.id
+                WHERE m.enabled AND m.removed_at IS NULL
+              ) THEN RETURN 0; END IF;
+          PERFORM pg_advisory_xact_lock(2200471001);
+          INSERT INTO public.platform_saas_notice_outbox(
+              id,invoice_id,kind,available_at
+          )
+          SELECT gen_random_uuid(),i.id,k.kind,now_at
+          FROM public.platform_saas_invoices i
+          CROSS JOIN LATERAL (
+            VALUES
+              ('issued'::text,i.issued_at),
+              ('due'::text,greatest(i.due_at,i.issued_at)+interval '1 day'),
+              ('overdue'::text,greatest(i.due_at,i.issued_at)+interval '7 days')
+          ) AS k(kind,notify_at)
+          WHERE i.status='issued' AND i.issued_at>=started
+            AND k.notify_at<=now_at
+            -- If an invoice has gone unattended for weeks, do not blast
+            -- issued + due + overdue messages in the same poll cycle.
+            -- Enqueue only the latest relevant reminder stage.
+            AND (
+              (k.kind='issued' AND now_at<
+                greatest(i.due_at,i.issued_at)+interval '1 day')
+              OR (k.kind='due' AND now_at>=
+                greatest(i.due_at,i.issued_at)+interval '1 day'
+                AND now_at<greatest(i.due_at,i.issued_at)+interval '7 days')
+              OR (k.kind='overdue' AND now_at>=
+                greatest(i.due_at,i.issued_at)+interval '7 days')
+            )
+            AND public.platform_saas_v2_remaining(i.id)>0
+          ON CONFLICT (invoice_id,kind) DO NOTHING;
+          GET DIAGNOSTICS notice_count = ROW_COUNT;
+          UPDATE public.platform_saas_notice_outbox n
+            SET status='cancelled'
+          FROM public.platform_saas_invoices i
+          WHERE n.invoice_id=i.id AND n.status='pending'
+            AND (
+              i.status<>'issued' OR public.platform_saas_v2_remaining(i.id)=0
+              -- Prevent a paused delivery from replaying an obsolete
+              -- invoice stage together with a newer due/overdue stage.
+              OR (n.kind='issued' AND now_at >=
+                  greatest(i.due_at,i.issued_at)+interval '1 day')
+              OR (n.kind='due' AND now_at >=
+                  greatest(i.due_at,i.issued_at)+interval '7 days')
+            );
+          RETURN notice_count;
+        END;
+        $fn$
+    """)
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_notice_claim()
+        RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $fn$
+        DECLARE
+          item record;
+          now_at timestamptz := clock_timestamp();
+        BEGIN
+          PERFORM public.platform_saas_require_owner();
+          -- Reminders link back to the buyer's actual account checkout,
+          -- so no obsolete bank instructions are ever sent in notices.
+          IF NOT EXISTS (
+              SELECT 1 FROM public.platform_saas_payment_catalog_methods m
+              JOIN public.platform_saas_payment_catalog_currencies c
+                ON c.method_id=m.id
+              WHERE m.enabled AND m.removed_at IS NULL
+            ) OR NOT EXISTS (
+              SELECT 1 FROM public.platform_saas_billing_control
+              WHERE id=1 AND enabled=true AND effective_from<=now_at
+            ) THEN RETURN NULL; END IF;
+          SELECT n.id,n.invoice_id,n.kind,n.attempts,i.total_rub,
+                 i.due_at,i.issued_at,i.status,i.owner_user_id,
+                 u.telegram_user_id
+          INTO item
+          FROM public.platform_saas_notice_outbox n
+          JOIN public.platform_saas_invoices i ON i.id=n.invoice_id
+          JOIN public.telegram_users u ON u.id=i.owner_user_id
+          WHERE n.available_at<=now_at
+            AND (n.status='pending' OR
+                 (n.status='sending' AND
+                  n.claimed_at<now_at-interval '5 minutes'))
+          ORDER BY n.available_at,n.id
+          FOR UPDATE OF n SKIP LOCKED LIMIT 1;
+          IF NOT FOUND THEN RETURN NULL; END IF;
+          IF item.status<>'issued' OR public.platform_saas_v2_remaining(item.invoice_id)=0
+          OR (item.kind='issued' AND now_at>=
+              greatest(item.due_at,item.issued_at)+interval '1 day')
+          OR (item.kind='due' AND now_at>=
+              greatest(item.due_at,item.issued_at)+interval '7 days')
+          THEN
+            UPDATE public.platform_saas_notice_outbox
+              SET status='cancelled' WHERE id=item.id;
+            RETURN NULL;
+          END IF;
+          UPDATE public.platform_saas_notice_outbox
+             SET status='sending',attempts=attempts+1,claimed_at=now_at
+          WHERE id=item.id;
+          RETURN jsonb_build_object(
+            'id',item.id::text,'invoice_id',item.invoice_id::text,
+            'kind',item.kind,'attempt',item.attempts+1,
+            'recipient',item.telegram_user_id,
+            'amount_rub',public.platform_saas_v2_remaining(item.invoice_id)::text,
+            'due_at',item.due_at
+          );
+        END;
+        $fn$
     """)
     signatures = [
         "platform_saas_catalog_read()",
