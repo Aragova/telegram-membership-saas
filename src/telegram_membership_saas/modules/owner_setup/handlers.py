@@ -152,6 +152,12 @@ from telegram_membership_saas.modules.owner_setup.plan_management import (
     edit_owner_draft_resource,
     rename_owner_plan,
 )
+from telegram_membership_saas.modules.owner_setup.premium_welcome import (
+    central_welcome_classic,
+    central_welcome_rich,
+    trial_status_classic,
+    trial_status_rich,
+)
 from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
     rich_channel_card,
     rich_channel_directory,
@@ -226,6 +232,7 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_statements,
+    merchant_saas_trial_status,
     merchant_saas_unified_monthly_preview,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
@@ -869,10 +876,18 @@ def create_owner_setup_router(
         rows.append([InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
-        await bot.send_message(
-            user_id, "\n".join(lines),
-            parse_mode="HTML", reply_markup=_markup(rows),
-        )
+        if not home.projects:
+            await send_owner_rich(
+                bot, chat_id=user_id,
+                rich_html=central_welcome_rich(),
+                classic_html=central_welcome_classic(),
+                reply_markup=_markup(rows),
+            )
+        else:
+            await bot.send_message(
+                user_id, "\n".join(lines),
+                parse_mode="HTML", reply_markup=_markup(rows),
+            )
 
     async def show_dashboard(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -900,11 +915,15 @@ def create_owner_setup_router(
                 rows.append(platform_navigation(user_id))
         else:
             next_step = _next_setup_step(data)
+            trial = await merchant_saas_trial_status(
+                factory, actor_user_id=actor_id, project_id=project_id,
+            )
             text = (
                 tr("✦ <b>Панель администратора</b>\n",
                    "✦ <b>Admin dashboard</b>\n") +
                 f"<b>{escape(data.project_name)}</b>\n"
                 f"🌍 {escape(data.timezone)}\n\n"
+                + trial_status_classic(trial, timezone=data.timezone) + "\n\n"
                 + "\n".join(_progress(data))
                 + "\n\n"
                 + (
@@ -984,6 +1003,9 @@ def create_owner_setup_router(
         service_price = await saas_price_profile(
             factory, actor_id=actor_id, project_id=project_id,
         )
+        trial = await merchant_saas_trial_status(
+            factory, actor_user_id=actor_id, project_id=project_id,
+        )
         unified = None
         if project_id is not None:
             month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
@@ -994,6 +1016,8 @@ def create_owner_setup_router(
         lines = [
             tr("🧾 <b>ViMi Pay · Счета платформы</b>",
                "🧾 <b>ViMi Pay · Platform invoices</b>"),
+            trial_status_classic(trial, timezone="Europe/Moscow"),
+            "",
             tr("Всего: ", "Total: ") + str(report.total),
             tr("Неоплаченных: ", "Unpaid: ") + str(report.unpaid),
             tr("К оплате: ", "Outstanding: ")
@@ -1111,7 +1135,8 @@ def create_owner_setup_router(
         if unified is not None:
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html=unified_monthly_rich(unified) + "\n"
+                rich_html=trial_status_rich(trial, timezone="Europe/Moscow") + "\n"
+                + unified_monthly_rich(unified) + "\n"
                 + _saas_invoices_rich(report),
                 classic_html=unified_monthly_classic(unified)
                 + "\n\n" + "\n".join(lines),
