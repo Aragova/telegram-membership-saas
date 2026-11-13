@@ -761,6 +761,92 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_due_batch()
       );
     END; $f$
     """)
+    # Previous live-interval liabilities remain notifiable after STOP/ARM;
+    # the current enabled cutoff still suppresses all notices during pause.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_notice_schedule()
+        RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $fn$
+        DECLARE
+          started timestamptz;
+          now_at timestamptz := clock_timestamp();
+          notice_count integer := 0;
+        BEGIN
+          PERFORM public.platform_saas_require_owner();
+          SELECT effective_from INTO started
+          FROM public.platform_saas_billing_control
+          WHERE id=1 AND enabled=true;
+          -- Refund offsets are sourced before any due/overdue notice.
+          IF started IS NOT NULL AND started<=now_at THEN
+            PERFORM public.platform_saas_reconcile_verified_refunds(NULL);
+            started:=coalesce(public.platform_saas_first_activation(),started);
+          END IF;
+          -- Issue payment reminders only while a valid currently-enabled
+          -- payment method exists. A disabled v2 RUB row supersedes any
+          -- legacy bank details left for historical audit purposes.
+          IF started IS NULL OR started>now_at
+             OR NOT (
+               EXISTS(
+                 SELECT 1 FROM public.platform_saas_payment_methods_v2
+                 WHERE enabled
+               )
+               OR (
+                 NOT EXISTS(
+                   SELECT 1 FROM public.platform_saas_payment_methods_v2
+                   WHERE currency_code='RUB'
+                 ) AND EXISTS(
+                   SELECT 1 FROM public.platform_saas_payment_details
+                   WHERE id=1 AND instructions IS NOT NULL
+                 )
+               )
+             ) THEN RETURN 0; END IF;
+          PERFORM pg_advisory_xact_lock(2200471001);
+          INSERT INTO public.platform_saas_notice_outbox(
+              id,invoice_id,kind,available_at
+          )
+          SELECT gen_random_uuid(),i.id,k.kind,now_at
+          FROM public.platform_saas_invoices i
+          CROSS JOIN LATERAL (
+            VALUES
+              ('issued'::text,i.issued_at),
+              ('due'::text,greatest(i.due_at,i.issued_at)+interval '1 day'),
+              ('overdue'::text,greatest(i.due_at,i.issued_at)+interval '7 days')
+          ) AS k(kind,notify_at)
+          WHERE i.status='issued' AND i.issued_at>=started
+            AND k.notify_at<=now_at
+            -- If an invoice has gone unattended for weeks, do not blast
+            -- issued + due + overdue messages in the same poll cycle.
+            -- Enqueue only the latest relevant reminder stage.
+            AND (
+              (k.kind='issued' AND now_at<
+                greatest(i.due_at,i.issued_at)+interval '1 day')
+              OR (k.kind='due' AND now_at>=
+                greatest(i.due_at,i.issued_at)+interval '1 day'
+                AND now_at<greatest(i.due_at,i.issued_at)+interval '7 days')
+              OR (k.kind='overdue' AND now_at>=
+                greatest(i.due_at,i.issued_at)+interval '7 days')
+            )
+            AND public.platform_saas_v2_remaining(i.id)>0
+          ON CONFLICT (invoice_id,kind) DO NOTHING;
+          GET DIAGNOSTICS notice_count = ROW_COUNT;
+          UPDATE public.platform_saas_notice_outbox n
+            SET status='cancelled'
+          FROM public.platform_saas_invoices i
+          WHERE n.invoice_id=i.id AND n.status='pending'
+            AND (
+              i.status<>'issued' OR public.platform_saas_v2_remaining(i.id)=0
+              -- Prevent a paused delivery from replaying an obsolete
+              -- invoice stage together with a newer due/overdue stage.
+              OR (n.kind='issued' AND now_at >=
+                  greatest(i.due_at,i.issued_at)+interval '1 day')
+              OR (n.kind='due' AND now_at >=
+                  greatest(i.due_at,i.issued_at)+interval '7 days')
+            );
+          RETURN notice_count;
+        END;
+        $fn$
+    """)
     # Independent operator bank confirmation must not over-allocate a bill
     # after a source-linked credit. Existing receipts are never rewritten.
     op.execute("""
