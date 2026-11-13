@@ -85,7 +85,7 @@ async def test_issued_bill_card_works_without_selected_project(monkeypatch, lang
         ].inline_keyboard
         for b in row
     ]
-    assert "own:saasv2pay:" + encode_uuid(invoice_id) + ":0" in buttons
+    assert "own:spm:" + encode_uuid(invoice_id) + ":RUB:0" in buttons
     assert not any(x.startswith("own:saasbillchoose:") for x in buttons)
     assert "own:saasinvoices:0" in buttons
     callback.answer.assert_awaited_once()
