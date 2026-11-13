@@ -1121,6 +1121,24 @@ def create_platform_dashboard_router(
             ))
             return
         value = message.text.strip()
+        # Validate at the Telegram boundary, before an RPC or any bank
+        # mutation. Rejection and approval have deliberately different
+        # lengths due to their separate database constraints.
+        lower, upper = (8, 160) if approve else (5, 500)
+        if not lower <= len(value) <= upper:
+            await bot.send_message(user.id, tr(
+                "⚠️ Для подтверждения введите банковский референс "
+                "длиной 8–160 символов." if approve else
+                "⚠️ Причина отклонения: от 5 до 500 символов. "
+                "Например: «Тестовый чек». Сам счёт не удаляется. "
+                "/cancel — отмена.",
+                "⚠️ Enter a verified bank reference of 8–160 characters."
+                if approve else
+                "⚠️ Rejection reason must be 5–500 characters, "
+                'for example "Test receipt". The invoice is not deleted. '
+                "/cancel to abort.",
+            ))
+            return
         try:
             actor_id = await ensure_telegram_actor(
                 factory, telegram_id=user.id, username=user.username,
@@ -1726,10 +1744,14 @@ def create_platform_dashboard_router(
                         "enter the unique received transfer reference "
                         "(8–160 characters). /cancel to abort.",
                     ) if decision == "ok" else tr(
-                        "❌ <b>Отклонение платежа</b>\n"
-                        "Укажите причину (5–500 символов). /cancel — отмена.",
-                        "❌ <b>Reject payment</b>\n"
-                        "Enter a reason (5–500 characters). /cancel to abort.",
+                        "❌ <b>Отклонение чека</b>\n"
+                        "Причина: 5–500 символов. Чек будет отклонён, "
+                        "но сам счёт останется неоплаченным. "
+                        "/cancel — отмена.",
+                        "❌ <b>Reject receipt</b>\n"
+                        "Reason: 5–500 characters. The receipt is rejected, "
+                        "but the invoice remains unpaid. "
+                        "/cancel to abort.",
                     ),
                     reply_markup=_keyboard([[_button(
                         tr("⬅️ Назад", "⬅️ Back"),
