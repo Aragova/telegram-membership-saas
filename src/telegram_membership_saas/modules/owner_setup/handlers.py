@@ -486,10 +486,10 @@ def _saas_invoices_rich(report) -> str:
         "<tr><td>" + tr("Все неоплаченные", "All unpaid") + "</td><td>"
         + str(report.unpaid) + "</td></tr>",
         "<tr><td>" + tr("К оплате сейчас", "Due now") + "</td><td>"
-        + escape(format(report.due_now_rub, ".2f")) + " ₽</td></tr>",
+        + escape(format(getattr(report, "due_now_rub", report.outstanding_rub), ".2f")) + " ₽</td></tr>",
         "<tr><td>" + tr("Предстоящие счета", "Upcoming invoices") + "</td><td>"
-        + str(report.upcoming_count) + " · "
-        + escape(format(report.upcoming_rub, ".2f")) + " ₽</td></tr>",
+        + str(getattr(report, "upcoming_count", 0)) + " · "
+        + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽</td></tr>",
     ]
     pending_count = getattr(report, "pending_credit_count", 0)
     if pending_count:
@@ -1047,10 +1047,10 @@ def create_owner_setup_router(
             tr("Всего: ", "Total: ") + str(report.total),
             tr("Неоплаченных всего: ", "Total unpaid: ") + str(report.unpaid),
             tr("К оплате сейчас: ", "Due now: ")
-            + escape(format(report.due_now_rub, ".2f")) + " ₽",
+            + escape(format(getattr(report, "due_now_rub", report.outstanding_rub), ".2f")) + " ₽",
             tr("Плановые счета: ", "Upcoming: ")
-            + str(report.upcoming_count) + " · "
-            + escape(format(report.upcoming_rub, ".2f")) + " ₽",
+            + str(getattr(report, "upcoming_count", 0)) + " · "
+            + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽",
             tr("Тариф обслуживания: ", "Service price: ")
             + ("$3 / " if service_price["currency"] == "USD"
                else "150 ₽ / ")
