@@ -48,7 +48,10 @@ def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
     text = prompt.text or prompt.caption or ""
     if not text.startswith(_PREFIX):
         return None
-    token = text[len(_PREFIX):].split(maxsplit=1)[0]
+    remainder = text[len(_PREFIX):].strip()
+    if not remainder:
+        return None
+    token = remainder.split(maxsplit=1)[0]
     try:
         return UUID(token)
     except (ValueError, AttributeError):
