@@ -6221,6 +6221,93 @@ def create_owner_setup_router(
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action == "methods":
                 await show_methods(bot, user_id, actor_id, project_id)
+            elif action == "starsnew":
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if overview.plans:
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id,
+                    )
+                else:
+                    await bot.send_message(
+                        user_id,
+                        tr(
+                            "⭐ <b>Создать тариф на 1 месяц?</b>\n\n"
+                            "После ввода вашей цены в звёздах ViMi Pay "
+                            "создаст тариф, привяжет его к каналу "
+                            "и включит для новых покупок. "
+                            "До ввода цены ничего не создаётся.",
+                            "⭐ <b>Create a 1-month plan?</b>\n\n"
+                            "Once you enter your Stars price, ViMi Pay "
+                            "will create the plan, link it to a channel, "
+                            "and enable new purchases. Nothing is "
+                            "created until you enter the price.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([
+                            [_button(
+                                tr("✅ Продолжить", "✅ Continue"),
+                                "starsnewok", "success",
+                            )],
+                            [_button(
+                                tr("⬅️ Отмена", "⬅️ Cancel"), "starspage:0",
+                            )],
+                        ]),
+                    )
+            elif action == "starsnewok" or action.startswith("starsnewres:"):
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if overview.plans:
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id,
+                    )
+                else:
+                    resources = [
+                        (rid, name) for rid, name, status in overview.resources
+                        if status == "active"
+                    ]
+                    if not resources:
+                        await bot.send_message(
+                            user_id, tr(
+                                "📢 Сначала подключите канал для этого тарифа.",
+                                "📢 Connect a channel before creating a plan.",
+                            ),
+                            reply_markup=_markup([[_button(
+                                tr("📢 Подключить канал", "📢 Connect channel"),
+                                "resources", "success",
+                            )], [_button(
+                                tr("⬅️ Назад", "⬅️ Back"), "starspage:0",
+                            )]]),
+                        )
+                    elif action == "starsnewok" and len(resources) > 1:
+                        await bot.send_message(
+                            user_id,
+                            tr("📢 Какой канал откроет тариф на 1 месяц?",
+                               "📢 Which channel will the 1-month plan unlock?"),
+                            reply_markup=_markup([
+                                [_button(
+                                    "📢 " + name[:38], "starsnewres:" + rid.hex,
+                                )] for rid, name in resources
+                            ] + [[_button(
+                                tr("⬅️ Назад", "⬅️ Back"), "starspage:0",
+                            )]]),
+                        )
+                    else:
+                        selected = (
+                            UUID(hex=action.split(":", 1)[1])
+                            if action.startswith("starsnewres:")
+                            else resources[0][0]
+                        )
+                        if selected not in {rid for rid, _ in resources}:
+                            raise ValueError(tr(
+                                "Канал изменился. Выберите действующий канал.",
+                                "Channel changed. Select an active channel.",
+                            ))
+                        await prompt_first_stars_month(
+                            bot, user_id, actor_id, selected,
+                        )
             elif action.startswith("starspage:"):
                 page_token = action.split(":", 1)[1]
                 if not page_token.isascii() or not page_token.isdecimal():
@@ -7144,6 +7231,23 @@ def create_owner_setup_router(
                     )
                 else:
                     raise ValueError("Шаг выбора валюты устарел")
+            elif flow.step == "stars_month_price":
+                plan_id = await create_one_month_stars_plan(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    resource_id=UUID(hex=flow.payload["resource_id"]),
+                    stars_amount=text,
+                )
+                await bot.send_message(
+                    message.chat.id,
+                    tr(
+                        "✅ <b>Тариф на 1 месяц опубликован!</b>\n⭐ Цена: ",
+                        "✅ <b>1-month plan published!</b>\n⭐ Price: ",
+                    ) + escape(text.strip()) + " ⭐",
+                    parse_mode="HTML",
+                )
+                await show_stars_payments(
+                    bot, message.chat.id, actor_id, project_id,
+                )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
                 await save_owner_price(
@@ -7232,6 +7336,7 @@ def create_owner_setup_router(
         except (ValueError, PermissionError, RuntimeError) as exc:
             destination = {
                 "plan_name": "plans",
+                "stars_month_price": "starspage:0",
                 "plan_duration": "plans",
                 "plan_resource": "plans",
                 "resource_reference": "resources",
