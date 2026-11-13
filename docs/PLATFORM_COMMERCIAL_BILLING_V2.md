@@ -1,3 +1,29 @@
+## 2026-11-14 — PR #155: fix replies to already-issued Rich payment prompts
+
+Live staging demonstrated that PDF replies to ViMi Pay's invoice instructions
+produced neither the required merchant acknowledgement nor any record in
+the central review queue, even after prioritizing receipt routing in #154.
+Root cause: the receipt parser used `reply_to_message.text`, but
+`sendRichMessage` produces a Telegram `Message.rich_message.blocks` and
+normally no `text` field. Telegram displays the reply preview even when
+the Bot API reply message has no ordinary text.
+
+Existing Rich invoice prompts are parsed using **only the original bot's
+authenticated reply message** and a bounded read of the first paragraph or
+section heading's RichText nodes (including inline-code invoice UUID).
+The existing database RPC still verifies invoice ownership/attempt state.
+
+Future `🧾 ViMi Pay · <UUID>` receipt prompts use Telegram's **native HTML**
+message so user reply references always contain `Message.text` regardless
+of the platform-wide Rich toggle. This only affects a receipt reply target:
+the currency selector, invoice list, all other screens and buttons keep Rich.
+No test-only buttons, new SQL schema, receipt content storage, billing
+activation or changes to historical payment ledger. The former Rich prompt
+is still supported, so existing unconfirmed invoices don't require a new
+payment attempt.
+
+---
+
 ## 2026-11-13 — PR #154: platform invoice receipt ingress priority
 
 The live RU staging flow can create an account invoice and send a PDF as a
