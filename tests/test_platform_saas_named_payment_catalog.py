@@ -125,23 +125,27 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                 assert Decimal(attempt["amount_rub"])==Decimal("150.00")
                 assert attempt["method_name"]=="СБП ViMi Pay"
                 assert attempt["instructions"]=="Bank reference 123456789 for test"
+                await conn.execute(text("RESET ROLE"))
                 record=(await conn.execute(text(
                     "SELECT method_id,instructions_snapshot FROM "
                     "platform_saas_payment_attempts_v2 WHERE id=:id"
                 ),{"id":UUID(str(attempt["id"]))})).one()
                 assert record.method_id==method
                 assert record.instructions_snapshot==attempt["instructions"]
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _identity(conn,operator)
                 await _call(conn,"platform_saas_catalog_update",{
                     "id":method,"name":"Bank transfer",
                     "instructions":"Changed bank reference 987654321",
                 },as_json=False)
+                await conn.execute(text("RESET ROLE"))
                 assert (await conn.execute(text(
                     "SELECT instructions_snapshot FROM "
                     "platform_saas_payment_attempts_v2 WHERE id=:id"
                 ),{"id":UUID(str(attempt["id"]))})).scalar_one()==(
                     "Bank reference 123456789 for test"
                 )
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _call(conn,"platform_saas_catalog_toggle",{
                     "id":method,"enabled":False,
                 },as_json=False)
@@ -204,6 +208,7 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                 await _call(conn,"platform_saas_catalog_remove",{
                     "id":method,
                 },as_json=False)
+                await conn.execute(text("RESET ROLE"))
                 assert (await conn.execute(text(
                     "SELECT instructions_snapshot FROM "
                     "platform_saas_payment_attempts_v2 WHERE id=:id"
