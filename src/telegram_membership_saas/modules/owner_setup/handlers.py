@@ -3602,7 +3602,15 @@ def create_owner_setup_router(
             except (KeyError, TypeError, ValueError, AttributeError):
                 await show_plans(bot, message.chat.id, actor_id, project_id)
             else:
-                await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+                if prior.payload.get("currency") == "XTR":
+                    await show_stars_payments(
+                        bot, message.chat.id, actor_id, project_id,
+                        page=int(prior.payload.get("stars_page", 0)),
+                    )
+                else:
+                    await show_plan_card(
+                        bot, message.chat.id, actor_id, project_id, plan_id,
+                    )
         elif prior.step in ("method_rename", "method_edit"):
             await show_method_card(
                 bot, message.chat.id, actor_id, project_id,
@@ -6108,6 +6116,49 @@ def create_owner_setup_router(
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action == "methods":
                 await show_methods(bot, user_id, actor_id, project_id)
+            elif action.startswith("starspage:"):
+                page_token = action.split(":", 1)[1]
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars page")
+                await show_stars_payments(
+                    bot, user_id, actor_id, project_id, page=int(page_token),
+                )
+            elif action.startswith("starsprice:"):
+                _, plan_hex, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars price page")
+                plan_id = UUID(hex=plan_hex)
+                await get_owner_plan_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id, step="price_amount",
+                    payload={
+                        "plan_id": plan_id.hex, "currency": "XTR",
+                        "stars_page": int(page_token),
+                    },
+                    text=tr(
+                        "⭐ <b>Цена Telegram Stars</b>\n\n"
+                        "Введите целое число звёзд от 1 до 250000. "
+                        "Оно будет списано Telegram при покупке.",
+                        "⭐ <b>Telegram Stars price</b>\n\n"
+                        "Enter a whole number of Stars from 1 to 250000. "
+                        "Telegram will charge this amount for the purchase.",
+                    ),
+                )
+            elif action.startswith("starsoff:"):
+                _, plan_hex, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars page")
+                await disable_owner_stars_price(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=UUID(hex=plan_hex),
+                )
+                await show_stars_payments(
+                    bot, user_id, actor_id, project_id,
+                    page=int(page_token),
+                )
             elif action == "cryptopay":
                 await show_crypto_pay(bot, user_id, actor_id, project_id)
             elif action == "cryptonet":
@@ -6995,7 +7046,15 @@ def create_owner_setup_router(
                     currency_code=flow.payload["currency"], amount=text,
                 )
                 await bot.send_message(message.chat.id, tr("✅ Цена сохранена.", "✅ Price saved."))
-                await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+                if flow.payload["currency"] == "XTR":
+                    await show_stars_payments(
+                        bot, message.chat.id, actor_id, project_id,
+                        page=int(flow.payload.get("stars_page", 0)),
+                    )
+                else:
+                    await show_plan_card(
+                        bot, message.chat.id, actor_id, project_id, plan_id,
+                    )
             elif flow.step == "method_rename":
                 method_id = UUID(hex=flow.payload["method_id"])
                 name = await rename_owner_method(
@@ -7089,7 +7148,11 @@ def create_owner_setup_router(
                     destination = "method:" + UUID(hex=method_hex).hex
                 except (TypeError, ValueError, AttributeError):
                     pass
-            if flow.step in ("price_amount", "plan_rename"):
+            if flow.step == "price_amount" and flow.payload.get("currency") == "XTR":
+                destination = "starspage:" + str(flow.payload.get("stars_page", 0))
+            if flow.step in ("price_amount", "plan_rename") and (
+                flow.payload.get("currency") != "XTR"
+            ):
                 plan_hex = flow.payload.get("plan_id")
                 try:
                     destination = "plan:" + UUID(hex=plan_hex).hex
