@@ -45,6 +45,39 @@ async def test_first_stars_month_plan_is_published_once_with_real_checkout():
                     ))
                     assert resource is not None
                     resource_id = resource.id
+                # A consumed invalid Stars reply can safely advance its
+                # original generation, without restarting channel selection.
+                generation = await setup.set_flow(
+                    factory, actor_id=owner, step="stars_month_price",
+                    project_id=project, payload={"resource_id": resource_id.hex},
+                )
+                await setup.bind_prompt(
+                    factory, actor_id=owner, step="stars_month_price",
+                    message_id=1201, generation=generation,
+                )
+                invalid = await setup.consume_flow(
+                    factory, actor_id=owner, reply_message_id=None,
+                )
+                assert invalid.step == "stars_month_price"
+                retry = await setup.advance_flow(
+                    factory, actor_id=owner, source=invalid,
+                    step="stars_month_price",
+                    payload={"resource_id": resource_id.hex},
+                )
+                await setup.bind_prompt(
+                    factory, actor_id=owner, step="stars_month_price",
+                    message_id=1202, generation=retry,
+                )
+                corrected = await setup.consume_flow(
+                    factory, actor_id=owner, reply_message_id=None,
+                )
+                assert corrected.generation == retry
+                assert corrected.project_id == project
+                with pytest.raises(ValueError, match="устарел"):
+                    await setup.advance_flow(
+                        factory, actor_id=owner, source=invalid,
+                        step="stars_month_price", payload=invalid.payload,
+                    )
                 with pytest.raises(ValueError, match="250000"):
                     await setup.create_one_month_stars_plan(
                         factory, actor_id=owner, project_id=project,
