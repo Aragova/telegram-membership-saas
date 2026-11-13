@@ -2969,12 +2969,19 @@ def create_owner_setup_router(
 
     async def prompt_first_stars_month(
         bot: Bot, user_id: int, actor_id: UUID, resource_id: UUID,
+        *, source_flow: SetupFlow | None = None, retry: bool = False,
     ) -> None:
+        warning = (
+            tr("⚠️ Цена должна быть целым числом от 1 до 250000.\n\n",
+               "⚠️ Enter a whole number between 1 and 250000.\n\n")
+            if retry else ""
+        )
         await prompt(
             bot, user_id, actor_id,
             step="stars_month_price",
+            source_flow=source_flow,
             payload={"resource_id": resource_id.hex},
-            text=tr(
+            text=warning + tr(
                 "⭐ <b>Тариф «1 месяц»</b>\n\n"
                 "Введите цену подписки в звёздах: целое число от 1 до 250000. "
                 "После сохранения тариф автоматически появится в продаже.",
@@ -7232,6 +7239,17 @@ def create_owner_setup_router(
                 else:
                     raise ValueError("Шаг выбора валюты устарел")
             elif flow.step == "stars_month_price":
+                valid_stars = (
+                    text.isascii() and text.isdecimal()
+                    and 1 <= int(text) <= 250000
+                )
+                if not valid_stars:
+                    await prompt_first_stars_month(
+                        bot, message.chat.id, actor_id,
+                        UUID(hex=flow.payload["resource_id"]),
+                        source_flow=flow, retry=True,
+                    )
+                    return
                 plan_id = await create_one_month_stars_plan(
                     factory, actor_id=actor_id, project_id=project_id,
                     resource_id=UUID(hex=flow.payload["resource_id"]),
