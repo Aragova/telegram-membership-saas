@@ -6,7 +6,7 @@ are touched by these tests. Every fixture is inside ONE outer transaction.
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from sqlalchemy import text
