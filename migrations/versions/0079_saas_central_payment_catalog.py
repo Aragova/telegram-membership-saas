@@ -389,7 +389,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_bank_method(
        p_currency text,p_instructions text
     ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
     SET search_path=pg_catalog,public AS $f$
-    DECLARE actor uuid; match_id uuid;
+    DECLARE actor uuid; match_id uuid; archived_at timestamptz;
     BEGIN
       actor:=public.platform_saas_require_owner();
       IF p_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
@@ -412,16 +412,24 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_bank_method(
       END IF;
       -- Keep old operator/API entry points synchronized with the catalog.
       -- Previously issued attempts still retain their exact old snapshot.
-      SELECT m.id INTO match_id
+      -- Identity is stable, but currencies and archival state are mutable.
+      -- Never create a duplicate or resurrect a detached/archived legacy row.
+      SELECT m.id,m.removed_at INTO match_id,archived_at
       FROM public.platform_saas_payment_catalog_methods m
-      JOIN public.platform_saas_payment_catalog_currencies c
-        ON c.method_id=m.id AND c.currency_code=p_currency
-      WHERE m.removed_at IS NULL
-        AND (m.legacy_source='v2:'||p_currency
-          OR (p_currency='RUB' AND m.legacy_source='bank:RUB'))
+      WHERE m.legacy_source='v2:'||p_currency
+         OR (p_currency='RUB' AND m.legacy_source='bank:RUB')
       ORDER BY CASE WHEN m.legacy_source='v2:'||p_currency
                     THEN 0 ELSE 1 END
       LIMIT 1 FOR UPDATE OF m;
+      IF match_id IS NOT NULL AND (
+        archived_at IS NOT NULL OR NOT EXISTS (
+          SELECT 1 FROM public.platform_saas_payment_catalog_currencies c
+          WHERE c.method_id=match_id AND c.currency_code=p_currency
+        )
+      ) THEN
+        RAISE EXCEPTION 'Legacy method is archived or currency was detached'
+          USING ERRCODE='42501';
+      END IF;
       IF p_instructions IS NULL THEN
         IF match_id IS NOT NULL THEN
           UPDATE public.platform_saas_payment_catalog_methods
