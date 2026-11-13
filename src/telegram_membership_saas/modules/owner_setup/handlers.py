@@ -178,6 +178,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     consume_flow,
     create_owner_payment_method,
     create_owner_plan,
+    create_one_month_stars_plan,
     create_owner_project,
     ensure_telegram_actor,
     get_selected_project,
@@ -639,7 +640,9 @@ def _next_setup_step(snapshot) -> tuple[str, str] | None:
     """One contextual action at a time, not an error-driven wizard."""
     if not any(status == "active" for _, _, status in snapshot.resources):
         return tr("📢 1. Подключить канал", "📢 1. Connect a channel"), "resources"
-    if not any(status == "active" for _, _, status in snapshot.methods):
+    if not any(status == "active" for _, _, status in snapshot.methods) and (
+        not snapshot.sales_configured
+    ):
         return tr("💳 2. Настроить оплату", "💳 2. Set up payments"), "methods"
     if not any(status == "active" for _, _, status in snapshot.plans):
         return tr("📦 3. Подготовить тариф", "📦 3. Create a plan"), "plans"
@@ -662,7 +665,9 @@ def _progress(snapshot) -> tuple[str, ...]:
         (tr("Канал / группа", "Channel / group"),
          any(s == "active" for _, _, s in snapshot.resources)),
         (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
-        (tr("Способ оплаты", "Payment method"), any(s == "active" for _, _, s in snapshot.methods)),
+        (tr("Способ оплаты", "Payment method"),
+         any(s == "active" for _, _, s in snapshot.methods)
+         or snapshot.sales_configured),
         (tr("Бот принимает покупателей", "Bot accepts buyers"), bool(snapshot.live_bot_username)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
@@ -2622,7 +2627,7 @@ def create_owner_setup_router(
                 "danger" if active else "success",
             )])
         rows.append([_button("➕ Создать тариф", "newplan", "success")])
-        if not data.methods:
+        if not data.methods and not data.sales_configured:
             lines.append(tr(
                 "\n💳 Настройте оплату, затем публикуйте тарифы.",
                 "\n💳 Configure payments before publishing plans.",
@@ -2902,8 +2907,22 @@ def create_owner_setup_router(
             "",
         ]
         rows: list[list[InlineKeyboardButton]] = []
-        if not current:
-            lines.append(tr("Тарифов пока нет.", "No plans yet."))
+        if not plans:
+            lines.append(tr(
+                "📦 Тарифов пока нет.\n\n"
+                "Создайте первый тариф на <b>1 месяц</b> с оплатой ⭐ Stars. "
+                "Цену вы укажете сами. После сохранения тариф будет опубликован.",
+                "📦 No plans yet.\n\n"
+                "Create your first <b>1-month</b> plan with ⭐ Stars. "
+                "You set the price; the plan is published after saving.",
+            ))
+            rows.append([_button(
+                tr("✨ Создать тариф на 1 месяц", "✨ Create 1-month plan"),
+                "starsnew", "success",
+            )])
+        elif not current:
+            lines.append(tr("На этой странице тарифов нет.",
+                            "No plans on this page."))
         for plan_id, plan_name, plan_status in current:
             info = await get_owner_plan_info(
                 factory, actor_id=actor_id, project_id=project_id,
@@ -2946,6 +2965,23 @@ def create_owner_setup_router(
         await bot.send_message(
             user_id, "\n".join(lines), parse_mode="HTML",
             reply_markup=_markup(rows),
+        )
+
+    async def prompt_first_stars_month(
+        bot: Bot, user_id: int, actor_id: UUID, resource_id: UUID,
+    ) -> None:
+        await prompt(
+            bot, user_id, actor_id,
+            step="stars_month_price",
+            payload={"resource_id": resource_id.hex},
+            text=tr(
+                "⭐ <b>Тариф «1 месяц»</b>\n\n"
+                "Введите цену подписки в звёздах: целое число от 1 до 250000. "
+                "После сохранения тариф автоматически появится в продаже.",
+                "⭐ <b>1-month plan</b>\n\n"
+                "Enter a whole number of Stars from 1 to 250000. "
+                "Saving will publish the plan automatically.",
+            ),
         )
 
     async def show_crypto_pay(
