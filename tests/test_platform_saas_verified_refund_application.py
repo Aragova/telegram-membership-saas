@@ -32,9 +32,11 @@ async def _json(conn, sql, **params):
     )).scalar_one()
 
 
-@pytest.mark.parametrize("paid_before_refund", [False, True])
+@pytest.mark.parametrize(
+    "payment_state", ["not_paid", "confirmed", "proof_pending"]
+)
 async def test_verified_star_refund_applies_once_and_carries_after_payment(
-    paid_before_refund: bool,
+    payment_state: str,
 ):
     cfg = Settings()
     engine = build_engine(cfg)
@@ -135,7 +137,7 @@ async def test_verified_star_refund_applies_once_and_carries_after_payment(
                     " WHERE id=:invoice"
                 ), {"invoice": commission})
                 other_invoice = None
-                if paid_before_refund:
+                if payment_state == "confirmed":
                     other_invoice = await _invoice(
                         conn, owner, merchant, bot, total="150",
                         period_start=now+timedelta(minutes=1),
@@ -148,6 +150,29 @@ async def test_verified_star_refund_applies_once_and_carries_after_payment(
                         " WHERE id=:invoice"
                     ), {"invoice": other_invoice})
                     await _receipt(conn, commission, operator, "117")
+                pending_attempt = None
+                if payment_state == "proof_pending":
+                    pending_attempt = uuid4()
+                    day = now.astimezone(ZoneInfo("Europe/Moscow")).date()
+                    await conn.execute(text(
+                        "INSERT INTO platform_saas_payment_attempts_v2 "
+                        "(id,invoice_id,owner_user_id,amount_rub,currency_code,"
+                        "rub_per_unit,amount_currency,quote_date,"
+                        "instructions_snapshot,expires_at) "
+                        "VALUES(:id,:invoice,:owner,117,'RUB',1,117,:day,"
+                        "'Real RUB bank instructions',:expiry)"
+                    ), {
+                        "id": pending_attempt, "invoice": commission,
+                        "owner": owner, "day": day,
+                        "expiry": now+timedelta(hours=1),
+                    })
+                    await conn.execute(text(
+                        "INSERT INTO platform_saas_payment_proofs_v2("
+                        "id,attempt_id,source_bot_id,source_chat_id,"
+                        "source_message_id,source_file_id,file_type)"
+                        " VALUES(:id,:attempt,12345,67890,321,"
+                        "'test_proof_document','document')"
+                    ), {"id": uuid4(), "attempt": pending_attempt})
                 await conn.execute(text(
                     "INSERT INTO file_sale_star_refunds("
                     "id,project_id,purchase_id,telegram_bot_id,telegram_user_id,"
@@ -168,7 +193,9 @@ async def test_verified_star_refund_applies_once_and_carries_after_payment(
                     owner=owner,
                 )
                 assert first["claimed"] == 1
-                assert first["allocated"] == 1
+                assert first["allocated"] == (
+                    0 if payment_state == "proof_pending" else 1
+                )
                 second = await _json(
                     conn, "public.platform_saas_reconcile_verified_refunds(:owner)",
                     owner=owner,
@@ -181,6 +208,31 @@ async def test_verified_star_refund_applies_once_and_carries_after_payment(
                     " WHERE original_sale_id=:sale)"
                 ), {"sale": star_sale})).scalars().all()
                 assert amounts == [Decimal("117.00")]
+                if payment_state == "proof_pending":
+                    # A previously transferred full 117 RUB remains
+                    # approvable after the verified refund is recorded.
+                    approved = (await conn.execute(text(
+                        "SELECT public.platform_saas_v2_approve_attempt("
+                        ":attempt,:reference)"
+                    ), {
+                        "attempt": pending_attempt,
+                        "reference": "pending-bank-" + uuid4().hex,
+                    })).scalar_one()
+                    assert approved is not None
+                    other_invoice = await _invoice(
+                        conn, owner, merchant, bot, total="150",
+                        period_start=now+timedelta(minutes=2),
+                    )
+                    await _line(conn, other_invoice, project, "bot_fee", bot)
+                    await conn.execute(text(
+                        "UPDATE platform_saas_invoices SET status='issued'"
+                        " WHERE id=:invoice"
+                    ), {"invoice": other_invoice})
+                    carried = await _json(
+                        conn, "public.platform_saas_reconcile_verified_refunds(:owner)",
+                        owner=owner,
+                    )
+                    assert carried == {"claimed": 0, "allocated": 1}
                 applied_invoice = other_invoice or commission
                 credit_balance = await _json(
                     conn, "public.platform_saas_v2_invoice_balance(:invoice)",
@@ -188,7 +240,7 @@ async def test_verified_star_refund_applies_once_and_carries_after_payment(
                 )
                 assert Decimal(credit_balance["verified_refund_credit_rub"]) == 117
                 assert Decimal(credit_balance["remaining_rub"]) == (
-                    33 if paid_before_refund else 0
+                    33 if payment_state != "not_paid" else 0
                 )
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
