@@ -79,24 +79,32 @@ async def show_pending_platform_proof(
         factory, actor_id=actor_id, actor_telegram_id=operator_id,
         attempt_id=attempt_id, settings=settings,
     )
-    key = settings.bot_token_encryption_key
-    if key is None:
-        raise ValueError("Original bot credentials are unavailable")
-    project_id = UUID(str(proof["source_project"]))
     source_bot_id = int(proof["source_bot"])
-    async with system_project_session_scope(factory, project_id) as session:
-        cipher = await session.scalar(
-            select(BotInstance.token_ciphertext).where(
-                BotInstance.project_id == project_id,
-                BotInstance.telegram_bot_id == source_bot_id,
-                BotInstance.status == "registered",
+    # The central bot can receive payment proofs too. It has no
+    # BotInstance/project and must use its live, already-authenticated Bot.
+    # Do not close the central transport after sending its own receipt.
+    close_source = False
+    if source_bot_id == central_bot.id:
+        source_bot = central_bot
+    else:
+        key = settings.bot_token_encryption_key
+        if key is None or not proof.get("source_project"):
+            raise ValueError("Original bot credentials are unavailable")
+        project_id = UUID(str(proof["source_project"]))
+        async with system_project_session_scope(factory, project_id) as session:
+            cipher = await session.scalar(
+                select(BotInstance.token_ciphertext).where(
+                    BotInstance.project_id == project_id,
+                    BotInstance.telegram_bot_id == source_bot_id,
+                    BotInstance.status == "registered",
+                )
             )
-        )
-    if not cipher:
-        raise ValueError("Original bot is disconnected")
-    source_bot = Bot(token=decrypt_token(cipher, key=key))
+        if not cipher:
+            raise ValueError("Original bot is disconnected")
+        source_bot = Bot(token=decrypt_token(cipher, key=key))
+        close_source = True
     try:
-        # A rotated or mismatched token must not read another bot's media.
+        # Rotated or mismatched tokens must not read another bot's media.
         if source_bot.id != source_bot_id:
             raise ValueError("Original bot identity mismatch")
         caption = (
@@ -121,4 +129,5 @@ async def show_pending_platform_proof(
             attempt_id=attempt_id, caption=caption,
         )
     finally:
-        await source_bot.session.close()
+        if close_source:
+            await source_bot.session.close()
