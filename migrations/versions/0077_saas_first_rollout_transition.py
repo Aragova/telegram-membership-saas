@@ -33,21 +33,23 @@ SET search_path=pg_catalog,public AS $fn$
    FROM public.platform_saas_commercial_enrollments e
    JOIN public.merchant_project_periods mp
      ON mp.owner_user_id=e.owner_user_id
-    AND mp.started_at<=e.effective_from
-    AND (mp.ended_at IS NULL OR mp.ended_at>e.effective_from)
-   -- Connection/removal usage events are immutable even after a bot
-   -- is retired and its bot_instances row has been physically removed.
+    AND mp.started_at<=public.platform_saas_first_activation()
+    AND (mp.ended_at IS NULL OR
+         mp.ended_at>public.platform_saas_first_activation())
+   -- Connection/removal events outlive deleted bots. First enrollment
+   -- must precede the FIRST REAL activation, not a later STOP/ARM cycle.
    JOIN public.platform_usage_events connected
      ON connected.project_id=mp.project_id
     AND connected.event_type='bot_connected'
-    AND connected.occurred_at<e.effective_from
+    AND connected.occurred_at<public.platform_saas_first_activation()
    WHERE e.owner_user_id=p_owner
+     AND e.effective_from<=public.platform_saas_first_activation()
      AND NOT EXISTS(
        SELECT 1 FROM public.platform_usage_events gone
        WHERE gone.project_id=connected.project_id
          AND gone.source_id=connected.source_id
          AND gone.event_type='bot_removed'
-         AND gone.occurred_at<=e.effective_from
+         AND gone.occurred_at<=public.platform_saas_first_activation()
      )
  );
 $fn$;""")
@@ -64,9 +66,10 @@ BEGIN
     AND t.policy_key='vimi-saas-72h-v1';
   IF claim_at IS NULL THEN RETURN NULL; END IF;
   IF public.platform_saas_is_transition_owner(p_owner) THEN
-    SELECT e.effective_from INTO enrolled_at
-    FROM public.platform_saas_commercial_enrollments e
-    WHERE e.owner_user_id=p_owner;
+    -- A cancelled pre-start ARM may already have enrolled this owner.
+    -- Grant transition from the first *effective* activation, not the
+    -- cancelled audit row or any later reactivation.
+    enrolled_at:=public.platform_saas_first_activation();
     RETURN greatest(claim_at,enrolled_at)+interval '72 hours';
   END IF;
   RETURN claim_at+interval '72 hours';
