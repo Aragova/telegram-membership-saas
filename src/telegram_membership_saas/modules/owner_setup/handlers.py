@@ -1171,8 +1171,8 @@ def create_owner_setup_router(
         )])
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=issued_invoice_rich(item, snapshot, credits),
-            classic_html=issued_invoice_classic(item, snapshot, credits),
+            rich_html=issued_invoice_rich(item, snapshot, credits, balance),
+            classic_html=issued_invoice_classic(item, snapshot, credits, balance),
             reply_markup=_markup(buttons),
         )
 
