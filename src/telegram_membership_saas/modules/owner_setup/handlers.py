@@ -464,6 +464,18 @@ def _saas_stars_rich(stars: dict) -> str:
     return "\n".join(lines)
 
 
+def _saas_invoice_is_upcoming(item: dict) -> bool:
+    """Only a future UTC due date is 'upcoming'; never infer paid status."""
+    value = item.get("due_at")
+    if not value:
+        return False
+    try:
+        due = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return due.tzinfo is not None and due > datetime.now(ZoneInfo("UTC"))
+
+
 def _saas_invoices_rich(report) -> str:
     """Keep platform invoices a separate compact Rich section."""
     items = [
@@ -471,10 +483,15 @@ def _saas_invoices_rich(report) -> str:
         "<table bordered compact>",
         "<tr><td>" + tr("Выставлено", "Issued") + "</td><td>"
         + str(report.total) + "</td></tr>",
-        "<tr><td>" + tr("Не оплачено", "Unpaid") + "</td><td>"
+        "<tr><td>" + tr("Все неоплаченные", "All unpaid") + "</td><td>"
         + str(report.unpaid) + "</td></tr>",
-        "<tr><td>" + tr("Остаток", "Outstanding") + "</td><td>"
-        + escape(format(report.outstanding_rub, ".2f")) + " ₽</td></tr>",
+        "<tr><td>" + tr("К оплате сейчас", "Due now") + "</td><td>"
+        + escape(format(
+            getattr(report, "due_now_rub", report.outstanding_rub), ".2f",
+        )) + " ₽</td></tr>",
+        "<tr><td>" + tr("Предстоящие счета", "Upcoming invoices") + "</td><td>"
+        + str(getattr(report, "upcoming_count", 0)) + " · "
+        + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽</td></tr>",
     ]
     pending_count = getattr(report, "pending_credit_count", 0)
     if pending_count:
@@ -496,7 +513,9 @@ def _saas_invoices_rich(report) -> str:
         )
         state = (
             tr("Оплачено", "Paid") if inv["status"] == "paid"
-            else tr("Ожидает подтверждения", "Pending confirmation")
+            else tr("Плановый счёт, срок ещё не наступил", "Upcoming, not due yet")
+            if _saas_invoice_is_upcoming(inv)
+            else tr("Ожидает оплаты", "Awaiting payment")
         )
         settlement = inv.get("settlement") or {}
         amount = (
@@ -1028,9 +1047,12 @@ def create_owner_setup_router(
             trial_status_classic(trial, timezone="Europe/Moscow"),
             "",
             tr("Всего: ", "Total: ") + str(report.total),
-            tr("Неоплаченных: ", "Unpaid: ") + str(report.unpaid),
-            tr("К оплате: ", "Outstanding: ")
-            + escape(format(report.outstanding_rub, ".2f")) + " ₽",
+            tr("Неоплаченных всего: ", "Total unpaid: ") + str(report.unpaid),
+            tr("К оплате сейчас: ", "Due now: ")
+            + escape(format(getattr(report, "due_now_rub", report.outstanding_rub), ".2f")) + " ₽",
+            tr("Плановые счета: ", "Upcoming: ")
+            + str(getattr(report, "upcoming_count", 0)) + " · "
+            + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽",
             tr("Тариф обслуживания: ", "Service price: ")
             + ("$3 / " if service_price["currency"] == "USD"
                else "150 ₽ / ")
@@ -1050,7 +1072,9 @@ def create_owner_setup_router(
             is_paid = item["status"] == "paid"
             state = (
                 tr("Оплачен", "Paid") if is_paid
-                else tr("Ожидает подтверждения", "Awaiting confirmation")
+                else tr("Срок ещё не наступил", "Not due yet")
+                if _saas_invoice_is_upcoming(item)
+                else tr("Ожидает оплаты", "Awaiting payment")
             )
             kind = (
                 tr("Обслуживание бота", "Bot service") if item["kind"] == "prepayment"

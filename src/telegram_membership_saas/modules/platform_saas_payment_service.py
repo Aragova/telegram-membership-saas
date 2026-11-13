@@ -35,6 +35,10 @@ class MerchantSaasStatements:
     pending_credit_rub: Decimal = Decimal("0")
     pending_credit_count: int = 0
     foreign_unpaid_count: int = 0
+    due_now_count: int = 0
+    due_now_rub: Decimal = Decimal("0")
+    upcoming_count: int = 0
+    upcoming_rub: Decimal = Decimal("0")
 
 
 async def platform_saas_payment_details(
@@ -239,4 +243,8 @@ async def merchant_saas_statements(
         pending_credit_rub=Decimal(str(credits["total_credited_rub"])),
         pending_credit_count=int(credits["credit_count"]),
         foreign_unpaid_count=int(foreign_count),
+        due_now_count=int(data.get("due_now_count", data["unpaid"])),
+        due_now_rub=Decimal(str(data.get("due_now_rub", data["outstanding_rub"]))),
+        upcoming_count=int(data.get("upcoming_count", 0)),
+        upcoming_rub=Decimal(str(data.get("upcoming_rub", "0"))),
     )

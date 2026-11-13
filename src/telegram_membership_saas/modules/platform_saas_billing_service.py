@@ -38,6 +38,10 @@ class SaasInvoiceSnapshot:
     page: int
     pages: int
     invoices: tuple[dict, ...]
+    due_now_count: int = 0
+    due_now_rub: Decimal = Decimal("0")
+    upcoming_count: int = 0
+    upcoming_rub: Decimal = Decimal("0")
 
 
 def _check_actor(actor_telegram_id: int, settings: Settings | None) -> None:
@@ -124,6 +128,10 @@ async def platform_saas_invoice_report(
         page=page,
         pages=int(data["pages"]),
         invoices=tuple(data["invoices"]),
+        due_now_count=int(data.get("due_now_count", data["unpaid"])),
+        due_now_rub=Decimal(str(data.get("due_now_rub", data["unpaid_rub"]))),
+        upcoming_count=int(data.get("upcoming_count", 0)),
+        upcoming_rub=Decimal(str(data.get("upcoming_rub", "0"))),
     )
 
 

@@ -1,3 +1,40 @@
+## 2026-11-13 — First-live-rollout correction (PR #148)
+
+The observed network has 29 platform-owner bots (exempt), 11 + 12 bots on
+two previously connected test accounts, and one new bot connected on
+2026-11-13. The initial rollout generated 24 distinct prepayment invoices
+(not 24 duplicate invoices): 23 accounts' existing bots had their one-time
+owner trials backdated by up to 72h, making them immediately billable. The
+genuinely new owner's invoice due on 2026-11-16 is an intentionally
+**upcoming** advance prepayment at the end of their real 72-hour trial.
+
+**Safe correction:** For accounts with a genuinely connected bot at the FIRST
+commercial enrollment, preserve their original immutable first-trial claim
+but give a one-time 72h transition *from that first rollout effective time*.
+Reactivations and new bots do not reset this period. Service prepayments for
+these legacy accounts may only issue when the transition actually ends.
+New accounts retain the existing advance prepayment/72h deadline behavior.
+The same billable-after decision gates historical 5% sales commission,
+Stars/Crypto eligibility, owner account trial display and direct service
+invoice issuance. Operator-owned bots remain exempt.
+
+Migration 0077 performs a narrow, audited clean-up: only originally issued
+prepayment invoices that fall strictly BEFORE this new effective threshold
+are marked VOID, only if they have NO legacy receipt, new bank attempt,
+payment proof/confirmed allocation, currency settlement, refund allocation
+or credit claim. Original invoice, invoice-line and trial evidence is retained.
+Any invoice with money or a payment attempt is skipped for manual financial
+review, not automatically deleted/voided. Real buyer subscriptions and
+previously paid access remain unchanged. The new account's November 16
+invoice is not eligible for the void.
+
+Activation is a **separate operator decision**: never enable billing during
+deployment, and while repairing keep commercial billing/holds OFF. Install
+only after exact-head CI and financial review. Avoid new test-only buttons,
+repayment scripts, or extra supervisors.
+
+---
+
 ## 2026-11-13 — PR #145 release hardening (not activated)
 
 The single PR #145 keeps commercial billing in Draft/OFF while its financial

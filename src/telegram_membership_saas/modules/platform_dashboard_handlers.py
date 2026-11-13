@@ -724,9 +724,12 @@ def _saas_invoice_text(report) -> str:
             else "Billing: <b>not activated</b>",
         ),
         tr("Выставленных счетов: ", "Issued invoices: ") + str(report.issued),
-        tr("Неоплаченных: ", "Unpaid: ") + str(report.unpaid),
-        tr("Задолженность: ", "Outstanding: ")
-        + escape(format(report.unpaid_rub, ".2f")) + " ₽",
+        tr("Неоплаченных всего: ", "Total unpaid: ") + str(report.unpaid),
+        tr("К оплате сейчас: ", "Due now: ")
+        + escape(format(getattr(report, "due_now_rub", report.unpaid_rub), ".2f")) + " ₽",
+        tr("Предстоящие счета: ", "Upcoming invoices: ")
+        + str(getattr(report, "upcoming_count", 0)) + " · "
+        + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽",
         tr("Получено: ", "Received: ")
         + escape(format(report.received_rub, ".2f")) + " ₽",
         tr(
@@ -749,10 +752,13 @@ def _saas_invoice_text(report) -> str:
             "No issued invoices yet.",
         ))
     for item in report.invoices:
-        status = tr("Оплачен", "Paid") if item["status"] == "paid" else tr(
-            "Ожидается оплата", "Awaiting payment",
-        )
         due = datetime.fromisoformat(str(item["due_at"]).replace("Z", "+00:00"))
+        status = (
+            tr("Оплачен", "Paid") if item["status"] == "paid"
+            else tr("Плановый счёт", "Upcoming")
+            if due > datetime.now(ZoneInfo("UTC"))
+            else tr("Ожидается оплата", "Awaiting payment")
+        )
         lines.extend([
             "• <b>" + escape(str(item["kind"])) + "</b>: "
             + escape(str(item["total_rub"])) + " ₽",
