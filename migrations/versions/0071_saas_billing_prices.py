@@ -310,6 +310,7 @@ def upgrade() -> None:
           amount_native numeric;
           invoice_rub numeric;
           usd_rate numeric;
+          issue_at timestamptz;
         BEGIN
           first_charge := public.platform_saas_require_rollout();
           IF p_bot IS NULL OR p_start IS NULL OR p_end IS NULL
@@ -403,6 +404,7 @@ def upgrade() -> None:
             END IF;
             RETURN invoice_id;
           END IF;
+          issue_at:=clock_timestamp();
           SELECT coalesce(
             (SELECT currency_code FROM public.platform_saas_price_profiles
              WHERE owner_user_id=entry.owner_user_id),
@@ -413,7 +415,7 @@ def upgrade() -> None:
             SELECT rub_per_unit INTO usd_rate
             FROM public.platform_saas_daily_fx_rates
             WHERE currency_code='USD' AND source_name='CBR'
-              AND rate_date=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
+              AND rate_date=(issue_at AT TIME ZONE 'Europe/Moscow')::date;
             IF usd_rate IS NULL OR usd_rate<=0 THEN
               RAISE EXCEPTION 'Verified USD price quote not available'
                 USING ERRCODE='42501';
@@ -425,10 +427,11 @@ def upgrade() -> None:
           invoice_id := gen_random_uuid();
           INSERT INTO public.platform_saas_invoices(
              id,invoice_key,merchant_id,owner_user_id,kind,
-             bot_instance_id,period_start,period_end,due_at,total_rub
+             bot_instance_id,period_start,period_end,due_at,total_rub,
+             created_at
           ) VALUES (
              invoice_id,service_key,entry.merchant_id,entry.owner_user_id,
-             'prepayment',p_bot,p_start,p_end,p_start,invoice_rub
+             'prepayment',p_bot,p_start,p_end,p_start,invoice_rub,issue_at
           );
           INSERT INTO public.platform_saas_invoice_lines(
              id,invoice_id,project_id,source_kind,source_id,

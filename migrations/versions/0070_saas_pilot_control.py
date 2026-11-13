@@ -151,6 +151,10 @@ def upgrade() -> None:
       SELECT enabled INTO old_holds
       FROM public.platform_saas_hold_control WHERE id=1;
       IF p_action='arm' THEN
+        IF (before_state->>'operator_exemption_pending')::integer>0 THEN
+          RAISE EXCEPTION 'Verify platform-owned bot exemptions before rollout'
+            USING ERRCODE='42501';
+        END IF;
         IF old_billing THEN
           RAISE EXCEPTION 'Commercial pilot already active'
             USING ERRCODE='23514';
