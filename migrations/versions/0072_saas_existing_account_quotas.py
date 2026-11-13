@@ -66,7 +66,7 @@ def upgrade() -> None:
           ) AND NOT EXISTS(
             SELECT 1 FROM public.platform_saas_commercial_enrollments e
             WHERE e.owner_user_id=recorded_owner
-              AND e.effective_from>=effective_at
+              AND e.effective_from<=clock_timestamp()
           ) AND public.platform_saas_owner_was_legacy(
               recorded_owner,effective_at
           ) THEN RETURN NEW; END IF;
@@ -152,7 +152,7 @@ def upgrade() -> None:
             ) AND NOT EXISTS(
               SELECT 1 FROM public.platform_saas_commercial_enrollments e
               WHERE e.owner_user_id=account_owner
-                AND e.effective_from>=effective_at
+                AND e.effective_from<=clock_timestamp()
             ) AND public.platform_saas_owner_was_legacy(
               account_owner,effective_at
             )
