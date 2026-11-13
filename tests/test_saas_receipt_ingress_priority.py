@@ -125,6 +125,8 @@ def test_receipt_filter_rejects_foreign_bot_spoofed_or_unrelated_documents():
     authentic.reply_to_message.from_user.id = 123
     authentic.reply_to_message.text = "🧾 Not ViMi Pay · " + str(uid)
     assert ingress.receipt_attempt_id(authentic, 123) is None
+    authentic.reply_to_message.text = "🧾 ViMi Pay · "
+    assert ingress.receipt_attempt_id(authentic, 123) is None
     authentic.reply_to_message.text = "🧾 ViMi Pay · invalid"
     assert ingress.receipt_attempt_id(authentic, 123) is None
     authentic.reply_to_message.text = "🧾 ViMi Pay · " + uid.hex
