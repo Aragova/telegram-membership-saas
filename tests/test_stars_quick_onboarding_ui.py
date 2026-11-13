@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from test_v2_tenant_onboarding_ui import (
-    _auth, _bot, _callback, _query, _snapshot,
+    _auth,
+    _bot,
+    _callback,
+    _query,
+    _snapshot,
 )
 
 from telegram_membership_saas.modules.owner_setup import handlers as ui
