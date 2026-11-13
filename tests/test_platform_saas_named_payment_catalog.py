@@ -172,6 +172,34 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                             "currency":"USD","method":method,
                         })
                 assert getattr(detached.value.orig,"sqlstate",None)=="42501"
+                # Legacy v2 RPC must not keep using bank details after
+                # the matching catalog method is switched off.
+                await _identity(conn,operator)
+                await _call(conn,"platform_saas_v2_bank_method",{
+                    "currency":"RUB",
+                    "instructions":"Legacy RUB test account number 33221100",
+                },as_json=False)
+                legacy=await _call(conn,"platform_saas_catalog_read",{})
+                legacy_method=next(m for m in legacy
+                                   if m["name"]=="💳 RUB")
+                await _identity(conn,owner)
+                old=await _call(conn,"platform_saas_v2_create_attempt",{
+                    "invoice":invoice,"amount_rub":Decimal("1.00"),
+                    "currency":"RUB",
+                })
+                assert old["instructions"]=="Legacy RUB test account number 33221100"
+                await _identity(conn,operator)
+                await _call(conn,"platform_saas_catalog_toggle",{
+                    "id":UUID(str(legacy_method["id"])),"enabled":False,
+                },as_json=False)
+                await _identity(conn,owner)
+                with pytest.raises(DBAPIError) as retired:
+                    async with conn.begin_nested():
+                        await _call(conn,"platform_saas_v2_create_attempt",{
+                            "invoice":invoice,"amount_rub":Decimal("1.00"),
+                            "currency":"RUB",
+                        })
+                assert getattr(retired.value.orig,"sqlstate",None)=="42501"
                 await _identity(conn,operator)
                 await _call(conn,"platform_saas_catalog_remove",{
                     "id":method,
