@@ -56,7 +56,7 @@ async def commercial_release_status(
         factory, TenantContext(user_id=actor_user_id),
     ) as session:
         result = (await session.execute(text(
-            "SELECT public.platform_saas_pilot_status() AS state"
+            "SELECT public.platform_saas_release_status() AS state"
         ).columns(state=JSONB))).scalar_one()
     if not isinstance(result, dict):
         raise RuntimeError("Commercial billing status unavailable")
@@ -81,7 +81,7 @@ async def commercial_release_change(
         factory, TenantContext(user_id=actor_user_id),
     ) as session:
         result = (await session.execute(text(
-            "SELECT public.platform_saas_pilot_change("
+            "SELECT public.platform_saas_release_change("
             ":action,:bots,:other_owners) AS state"
         ).columns(state=JSONB), {
             "action": action, "bots": expected_bots,

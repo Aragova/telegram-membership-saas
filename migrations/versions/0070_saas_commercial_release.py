@@ -1,6 +1,6 @@
-"""Owner-confirmed commercial pilot switch with audit; NOT auto-activated.
+"""Owner-confirmed commercial release switch with audit; NOT auto-activated.
 
-Revision ID: 0070_saas_pilot
+Revision ID: 0070_saas_release
 Revises: 0069_saas_balance
 
 No migration-time billing changes. The only activation control belongs in
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0070_saas_pilot"
+revision: str = "0070_saas_release"
 down_revision: str | None = "0069_saas_balance"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -20,7 +20,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.create_table(
-        "platform_saas_pilot_audit",
+        "platform_saas_release_audit",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("actor_id", sa.Uuid(), nullable=False),
         sa.Column("action", sa.String(12), nullable=False),
@@ -35,22 +35,22 @@ def upgrade() -> None:
         ),
     )
     op.execute(
-        "ALTER TABLE public.platform_saas_pilot_audit "
+        "ALTER TABLE public.platform_saas_release_audit "
         "ENABLE ROW LEVEL SECURITY"
     )
     op.execute(
-        "ALTER TABLE public.platform_saas_pilot_audit "
+        "ALTER TABLE public.platform_saas_release_audit "
         "FORCE ROW LEVEL SECURITY"
     )
     op.execute("""
       CREATE TRIGGER trg_saas_pilot_immutable
-      BEFORE UPDATE OR DELETE ON public.platform_saas_pilot_audit
+      BEFORE UPDATE OR DELETE ON public.platform_saas_release_audit
       FOR EACH ROW EXECUTE FUNCTION
       public.platform_saas_credit_entry_immutable()
     """)
 
     op.execute("""
-    CREATE FUNCTION public.platform_saas_pilot_status()
+    CREATE FUNCTION public.platform_saas_release_status()
     RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path=pg_catalog,public AS $f$
     DECLARE
@@ -112,7 +112,7 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-    CREATE FUNCTION public.platform_saas_pilot_change(
+    CREATE FUNCTION public.platform_saas_release_change(
       p_action text, p_expected_bots integer,
       p_expected_other_owners integer
     ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
@@ -133,7 +133,7 @@ def upgrade() -> None:
       PERFORM pg_advisory_xact_lock(
         hashtextextended('vimi:saas:pilot-control',0)
       );
-      before_state:=public.platform_saas_pilot_status();
+      before_state:=public.platform_saas_release_status();
       IF p_action IN ('arm','holdon') AND (
            p_expected_bots IS NULL OR p_expected_other_owners IS NULL
            OR p_expected_bots<>(
@@ -143,7 +143,7 @@ def upgrade() -> None:
              before_state->>'nonoperator_owners'
            )::integer
          ) THEN
-        RAISE EXCEPTION 'Pilot bot/account inventory changed, review again'
+        RAISE EXCEPTION 'Release bot/account inventory changed, review again'
           USING ERRCODE='23514';
       END IF;
       SELECT enabled INTO old_billing
@@ -226,14 +226,14 @@ def upgrade() -> None:
         UPDATE public.platform_saas_billing_control
         SET enabled=false,effective_from=NULL WHERE id=1;
       END IF;
-      INSERT INTO public.platform_saas_pilot_audit(
+      INSERT INTO public.platform_saas_release_audit(
         id,actor_id,action,registered_bots,nonoperator_owners,effective_from
       ) VALUES (
         gen_random_uuid(),actor,p_action,
         (before_state->>'registered_bots')::integer,
         (before_state->>'nonoperator_owners')::integer,start_at
       );
-      RETURN public.platform_saas_pilot_status();
+      RETURN public.platform_saas_release_status();
     END; $f$
     """)
     # One audited invoice reconciler shared by the existing supervisor.
@@ -358,8 +358,8 @@ def upgrade() -> None:
     END; $f$
     """)
     for signature in (
-        "platform_saas_pilot_status()",
-        "platform_saas_pilot_change(text,integer,integer)",
+        "platform_saas_release_status()",
+        "platform_saas_release_change(text,integer,integer)",
         "platform_saas_issue_due_batch()",
     ):
         op.execute(f"REVOKE ALL ON FUNCTION public.{signature} FROM PUBLIC")
@@ -380,7 +380,7 @@ def upgrade() -> None:
          IF EXISTS(
            SELECT 1 FROM pg_roles WHERE rolname='membership_runtime'
          ) THEN
-           REVOKE ALL ON public.platform_saas_pilot_audit
+           REVOKE ALL ON public.platform_saas_release_audit
            FROM membership_runtime;
          END IF;
        END $revoke$

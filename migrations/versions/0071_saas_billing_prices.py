@@ -1,7 +1,7 @@
 """Independent RUB 150 / USD 3 account service pricing.
 
 Revision ID: 0071_saas_prices
-Revises: 0070_saas_pilot
+Revises: 0070_saas_release
 """
 from collections.abc import Sequence
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0071_saas_prices"
-down_revision: str | None = "0070_saas_pilot"
+down_revision: str | None = "0070_saas_release"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
