@@ -11,11 +11,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_platform_saas_invoice_rls import _invoice, _line, _project, _tid
 
 from telegram_membership_saas.config import Settings
-from telegram_membership_saas.db import build_engine, build_session_factory
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
@@ -25,15 +24,20 @@ pytestmark = pytest.mark.skipif(
 
 async def test_voided_invoice_rejects_proof_for_existing_test_quote():
     cfg = Settings()
-    engine = build_engine(cfg)
-    factory = build_session_factory(engine)
     admin = create_async_engine(cfg.migration_database_url)
     try:
         tg_id = _tid()
-        owner, merchant, project, bot, _ = await _project(factory, tg_id)
         async with admin.connect() as conn:
             tx = await conn.begin()
             try:
+                # Every helper session joins a SAVEPOINT of the same
+                # outer transaction, so even registered bot + channel
+                # fixtures disappear with tx.rollback().
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
+                owner, merchant, project, bot, _ = await _project(factory, tg_id)
                 now = datetime.now(UTC)
                 invoice = await _invoice(
                     conn, owner, merchant, bot,
@@ -93,6 +97,13 @@ async def test_voided_invoice_rejects_proof_for_existing_test_quote():
                 ), {"id": invoice})).scalar_one() == 0
             finally:
                 await tx.rollback()
+        # Fail CI if any helper accidentally committed user/bot fixtures.
+        async with admin.connect() as verify:
+            assert (await verify.execute(text(
+                "SELECT count(*) FROM telegram_users WHERE id=:owner"
+            ), {"owner": owner})).scalar_one() == 0
+            assert (await verify.execute(text(
+                "SELECT count(*) FROM bot_instances WHERE id=:bot"
+            ), {"bot": bot})).scalar_one() == 0
     finally:
-        await engine.dispose()
         await admin.dispose()
