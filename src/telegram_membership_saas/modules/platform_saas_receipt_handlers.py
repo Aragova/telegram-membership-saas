@@ -114,6 +114,16 @@ def create_saas_receipt_router(
             )
             return
 
+        await bot.send_message(
+            message.chat.id,
+            tr(
+                "✅ Чек зарегистрирован. Оплата будет зачтена только после "
+                "подтверждения поступления администратором ViMi Pay.",
+                "✅ Receipt recorded. The platform operator must verify "
+                "actual bank funds before this payment is credited.",
+            ),
+        )
+
         # Proof metadata is durable and belongs to the original source bot.
         # Owner push is best-effort: the central operator can always open
         # the pending queue and use the on-demand proof viewer (PR #153).
@@ -138,14 +148,6 @@ def create_saas_receipt_router(
                     "ViMi Pay operator receipt push unavailable; "
                     "pending receipt is persisted"
                 )
-        await bot.send_message(
-            message.chat.id,
-            tr(
-                "✅ Чек зарегистрирован. Оплата будет зачтена только после "
-                "подтверждения поступления администратором ViMi Pay.",
-                "✅ Receipt recorded. The platform operator must verify "
-                "actual bank funds before this payment is credited.",
-            ),
-        )
+
 
     return router
