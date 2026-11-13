@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import create_async_engine
+from test_platform_saas_invoice_rls import _project, _tid
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory
@@ -20,7 +21,6 @@ from telegram_membership_saas.modules.owner_setup.premium_welcome import (
     trial_status_classic,
     trial_status_rich,
 )
-from test_platform_saas_invoice_rls import _project, _tid
 
 
 def test_premium_onboarding_uses_native_rich_and_exact_same_buttons():
