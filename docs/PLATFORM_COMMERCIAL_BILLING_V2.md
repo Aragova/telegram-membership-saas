@@ -1,3 +1,22 @@
+## 2026-11-14 — PR #156: honest refresh feedback in the central proof queue
+
+The existing `🔄 Обновить / Refresh` button in
+`👑 Финансы → Счета ViMi Pay → 🧾 Проверка чеков` already executes a
+new, operator-authorized database query for each callback. If the
+pending items are unchanged, however, Telegram responds
+`message is not modified`, which the screen editor appropriately
+silences, making the refresh appear inert.
+
+The same existing queue now shows the platform-local time of its latest
+database check and gives a quiet (non-alert) `✅ Список проверен / List checked`
+callback acknowledgement after every successful query, including rapid
+repeated taps within one second. It edits the existing card in place; there
+is no duplicate card, no new debug button, no cache and no financial
+mutation. The list still immediately reflects actual new, approved or
+rejected pending evidence returned by PostgreSQL.
+
+---
+
 ## 2026-11-14 — PR #155: fix replies to already-issued Rich payment prompts
 
 Live staging demonstrated that PDF replies to ViMi Pay's invoice instructions
