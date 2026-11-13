@@ -188,6 +188,14 @@ jobs:
                       "platform_saas_v2_approve_attempt(uuid,text)",
                       "platform_saas_v2_reject_attempt(uuid,text)",
                       "platform_saas_v2_pending_proofs(integer)",
+                      "platform_saas_catalog_read()",
+                      "platform_saas_catalog_create(text,text,text)",
+                      "platform_saas_catalog_update(uuid,text,text)",
+                      "platform_saas_catalog_currency_set(uuid,text,boolean)",
+                      "platform_saas_catalog_toggle(uuid,boolean)",
+                      "platform_saas_catalog_remove(uuid)",
+                      "platform_saas_catalog_for_invoice(uuid)",
+                      "platform_saas_v3_create_attempt(uuid,numeric,text,uuid)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(

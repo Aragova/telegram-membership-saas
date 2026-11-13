@@ -57,9 +57,14 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
     saas_invoice_currency_snapshot,
 )
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_catalog_create,
+    saas_catalog_currency_set,
+    saas_catalog_read,
+    saas_catalog_remove,
+    saas_catalog_toggle,
+    saas_catalog_update,
     saas_v2_configure_method,
     saas_v2_confirm_attempt,
-    saas_v2_methods_read,
     saas_v2_pending_proofs,
     saas_v2_reject_attempt,
 )
@@ -800,16 +805,19 @@ class PlatformBankNavigationMiddleware(BaseMiddleware):
 
     def __init__(self) -> None:
         self.pending: set[int] = set()
+        self.catalog_pending: dict[int, dict] = {}
 
     async def __call__(self, handler, event, data):
         user = getattr(event, "from_user", None)
         if user is not None:
             if isinstance(event, CallbackQuery):
                 self.pending.discard(user.id)
+                self.catalog_pending.pop(user.id,None)
             elif isinstance(event, Message):
                 command = _editor_command(event.text)
                 if command is not None and command != "/cancel":
                     self.pending.discard(user.id)
+                    self.catalog_pending.pop(user.id,None)
         return await handler(event, data)
 
 
@@ -899,6 +907,9 @@ def create_platform_dashboard_router(
     )
     pending_v2_review: dict[int, tuple[UUID, bool]] = {}
     pending_v2_method: dict[int, str] = {}
+    pending_catalog: dict[int, dict] = (
+        bank_navigation.catalog_pending if bank_navigation is not None else {}
+    )
 
     async def _show_bank_screen(bot: Bot, user, message_id: int | None = None) -> None:
         actor_id = await ensure_telegram_actor(
@@ -926,6 +937,104 @@ def create_platform_dashboard_router(
         await _render_platform_screen(
             bot, chat_id=user.id, text=_platform_bank_text(details),
             reply_markup=_keyboard(buttons), message_id=message_id,
+        )
+
+    async def _catalog_actor(user):
+        return await ensure_telegram_actor(
+            factory, telegram_id=user.id, username=user.username,
+            first_name=user.first_name,
+        )
+
+    async def _show_catalog(
+        bot: Bot, user, message_id: int | None = None,
+    ) -> None:
+        actor_id = await _catalog_actor(user)
+        methods = await saas_catalog_read(
+            factory, actor_id=actor_id, actor_telegram_id=user.id,
+            settings=config,
+        )
+        lines = [
+            tr("💳 <b>ViMi Pay · Способы оплаты</b>",
+               "💳 <b>ViMi Pay · Payment methods</b>"),
+            tr("Задайте валюты и реквизиты для оплаты счетов платформы. "
+               "Покупатель увидит только включённые способы. "
+               "Уже выданные счета и сохранённые чеки не меняются.",
+               "Assign currencies and instructions for platform invoices. "
+               "Payers see only enabled methods. Existing invoices and "
+               "payment proofs remain unchanged."),
+        ]
+        rows: list[list[InlineKeyboardButton]] = []
+        for method in methods:
+            codes = ", ".join(method["currencies"])
+            lines.append(
+                ("✅ " if method["enabled"] else "⏸️ ")
+                + escape(method["name"]) + " · " + escape(codes or "—")
+            )
+            rows.append([_button(
+                ("✅ " if method["enabled"] else "⏸️ ")
+                + str(method["name"])[:43],
+                "pm:" + encode_uuid(UUID(str(method["id"]))),
+            )])
+        if not methods:
+            lines.append(tr("Способы пока не созданы.",
+                            "No payment methods configured."))
+        rows.extend([
+            [_button(tr("➕ Добавить способ", "➕ Add payment method"),
+                     "pmnew")],
+            [_button(tr("⬅️ Счета", "⬅️ Invoices"), "billing:0")],
+        ])
+        await _render_platform_screen(
+            bot, chat_id=user.id, text="\n\n".join(lines),
+            reply_markup=_keyboard(rows), message_id=message_id,
+        )
+
+    async def _show_catalog_method(
+        bot: Bot, user, method_id: UUID, message_id: int | None = None,
+    ) -> None:
+        actor_id = await _catalog_actor(user)
+        items = await saas_catalog_read(
+            factory, actor_id=actor_id, actor_telegram_id=user.id,
+            settings=config,
+        )
+        method = next(
+            (item for item in items if item["id"] == str(method_id)), None,
+        )
+        if method is None:
+            raise ValueError("Payment method was removed")
+        currencies = set(method["currencies"])
+        lines = [
+            "💳 <b>" + escape(str(method["name"])) + "</b>",
+            tr("Статус: ", "Status: ") + (
+                tr("✅ Включён", "✅ Enabled") if method["enabled"]
+                else tr("⏸️ Выключен", "⏸️ Disabled")
+            ),
+            tr("Реквизиты: ", "Instructions: "),
+            "<pre>" + escape(str(method["instructions"])) + "</pre>",
+            tr("Доступные валюты: ", "Enabled currencies: ")
+            + escape(", ".join(sorted(currencies)) or "—"),
+        ]
+        code = encode_uuid(method_id)
+        currows = [_button(
+            ("✅ " if cur in currencies else "◯ ") + cur,
+            "pmcur:" + code + ":" + cur + ":"
+            + ("0" if cur in currencies else "1"),
+        ) for cur in ("RUB","USD","EUR","UAH","BYN")]
+        rows = [currows[i:i+2] for i in range(0,len(currows),2)]
+        rows.extend([
+            [_button(tr("✏️ Название", "✏️ Name"), "pmedit:" + code + ":name"),
+             _button(tr("✍️ Реквизиты", "✍️ Details"),
+                     "pmedit:" + code + ":instructions")],
+            [_button(
+                tr("⏸️ Отключить", "⏸️ Disable") if method["enabled"]
+                else tr("✅ Включить", "✅ Enable"),
+                "pmtoggle:" + code + ":" + ("0" if method["enabled"] else "1"),
+            )],
+            [_button(tr("🗑 Удалить", "🗑 Remove"), "pmdeleteask:" + code)],
+            [_button(tr("⬅️ Способы оплаты", "⬅️ Payment methods"), "pm")],
+        ])
+        await _render_platform_screen(
+            bot, chat_id=user.id, text="\n".join(lines),
+            reply_markup=_keyboard(rows), message_id=message_id,
         )
 
     async def read_report(user, *, period: str, page: int = 0):
@@ -1042,6 +1151,82 @@ def create_platform_dashboard_router(
             else "❌ Payment attempt rejected.",
         ))
 
+
+    @router.message(_PlatformSaasMethodEntryFilter(pending_catalog))
+    async def platform_named_method_entry(message: Message, bot: Bot) -> None:
+        user = message.from_user
+        if user is None or not is_configured_platform_owner(user.id, config):
+            return
+        draft = pending_catalog[user.id]
+        if _editor_command(message.text) == "/cancel":
+            pending_catalog.pop(user.id, None)
+            await _show_catalog(bot, user)
+            return
+        if _editor_command(message.text):
+            await bot.send_message(user.id, tr(
+                "Введите текст или /cancel.", "Enter text or /cancel.",
+            ))
+            return
+        value = message.text.strip()
+        stage = draft["stage"]
+        if stage in ("name","edit_name") and not 2 <= len(value) <= 80:
+            await bot.send_message(user.id, tr(
+                "Название: от 2 до 80 символов.",
+                "Name: 2–80 characters.",
+            ))
+            return
+        if stage in ("instructions","edit_instructions") and not (
+            8 <= len(value) <= 900
+        ):
+            await bot.send_message(user.id, tr(
+                "Реквизиты: от 8 до 900 символов.",
+                "Instructions: 8–900 characters.",
+            ))
+            return
+        if stage == "name":
+            draft["name"] = value
+            draft["stage"] = "instructions"
+            await bot.send_message(user.id, tr(
+                "✍️ Отправьте реквизиты и инструкцию оплаты одним сообщением. "
+                "/cancel — отмена.",
+                "✍️ Send payment details and instructions in one message. "
+                "/cancel to abort.",
+            ))
+            return
+        try:
+            actor_id = await _catalog_actor(user)
+            if stage == "instructions":
+                await saas_catalog_create(
+                    factory, actor_id=actor_id, actor_telegram_id=user.id,
+                    name=draft["name"],instructions=value,
+                    currency=draft["currency"],settings=config,
+                )
+            else:
+                all_methods = await saas_catalog_read(
+                    factory, actor_id=actor_id, actor_telegram_id=user.id,
+                    settings=config,
+                )
+                target = next((x for x in all_methods
+                               if x["id"] == str(draft["method_id"])),None)
+                if target is None:
+                    raise ValueError("Method no longer exists")
+                await saas_catalog_update(
+                    factory, actor_id=actor_id, actor_telegram_id=user.id,
+                    method_id=draft["method_id"],
+                    name=value if stage=="edit_name" else target["name"],
+                    instructions=(value if stage=="edit_instructions"
+                                  else target["instructions"]),settings=config,
+                )
+        except (ValueError,RuntimeError):
+            await bot.send_message(user.id, tr(
+                "⚠️ Не удалось сохранить способ. Проверьте данные и повторите "
+                "или /cancel.",
+                "⚠️ Could not save the method. Retry or /cancel.",
+            ))
+            return
+        pending_catalog.pop(user.id,None)
+        await _show_catalog(bot,user)
+
     @router.message(_PlatformSaasMethodEntryFilter(pending_v2_method))
     async def platform_v2_bank_method_entry(message: Message, bot: Bot) -> None:
         user = message.from_user
@@ -1151,6 +1336,7 @@ def create_platform_dashboard_router(
         pending_bank_entry.discard(query.from_user.id)
         pending_v2_review.pop(query.from_user.id, None)
         pending_v2_method.pop(query.from_user.id, None)
+        pending_catalog.pop(query.from_user.id, None)
         tokens = (query.data or "").split(":")
         message_id = getattr(query.message, "message_id", None)
         try:
@@ -1258,116 +1444,126 @@ def create_platform_dashboard_router(
                             ),
                         )
             elif tokens[1:] == ["bankdetails"]:
-                await _show_bank_screen(
+                await _show_catalog(
                     bot, query.from_user, message_id=message_id,
                 )
-            elif tokens[1:] == ["bankedit"]:
-                pending_bank_entry.add(query.from_user.id)
-                await bot.send_message(
-                    query.from_user.id,
-                    tr(
-                        "✍️ <b>Реквизиты для счетов ViMi Pay</b>\n"
-                        "Пришлите одним сообщением получателя, банк, "
-                        "номер счёта/карты и назначение платежа. "
-                        "8–900 символов. Отмена: /cancel.\n\n"
-                        "Не отправляйте коды доступа, пароли или API-токены.",
-                        "✍️ <b>ViMi Pay bank instructions</b>\n"
-                        "Send recipient, bank, account/card reference and "
-                        "transfer memo in one message (8–900 characters). "
-                        "Cancel: /cancel.\n\n"
-                        "Never submit passwords, login codes or API tokens.",
-                    ),
-                    parse_mode="HTML",
+            elif tokens[1:] in (
+                ["bankedit"], ["bankclearask"], ["bankclearok"],
+            ):
+                # Stale messages must never mutate a retired bank record.
+                # Use the same authoritative named-method editor as new UI.
+                await _show_catalog(
+                    bot, query.from_user, message_id=message_id,
                 )
-            elif tokens[1:] == ["bankclearask"]:
+            elif tokens[1:] == ["pm"]:
+                await _show_catalog(
+                    bot, query.from_user, message_id=message_id,
+                )
+            elif tokens[1:] == ["pmnew"]:
+                rows = [_button(
+                    "💳 " + cur, "pmnew:" + cur,
+                ) for cur in ("RUB","USD","EUR","UAH","BYN")]
                 await _render_platform_screen(
                     bot, chat_id=query.from_user.id,
                     text=tr(
-                        "⚠️ Удалить реквизиты ViMi Pay? Новые уведомления "
-                        "об оплате не будут отправляться.",
-                        "⚠️ Clear ViMi Pay payment instructions? "
-                        "New billing reminders will be paused.",
-                    ), reply_markup=_keyboard([
-                        [_button(tr("🗑 Подтвердить", "🗑 Confirm"), "bankclearok")],
-                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bankdetails")],
-                    ]), message_id=message_id,
+                        "💱 <b>Выберите первую валюту способа оплаты</b>\n"
+                        "Позже можно привязать дополнительные валюты.",
+                        "💱 <b>Choose the first payment currency</b>\n"
+                        "You can attach more currencies later.",
+                    ),
+                    reply_markup=_keyboard(
+                        [rows[i:i+2] for i in range(0,len(rows),2)]
+                        + [[_button(tr("⬅️ Назад", "⬅️ Back"),"pm")]]
+                    ), message_id=message_id,
                 )
-            elif tokens[1:] == ["bankclearok"]:
-                actor_id = await ensure_telegram_actor(
-                    factory, telegram_id=query.from_user.id,
-                    username=query.from_user.username,
-                    first_name=query.from_user.first_name,
-                )
-                await configure_platform_saas_payment(
-                    factory, actor_user_id=actor_id,
-                    actor_telegram_id=query.from_user.id,
-                    instructions=None, settings=config,
-                )
-                pending_bank_entry.discard(query.from_user.id)
-                await _show_bank_screen(
-                    bot, query.from_user, message_id=message_id,
-                )
-            elif tokens[1:] == ["v2methods"]:
-                actor_id = await ensure_telegram_actor(
-                    factory, telegram_id=query.from_user.id,
-                    username=query.from_user.username,
-                    first_name=query.from_user.first_name,
-                )
-                methods = await saas_v2_methods_read(
-                    factory, actor_id=actor_id,
-                    actor_telegram_id=query.from_user.id, settings=config,
-                )
-                by_currency = {m["currency"]: m for m in methods}
-                text_lines = [
-                    tr("💱 <b>ViMi Pay · Реквизиты по валютам</b>",
-                       "💱 <b>ViMi Pay · Bank methods by currency</b>"),
-                    tr("Изменения применяются только к новым платёжным "
-                       "попыткам. Старые реквизиты в чеках сохраняются.",
-                       "Changes apply only to new payment attempts. "
-                       "Prior receipts retain their original instructions."),
-                ]
-                currency_rows = []
-                for currency in ("RUB", "USD", "EUR", "UAH", "BYN"):
-                    method = by_currency.get(currency)
-                    enabled = bool(method and method.get("enabled"))
-                    text_lines.append(
-                        ("✅ " if enabled else "◯ ") + currency
-                        + (" · " + tr("активен", "active")
-                           if enabled else " · " + tr("выключен", "off"))
-                    )
-                    currency_rows.append(_button(
-                        "💳 " + currency, "v2method:" + currency,
-                    ))
-                rows = [currency_rows[i:i + 2]
-                        for i in range(0, len(currency_rows), 2)]
-                rows.append([_button(
-                    tr("⬅️ Реквизиты", "⬅️ Bank details"), "bankdetails",
-                )])
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text="\n".join(text_lines), reply_markup=_keyboard(rows),
+            elif len(tokens)==3 and tokens[1]=="pmnew":
+                currency=tokens[2]
+                if currency not in ("RUB","USD","EUR","UAH","BYN"):
+                    raise ValueError("Invalid catalog currency")
+                pending_catalog[query.from_user.id] = {
+                    "stage":"name","currency":currency,
+                }
+                await bot.send_message(query.from_user.id,tr(
+                    "✍️ Напишите название способа оплаты, например "
+                    "«СБП» или «PayPal». 2–80 символов. /cancel — отмена.",
+                    "✍️ Enter a method name, e.g. «Bank transfer» "
+                    "or «PayPal». 2–80 characters. /cancel to abort.",
+                ))
+            elif len(tokens)==3 and tokens[1]=="pm":
+                await _show_catalog_method(
+                    bot,query.from_user,decode_uuid(tokens[2]),
                     message_id=message_id,
                 )
-            elif len(tokens) == 3 and tokens[1] == "v2method":
-                currency = tokens[2]
-                if currency not in ("RUB", "USD", "EUR", "UAH", "BYN"):
-                    raise ValueError("Invalid platform banking currency")
-                pending_v2_method[query.from_user.id] = currency
+            elif len(tokens)==5 and tokens[1]=="pmcur":
+                method_id=decode_uuid(tokens[2])
+                currency=tokens[3]
+                if tokens[4] not in ("0","1"):
+                    raise ValueError("Invalid currency setting")
+                owner=await _catalog_actor(query.from_user)
+                await saas_catalog_currency_set(
+                    factory,actor_id=owner,
+                    actor_telegram_id=query.from_user.id,method_id=method_id,
+                    currency=currency,enabled=tokens[4]=="1",settings=config,
+                )
+                await _show_catalog_method(
+                    bot,query.from_user,method_id,message_id=message_id,
+                )
+            elif len(tokens)==4 and tokens[1]=="pmtoggle":
+                method_id=decode_uuid(tokens[2])
+                if tokens[3] not in ("0","1"):
+                    raise ValueError("Invalid method state")
+                owner=await _catalog_actor(query.from_user)
+                await saas_catalog_toggle(
+                    factory,actor_id=owner,actor_telegram_id=query.from_user.id,
+                    method_id=method_id,enabled=tokens[3]=="1",settings=config,
+                )
+                await _show_catalog_method(
+                    bot,query.from_user,method_id,message_id=message_id,
+                )
+            elif len(tokens)==4 and tokens[1]=="pmedit":
+                method_id=decode_uuid(tokens[2])
+                if tokens[3] not in ("name","instructions"):
+                    raise ValueError("Invalid method editor")
+                pending_catalog[query.from_user.id]={
+                    "stage":"edit_"+tokens[3],"method_id":method_id,
+                }
+                await bot.send_message(query.from_user.id,tr(
+                    "✍️ Введите новое значение или /cancel для отмены.",
+                    "✍️ Send the new value or /cancel to abort.",
+                ))
+            elif len(tokens)==3 and tokens[1]=="pmdeleteask":
+                method_id=decode_uuid(tokens[2])
                 await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text=tr(
-                        "💳 <b>Реквизиты ViMi Pay: ", "💳 <b>ViMi Pay method: "
-                    ) + escape(currency) + "</b>\n\n" + tr(
-                        "Пришлите новые реквизиты одним сообщением "
-                        "(8–900 символов). /disable отключит этот способ. "
-                        "/cancel отменит ввод.",
-                        "Send new bank instructions in one message "
-                        "(8–900 characters). /disable turns the method off. "
-                        "/cancel aborts editing.",
+                    bot,chat_id=query.from_user.id,text=tr(
+                        "🗑 Удалить способ оплаты? Старые чеки и попытки "
+                        "оплаты сохранят свои реквизиты.",
+                        "🗑 Remove this payment method? Existing "
+                        "payment attempts keep their original instructions.",
                     ),
-                    reply_markup=_keyboard([[_button(
-                        tr("⬅️ Назад", "⬅️ Back"), "v2methods",
-                    )]]), message_id=message_id,
+                    reply_markup=_keyboard([
+                        [_button(tr("🗑 Подтвердить","🗑 Confirm"),
+                                 "pmdelete:"+tokens[2])],
+                        [_button(tr("⬅️ Отмена","⬅️ Cancel"),
+                                 "pm:"+tokens[2])],
+                    ]),message_id=message_id,
+                )
+            elif len(tokens)==3 and tokens[1]=="pmdelete":
+                owner=await _catalog_actor(query.from_user)
+                await saas_catalog_remove(
+                    factory,actor_id=owner,
+                    actor_telegram_id=query.from_user.id,
+                    method_id=decode_uuid(tokens[2]),settings=config,
+                )
+                await _show_catalog(
+                    bot,query.from_user,message_id=message_id,
+                )
+            elif tokens[1:] == ["v2methods"] or (
+                len(tokens) == 3 and tokens[1] == "v2method"
+            ):
+                # Old currency-only keyboards remain navigable but cannot
+                # create a competing source of payment instructions.
+                await _show_catalog(
+                    bot, query.from_user, message_id=message_id,
                 )
             elif len(tokens) == 3 and tokens[1] == "v2proofs":
                 page_token = tokens[2]
@@ -1661,7 +1857,8 @@ def create_platform_dashboard_router(
                     "v2proofs:0",
                 )])
                 rows.append([_button(
-                    tr("💳 Реквизиты ViMi Pay", "💳 ViMi Pay payment details"),
+                    tr("💳 Способы оплаты ViMi Pay",
+                       "💳 ViMi Pay payment methods"),
                     "bankdetails",
                 )])
                 rows.append([_button(
