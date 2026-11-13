@@ -2769,10 +2769,10 @@ def create_owner_setup_router(
                 tr("Нет способов оплаты на этой странице.",
                    "No payment methods on this page.")
                 if page else
-                tr("Пока ничего не подключено. Для начала выберите валюту "
-                   "и добавьте способ перевода.",
-                   "No payment methods yet. Choose a currency "
-                   "and add a transfer method to get started.")
+                tr("Ручные способы ещё не настроены. "
+                   "⭐ Telegram Stars и 💎 Crypto Pay доступны ниже.",
+                   "No manual payment methods yet. "
+                   "⭐ Telegram Stars and 💎 Crypto Pay are below.")
             )
         for method in methods:
             lines.append(
@@ -2800,9 +2800,9 @@ def create_owner_setup_router(
             )
             if bulk.available:
                 rows.append([_button(
-                    tr("▶️ Включить все оплаты", "▶️ Enable all payments")
+                    tr("▶️ Включить ручные оплаты", "▶️ Enable manual payments")
                     if bulk.enable_action else
-                    tr("⏸️ Выключить все оплаты", "⏸️ Disable all payments"),
+                    tr("⏸️ Выключить ручные оплаты", "⏸️ Disable manual payments"),
                     "bulks:method:" + ("on:" if bulk.enable_action else "off:")
                     + encode_uuid(project_id),
                     "success" if bulk.enable_action else "danger",
