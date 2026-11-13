@@ -82,6 +82,7 @@ DECLARE
   claim record;
   bill record;
   already_claimed numeric;
+  already_invoiced numeric;
   claim_amount numeric;
   used_amount numeric;
   available numeric;
@@ -108,7 +109,9 @@ BEGIN
     hashtextextended('vimi:saas:verified-refunds',0)
   );
   FOR entry IN
-    SELECT src.*,l.id AS line_id,l.charge_rub,fx.rub_per_unit
+    SELECT src.*,l.id AS line_id,l.charge_rub,
+           i.id AS original_invoice_id,i.total_rub AS original_invoice_total,
+           fx.rub_per_unit
     FROM (
       SELECT 'stars_file'::text AS refund_kind,c.id AS proof_id,
              s.owner_user_id,s.source_kind,s.source_id,
@@ -152,9 +155,17 @@ BEGIN
     SELECT coalesce(sum(credit_rub),0) INTO already_claimed
     FROM public.platform_saas_verified_credit_claims c
     WHERE c.invoice_line_id=entry.line_id;
+    SELECT coalesce(sum(c.credit_rub),0) INTO already_invoiced
+    FROM public.platform_saas_verified_credit_claims c
+    JOIN public.platform_saas_invoice_lines l
+      ON l.id=c.invoice_line_id
+    WHERE l.invoice_id=entry.original_invoice_id;
+    -- Invoices sum high-precision per-source fees then round once. Do not
+    -- create >1 kopeck extra credit for each tiny refunded source.
     claim_amount:=greatest(0,least(
       round(entry.commission_credit_usd*entry.rub_per_unit,2),
-      round(entry.charge_rub,2)-already_claimed
+      round(entry.charge_rub,2)-already_claimed,
+      entry.original_invoice_total-already_invoiced
     ));
     INSERT INTO public.platform_saas_verified_credit_claims(
       id,source_kind,source_credit_id,invoice_line_id,owner_user_id,
