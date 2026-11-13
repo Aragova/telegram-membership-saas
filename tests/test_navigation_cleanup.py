@@ -46,6 +46,10 @@ async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sec
         owner_ui, "get_selected_project", AsyncMock(return_value=project_id),
     )
     monkeypatch.setattr(
+        owner_ui, "merchant_saas_trial_status",
+        AsyncMock(return_value={"state": "pending"}),
+    )
+    monkeypatch.setattr(
         owner_ui, "setup_overview",
         AsyncMock(return_value=SetupOverview(
             project_id=project_id, project_name="VIP",
