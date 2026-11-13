@@ -147,8 +147,10 @@ def test_mixed_currency_account_hides_shared_rub_payment_instructions(lang):
     finally:
         _language.reset(token)
     assert "RUB BANK" not in rich
-    assert ("рублёвые реквизиты" if lang == "ru" else
-            "RUB payment details") in rich
+    assert ("выбрать" if lang == "ru" else
+            "choose") in rich
+    assert ("способы оплаты" if lang == "ru" else
+            "payment methods") in rich
     assert "150.00 ₽" in rich
 
 
