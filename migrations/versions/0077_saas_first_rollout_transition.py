@@ -1269,6 +1269,185 @@ CREATE OR REPLACE FUNCTION public.platform_saas_owner_trial_status()
           );
         END; $fn$
     """)
+    # Informational future/due separation; old report keys and payable
+    # status remain backward compatible with all existing buyer flows.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_invoice_report(
+            p_page integer, p_size integer
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $f$
+        DECLARE result jsonb;
+        BEGIN
+          PERFORM public.platform_saas_require_owner();
+          IF p_page IS NULL OR p_page<0 OR p_page>100000
+             OR p_size IS NULL OR p_size<1 OR p_size>10 THEN
+            RAISE EXCEPTION 'Invalid invoice page' USING ERRCODE='22023';
+          END IF;
+          SELECT jsonb_build_object(
+              'enabled', (SELECT enabled FROM public.platform_saas_billing_control
+                          WHERE id=1),
+              'total', (SELECT count(*) FROM public.platform_saas_invoices
+                        WHERE status='issued'),
+              'unpaid', (SELECT count(*) FROM public.platform_saas_invoices i
+                         WHERE i.status='issued' AND public.platform_saas_v2_remaining(i.id)>0),
+              'unpaid_rub', (SELECT coalesce(sum(public.platform_saas_v2_remaining(i.id)),0)::text
+                             FROM public.platform_saas_invoices i
+                             WHERE i.status='issued' AND public.platform_saas_v2_remaining(i.id)>0),
+              'due_now_count',(SELECT count(*)
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at<=clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'due_now_rub',(SELECT coalesce(
+                sum(public.platform_saas_v2_remaining(i.id)),0)::text
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at<=clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'upcoming_count',(SELECT count(*)
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at>clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'upcoming_rub',(SELECT coalesce(
+                sum(public.platform_saas_v2_remaining(i.id)),0)::text
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at>clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'received_rub', (
+                (SELECT coalesce(sum(r.amount_rub),0)
+                 FROM public.platform_saas_receipts r)
+                +(SELECT coalesce(sum(a.allocated_rub),0)
+                  FROM public.platform_saas_payment_allocations_v2 a)
+                )::text,
+              'pages', (SELECT CASE WHEN count(*)=0 THEN 1
+                               ELSE ceil(count(*)::numeric/p_size)::int END
+                        FROM public.platform_saas_invoices
+                        WHERE status='issued'),
+              'invoices', coalesce((
+                  SELECT jsonb_agg(jsonb_build_object(
+                    'id',j.id::text, 'owner',j.owner_user_id::text,
+                    'merchant',j.merchant_id::text,
+                    'kind',j.kind, 'total_rub',j.total_rub::text,
+                    'remaining_rub',public.platform_saas_v2_remaining(j.id)::text,
+                    'invoice_key',j.invoice_key,
+                    'bot',j.bot_instance_id::text,
+                    'period_start',j.period_start,'period_end',j.period_end,
+                    'due_at',j.due_at, 'status',
+                    CASE WHEN public.platform_saas_v2_remaining(j.id)=0 THEN 'paid'
+                         ELSE j.status END
+                  ) ORDER BY j.due_at DESC,j.id DESC)
+                  FROM (
+                    SELECT i.*
+                    FROM public.platform_saas_invoices i
+                    WHERE i.status='issued'
+                    ORDER BY i.due_at DESC,i.id DESC
+                    LIMIT p_size OFFSET p_page*p_size
+                  ) j
+              ),'[]'::jsonb)
+          ) INTO result;
+          RETURN result;
+        END;
+        $f$
+    """)
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_owner_invoice_report(
+            p_page integer, p_size integer
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $fn$
+        DECLARE
+          actor uuid;
+          bank text;
+          result jsonb;
+        BEGIN
+          actor:=NULLIF(
+            current_setting('app.current_user_id',true),''
+          )::uuid;
+          IF actor IS NULL OR NOT EXISTS(
+            SELECT 1 FROM public.telegram_users u WHERE u.id=actor
+          ) THEN
+            RAISE EXCEPTION 'Authenticated owner required'
+              USING ERRCODE='42501';
+          END IF;
+          IF p_page IS NULL OR p_page<0 OR p_page>100000
+             OR p_size IS NULL OR p_size<1 OR p_size>8 THEN
+            RAISE EXCEPTION 'Invalid statement page' USING ERRCODE='22023';
+          END IF;
+          -- An explicitly disabled v2 RUB method must never display retired
+          -- legacy bank details to the account owner.
+          SELECT instructions INTO bank
+          FROM public.platform_saas_payment_methods_v2
+          WHERE currency_code='RUB' AND enabled;
+          IF bank IS NULL AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_payment_methods_v2
+            WHERE currency_code='RUB'
+          ) THEN
+            SELECT instructions INTO bank
+            FROM public.platform_saas_payment_details WHERE id=1;
+          END IF;
+          SELECT jsonb_build_object(
+            'total',(SELECT count(*) FROM public.platform_saas_invoices i
+                     WHERE i.owner_user_id=actor AND i.status='issued'),
+            'unpaid',(SELECT count(*) FROM public.platform_saas_invoices i
+                      WHERE i.owner_user_id=actor AND i.status='issued'
+                        AND public.platform_saas_v2_remaining(i.id)>0),
+            'outstanding_rub',(
+                SELECT coalesce(sum(public.platform_saas_v2_remaining(i.id)),0)::text
+                FROM public.platform_saas_invoices i
+                WHERE i.owner_user_id=actor AND i.status='issued'
+                  AND public.platform_saas_v2_remaining(i.id)>0
+            ),
+            'due_now_count',(SELECT count(*)
+              FROM public.platform_saas_invoices i
+              WHERE i.owner_user_id=actor AND i.status='issued'
+                AND i.due_at<=clock_timestamp()
+                AND public.platform_saas_v2_remaining(i.id)>0),
+            'due_now_rub',(SELECT coalesce(
+              sum(public.platform_saas_v2_remaining(i.id)),0)::text
+              FROM public.platform_saas_invoices i
+              WHERE i.owner_user_id=actor AND i.status='issued'
+                AND i.due_at<=clock_timestamp()
+                AND public.platform_saas_v2_remaining(i.id)>0),
+            'upcoming_count',(SELECT count(*)
+              FROM public.platform_saas_invoices i
+              WHERE i.owner_user_id=actor AND i.status='issued'
+                AND i.due_at>clock_timestamp()
+                AND public.platform_saas_v2_remaining(i.id)>0),
+            'upcoming_rub',(SELECT coalesce(
+              sum(public.platform_saas_v2_remaining(i.id)),0)::text
+              FROM public.platform_saas_invoices i
+              WHERE i.owner_user_id=actor AND i.status='issued'
+                AND i.due_at>clock_timestamp()
+                AND public.platform_saas_v2_remaining(i.id)>0),
+            'details_configured',bank IS NOT NULL,
+            'instructions',CASE WHEN EXISTS(
+                SELECT 1 FROM public.platform_saas_invoices visible
+                WHERE visible.owner_user_id=actor AND visible.status='issued'
+            ) THEN bank ELSE NULL END,
+            'invoices',coalesce((
+              SELECT jsonb_agg(jsonb_build_object(
+                  'id',f.id::text,
+                  'kind',f.kind,
+                  'amount_rub',f.total_rub::text,
+                  'period_start',f.period_start,
+                  'period_end',f.period_end,
+                  'due_at',f.due_at,
+                  'issued_at',f.issued_at,
+                  'status',CASE WHEN public.platform_saas_v2_remaining(f.id)=0
+                                THEN 'paid' ELSE 'unpaid' END,
+                  'remaining_rub',public.platform_saas_v2_remaining(f.id)::text
+              ) ORDER BY f.due_at DESC,f.id DESC)
+              FROM (
+                SELECT i.* FROM public.platform_saas_invoices i
+                WHERE i.owner_user_id=actor AND i.status='issued'
+                ORDER BY i.due_at DESC,i.id DESC
+                LIMIT p_size OFFSET p_page*p_size
+              ) f
+            ),'[]'::jsonb)
+          ) INTO result;
+          RETURN result;
+        END;
+        $fn$
+    """)
     op.create_table(
         "platform_saas_trial_transition_void_audit",
         sa.Column("invoice_id",sa.Uuid(),
