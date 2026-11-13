@@ -379,6 +379,213 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
       );
     END; $f$
     """)
+    # Old, already-sent Telegram keyboards and historical API clients cannot
+    # bypass a disabled or edited payment method. Keep v2 methods in sync
+    # only for backwards-compatibility, not as a second visible catalog.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_v2_bank_method(
+       p_currency text,p_instructions text
+    ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE actor uuid; match_id uuid;
+    BEGIN
+      actor:=public.platform_saas_require_owner();
+      IF p_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
+         OR (p_instructions IS NOT NULL AND
+             length(btrim(p_instructions)) NOT BETWEEN 8 AND 900) THEN
+        RAISE EXCEPTION 'Invalid central bank instructions'
+          USING ERRCODE='22023';
+      END IF;
+      IF p_instructions IS NULL THEN
+        UPDATE public.platform_saas_payment_methods_v2
+        SET enabled=false,updated_at=clock_timestamp(),updated_by=actor
+        WHERE currency_code=p_currency;
+      ELSE
+        INSERT INTO public.platform_saas_payment_methods_v2(
+          currency_code,instructions,enabled,updated_by
+        ) VALUES(p_currency,btrim(p_instructions),true,actor)
+        ON CONFLICT(currency_code) DO UPDATE SET
+          instructions=excluded.instructions,enabled=true,
+          updated_by=actor,updated_at=clock_timestamp();
+      END IF;
+      -- Keep old operator/API entry points synchronized with the catalog.
+      -- Previously issued attempts still retain their exact old snapshot.
+      SELECT m.id INTO match_id
+      FROM public.platform_saas_payment_catalog_methods m
+      JOIN public.platform_saas_payment_catalog_currencies c
+        ON c.method_id=m.id AND c.currency_code=p_currency
+      WHERE m.name='💳 '||p_currency AND m.removed_at IS NULL
+      ORDER BY m.created_at,m.id LIMIT 1;
+      IF p_instructions IS NULL THEN
+        IF match_id IS NOT NULL THEN
+          UPDATE public.platform_saas_payment_catalog_methods
+          SET enabled=false,updated_at=clock_timestamp()
+          WHERE id=match_id;
+        END IF;
+      ELSIF match_id IS NOT NULL THEN
+        UPDATE public.platform_saas_payment_catalog_methods
+        SET instructions=btrim(p_instructions),enabled=true,
+            updated_at=clock_timestamp() WHERE id=match_id;
+      ELSE
+        match_id:=gen_random_uuid();
+        INSERT INTO public.platform_saas_payment_catalog_methods(
+          id,name,instructions,enabled,created_by
+        ) VALUES(
+          match_id,'💳 '||p_currency,btrim(p_instructions),true,actor
+        );
+        INSERT INTO public.platform_saas_payment_catalog_currencies(
+          method_id,currency_code
+        ) VALUES(match_id,p_currency);
+      END IF;
+      RETURN true;
+    END; $f$
+    """)
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
+      p_invoice uuid,p_requested_rub numeric,p_currency text
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      actor uuid;
+      item record;
+      paid numeric;
+      due numeric;
+      rate numeric;
+      fx_day date;
+      day date;
+      bank text;
+      converted numeric;
+      snapped_rub numeric;
+      attempt uuid;
+      deadline timestamptz;
+      native_usd numeric;
+      usd_rate_today numeric;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      IF actor IS NULL OR p_invoice IS NULL
+         OR p_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
+         OR p_requested_rub IS NULL OR p_requested_rub<=0
+         OR p_requested_rub<>round(p_requested_rub,2) THEN
+        RAISE EXCEPTION 'Invalid payment amount/currency'
+          USING ERRCODE='22023';
+      END IF;
+      PERFORM public.platform_saas_reconcile_verified_refunds(actor);
+      SELECT * INTO item FROM public.platform_saas_invoices
+        WHERE id=p_invoice FOR UPDATE;
+      IF item.id IS NULL OR item.status<>'issued'
+         OR item.owner_user_id IS DISTINCT FROM actor THEN
+        RAISE EXCEPTION 'Account invoice is not payable'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT coalesce(sum(amount_rub),0) INTO paid
+      FROM public.platform_saas_receipts WHERE invoice_id=p_invoice;
+      SELECT paid+coalesce(sum(allocated_rub),0) INTO paid
+      FROM public.platform_saas_payment_allocations_v2
+      WHERE invoice_id=p_invoice;
+      due:=public.platform_saas_v2_remaining(item.id);
+      IF p_requested_rub>due THEN
+        RAISE EXCEPTION 'Requested amount exceeds unpaid invoice'
+          USING ERRCODE='23514';
+      END IF;
+      SELECT instructions INTO bank
+      FROM public.platform_saas_payment_methods_v2
+      WHERE currency_code=p_currency AND enabled;
+      -- Legacy RUB details are a fallback only when the owner has never
+      -- configured a v2 RUB row. An explicit disabled row always wins.
+      IF bank IS NULL AND p_currency='RUB' AND NOT EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_methods_v2
+        WHERE currency_code='RUB'
+      ) THEN
+        SELECT instructions INTO bank
+        FROM public.platform_saas_payment_details WHERE id=1;
+      END IF;
+      IF bank IS NULL THEN
+        RAISE EXCEPTION 'Platform bank details not published'
+          USING ERRCODE='42501';
+      END IF;
+      -- No obsolete legacy bank message may bypass operator decisions
+      -- made in the authoritative named-method catalog. Old callbacks
+      -- normally reroute to the new selector, and this DB guard protects
+      -- any stale RPC client that still attempts the old flow.
+      IF NOT EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_catalog_methods m
+        JOIN public.platform_saas_payment_catalog_currencies c
+          ON c.method_id=m.id AND c.currency_code=p_currency
+        WHERE m.enabled AND m.removed_at IS NULL
+          AND m.instructions=bank
+      ) THEN
+        RAISE EXCEPTION 'Legacy bank method no longer available'
+          USING ERRCODE='42501';
+      END IF;
+      day:=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
+      IF p_currency='RUB' THEN rate:=1;fx_day:=NULL;
+      ELSE
+        SELECT rub_per_unit,source_date INTO rate,fx_day
+        FROM public.platform_saas_daily_fx_rates
+        WHERE rate_date=day AND currency_code=p_currency
+          AND source_name='CBR' AND source_date<=day
+          AND source_date>=day-interval '14 days';
+      END IF;
+      IF rate IS NULL OR rate<=0 THEN
+        RAISE EXCEPTION 'Verified bank currency conversion unavailable'
+          USING ERRCODE='42501';
+      END IF;
+      -- Foreign currency is paid in 2 decimal places. A rounded bank
+      -- transfer can differ slightly from the RUB obligation. Preserve the
+      -- exact RUB amount requested; the platform absorbs that bounded FX
+      -- rounding difference rather than creating an unpayable residual.
+      -- Preserve the original $3 service obligation across FX dates.
+      -- RUB allocations remain at their immutable issue-day book value;
+      -- only the actual bank transfer quote uses the current rate.
+      SELECT l.original_amount INTO native_usd
+      FROM public.platform_saas_invoice_lines l
+      WHERE l.invoice_id=item.id AND l.source_kind='bot_fee'
+        AND l.original_currency='USD'
+      LIMIT 1;
+      IF native_usd IS NULL THEN
+        converted:=round(p_requested_rub/rate,2);
+      ELSIF p_currency='USD' THEN
+        converted:=round(native_usd*p_requested_rub/item.total_rub,2);
+      ELSE
+        SELECT rub_per_unit INTO usd_rate_today
+        FROM public.platform_saas_daily_fx_rates
+        WHERE rate_date=day AND currency_code='USD'
+          AND source_name='CBR' AND source_date<=day
+          AND source_date>=day-interval '14 days';
+        IF usd_rate_today IS NULL OR usd_rate_today<=0 THEN
+          RAISE EXCEPTION 'Current USD service quote unavailable'
+            USING ERRCODE='42501';
+        END IF;
+        converted:=round(
+          native_usd*p_requested_rub/item.total_rub*usd_rate_today/rate,2
+        );
+      END IF;
+      snapped_rub:=p_requested_rub;
+      IF converted<=0 OR snapped_rub>due
+         OR (native_usd IS NULL AND
+             abs(converted*rate-snapped_rub)>rate*0.005+0.005) THEN
+        RAISE EXCEPTION 'Converted payment amount outside remaining debt'
+          USING ERRCODE='23514';
+      END IF;
+      deadline:=clock_timestamp()+interval '48 hours';
+      attempt:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_attempts_v2(
+        id,invoice_id,owner_user_id,amount_rub,currency_code,
+        rub_per_unit,amount_currency,quote_date,source_date,
+        instructions_snapshot,expires_at
+      ) VALUES(
+        attempt,item.id,actor,snapped_rub,p_currency,rate,
+        converted,day,fx_day,bank,deadline
+      );
+      RETURN jsonb_build_object(
+        'id',attempt,'invoice_id',item.id,'amount_rub',snapped_rub::text,
+        'currency',p_currency,'amount',converted::text,
+        'rub_per_unit',rate::text,'quote_date',day,
+        'source_date',fx_day,'expires_at',deadline,
+        'instructions',bank,'remaining_before',due::text
+      );
+    END; $f$
+    """)
     signatures = [
         "platform_saas_catalog_read()",
         "platform_saas_catalog_create(text,text,text)",
