@@ -125,7 +125,7 @@ async def enable_owner_currency(
                 "Валюта не найдена в справочнике ISO 4217 / "
                 "поддерживаемых криптовалют. Проверьте трёхбуквенный код."
             )
-        if fiat_only and asset.asset_type != "fiat":
+        if fiat_only and (asset.asset_type != "fiat" or code == "XTR"):
             raise ValueError(
                 "Для тарифов доступны только обычные валюты. "
                 "⭐ Telegram Stars и 💎 Crypto Pay настройте в «Способах оплаты»."
@@ -179,7 +179,9 @@ async def list_owner_fiat_currencies(
                 CurrencyAsset.status == "active",
             )
         )).all())
-    return tuple(code for code in selected if code in active_fiat)
+    return tuple(
+        code for code in selected if code in active_fiat and code != "XTR"
+    )
 
 
 async def disable_owner_stars_price(
