@@ -1,3 +1,30 @@
+## 2026-11-13 — PR #145 release hardening (not activated)
+
+The single PR #145 keeps commercial billing in Draft/OFF while its financial
+review items are addressed. Service invoicing now rotates persistently through
+the connected bot inventory rather than repeatedly selecting the oldest 100;
+commission reconciliation also cycles through every unissued closed Moscow
+month (including empty/deferred periods) without starving older unresolved
+source evidence. Each new owner's first service period starts after connection,
+trial, rollout, and actual ownership start; an outgoing owner's unpaid debt must
+not prevent the incoming owner from starting service after an existing period
+ends. Owners connected during the five-minute activation delay are enrolled
+without resetting an existing trial. Previously enrolled owners retain their
+complimentary-grant quotas even after OFF/ON cycling.
+
+The USD $3 profile is a native service obligation. Its issue-day RUB value is
+an accounting snapshot, not a fixed later payment quote. A new payment attempt
+converts the unpaid native USD fraction at that attempt's verified rates, with
+its RUB-book allocation retained as immutable historical evidence. Regular
+150 RUB profiles and manual customer prices are unchanged.
+
+**Remaining activation gate:** source-linked verified Stars/Crypto Pay refunds
+must reduce collectable SaaS liability exactly once, including partial payments,
+overpayment credit and holds. No new customer-facing test buttons or
+commercial activation are introduced by these hardening changes.
+
+---
+
 ## 2026-11-12 — Single integrated commercial billing release PR
 
 The existing connected-bot `🧾 Счёт` will replace duplicative FX and
