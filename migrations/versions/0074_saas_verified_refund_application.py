@@ -25,13 +25,17 @@ def upgrade() -> None:
             "platform_saas_invoice_lines.id",ondelete="RESTRICT"),nullable=False),
         sa.Column("owner_user_id",sa.Uuid(),nullable=False),
         sa.Column("credit_rub",sa.Numeric(38,2),nullable=False),
+        # Keep the original unrounded credit for cumulative FX rounding.
+        # Immutable evidence, never independently rounded per refund.
+        sa.Column("exact_credit_rub",sa.Numeric(38,18),nullable=False),
         sa.Column("recorded_at",sa.DateTime(timezone=True),nullable=False,
                   server_default=sa.text("clock_timestamp()")),
         sa.UniqueConstraint("source_kind","source_credit_id",
                             name="uq_saas_verified_refund_proof"),
         sa.CheckConstraint(
             "source_kind IN ('stars_file','stars_subscription','crypto_transfer') "
-            "AND credit_rub>=0",name="ck_saas_verified_credit"),
+            "AND credit_rub>=0 AND exact_credit_rub>0",
+            name="ck_saas_verified_credit"),
     )
     op.create_index("ix_saas_verified_claims_owner",
                     "platform_saas_verified_credit_claims",
@@ -83,7 +87,10 @@ DECLARE
   bill record;
   already_claimed numeric;
   already_invoiced numeric;
+  exact_prior numeric;
+  exact_current numeric;
   claim_amount numeric;
+  source_status text;
   used_amount numeric;
   available numeric;
   due numeric;
@@ -152,27 +159,37 @@ BEGIN
       )
     ORDER BY src.paid_at,src.proof_id LIMIT 200
   LOOP
+    -- Serialize with the invoice transition guard. An in-flight VOID must
+    -- complete first, and the committed status is rechecked under row lock.
+    SELECT i.status INTO source_status
+    FROM public.platform_saas_invoices i
+    WHERE i.id=entry.original_invoice_id FOR UPDATE;
+    IF source_status IS DISTINCT FROM 'issued' THEN CONTINUE; END IF;
     SELECT coalesce(sum(credit_rub),0) INTO already_claimed
     FROM public.platform_saas_verified_credit_claims c
     WHERE c.invoice_line_id=entry.line_id;
-    SELECT coalesce(sum(c.credit_rub),0) INTO already_invoiced
+    SELECT coalesce(sum(c.credit_rub),0),
+           coalesce(sum(c.exact_credit_rub),0)
+      INTO already_invoiced,exact_prior
     FROM public.platform_saas_verified_credit_claims c
     JOIN public.platform_saas_invoice_lines l
       ON l.id=c.invoice_line_id
     WHERE l.invoice_id=entry.original_invoice_id;
-    -- Invoices sum high-precision per-source fees then round once. Do not
-    -- create >1 kopeck extra credit for each tiny refunded source.
+    exact_current:=round(entry.commission_credit_usd*entry.rub_per_unit,18);
+    -- Invoice totals are rounded once after summing exact individual sale
+    -- commissions. Rounding each refund independently leaves phantom cents,
+    -- or overcredits partial returns. Delta of cumulative rounded totals
+    -- assigns any remainder to the precise refund that crosses the boundary.
     claim_amount:=greatest(0,least(
-      round(entry.commission_credit_usd*entry.rub_per_unit,2),
-      round(entry.charge_rub,2)-already_claimed,
+      round(exact_prior+exact_current,2)-already_invoiced,
       entry.original_invoice_total-already_invoiced
     ));
     INSERT INTO public.platform_saas_verified_credit_claims(
       id,source_kind,source_credit_id,invoice_line_id,owner_user_id,
-      credit_rub
+      credit_rub,exact_credit_rub
     ) VALUES(
       gen_random_uuid(),entry.refund_kind,entry.proof_id,
-      entry.line_id,entry.owner_user_id,claim_amount
+      entry.line_id,entry.owner_user_id,claim_amount,exact_current
     ) ON CONFLICT(source_kind,source_credit_id) DO NOTHING;
     IF FOUND THEN created:=created+1; END IF;
   END LOOP;
@@ -203,6 +220,21 @@ BEGIN
     FOR bill IN
       SELECT i.id FROM public.platform_saas_invoices i
       WHERE i.owner_user_id=claim.owner_user_id AND i.status='issued'
+        -- A quoted or proof-submitted transfer may be in flight. Preserve
+        -- its full immutable bank amount for legitimate operator approval.
+        -- Unspent verified credit carries into a later invoice instead.
+        AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_payment_attempts_v2 pending
+          WHERE pending.invoice_id=i.id
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_payment_allocations_v2 ap
+              WHERE ap.attempt_id=pending.id
+            )
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_payment_rejections_v2 rp
+              WHERE rp.attempt_id=pending.id
+            )
+        )
         AND NOT EXISTS(
           SELECT 1 FROM public.platform_saas_verified_credit_allocations a
           WHERE a.claim_id=claim.id AND a.invoice_id=i.id
