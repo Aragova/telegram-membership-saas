@@ -577,6 +577,38 @@ def upgrade() -> None:
       );
     END; $f$
     """)
+    # v2 payment attempts are the only new settlement route for native-USD
+    # service fees. Legacy quote freezing still reads issue-day RUB values;
+    # block new such snapshots without modifying older immutable history.
+    op.execute("""
+        CREATE FUNCTION public.platform_saas_block_legacy_usd_settlement()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog,public AS $f$
+        BEGIN
+          IF EXISTS(
+            SELECT 1
+            FROM public.platform_saas_invoice_lines l
+            WHERE l.invoice_id=NEW.invoice_id
+              AND l.source_kind='bot_fee'
+              AND l.original_currency='USD'
+          ) THEN
+            RAISE EXCEPTION
+              'Native USD service invoice requires current v2 payment quote'
+              USING ERRCODE='42501';
+          END IF;
+          RETURN NEW;
+        END; $f$
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_saas_block_legacy_usd_settlement
+        BEFORE INSERT ON public.platform_saas_currency_settlements
+        FOR EACH ROW EXECUTE FUNCTION
+        public.platform_saas_block_legacy_usd_settlement()
+    """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION "
+        "public.platform_saas_block_legacy_usd_settlement() FROM PUBLIC"
+    )
     for signature in (
         "platform_saas_price_profile_read()",
         "platform_saas_price_profile_set(text)",
