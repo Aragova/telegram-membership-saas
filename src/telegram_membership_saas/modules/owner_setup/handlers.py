@@ -2627,7 +2627,7 @@ def create_owner_setup_router(
                 "danger" if active else "success",
             )])
         rows.append([_button("➕ Создать тариф", "newplan", "success")])
-        if not data.methods and not data.sales_configured:
+        if not data.methods and not getattr(data, "sales_configured", False):
             lines.append(tr(
                 "\n💳 Настройте оплату, затем публикуйте тарифы.",
                 "\n💳 Configure payments before publishing plans.",
