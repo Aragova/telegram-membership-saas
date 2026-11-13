@@ -11,6 +11,7 @@ once and old immutable receipts/attempts are preserved. No billing switches
 or buyer entitlements are modified.
 """
 from collections.abc import Sequence
+
 import sqlalchemy as sa
 from alembic import op
 
