@@ -1627,6 +1627,16 @@ def create_platform_dashboard_router(
                     nav.append(_button("➡️", "v2proofs:" + str(page + 1)))
                 if nav:
                     rows.append(nav)
+                # The queue is queried afresh on every callback. Show when
+                # that check happened even if the items haven't changed;
+                # Telegram otherwise reports "message is not modified".
+                checked = datetime.now(
+                    ZoneInfo(config.platform_timezone),
+                ).strftime("%H:%M:%S %Z")
+                lines.append(
+                    "\n" + tr("⏱ Проверено: ", "⏱ Checked: ")
+                    + "<code>" + escape(checked) + "</code>"
+                )
                 rows.append([_button(
                     tr("🔄 Обновить", "🔄 Refresh"), "v2proofs:" + page_token,
                 )])
@@ -1638,6 +1648,12 @@ def create_platform_dashboard_router(
                     text="\n".join(lines), reply_markup=_keyboard(rows),
                     message_id=message_id,
                 )
+                # Even two taps in the same second yield identical text.
+                # A non-alert callback toast confirms the fresh DB check.
+                await query.answer(tr(
+                    "✅ Список проверен", "✅ List checked",
+                ))
+                return
             elif len(tokens) == 4 and tokens[1] == "v2proof":
                 # A receipt belongs to the bot that received it. The
                 # central bot must re-upload bytes, never another bot's
