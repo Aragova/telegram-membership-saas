@@ -149,9 +149,15 @@ async def test_invoice_notice_outbox_dedupes_retries_and_stops_after_receipt():
                 assert (await admin.execute(text(
                     "SELECT public.platform_saas_notice_schedule()"
                 ))).scalar_one() == 0
+                # The new catalog is the sole payment availability source.
+                # No legacy v2/bank method is configured in this test.
                 await admin.execute(text(
-                    "SELECT public.platform_saas_payment_details_set(:text)"
-                ), {"text": "TEST PAYMENT DETAILS 1234567890 <tag> & data"})
+                    "SELECT public.platform_saas_catalog_create("
+                    ":name,:instructions,:currency)"
+                ), {
+                    "name": "Manual RUB transfer", "currency": "RUB",
+                    "instructions": "TEST PAYMENT DETAILS 1234567890 <tag> & data",
+                })
                 assert (await admin.execute(text(
                     "SELECT public.platform_saas_notice_schedule()"
                 ))).scalar_one() == 0
@@ -279,14 +285,18 @@ async def test_stale_issued_notice_is_cancelled_after_delivery_pause():
                     UPDATE platform_saas_billing_control
                        SET enabled=true,effective_from=:from WHERE id=1
                 """), {"from": moment - timedelta(days=30)})
-                # Bank details temporarily cleared while delivery was
-                # paused, so the old stage stayed pending.
+                # No enabled catalog method during the delivery pause,
+                # so the stale issued stage stays pending.
                 assert (await admin.execute(text(
                     "SELECT public.platform_saas_notice_schedule()"
                 ))).scalar_one() == 0
                 await admin.execute(text(
-                    "SELECT public.platform_saas_payment_details_set(:text)"
-                ), {"text": "TEST BANK ROUTING 1234567890"})
+                    "SELECT public.platform_saas_catalog_create("
+                    ":name,:instructions,:currency)"
+                ), {
+                    "name": "New RUB method", "currency": "RUB",
+                    "instructions": "TEST BANK ROUTING 1234567890",
+                })
                 await admin.execute(text(
                     "SELECT public.platform_saas_notice_schedule()"
                 ))
