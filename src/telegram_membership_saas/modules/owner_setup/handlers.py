@@ -234,6 +234,7 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
     saas_invoice_currency_snapshot,
 )
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_price_profile,
     saas_v2_available_methods,
     saas_v2_create_attempt,
     saas_v2_invoice_balance,
@@ -979,6 +980,9 @@ def create_owner_setup_router(
             factory, actor_user_id=actor_id, project_id=project_id,
             page=page,
         )
+        service_price = await saas_price_profile(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         unified = None
         if project_id is not None:
             month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
@@ -993,6 +997,10 @@ def create_owner_setup_router(
             tr("Неоплаченных: ", "Unpaid: ") + str(report.unpaid),
             tr("К оплате: ", "Outstanding: ")
             + escape(format(report.outstanding_rub, ".2f")) + " ₽",
+            tr("Тариф обслуживания: ", "Service price: ")
+            + ("$3 / " if service_price["currency"] == "USD"
+               else "150 ₽ / ")
+            + tr("бот в месяц", "bot per month"),
             "",
         ]
         if getattr(report, "pending_credit_count", 0):
@@ -1063,7 +1071,16 @@ def create_owner_setup_router(
             "<i>These are platform service invoices, not customer "
             "invoices. Previously paid access is preserved.</i>",
         ))
-        rows: list[list[InlineKeyboardButton]] = []
+        rows: list[list[InlineKeyboardButton]] = [[
+            _button(
+                ("✅ " if service_price["currency"] == "RUB" else "")
+                + "150 ₽", "saasprice:RUB",
+            ),
+            _button(
+                ("✅ " if service_price["currency"] == "USD" else "")
+                + "$3", "saasprice:USD",
+            ),
+        ]]
         nav = []
         if page:
             nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
@@ -3660,7 +3677,7 @@ def create_owner_setup_router(
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasinvoices:",
-                "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
+                "saasprice:", "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
             ))
             if not is_registry_action:
@@ -4049,6 +4066,19 @@ def create_owner_setup_router(
                     )
                 else:
                     raise ValueError("Invalid ViMi Pay payment action")
+                await query.answer()
+                return
+            if action.startswith("saasprice:"):
+                chosen_price = action.split(":", 1)[1]
+                if chosen_price not in ("RUB", "USD"):
+                    raise ValueError("Invalid service billing profile")
+                await saas_price_profile(
+                    factory, actor_id=actor_id,
+                    currency=chosen_price, project_id=fixed_project_id,
+                )
+                await show_saas_statements(
+                    bot, user_id, actor_id, fixed_project_id, page=0,
+                )
                 await query.answer()
                 return
             if action.startswith("saasinvoices:"):
