@@ -57,6 +57,22 @@ def upgrade() -> None:
         "ALTER TABLE public.platform_saas_commercial_enrollments "
         "FORCE ROW LEVEL SECURITY"
     )
+    # Durable round-robin progress for bounded service/commission batches.
+    op.create_table(
+        "platform_saas_due_progress",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("last_bot_connected_at", sa.DateTime(timezone=True)),
+        sa.Column("last_bot_id", sa.Uuid()),
+        sa.Column("last_commission_month", sa.Date()),
+        sa.Column("last_commission_owner_id", sa.Uuid()),
+        sa.Column("last_commission_merchant_id", sa.Uuid()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.text("clock_timestamp()")),
+        sa.CheckConstraint("id=1", name="ck_saas_due_progress_singleton"),
+    )
+    op.execute("ALTER TABLE public.platform_saas_due_progress ENABLE ROW LEVEL SECURITY")
+    op.execute("ALTER TABLE public.platform_saas_due_progress FORCE ROW LEVEL SECURITY")
+    op.execute("INSERT INTO public.platform_saas_due_progress(id) VALUES (1)")
     op.execute("""
       CREATE TRIGGER trg_saas_pilot_immutable
       BEFORE UPDATE OR DELETE ON public.platform_saas_release_audit
@@ -281,6 +297,15 @@ def upgrade() -> None:
       invoice uuid;
       first_trial timestamptz;
       owner_period_start timestamptz;
+      last_issued_end timestamptz;
+      progress record;
+      cursor_bot_at timestamptz;
+      cursor_bot_id uuid;
+      cursor_month date;
+      cursor_owner_id uuid;
+      cursor_merchant_id uuid;
+      recovery_owner record;
+      recovery_merchant uuid;
     BEGIN
       PERFORM public.platform_saas_require_owner();
       SELECT effective_from INTO started
@@ -297,6 +322,48 @@ def upgrade() -> None:
       ) THEN
         RETURN jsonb_build_object('enabled',true,'busy',true);
       END IF;
+      SELECT * INTO progress FROM public.platform_saas_due_progress
+      WHERE id=1 FOR UPDATE;
+      -- During the activation delay, first-bot trial triggers are inactive.
+      -- Reconcile those accounts without rewriting any historical claim.
+      FOR recovery_owner IN
+        SELECT p.owner_user_id,min(b.created_at) AS first_connected
+        FROM public.bot_instances b
+        JOIN public.projects p ON p.id=b.project_id
+        JOIN public.telegram_users u ON u.id=p.owner_user_id
+        LEFT JOIN public.platform_operators po
+          ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
+        WHERE b.status='registered' AND po.telegram_user_id IS NULL
+        GROUP BY p.owner_user_id
+      LOOP
+        INSERT INTO public.platform_saas_commercial_enrollments(
+          owner_user_id,effective_from
+        ) VALUES(recovery_owner.owner_user_id,started)
+        ON CONFLICT DO NOTHING;
+        IF NOT EXISTS(
+          SELECT 1 FROM public.merchant_platform_trial_claims t
+          WHERE t.owner_user_id=recovery_owner.owner_user_id
+            AND t.policy_key='vimi-saas-72h-v1' AND t.scope='owner'
+        ) THEN
+          SELECT m.id INTO recovery_merchant
+          FROM public.merchant_identities m
+          WHERE m.initial_owner_user_id=recovery_owner.owner_user_id
+          ORDER BY m.created_at,m.id LIMIT 1;
+          IF recovery_merchant IS NULL THEN
+            recovery_merchant:=gen_random_uuid();
+            INSERT INTO public.merchant_identities(
+              id,initial_owner_user_id
+            ) VALUES(recovery_merchant,recovery_owner.owner_user_id);
+          END IF;
+          INSERT INTO public.merchant_platform_trial_claims(
+            id,merchant_id,owner_user_id,policy_key,scope,claimed_at
+          ) VALUES(
+            gen_random_uuid(),recovery_merchant,
+            recovery_owner.owner_user_id,'vimi-saas-72h-v1','owner',
+            greatest(recovery_owner.first_connected,started-interval '72 hours')
+          ) ON CONFLICT DO NOTHING;
+        END IF;
+      END LOOP;
       -- Connected LIVE accounts only. The operator's own network is
       -- explicitly excluded. A bot/account can never be invoiced twice
       -- because the canonical issuer locks the bot and invoice_key.
@@ -308,8 +375,15 @@ def upgrade() -> None:
         LEFT JOIN public.platform_operators o
           ON o.telegram_user_id=u.telegram_user_id AND o.role='owner'
         WHERE b.status='registered' AND o.telegram_user_id IS NULL
-        ORDER BY b.created_at,b.id LIMIT 100
+        ORDER BY
+          CASE WHEN progress.last_bot_id IS NOT NULL
+            AND (b.created_at,b.id) <=
+                (progress.last_bot_connected_at,progress.last_bot_id)
+               THEN 1 ELSE 0 END,
+          b.created_at,b.id LIMIT 100
       LOOP
+        cursor_bot_at:=bot.created_at;
+        cursor_bot_id:=bot.id;
         BEGIN
           SELECT min(claimed_at) INTO first_trial
           FROM public.merchant_platform_trial_claims t
@@ -324,11 +398,19 @@ def upgrade() -> None:
           IF owner_period_start IS NULL THEN
             deferred:=deferred+1;CONTINUE;
           END IF;
+          -- A transferred bot must not inherit the previous owner's debt,
+          -- but service periods of both owners must never overlap.
+          SELECT max(i.period_end) INTO last_issued_end
+          FROM public.platform_saas_invoices i
+          WHERE i.bot_instance_id=bot.id AND i.kind='prepayment'
+            AND i.status='issued';
           SELECT i.id,i.period_end,i.status
             INTO prior
           FROM public.platform_saas_invoices i
           WHERE i.bot_instance_id=bot.id AND i.kind='prepayment'
             AND i.status='issued'
+            AND i.owner_user_id=bot.owner_user_id
+            AND i.period_start>=owner_period_start
           ORDER BY i.period_end DESC LIMIT 1;
           IF prior.id IS NOT NULL THEN
             -- Do not stack future debts while the prior month's bill
@@ -336,12 +418,15 @@ def upgrade() -> None:
             IF public.platform_saas_v2_remaining(prior.id)>0 THEN
               CONTINUE;
             END IF;
-            period_start:=greatest(prior.period_end,now_at,
-                                   bot.created_at,owner_period_start);
+            period_start:=greatest(
+              prior.period_end,now_at,bot.created_at,owner_period_start,
+              coalesce(last_issued_end,now_at)
+            );
           ELSE
             period_start:=greatest(
               started,first_trial+interval '72 hours',
-              bot.created_at,owner_period_start
+              bot.created_at,owner_period_start,
+              coalesce(last_issued_end,started)
             );
           END IF;
           IF period_start>now_at+interval '3 days' THEN CONTINUE; END IF;
@@ -355,6 +440,12 @@ def upgrade() -> None:
           deferred:=deferred+1;
         END;
       END LOOP;
+      IF cursor_bot_id IS NOT NULL THEN
+        UPDATE public.platform_saas_due_progress SET
+          last_bot_connected_at=cursor_bot_at,
+          last_bot_id=cursor_bot_id,updated_at=clock_timestamp()
+        WHERE id=1;
+      END IF;
       -- Closed Moscow calendar month, once per actual historical
       -- merchant+owner. Source completeness and FX are revalidated by
       -- the canonical 0068 issuer, which fails closed rather than
@@ -367,34 +458,47 @@ def upgrade() -> None:
       -- not just the latest month. Late FX/Stars/Crypto evidence must
       -- eventually generate the missing bill without duplicate keys.
       FOR accounting IN
-        SELECT DISTINCT mp.merchant_id,mp.owner_user_id,
-               months.m::date AS billing_month
-        FROM generate_series(
-          date_trunc('month',started AT TIME ZONE 'Europe/Moscow'),
-          date_trunc('month',
-                     (now_at AT TIME ZONE 'Europe/Moscow')
-                     -interval '1 month'),
-          interval '1 month'
-        ) AS months(m)
-        JOIN public.merchant_project_periods mp
-          ON mp.started_at <
-            ((months.m+interval '1 month') AT TIME ZONE 'Europe/Moscow')
-         AND (mp.ended_at IS NULL OR mp.ended_at>=
-              (months.m AT TIME ZONE 'Europe/Moscow'))
-        JOIN public.telegram_users u ON u.id=mp.owner_user_id
-        LEFT JOIN public.platform_operators po
-          ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
-        WHERE po.telegram_user_id IS NULL
-          AND NOT EXISTS(
-            SELECT 1 FROM public.platform_saas_invoices i
-            WHERE i.invoice_key='commission:'||mp.merchant_id::text
-              ||':'||mp.owner_user_id::text||':'
-              ||to_char(months.m,'YYYY-MM-DD')
-              AND i.status='issued'
-          )
-        ORDER BY billing_month DESC,mp.owner_user_id,mp.merchant_id
+        SELECT q.merchant_id,q.owner_user_id,q.billing_month
+        FROM (
+          SELECT DISTINCT mp.merchant_id,mp.owner_user_id,
+                 months.m::date AS billing_month
+          FROM generate_series(
+            date_trunc('month',started AT TIME ZONE 'Europe/Moscow'),
+            date_trunc('month',
+                       (now_at AT TIME ZONE 'Europe/Moscow')
+                       -interval '1 month'),
+            interval '1 month'
+          ) AS months(m)
+          JOIN public.merchant_project_periods mp
+            ON mp.started_at <
+              ((months.m+interval '1 month') AT TIME ZONE 'Europe/Moscow')
+           AND (mp.ended_at IS NULL OR mp.ended_at>=
+                (months.m AT TIME ZONE 'Europe/Moscow'))
+          JOIN public.telegram_users u ON u.id=mp.owner_user_id
+          LEFT JOIN public.platform_operators po
+            ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
+          WHERE po.telegram_user_id IS NULL
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_invoices i
+              WHERE i.invoice_key='commission:'||mp.merchant_id::text
+                ||':'||mp.owner_user_id::text||':'
+                ||to_char(months.m,'YYYY-MM-DD')
+                AND i.status='issued'
+            )
+        ) q
+        ORDER BY
+          CASE WHEN progress.last_commission_month IS NOT NULL
+            AND (q.billing_month,q.owner_user_id,q.merchant_id)<=
+                (progress.last_commission_month,
+                 progress.last_commission_owner_id,
+                 progress.last_commission_merchant_id)
+               THEN 1 ELSE 0 END,
+          q.billing_month,q.owner_user_id,q.merchant_id
         LIMIT 100
       LOOP
+        cursor_month:=accounting.billing_month;
+        cursor_owner_id:=accounting.owner_user_id;
+        cursor_merchant_id:=accounting.merchant_id;
         BEGIN
           invoice:=public.platform_saas_issue_commission_invoice(
             accounting.merchant_id,accounting.owner_user_id,
@@ -407,6 +511,13 @@ def upgrade() -> None:
           deferred:=deferred+1;
         END;
       END LOOP;
+      IF cursor_month IS NOT NULL THEN
+        UPDATE public.platform_saas_due_progress SET
+          last_commission_month=cursor_month,
+          last_commission_owner_id=cursor_owner_id,
+          last_commission_merchant_id=cursor_merchant_id,
+          updated_at=clock_timestamp() WHERE id=1;
+      END IF;
       RETURN jsonb_build_object(
         'enabled',true,'bot_invoices',bot_issued,
         'commission_invoices',commission_issued,'deferred',deferred
@@ -437,7 +548,8 @@ def upgrade() -> None:
            SELECT 1 FROM pg_roles WHERE rolname='membership_runtime'
          ) THEN
            REVOKE ALL ON public.platform_saas_release_audit,
-             public.platform_saas_commercial_enrollments
+             public.platform_saas_commercial_enrollments,
+             public.platform_saas_due_progress
            FROM membership_runtime;
          END IF;
        END $revoke$
