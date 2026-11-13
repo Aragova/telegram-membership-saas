@@ -14,8 +14,11 @@ the bytes to the configured platform operator's chat. Media is not persisted
 to the database or server filesystem; existing immutable proof metadata and
 confirmed/rejected payment allocations are unchanged. The viewer is limited
 to still-pending attempts and fails closed for removed/disabled bots, invalid
-credentials, oversized media or unavailable Telegram files. No automatic
-bank approval follows receipt viewing.
+credentials, oversized media or unavailable Telegram files. A proof originally
+submitted to the central bot (which has no customer BotInstance) is instead
+downloaded with that already-authenticated central bot, without requiring
+a tenant project or encryption key. No automatic bank approval follows
+receipt viewing.
 
 This does not grant a token to customer-supervisor, add a scheduler, change
 `compose.light100.yaml`, or enable SaaS billing/holds. For old pending proofs
