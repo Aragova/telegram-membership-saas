@@ -205,6 +205,44 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                         })
                 assert getattr(retired.value.orig,"sqlstate",None)=="42501"
                 await _identity(conn,operator)
+                legacy_id=UUID(str(legacy_method["id"]))
+                # Unlinking the original RUB currency does not free the
+                # imported v2 source identity. An old callback cannot
+                # reattach it, mutate an active USD link, or silently disable
+                # the USD method by using its retired RUB callback.
+                await _call(conn,"platform_saas_catalog_toggle",{
+                    "id":legacy_id,"enabled":True,
+                },as_json=False)
+                await _call(conn,"platform_saas_catalog_currency_set",{
+                    "id":legacy_id,"currency":"USD","enabled":True,
+                },as_json=False)
+                await _call(conn,"platform_saas_catalog_currency_set",{
+                    "id":legacy_id,"currency":"RUB","enabled":False,
+                },as_json=False)
+                for obsolete in ("New legacy bank details 998811",None):
+                    with pytest.raises(DBAPIError) as unlinked:
+                        async with conn.begin_nested():
+                            await _call(conn,"platform_saas_v2_bank_method",{
+                                "currency":"RUB","instructions":obsolete,
+                            },as_json=False)
+                    assert getattr(unlinked.value.orig,"sqlstate",None)=="42501"
+                current=await _call(conn,"platform_saas_catalog_read",{})
+                still_available=next(x for x in current if x["id"]==str(legacy_id))
+                assert still_available["currencies"]==["USD"]
+                assert still_available["enabled"]
+                assert still_available["instructions"]==(
+                    "Legacy RUB test account number 33221100"
+                )
+                await _call(conn,"platform_saas_catalog_remove",{
+                    "id":legacy_id,
+                },as_json=False)
+                with pytest.raises(DBAPIError) as archived:
+                    async with conn.begin_nested():
+                        await _call(conn,"platform_saas_v2_bank_method",{
+                            "currency":"RUB",
+                            "instructions":"No archived resurrection 551122",
+                        },as_json=False)
+                assert getattr(archived.value.orig,"sqlstate",None)=="42501"
                 # Legacy imported bank details have a stable identity even
                 # after their catalog method has been renamed. Obsolete bank
                 # edits update the authoritative row, never resurrect a
