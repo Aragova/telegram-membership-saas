@@ -109,16 +109,18 @@ def test_platform_router_only_in_central_and_only_when_configured(monkeypatch):
     central = create_dispatcher(MagicMock(), enable_access=False)
     tenant = create_customer_dispatcher(MagicMock(), project_id=uuid4())
     assert central.sub_routers[0].name == "vimi-language"
-    assert central.sub_routers[1].name == "platform-dashboard"
-    assert central.sub_routers[2].name == "secure-owner-transfer"
-    assert central.sub_routers[3].name == "central-registrar"
+    assert central.sub_routers[1].name == "vimi-saas-proof-ingress"
+    assert central.sub_routers[2].name == "platform-dashboard"
+    assert central.sub_routers[3].name == "secure-owner-transfer"
+    assert central.sub_routers[4].name == "central-registrar"
     assert "platform-dashboard" not in [r.name for r in tenant.sub_routers]
 
     monkeypatch.setattr(adapter, "get_settings", lambda: _settings(None))
     central = create_dispatcher(MagicMock(), enable_access=False)
     assert central.sub_routers[0].name == "vimi-language"
-    assert central.sub_routers[1].name == "secure-owner-transfer"
-    assert central.sub_routers[2].name == "central-registrar"
+    assert central.sub_routers[1].name == "vimi-saas-proof-ingress"
+    assert central.sub_routers[2].name == "secure-owner-transfer"
+    assert central.sub_routers[3].name == "central-registrar"
 
 
 @pytest.mark.parametrize(("id_value", "expected"), [
