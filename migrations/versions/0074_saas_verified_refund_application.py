@@ -209,10 +209,35 @@ BEGIN
         FROM public.platform_saas_verified_credit_allocations a
         WHERE a.claim_id=c.id
       ),0)
+      -- Skip claims without an actually payable, unreserved target so a
+      -- blocked oldest 200 cannot starve other owners indefinitely.
       AND EXISTS(
         SELECT 1 FROM public.platform_saas_invoices i
         WHERE i.owner_user_id=c.owner_user_id AND i.status='issued'
           AND public.platform_saas_v2_remaining(i.id)>0
+          AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_verified_credit_allocations a
+            WHERE a.claim_id=c.id AND a.invoice_id=i.id
+          )
+          AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_payment_attempts_v2 pending
+            WHERE pending.invoice_id=i.id
+              AND (
+                pending.expires_at>clock_timestamp()
+                OR EXISTS(
+                  SELECT 1 FROM public.platform_saas_payment_proofs_v2 proof
+                  WHERE proof.attempt_id=pending.id
+                )
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_allocations_v2 ap
+                WHERE ap.attempt_id=pending.id
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_rejections_v2 rp
+                WHERE rp.attempt_id=pending.id
+              )
+          )
       )
     ORDER BY c.recorded_at,c.id LIMIT 200
   LOOP
