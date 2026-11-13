@@ -294,6 +294,32 @@ async def test_old_aiogram_without_rich_type_still_starts_in_classic_mode(monkey
         await bot.session.close()
 
 
+async def test_platform_bank_proof_prompt_is_native_html_not_rich(monkeypatch):
+    """Other Rich UI remains enabled; only a proof-reply target is native."""
+    monkeypatch.setattr(rich, "get_settings", lambda: _settings())
+    rich_send = AsyncMock()
+    classic = AsyncMock(return_value="prompt")
+    monkeypatch.setattr(RichUiBot, "send_rich_message", rich_send)
+    monkeypatch.setattr(Bot, "send_message", classic)
+    bot = _bot()
+    attempt = uuid4()
+    text = "🧾 ViMi Pay · <code>" + str(attempt) + "</code>\\n\\n"
+    try:
+        assert await bot.send_message(
+            123, text, reply_markup=_keyboard(), parse_mode="HTML",
+        ) == "prompt"
+        classic.assert_awaited_once_with(
+            123, text, reply_markup=_keyboard(), parse_mode="HTML",
+        )
+        rich_send.assert_not_awaited()
+        assert rich._eligible(
+            "💳 <b>Оплата счёта ViMi Pay</b>",
+            {"reply_markup": _keyboard(), "parse_mode": "HTML"},
+        )
+    finally:
+        await bot.session.close()
+
+
 @pytest.mark.parametrize("prefix", [
     "💬 ViMi Pay · Покупатель /u12345",
     "💬 ViMi Pay · Customer /u12345",
