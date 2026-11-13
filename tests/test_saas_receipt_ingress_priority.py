@@ -117,6 +117,35 @@ async def test_failed_receipt_registration_yields_visible_error(monkeypatch):
     assert "не относится" in bot.send_message.await_args.args[1]
 
 
+@pytest.mark.asyncio
+async def test_registered_receipt_ack_precedes_optional_operator_push(monkeypatch):
+    message, _ = _receipt()
+    monkeypatch.setattr(
+        ingress, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", AsyncMock())
+    monkeypatch.setattr(
+        ingress, "get_settings",
+        lambda: SimpleNamespace(platform_owner_telegram_id=999),
+    )
+    bot = SimpleNamespace(
+        id=123, send_message=AsyncMock(), send_document=AsyncMock(),
+    )
+
+    async def check_operator_push(*_args, **_kwargs):
+        # Telegram source-bot delivery can fail or be slow. The payer
+        # receives confirmation immediately after durable DB submission.
+        bot.send_message.assert_awaited_once()
+        assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
+
+    bot.send_document.side_effect = check_operator_push
+    await ingress.create_saas_receipt_router(
+        object(),
+    ).message.handlers[0].callback(message, bot)
+    bot.send_document.assert_awaited_once()
+    assert bot.send_document.await_args.args[0] == 999
+
+
 def test_receipt_filter_rejects_foreign_bot_spoofed_or_unrelated_documents():
     authentic, uid = _receipt()
     assert ingress.receipt_attempt_id(authentic, 123) == uid
