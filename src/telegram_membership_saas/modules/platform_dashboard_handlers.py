@@ -65,7 +65,6 @@ from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_catalog_update,
     saas_v2_configure_method,
     saas_v2_confirm_attempt,
-    saas_v2_methods_read,
     saas_v2_pending_proofs,
     saas_v2_reject_attempt,
 )
@@ -1448,50 +1447,12 @@ def create_platform_dashboard_router(
                 await _show_catalog(
                     bot, query.from_user, message_id=message_id,
                 )
-            elif tokens[1:] == ["bankedit"]:
-                pending_bank_entry.add(query.from_user.id)
-                await bot.send_message(
-                    query.from_user.id,
-                    tr(
-                        "✍️ <b>Реквизиты для счетов ViMi Pay</b>\n"
-                        "Пришлите одним сообщением получателя, банк, "
-                        "номер счёта/карты и назначение платежа. "
-                        "8–900 символов. Отмена: /cancel.\n\n"
-                        "Не отправляйте коды доступа, пароли или API-токены.",
-                        "✍️ <b>ViMi Pay bank instructions</b>\n"
-                        "Send recipient, bank, account/card reference and "
-                        "transfer memo in one message (8–900 characters). "
-                        "Cancel: /cancel.\n\n"
-                        "Never submit passwords, login codes or API tokens.",
-                    ),
-                    parse_mode="HTML",
-                )
-            elif tokens[1:] == ["bankclearask"]:
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text=tr(
-                        "⚠️ Удалить реквизиты ViMi Pay? Новые уведомления "
-                        "об оплате не будут отправляться.",
-                        "⚠️ Clear ViMi Pay payment instructions? "
-                        "New billing reminders will be paused.",
-                    ), reply_markup=_keyboard([
-                        [_button(tr("🗑 Подтвердить", "🗑 Confirm"), "bankclearok")],
-                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bankdetails")],
-                    ]), message_id=message_id,
-                )
-            elif tokens[1:] == ["bankclearok"]:
-                actor_id = await ensure_telegram_actor(
-                    factory, telegram_id=query.from_user.id,
-                    username=query.from_user.username,
-                    first_name=query.from_user.first_name,
-                )
-                await configure_platform_saas_payment(
-                    factory, actor_user_id=actor_id,
-                    actor_telegram_id=query.from_user.id,
-                    instructions=None, settings=config,
-                )
-                pending_bank_entry.discard(query.from_user.id)
-                await _show_bank_screen(
+            elif tokens[1:] in (
+                ["bankedit"], ["bankclearask"], ["bankclearok"],
+            ):
+                # Stale messages must never mutate a retired bank record.
+                # Use the same authoritative named-method editor as new UI.
+                await _show_catalog(
                     bot, query.from_user, message_id=message_id,
                 )
             elif tokens[1:] == ["pm"]:
@@ -1596,67 +1557,13 @@ def create_platform_dashboard_router(
                 await _show_catalog(
                     bot,query.from_user,message_id=message_id,
                 )
-            elif tokens[1:] == ["v2methods"]:
-                actor_id = await ensure_telegram_actor(
-                    factory, telegram_id=query.from_user.id,
-                    username=query.from_user.username,
-                    first_name=query.from_user.first_name,
-                )
-                methods = await saas_v2_methods_read(
-                    factory, actor_id=actor_id,
-                    actor_telegram_id=query.from_user.id, settings=config,
-                )
-                by_currency = {m["currency"]: m for m in methods}
-                text_lines = [
-                    tr("💱 <b>ViMi Pay · Реквизиты по валютам</b>",
-                       "💱 <b>ViMi Pay · Bank methods by currency</b>"),
-                    tr("Изменения применяются только к новым платёжным "
-                       "попыткам. Старые реквизиты в чеках сохраняются.",
-                       "Changes apply only to new payment attempts. "
-                       "Prior receipts retain their original instructions."),
-                ]
-                currency_rows = []
-                for currency in ("RUB", "USD", "EUR", "UAH", "BYN"):
-                    method = by_currency.get(currency)
-                    enabled = bool(method and method.get("enabled"))
-                    text_lines.append(
-                        ("✅ " if enabled else "◯ ") + currency
-                        + (" · " + tr("активен", "active")
-                           if enabled else " · " + tr("выключен", "off"))
-                    )
-                    currency_rows.append(_button(
-                        "💳 " + currency, "v2method:" + currency,
-                    ))
-                rows = [currency_rows[i:i + 2]
-                        for i in range(0, len(currency_rows), 2)]
-                rows.append([_button(
-                    tr("⬅️ Реквизиты", "⬅️ Bank details"), "bankdetails",
-                )])
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text="\n".join(text_lines), reply_markup=_keyboard(rows),
-                    message_id=message_id,
-                )
-            elif len(tokens) == 3 and tokens[1] == "v2method":
-                currency = tokens[2]
-                if currency not in ("RUB", "USD", "EUR", "UAH", "BYN"):
-                    raise ValueError("Invalid platform banking currency")
-                pending_v2_method[query.from_user.id] = currency
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text=tr(
-                        "💳 <b>Реквизиты ViMi Pay: ", "💳 <b>ViMi Pay method: "
-                    ) + escape(currency) + "</b>\n\n" + tr(
-                        "Пришлите новые реквизиты одним сообщением "
-                        "(8–900 символов). /disable отключит этот способ. "
-                        "/cancel отменит ввод.",
-                        "Send new bank instructions in one message "
-                        "(8–900 characters). /disable turns the method off. "
-                        "/cancel aborts editing.",
-                    ),
-                    reply_markup=_keyboard([[_button(
-                        tr("⬅️ Назад", "⬅️ Back"), "v2methods",
-                    )]]), message_id=message_id,
+            elif tokens[1:] == ["v2methods"] or (
+                len(tokens) == 3 and tokens[1] == "v2method"
+            ):
+                # Old currency-only keyboards remain navigable but cannot
+                # create a competing source of payment instructions.
+                await _show_catalog(
+                    bot, query.from_user, message_id=message_id,
                 )
             elif len(tokens) == 3 and tokens[1] == "v2proofs":
                 page_token = tokens[2]
