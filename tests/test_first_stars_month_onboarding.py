@@ -73,7 +73,7 @@ async def test_first_stars_month_plan_is_published_once_with_real_checkout():
                 )
                 assert corrected.generation == retry
                 assert corrected.project_id == project
-                with pytest.raises(ValueError, match="устарел"):
+                with pytest.raises(ValueError, match="Проект или шаг"):
                     await setup.advance_flow(
                         factory, actor_id=owner, source=invalid,
                         step="stars_month_price", payload=invalid.payload,
