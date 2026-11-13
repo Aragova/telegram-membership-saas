@@ -1297,11 +1297,17 @@ CREATE OR REPLACE FUNCTION public.platform_saas_owner_trial_status()
       FOR EACH ROW EXECUTE FUNCTION
       public.platform_saas_credit_entry_immutable()
     """)
-    # Serialize with automated issuer. The existing invoice guard locks
-    # the invoice against concurrent receipt/payment confirmation.
+    # No bot callbacks are added: this privileged DB-only reconciler
+    # is run once at upgrade and may be replayed by migration admins.
+    # Runtime roles have no EXECUTE grant.
     op.execute("""
-      DO $repair$
-      DECLARE item record;
+      CREATE FUNCTION public.platform_saas_reconcile_first_rollout_invoices()
+      RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path=pg_catalog,public AS $repair$
+      DECLARE
+        item record;
+        voided integer:=0;
+        skipped integer:=0;
       BEGIN
         PERFORM pg_advisory_xact_lock(
           hashtextextended('vimi:saas:due-reconcile',0)
@@ -1350,7 +1356,10 @@ CREATE OR REPLACE FUNCTION public.platform_saas_owner_trial_status()
                 ON l.id=c.invoice_line_id
               WHERE l.invoice_id=item.id
             )
-          THEN CONTINUE; END IF;
+          THEN
+            skipped:=skipped+1;
+            CONTINUE;
+          END IF;
           UPDATE public.platform_saas_invoices
           SET status='void' WHERE id=item.id AND status='issued';
           IF FOUND THEN
@@ -1361,10 +1370,19 @@ CREATE OR REPLACE FUNCTION public.platform_saas_owner_trial_status()
               item.id,item.owner_user_id,item.due_at,item.grace_ends_at,
               item.total_rub,'first_rollout_72h_transition'
             ) ON CONFLICT DO NOTHING;
+            voided:=voided+1;
           END IF;
         END LOOP;
-      END $repair$
+        RETURN jsonb_build_object('voided',voided,'skipped',skipped);
+      END; $repair$
     """)
+    op.execute(
+        "REVOKE ALL ON FUNCTION "
+        "public.platform_saas_reconcile_first_rollout_invoices() FROM PUBLIC"
+    )
+    op.execute(
+        "SELECT public.platform_saas_reconcile_first_rollout_invoices()"
+    )
 
 
 def downgrade() -> None:
