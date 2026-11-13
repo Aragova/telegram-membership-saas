@@ -82,7 +82,8 @@ async def test_first_start_has_direct_bot_connection_button(monkeypatch):
     bot = _bot()
     await _handler("home_message")(_message(), bot)
     sent = bot.send_message.await_args
-    assert "Подключите собственного Telegram-бота" in sent.args[1]
+    assert "Ваш Telegram-канал. Ваши подписчики. Ваш доход." in sent.args[1]
+    assert "72 часа бесплатно" in sent.args[1]
     buttons = [
         button.text for row in sent.kwargs["reply_markup"].inline_keyboard
         for button in row

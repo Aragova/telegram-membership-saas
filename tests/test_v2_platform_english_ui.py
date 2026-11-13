@@ -132,8 +132,8 @@ async def test_english_central_welcome(monkeypatch) -> None:
     try:
         await start(message, bot)
         sent = bot.send_message.await_args
-        assert "Membership management" in sent.args[1]
-        assert "Connect your Telegram bot" in sent.args[1]
+        assert "Your channel. Your members. Your revenue." in sent.args[1]
+        assert "72 hours free" in sent.args[1]
         labels = [
             b.text for row in sent.kwargs["reply_markup"].inline_keyboard
             for b in row

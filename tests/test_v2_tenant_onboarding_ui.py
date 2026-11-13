@@ -52,6 +52,10 @@ def _auth(monkeypatch, project_id):
         ui, "can_manage_project", AsyncMock(return_value=True),
     )
     monkeypatch.setattr(
+        ui, "merchant_saas_trial_status",
+        AsyncMock(return_value={"state": "pending"}),
+    )
+    monkeypatch.setattr(
         ui, "get_selected_project", AsyncMock(return_value=project_id),
     )
     monkeypatch.setattr(
