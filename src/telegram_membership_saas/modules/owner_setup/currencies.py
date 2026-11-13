@@ -21,7 +21,9 @@ from telegram_membership_saas.modules.pricing import (
     PlanPrice,
     ProjectEnabledCurrency,
 )
+from telegram_membership_saas.modules.pricing.service import retire_active_plan_price
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
 
 PRIMARY_CURRENCIES = (
@@ -63,6 +65,7 @@ async def project_currency_is_selected(
 async def list_owner_currencies(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID | None = None,
+    fiat_only: bool = False,
 ) -> tuple[str, ...]:
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
@@ -71,9 +74,17 @@ async def list_owner_currencies(
             await _require_project_manager(
                 session, project_id=project_id, actor_user_id=actor_id,
             )
-        active = set((await session.scalars(select(CurrencyAsset.code).where(
+        catalog = select(CurrencyAsset.code).where(
             CurrencyAsset.status == "active",
-        ))).all())
+        )
+        if fiat_only:
+            # XTR is deliberately classified as fiat in the catalog, but
+            # its only checkout is native Telegram Stars.
+            catalog = catalog.where(
+                CurrencyAsset.asset_type == "fiat",
+                CurrencyAsset.code != "XTR",
+            )
+        active = set((await session.scalars(catalog)).all())
         codes = [code for code in PRIMARY_CURRENCIES if code in active]
         if project_id is None:
             return tuple(codes)
@@ -98,6 +109,7 @@ async def list_owner_currencies(
 async def enable_owner_currency(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, code: str,
+    fiat_only: bool = False,
 ) -> str:
     """Enable an official catalog currency for just one project.
 
@@ -122,6 +134,11 @@ async def enable_owner_currency(
                 "Валюта не найдена в справочнике ISO 4217 / "
                 "поддерживаемых криптовалют. Проверьте трёхбуквенный код."
             )
+        if fiat_only and (asset.asset_type != "fiat" or code == "XTR"):
+            raise ValueError(
+                "Для тарифов доступны только обычные валюты. "
+                "⭐ Telegram Stars и 💎 Crypto Pay настройте в «Способах оплаты»."
+            )
         if code in PRIMARY_CURRENCIES:
             return code
         already = await session.scalar(select(ProjectEnabledCurrency.currency_code).where(
@@ -143,3 +160,22 @@ async def enable_owner_currency(
             )
         )
         return code
+
+
+async def disable_owner_stars_price(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, plan_id: UUID,
+) -> bool:
+    """Disable future native Stars orders; retain historical price evidence."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        retired = await retire_active_plan_price(
+            session, project_id=project_id,
+            plan_id=plan_id, currency_code="XTR",
+        )
+        return retired is not None

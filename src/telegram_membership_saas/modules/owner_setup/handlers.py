@@ -96,6 +96,7 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
     parse_buyer_notification,
 )
 from telegram_membership_saas.modules.owner_setup.currencies import (
+    disable_owner_stars_price,
     enable_owner_currency,
 )
 from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
@@ -234,6 +235,7 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
     saas_invoice_currency_snapshot,
 )
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_price_profile,
     saas_v2_available_methods,
     saas_v2_create_attempt,
     saas_v2_invoice_balance,
@@ -979,6 +981,9 @@ def create_owner_setup_router(
             factory, actor_user_id=actor_id, project_id=project_id,
             page=page,
         )
+        service_price = await saas_price_profile(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         unified = None
         if project_id is not None:
             month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
@@ -993,6 +998,10 @@ def create_owner_setup_router(
             tr("Неоплаченных: ", "Unpaid: ") + str(report.unpaid),
             tr("К оплате: ", "Outstanding: ")
             + escape(format(report.outstanding_rub, ".2f")) + " ₽",
+            tr("Тариф обслуживания: ", "Service price: ")
+            + ("$3 / " if service_price["currency"] == "USD"
+               else "150 ₽ / ")
+            + tr("бот в месяц", "bot per month"),
             "",
         ]
         if getattr(report, "pending_credit_count", 0):
@@ -1063,7 +1072,16 @@ def create_owner_setup_router(
             "<i>These are platform service invoices, not customer "
             "invoices. Previously paid access is preserved.</i>",
         ))
-        rows: list[list[InlineKeyboardButton]] = []
+        rows: list[list[InlineKeyboardButton]] = [[
+            _button(
+                ("✅ " if service_price["currency"] == "RUB" else "")
+                + "150 ₽", "saasprice:RUB",
+            ),
+            _button(
+                ("✅ " if service_price["currency"] == "USD" else "")
+                + "$3", "saasprice:USD",
+            ),
+        ]]
         nav = []
         if page:
             nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
@@ -1145,24 +1163,16 @@ def create_owner_setup_router(
                 "saasv2pay:" + encode_uuid(invoice_id) + ":" + str(page),
                 "success",
             )])
-        if (
-            not snapshot.get("locked")
-            and item["status"] == "unpaid"
-            and Decimal(str(balance.get("partial_rub", 0))) == 0
-        ):
-            buttons.append([_button(
-                tr("💱 Зафиксировать валюту", "💱 Lock invoice currency"),
-                "saasbillchoose:" + encode_uuid(invoice_id) + ":" + str(page),
-                "success",
-            )])
+        # New payments use one full/partial v2 path. Historical locked
+        # currency snapshots remain visible, but no new legacy lock is offered.
         buttons.append([_button(
             tr("⬅️ К счетам", "⬅️ Invoices"),
             "saasinvoices:" + str(page),
         )])
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=issued_invoice_rich(item, snapshot, credits),
-            classic_html=issued_invoice_classic(item, snapshot, credits),
+            rich_html=issued_invoice_rich(item, snapshot, credits, balance),
+            classic_html=issued_invoice_classic(item, snapshot, credits, balance),
             reply_markup=_markup(buttons),
         )
 
@@ -2575,7 +2585,9 @@ def create_owner_setup_router(
         rows = []
         codes = await owner_available_currencies(
             factory, actor_id=actor_id, project_id=project_id,
+            fiat_only=True,
         )
+        fiat_prices = [price for price in data.prices if price.currency in codes]
         lines = [
             "📦 <b>" + escape(data.name) + "</b>",
             tr("Статус: ", "Status: ") + _status(data.status),
@@ -2584,9 +2596,10 @@ def create_owner_setup_router(
             "",
             tr("<b>Цены и оплата</b>", "<b>Prices and payments</b>"),
         ]
-        if not data.prices:
-            lines.append(tr("Цена ещё не указана.", "No price has been set yet."))
-        for price in data.prices:
+        if not fiat_prices:
+            lines.append(tr("Цена в обычной валюте ещё не указана.",
+                            "No fiat price has been set yet."))
+        for price in fiat_prices:
             lines.append(
                 ("✅ " if price.method_count or price.currency == "XTR" else "⚠️ ")
                 + escape(display_price(
@@ -2608,8 +2621,7 @@ def create_owner_setup_router(
             tr("➕ Другая валюта", "➕ Another currency"),
             "currencyadd:price:" + plan_id.hex,
         )])
-        if any(not price.method_count and price.currency != "XTR"
-               for price in data.prices):
+        if any(not price.method_count for price in fiat_prices):
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
             ])
@@ -2749,10 +2761,10 @@ def create_owner_setup_router(
                 tr("Нет способов оплаты на этой странице.",
                    "No payment methods on this page.")
                 if page else
-                tr("Пока ничего не подключено. Для начала выберите валюту "
-                   "и добавьте способ перевода.",
-                   "No payment methods yet. Choose a currency "
-                   "and add a transfer method to get started.")
+                tr("Ручные способы ещё не настроены. "
+                   "⭐ Telegram Stars и 💎 Crypto Pay доступны ниже.",
+                   "No manual payment methods yet. "
+                   "⭐ Telegram Stars and 💎 Crypto Pay are below.")
             )
         for method in methods:
             lines.append(
@@ -2780,16 +2792,17 @@ def create_owner_setup_router(
             )
             if bulk.available:
                 rows.append([_button(
-                    tr("▶️ Включить все оплаты", "▶️ Enable all payments")
+                    tr("▶️ Включить ручные оплаты", "▶️ Enable manual payments")
                     if bulk.enable_action else
-                    tr("⏸️ Выключить все оплаты", "⏸️ Disable all payments"),
+                    tr("⏸️ Выключить ручные оплаты", "⏸️ Disable manual payments"),
                     "bulks:method:" + ("on:" if bulk.enable_action else "off:")
                     + encode_uuid(project_id),
                     "success" if bulk.enable_action else "danger",
                 )])
-        rows.append([_button(
-            "💎 Crypto Pay", "cryptopay", "success",
-        )])
+        rows.append([
+            _button("⭐ Telegram Stars", "starspage:0", "success"),
+            _button("💎 Crypto Pay", "cryptopay", "success"),
+        ])
         rows.append([_button("➕ Добавить способ", "newmethod", "success")])
         if methods or page > 0:
             rows.append([_button("➡️ Перейти к тарифам", "plans")])
@@ -2799,6 +2812,83 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+
+    async def show_stars_payments(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, page: int = 0,
+    ) -> None:
+        """One native payment method screen. XTR historical prices stay intact."""
+        if not 0 <= page <= 10000:
+            raise ValueError("Invalid Telegram Stars page")
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        plans = sorted(
+            overview.plans,
+            key=lambda item: ((item[1] or "").casefold(), item[0].hex),
+        )
+        page_size = 8
+        current = plans[page * page_size:(page + 1) * page_size]
+        lines = [
+            "⭐ <b>Telegram Stars</b>",
+            tr(
+                "Нативная оплата Telegram, без банковских реквизитов.",
+                "Native Telegram payments, without bank instructions.",
+            ),
+            tr(
+                "Настройте цену в звёздах для нужных тарифов или отключите "
+                "новые покупки. Прошлые платежи и подписки сохраняются.",
+                "Set a Stars price for each plan or disable new purchases. "
+                "Previous payments and subscriptions are preserved.",
+            ),
+            "",
+        ]
+        rows: list[list[InlineKeyboardButton]] = []
+        if not current:
+            lines.append(tr("Тарифов пока нет.", "No plans yet."))
+        for plan_id, plan_name, plan_status in current:
+            info = await get_owner_plan_info(
+                factory, actor_id=actor_id, project_id=project_id,
+                plan_id=plan_id,
+            )
+            stars_price = next(
+                (price for price in info.prices if price.currency == "XTR"),
+                None,
+            )
+            price_label = (
+                format_amount(stars_price.amount, stars_price.precision) + " ⭐"
+                if stars_price is not None
+                else tr("не настроено", "not configured")
+            )
+            name = plan_name or tr("Без названия", "Unnamed")
+            lines.append(
+                "• <b>" + escape(name) + "</b> · "
+                + escape(price_label) + " · " + _status(plan_status)
+            )
+            row = [_button(
+                "⚙️ " + name[:30],
+                "starsprice:" + plan_id.hex + ":" + str(page),
+            )]
+            if stars_price is not None:
+                row.append(_button(
+                    "⏸️", "starsoff:" + plan_id.hex + ":" + str(page),
+                    "danger",
+                ))
+            rows.append(row)
+        nav = []
+        if page:
+            nav.append(_button("⬅️", "starspage:" + str(page - 1)))
+        if (page + 1) * page_size < len(plans):
+            nav.append(_button("➡️", "starspage:" + str(page + 1)))
+        if nav:
+            rows.append(nav)
+        rows.append([_button(
+            tr("⬅️ Способы оплаты", "⬅️ Payment methods"), "methods",
+        )])
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_markup(rows),
+        )
 
     async def show_crypto_pay(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -3108,6 +3198,7 @@ def create_owner_setup_router(
     ):
         codes = await owner_available_currencies(
             factory, actor_id=actor_id, project_id=project_id,
+            fiat_only=True,
         )
         rows = [
             [_button(
@@ -3507,7 +3598,15 @@ def create_owner_setup_router(
             except (KeyError, TypeError, ValueError, AttributeError):
                 await show_plans(bot, message.chat.id, actor_id, project_id)
             else:
-                await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+                if prior.payload.get("currency") == "XTR":
+                    await show_stars_payments(
+                        bot, message.chat.id, actor_id, project_id,
+                        page=int(prior.payload.get("stars_page", 0)),
+                    )
+                else:
+                    await show_plan_card(
+                        bot, message.chat.id, actor_id, project_id, plan_id,
+                    )
         elif prior.step in ("method_rename", "method_edit"):
             await show_method_card(
                 bot, message.chat.id, actor_id, project_id,
@@ -3660,7 +3759,7 @@ def create_owner_setup_router(
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasinvoices:",
-                "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
+                "saasprice:", "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
             ))
             if not is_registry_action:
@@ -4049,6 +4148,19 @@ def create_owner_setup_router(
                     )
                 else:
                     raise ValueError("Invalid ViMi Pay payment action")
+                await query.answer()
+                return
+            if action.startswith("saasprice:"):
+                chosen_price = action.split(":", 1)[1]
+                if chosen_price not in ("RUB", "USD"):
+                    raise ValueError("Invalid service billing profile")
+                await saas_price_profile(
+                    factory, actor_id=actor_id,
+                    currency=chosen_price, project_id=fixed_project_id,
+                )
+                await show_saas_statements(
+                    bot, user_id, actor_id, fixed_project_id, page=0,
+                )
                 await query.answer()
                 return
             if action.startswith("saasinvoices:"):
@@ -5930,23 +6042,38 @@ def create_owner_setup_router(
                     payload={"mode": mode, "target": target},
                     text=tr(
                         "💱 <b>Добавить валюту</b>\n\n"
-                        "Введите международный код, например: UAH, BYN, "
-                        "GBP, CNY, JPY, BTC. Доступны валюты ISO 4217 "
-                        "и криптовалюты из справочника ViMi Pay.\n\n"
-                        "Выбранная валюта появится только в этом боте. "
+                        "Введите обычный код валюты, например UAH, BYN, "
+                        "GBP, CNY или JPY. ⭐ Telegram Stars и 💎 Crypto Pay "
+                        "настраиваются в разделе «Способы оплаты».\n\n"
                         "Цена и способ оплаты настраиваются отдельно.",
                         "💱 <b>Add currency</b>\n\n"
-                        "Enter an international code, e.g. UAH, BYN, "
-                        "GBP, CNY, JPY, BTC. ISO 4217 and existing ViMi Pay "
-                        "cryptocurrency codes are supported.\n\n"
-                        "The currency is added only to this bot. "
+                        "Enter a fiat currency code, such as UAH, BYN, "
+                        "GBP, CNY or JPY. ⭐ Telegram Stars and 💎 Crypto Pay "
+                        "are configured in Payment methods.\n\n"
                         "Prices and payment instructions are configured separately.",
                     ),
                 )
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
+                # Existing Telegram messages keep their old callback data.
+                # Route obsolete Stars/crypto price buttons to their actual
+                # payment-rail settings instead of failing or recreating
+                # standalone crypto tariffs.
+                if currency == "XTR":
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id,
+                    )
+                    await query.answer()
+                    return
+                if currency in ("TON", "USDT"):
+                    await show_crypto_pay(
+                        bot, user_id, actor_id, project_id,
+                    )
+                    await query.answer()
+                    return
                 if currency not in await owner_available_currencies(
                     factory, actor_id=actor_id, project_id=project_id,
+                    fiat_only=True,
                 ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
@@ -6000,6 +6127,49 @@ def create_owner_setup_router(
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action == "methods":
                 await show_methods(bot, user_id, actor_id, project_id)
+            elif action.startswith("starspage:"):
+                page_token = action.split(":", 1)[1]
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars page")
+                await show_stars_payments(
+                    bot, user_id, actor_id, project_id, page=int(page_token),
+                )
+            elif action.startswith("starsprice:"):
+                _, plan_hex, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars price page")
+                plan_id = UUID(hex=plan_hex)
+                await get_owner_plan_info(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id,
+                )
+                await prompt(
+                    bot, user_id, actor_id, step="price_amount",
+                    payload={
+                        "plan_id": plan_id.hex, "currency": "XTR",
+                        "stars_page": int(page_token),
+                    },
+                    text=tr(
+                        "⭐ <b>Цена Telegram Stars</b>\n\n"
+                        "Введите целое число звёзд от 1 до 250000. "
+                        "Оно будет списано Telegram при покупке.",
+                        "⭐ <b>Telegram Stars price</b>\n\n"
+                        "Enter a whole number of Stars from 1 to 250000. "
+                        "Telegram will charge this amount for the purchase.",
+                    ),
+                )
+            elif action.startswith("starsoff:"):
+                _, plan_hex, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars page")
+                await disable_owner_stars_price(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=UUID(hex=plan_hex),
+                )
+                await show_stars_payments(
+                    bot, user_id, actor_id, project_id,
+                    page=int(page_token),
+                )
             elif action == "cryptopay":
                 await show_crypto_pay(bot, user_id, actor_id, project_id)
             elif action == "cryptonet":
@@ -6103,6 +6273,7 @@ def create_owner_setup_router(
                 )
                 codes = await owner_available_currencies(
                     factory, actor_id=actor_id, project_id=project_id,
+                    fiat_only=True,
                 )
                 rows = [
                     [_button(
@@ -6836,7 +7007,7 @@ def create_owner_setup_router(
             elif flow.step == "currency_custom_code":
                 code = await enable_owner_currency(
                     factory, actor_id=actor_id, project_id=project_id,
-                    code=text,
+                    code=text, fiat_only=True,
                 )
                 mode = flow.payload.get("mode")
                 target = flow.payload.get("target")
@@ -6887,7 +7058,15 @@ def create_owner_setup_router(
                     currency_code=flow.payload["currency"], amount=text,
                 )
                 await bot.send_message(message.chat.id, tr("✅ Цена сохранена.", "✅ Price saved."))
-                await show_plan_card(bot, message.chat.id, actor_id, project_id, plan_id)
+                if flow.payload["currency"] == "XTR":
+                    await show_stars_payments(
+                        bot, message.chat.id, actor_id, project_id,
+                        page=int(flow.payload.get("stars_page", 0)),
+                    )
+                else:
+                    await show_plan_card(
+                        bot, message.chat.id, actor_id, project_id, plan_id,
+                    )
             elif flow.step == "method_rename":
                 method_id = UUID(hex=flow.payload["method_id"])
                 name = await rename_owner_method(
@@ -6981,7 +7160,11 @@ def create_owner_setup_router(
                     destination = "method:" + UUID(hex=method_hex).hex
                 except (TypeError, ValueError, AttributeError):
                     pass
-            if flow.step in ("price_amount", "plan_rename"):
+            if flow.step == "price_amount" and flow.payload.get("currency") == "XTR":
+                destination = "starspage:" + str(flow.payload.get("stars_page", 0))
+            if flow.step in ("price_amount", "plan_rename") and (
+                flow.payload.get("currency") != "XTR"
+            ):
                 plan_hex = flow.payload.get("plan_id")
                 try:
                     destination = "plan:" + UUID(hex=plan_hex).hex

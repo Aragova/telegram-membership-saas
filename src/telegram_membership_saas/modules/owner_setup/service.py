@@ -941,7 +941,9 @@ async def publish_owner_plan(
 async def owner_available_currencies(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID | None = None,
+    fiat_only: bool = False,
 ) -> tuple[str, ...]:
     return await list_owner_currencies(
         factory, actor_id=actor_id, project_id=project_id,
+        fiat_only=fiat_only,
     )

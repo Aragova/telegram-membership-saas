@@ -1,3 +1,53 @@
+## 2026-11-13 — PR #145 release hardening (not activated)
+
+The single PR #145 keeps commercial billing in Draft/OFF while its financial
+review items are addressed. Service invoicing now rotates persistently through
+the connected bot inventory rather than repeatedly selecting the oldest 100;
+commission reconciliation also cycles through every unissued closed Moscow
+month (including empty/deferred periods) without starving older unresolved
+source evidence. Each new owner's first service period starts after connection,
+trial, rollout, and actual ownership start; an outgoing owner's unpaid debt must
+not prevent the incoming owner from starting service after an existing period
+ends. Owners connected during the five-minute activation delay are enrolled
+without resetting an existing trial. Previously enrolled owners retain their
+complimentary-grant quotas even after OFF/ON cycling.
+
+The USD $3 profile is a native service obligation. Its issue-day RUB value is
+an accounting snapshot, not a fixed later payment quote. A new payment attempt
+converts the unpaid native USD fraction at that attempt's verified rates, with
+its RUB-book allocation retained as immutable historical evidence. Regular
+150 RUB profiles and manual customer prices are unchanged.
+
+**Verified refund application in the same PR (migrations 0073–0074):**
+- The append-only activation audit establishes historical ON/OFF windows. A
+  STOP/ARM cycle keeps old earned but deferred fees and unpaid hold eligibility,
+  while purchases made during OFF intervals remain in buyer history but cannot
+  accrue 5% platform commission. Stars/Crypto late evidence is valued by its
+  original paid date and live interval.
+- Only original-source provider-verified Stars file/subscription refunds and
+  Crypto Pay merchant transfer credits linked to a positive issued commission
+  line can create an immutable claim. The original sale-day official USD→RUB
+  rate is reused; no new FX quote or synthetic provider refund is manufactured.
+  Each provider evidence ID is unique, and partial refund credit totals are
+  capped by the exact original commission line.
+- A separate immutable allocation links each credit to unpaid SaaS invoice
+  amounts. Original issuer totals and receipts are never rewritten; credit
+  after full payment is held for the owner's next unpaid bill. The canonical
+  remaining function now subtracts verified credit allocations and existing
+  receipts, and the bank-approval/legacy receipt guards reject over-collection.
+- Existing merchant/owner invoices, overdue restrictions and notices read the
+  same remaining liability. The RU/EN Rich issued-invoice card shows applied
+  Stars/Crypto refund credits and the live remaining RUB reference balance;
+  separate historical manual refund notes remain visibly unapplied.
+- Each sweep runs in existing customer-supervisor reconciliation, plus before
+  a payer starts a new v2 attempt. No new buyer commands, test buttons,
+  standalone refund action or per-bot scheduler.
+
+Live commercial switches remain OFF until exact-HEAD database CI and Codex
+review are clean and the platform owner approves staging rollout.
+
+---
+
 ## 2026-11-12 — Single integrated commercial billing release PR
 
 The existing connected-bot `🧾 Счёт` will replace duplicative FX and

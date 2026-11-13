@@ -1,3 +1,29 @@
+## 2026-11-13 — ViMi Pay commercial billing PR #145 (Draft)
+
+Commercial release remains one integrated PR, no new test modes or standalone
+test buttons. Current network is ~50 bots, ~30 platform-owned and exempt.
+The commercial control remains OFF until the owner explicitly activates
+it after complete financial accounting, including verified refund credits.
+The existing customer supervisor performs bounded automatic service/commission
+billing, maintaining durable rotation across the network and old deferred
+months. Enroll first-bot owners connected during the activation grace delay,
+preserve free-grant quota enrollment across STOP/ARM, and never pass historical
+debts from a transferred bot to its incoming owner. A native $3 monthly
+service profile must still cost $3 when a later payment attempt is made in USD,
+not the issue-day RUB amount divided by a later FX rate.
+
+PR #145 now includes migrations 0073 (immutable activation windows preserve
+old commissions and hold eligibility through STOP/ARM) and 0074 (provider
+verified Stars/Crypto refund claims and immutable allocations reducing actual
+SaaS invoice balances). The single existing Rich invoice shows the verified
+credit and net remaining amount. Original sales, receipts and already-paid
+access remain immutable. No manual refund issuing, new test screens, or
+per-bot timers were added. Run exact-HEAD PostgreSQL CI, review every open
+financial discussion, obtain the owner's explicit merge approval, then deploy
+main to staging. Commercial collection remains OFF until separately armed.
+
+---
+
 ## 2026-11-12 — One PR for commercial billing release
 
 Implementing a single integrated release branch
