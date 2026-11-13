@@ -45,6 +45,53 @@ def _check_actor(actor_telegram_id: int, settings: Settings | None) -> None:
         raise PermissionError("Platform SaaS billing is owner-only")
 
 
+async def commercial_release_status(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, actor_telegram_id: int,
+    settings: Settings | None = None,
+) -> dict:
+    """Actual commercial billing state of the connected network."""
+    _check_actor(actor_telegram_id, settings)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id),
+    ) as session:
+        result = (await session.execute(text(
+            "SELECT public.platform_saas_pilot_status() AS state"
+        ).columns(state=JSONB))).scalar_one()
+    if not isinstance(result, dict):
+        raise RuntimeError("Commercial billing status unavailable")
+    return result
+
+
+async def commercial_release_change(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, actor_telegram_id: int,
+    action: str, expected_bots: int, expected_other_owners: int,
+    settings: Settings | None = None,
+) -> dict:
+    """Owner's explicit production activation or emergency pause.
+
+    PostgreSQL verifies actual inventory in the same atomic transaction,
+    rather than trusting counters supplied by the Telegram callback.
+    """
+    _check_actor(actor_telegram_id, settings)
+    if action not in {"arm", "stop"}:
+        raise ValueError("Unsupported release control")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id),
+    ) as session:
+        result = (await session.execute(text(
+            "SELECT public.platform_saas_pilot_change("
+            ":action,:bots,:other_owners) AS state"
+        ).columns(state=JSONB), {
+            "action": action, "bots": expected_bots,
+            "other_owners": expected_other_owners,
+        })).scalar_one()
+    if not isinstance(result, dict):
+        raise RuntimeError("Commercial billing activation failed")
+    return result
+
+
 async def platform_saas_invoice_report(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID,
