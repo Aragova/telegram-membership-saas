@@ -726,10 +726,10 @@ def _saas_invoice_text(report) -> str:
         tr("Выставленных счетов: ", "Issued invoices: ") + str(report.issued),
         tr("Неоплаченных всего: ", "Total unpaid: ") + str(report.unpaid),
         tr("К оплате сейчас: ", "Due now: ")
-        + escape(format(report.due_now_rub, ".2f")) + " ₽",
+        + escape(format(getattr(report, "due_now_rub", report.unpaid_rub), ".2f")) + " ₽",
         tr("Предстоящие счета: ", "Upcoming invoices: ")
-        + str(report.upcoming_count) + " · "
-        + escape(format(report.upcoming_rub, ".2f")) + " ₽",
+        + str(getattr(report, "upcoming_count", 0)) + " · "
+        + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽",
         tr("Получено: ", "Received: ")
         + escape(format(report.received_rub, ".2f")) + " ₽",
         tr(
