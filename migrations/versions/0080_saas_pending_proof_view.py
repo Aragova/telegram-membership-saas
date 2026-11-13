@@ -5,7 +5,7 @@ Revises: 0079_saas_payment_catalog
 
 Returns no token, media bytes or tenant-secret field. The central operator
 may load a proof through its original bot only while the proof is awaiting
-a bank decision and that bot is still registered. No billing switches change.
+a bank decision and that bot is still registered. A NULL project also permits a genuine central-bot proof,\nwhich is verified against the live central Bot ID in the handler.\nNo billing switches change.
 """
 from collections.abc import Sequence
 
@@ -41,7 +41,7 @@ def upgrade() -> None:
       FROM public.platform_saas_payment_attempts_v2 a
       JOIN public.platform_saas_payment_proofs_v2 p
         ON p.attempt_id=a.id
-      JOIN public.bot_instances b
+      LEFT JOIN public.bot_instances b
         ON b.telegram_bot_id=p.source_bot_id
        AND b.status='registered'
       WHERE a.id=p_attempt
