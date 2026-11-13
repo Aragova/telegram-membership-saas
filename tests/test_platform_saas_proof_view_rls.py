@@ -13,8 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from test_platform_saas_invoice_rls import _invoice, _line, _project, _tid
+
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 
