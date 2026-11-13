@@ -10,6 +10,8 @@ from uuid import uuid4
 import pytest
 from aiogram.types import BufferedInputFile
 
+from telegram_membership_saas.config import Settings
+from telegram_membership_saas.modules import platform_saas_proof_media as media
 from telegram_membership_saas.modules.platform_saas_proof_media import (
     reupload_proof_media,
 )
@@ -97,3 +99,60 @@ async def test_wrong_recipient_and_file_type_fail_closed():
                 attempt_id=uuid4(), caption="Proof",
             )
     source.get_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_proof_received_by_central_bot_uses_live_bot_without_token_lookup(
+    monkeypatch,
+):
+    attempt = uuid4()
+    data = b"central-photo"
+    central = SimpleNamespace(
+        id=12345,
+        get_file=AsyncMock(return_value=SimpleNamespace(
+            file_path="photos/central.jpg", file_size=len(data),
+        )),
+        download_file=AsyncMock(return_value=BytesIO(data)),
+        send_photo=AsyncMock(),
+        send_document=AsyncMock(),
+        session=SimpleNamespace(close=AsyncMock()),
+    )
+    monkeypatch.setattr(media, "saas_pending_proof_source", AsyncMock(
+        return_value={
+            "source_bot": central.id, "source_project": None,
+            "source_file": "central-file-id", "file_type": "photo",
+            "invoice_id": str(uuid4()), "amount": "150.00",
+            "currency": "RUB", "instructions": "Bank transfer details",
+        },
+    ))
+    await media.show_pending_platform_proof(
+        None, central_bot=central, operator_id=12345,
+        actor_id=uuid4(), attempt_id=attempt,
+        settings=Settings(
+            telegram_bot_token=None, bot_token_encryption_key=None,
+        ),
+    )
+    central.send_photo.assert_awaited_once()
+    central.session.close.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unregistered_noncentral_receipt_does_not_use_central_token(
+    monkeypatch,
+):
+    central = SimpleNamespace(id=12345, send_photo=AsyncMock())
+    monkeypatch.setattr(media, "saas_pending_proof_source", AsyncMock(
+        return_value={
+            "source_bot": 999888, "source_project": None,
+            "source_file": "noncentral-file-id", "file_type": "photo",
+        },
+    ))
+    with pytest.raises(ValueError, match="credentials are unavailable"):
+        await media.show_pending_platform_proof(
+            None, central_bot=central, operator_id=12345,
+            actor_id=uuid4(), attempt_id=uuid4(),
+            settings=Settings(
+                telegram_bot_token=None, bot_token_encryption_key=None,
+            ),
+        )
+    central.send_photo.assert_not_awaited()
