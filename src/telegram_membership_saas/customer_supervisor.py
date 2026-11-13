@@ -38,6 +38,9 @@ from telegram_membership_saas.modules.platform_crypto_sync import (
 from telegram_membership_saas.modules.platform_monthly_fx_sync import (
     sync_official_daily_rates,
 )
+from telegram_membership_saas.modules.platform_saas_commercial_runtime import (
+    reconcile_commercial_invoices,
+)
 from telegram_membership_saas.modules.platform_stars_sync import (
     capture_paid_file_stars,
 )
@@ -317,6 +320,10 @@ class CustomerBotSupervisor:
         # Same existing shard-zero process; NO independent finance supervisor.
         self._crypto_evidence_task: asyncio.Task[None] | None = None
         self._next_crypto_evidence_at = 0.0
+        # Live commercial invoices share one platform task across all bots.
+        # The SQL issue path is OFF until explicitly activated by the owner.
+        self._commercial_task: asyncio.Task[None] | None = None
+        self._next_commercial_at = 0.0
         # Shared-mode admission cursor ensures a handful of busy legacy
         # projects cannot consume every five-worker startup batch forever.
         self._admission_cursor: UUID | None = None
@@ -485,6 +492,27 @@ class CustomerBotSupervisor:
                 type(exc).__name__,
             )
 
+    async def _reconcile_commercial_safe(self) -> None:
+        try:
+            result = await reconcile_commercial_invoices(
+                self.factory, self.settings,
+            )
+            if result.get("enabled") and result.get("deferred"):
+                # Missing FX, transfer evidence or ownership proof must
+                # never create a wrong invoice or interrupt buyer access.
+                logger.warning(
+                    "Commercial invoice reconciliation deferred %s source(s)",
+                    result["deferred"],
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._next_commercial_at = monotonic() + 5 * 60
+            logger.warning(
+                "Commercial invoice reconciliation deferred (%s)",
+                type(exc).__name__,
+            )
+
     async def run(self) -> None:
         if (
             self.settings.customer_supervisor_shard_id == 0
@@ -523,6 +551,15 @@ class CustomerBotSupervisor:
                     self._crypto_evidence_task = asyncio.create_task(
                         self._sync_crypto_evidence_safe()
                     )
+                if (self.settings.customer_supervisor_shard_id == 0
+                    and self.settings.platform_owner_telegram_id is not None
+                    and monotonic() >= self._next_commercial_at
+                    and (self._commercial_task is None
+                         or self._commercial_task.done())):
+                    self._next_commercial_at = monotonic() + 15 * 60
+                    self._commercial_task = asyncio.create_task(
+                        self._reconcile_commercial_safe()
+                    )
                 try:
                     await self.reconcile_once()
                 except asyncio.CancelledError:
@@ -555,6 +592,11 @@ class CustomerBotSupervisor:
                     cancel_once(self._crypto_evidence_task)
                     await asyncio.gather(
                         self._crypto_evidence_task, return_exceptions=True,
+                    )
+                if self._commercial_task is not None:
+                    cancel_once(self._commercial_task)
+                    await asyncio.gather(
+                        self._commercial_task, return_exceptions=True,
                     )
                 for worker in self.workers.values():
                     cancel_once(worker.task)
