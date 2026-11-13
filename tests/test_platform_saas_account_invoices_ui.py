@@ -36,6 +36,9 @@ async def test_central_account_invoice_button_does_not_require_project(
         },), page=0,
     ))
     monkeypatch.setattr(ui, "merchant_saas_statements", get_statements)
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "RUB", "monthly_amount": "150.00"},
+    ))
     router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=None)
     callback_handler = next(
         handler.callback for handler in router.callback_query.handlers
