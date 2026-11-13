@@ -2831,7 +2831,10 @@ def create_owner_setup_router(
         overview = await setup_overview(
             factory, actor_id=actor_id, project_id=project_id,
         )
-        plans = list(overview.plans)
+        plans = sorted(
+            overview.plans,
+            key=lambda item: ((item[1] or "").casefold(), item[0].hex),
+        )
         page_size = 8
         current = plans[page * page_size:(page + 1) * page_size]
         lines = [
@@ -6060,6 +6063,22 @@ def create_owner_setup_router(
                 )
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
+                # Existing Telegram messages keep their old callback data.
+                # Route obsolete Stars/crypto price buttons to their actual
+                # payment-rail settings instead of failing or recreating
+                # standalone crypto tariffs.
+                if currency == "XTR":
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id,
+                    )
+                    await query.answer()
+                    return
+                if currency in ("TON", "USDT"):
+                    await show_crypto_pay(
+                        bot, user_id, actor_id, project_id,
+                    )
+                    await query.answer()
+                    return
                 if currency not in await owner_available_currencies(
                     factory, actor_id=actor_id, project_id=project_id,
                     fiat_only=True,
