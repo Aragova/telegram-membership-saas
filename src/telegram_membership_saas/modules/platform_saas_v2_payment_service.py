@@ -237,7 +237,7 @@ async def saas_pending_proof_source(
     )
     if not isinstance(result, dict) or not all(
         result.get(field) for field in (
-            "source_bot", "source_project", "source_file", "file_type",
+            "source_bot", "source_file", "file_type",
         )
     ):
         raise ValueError("Pending receipt source unavailable")
