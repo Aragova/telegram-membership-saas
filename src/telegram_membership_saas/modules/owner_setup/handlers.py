@@ -2821,6 +2821,80 @@ def create_owner_setup_router(
         )
 
 
+    async def show_stars_payments(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, page: int = 0,
+    ) -> None:
+        """One native payment method screen. XTR historical prices stay intact."""
+        if not 0 <= page <= 10000:
+            raise ValueError("Invalid Telegram Stars page")
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        plans = list(overview.plans)
+        page_size = 8
+        current = plans[page * page_size:(page + 1) * page_size]
+        lines = [
+            "⭐ <b>Telegram Stars</b>",
+            tr(
+                "Нативная оплата Telegram, без банковских реквизитов.",
+                "Native Telegram payments, without bank instructions.",
+            ),
+            tr(
+                "Настройте цену в звёздах для нужных тарифов или отключите "
+                "новые покупки. Прошлые платежи и подписки сохраняются.",
+                "Set a Stars price for each plan or disable new purchases. "
+                "Previous payments and subscriptions are preserved.",
+            ),
+            "",
+        ]
+        rows: list[list[InlineKeyboardButton]] = []
+        if not current:
+            lines.append(tr("Тарифов пока нет.", "No plans yet."))
+        for plan_id, plan_name, plan_status in current:
+            info = await get_owner_plan_info(
+                factory, actor_id=actor_id, project_id=project_id,
+                plan_id=plan_id,
+            )
+            stars_price = next(
+                (price for price in info.prices if price.currency == "XTR"),
+                None,
+            )
+            price_label = (
+                format_amount(stars_price.amount, stars_price.precision) + " ⭐"
+                if stars_price is not None
+                else tr("не настроено", "not configured")
+            )
+            name = plan_name or tr("Без названия", "Unnamed")
+            lines.append(
+                "• <b>" + escape(name) + "</b> · "
+                + escape(price_label) + " · " + _status(plan_status)
+            )
+            row = [_button(
+                "⚙️ " + name[:30],
+                "starsprice:" + plan_id.hex + ":" + str(page),
+            )]
+            if stars_price is not None:
+                row.append(_button(
+                    "⏸️", "starsoff:" + plan_id.hex + ":" + str(page),
+                    "danger",
+                ))
+            rows.append(row)
+        nav = []
+        if page:
+            nav.append(_button("⬅️", "starspage:" + str(page - 1)))
+        if (page + 1) * page_size < len(plans):
+            nav.append(_button("➡️", "starspage:" + str(page + 1)))
+        if nav:
+            rows.append(nav)
+        rows.append([_button(
+            tr("⬅️ Способы оплаты", "⬅️ Payment methods"), "methods",
+        )])
+        await bot.send_message(
+            user_id, "\n".join(lines), parse_mode="HTML",
+            reply_markup=_markup(rows),
+        )
+
     async def show_crypto_pay(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
     ) -> None:
