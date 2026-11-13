@@ -22,8 +22,8 @@ from telegram_membership_saas.modules.pricing import (
     ProjectEnabledCurrency,
 )
 from telegram_membership_saas.modules.pricing.service import retire_active_plan_price
-from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
+from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
 from telegram_membership_saas.tenant_context import TenantContext
 
 PRIMARY_CURRENCIES = (
