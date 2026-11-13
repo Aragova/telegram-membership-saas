@@ -806,16 +806,19 @@ class PlatformBankNavigationMiddleware(BaseMiddleware):
 
     def __init__(self) -> None:
         self.pending: set[int] = set()
+        self.catalog_pending: dict[int, dict] = {}
 
     async def __call__(self, handler, event, data):
         user = getattr(event, "from_user", None)
         if user is not None:
             if isinstance(event, CallbackQuery):
                 self.pending.discard(user.id)
+                self.catalog_pending.pop(user.id,None)
             elif isinstance(event, Message):
                 command = _editor_command(event.text)
                 if command is not None and command != "/cancel":
                     self.pending.discard(user.id)
+                    self.catalog_pending.pop(user.id,None)
         return await handler(event, data)
 
 
@@ -905,7 +908,9 @@ def create_platform_dashboard_router(
     )
     pending_v2_review: dict[int, tuple[UUID, bool]] = {}
     pending_v2_method: dict[int, str] = {}
-    pending_catalog: dict[int, dict] = {}
+    pending_catalog: dict[int, dict] = (
+        bank_navigation.catalog_pending if bank_navigation is not None else {}
+    )
 
     async def _show_bank_screen(bot: Bot, user, message_id: int | None = None) -> None:
         actor_id = await ensure_telegram_actor(
