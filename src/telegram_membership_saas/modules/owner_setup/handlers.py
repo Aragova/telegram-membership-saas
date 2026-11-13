@@ -3893,6 +3893,7 @@ def create_owner_setup_router(
                 "connarchive:", "connarchiveok:", "saasinvoices:",
                 "saasprice:", "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
+                "spm:", "spv:", "spc:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -4230,7 +4231,7 @@ def create_owner_setup_router(
                         )])
                     rows.append([_button(
                         tr("⬅️ К счёту","⬅️ Invoice"),
-                        "saasbill:"+invoice_token+":"+page_text,
+                        "saasbill:"+invoice_token+":"+str(page),
                     )])
                     await bot.send_message(
                         user_id,
@@ -4318,7 +4319,7 @@ def create_owner_setup_router(
                             parse_mode="HTML",
                             reply_markup=_markup([[_button(
                                 tr("⬅️ К счёту","⬅️ Invoice"),
-                                "saasbill:"+invoice_token+":"+page_text,
+                                "saasbill:"+invoice_token+":"+str(page),
                             )]]),
                         )
                 await query.answer()
