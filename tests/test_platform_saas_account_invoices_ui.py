@@ -69,7 +69,8 @@ async def test_central_account_invoice_button_does_not_require_project(
     bot.send_message.assert_awaited_once()
     msg = bot.send_message.await_args.args[1]
     assert "150.00" in msg
-    assert "TEST bank &amp; &lt;details&gt;" in msg
+    assert "TEST bank &amp; &lt;details&gt;" not in msg
+    assert ("Оплатить" if language == "ru" else "Pay") in msg
     buttons = [
         b.callback_data
         for row in bot.send_message.await_args.kwargs[
@@ -78,4 +79,5 @@ async def test_central_account_invoice_button_does_not_require_project(
         for b in row
     ]
     assert "own:saasinvoices:0" in buttons
+    assert any(action.startswith("own:spm:") for action in buttons)
     assert "own:projects" in buttons
