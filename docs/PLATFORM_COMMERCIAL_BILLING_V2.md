@@ -1,3 +1,27 @@
+## 2026-11-13 — PR #154: platform invoice receipt ingress priority
+
+The live RU staging flow can create an account invoice and send a PDF as a
+Telegram reply, but the sender sometimes receives no receipt acknowledgement
+and the operator's existing queue remains empty. The SaaS receipt callback
+previously lived **inside** the general owner router, which the customer
+dispatcher registered **after** the file-sales/editor routers. A pending file
+editor could consume the PDF before the invoice receipt handler.
+
+A single dedicated `vimi-saas-proof-ingress` router is now registered before
+all tenant file/broadcast/editor routers and before central-owner forms.
+It matches only private photo/document replies to the original receiving bot's
+`🧾 ViMi Pay · <UUID>` prompt (both UUID formats), regardless of prior
+file editor state or supervisor restarts. The old late owner receipt handler
+was **removed** to avoid duplicated callbacks. On save, the payer gets
+a visible confirmation; failed/invalid saves yield a visible error.
+The original bot's push to platform operator remains best-effort because
+a connected bot may not have a /start chat with the platform owner.
+The central pending queue and `📎 Чек` from PR #153 remain canonical.
+
+This does **not** confirm bank funds, touch invoice balances, enable
+commercial holds, add buttons, store file bytes or modify compose/light100.
+
+---
 ## 2026-11-13 — Operator proof viewer for the existing invoice queue (PR #153)
 
 The existing central `👑 Финансы → ⏳ Проверка платежей` now includes
