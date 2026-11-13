@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 
 _skip_rich: ContextVar[bool] = ContextVar("skip_rich", default=False)
 _NATIVE_REPLY_MARKERS = (
+    # Reply-to payment prompts MUST retain Message.text for Telegram clients
+    # and existing receipt handlers, even when the rest of the UI is Rich.
+    "🧾 ViMi Pay · ",
     # These are authenticated using parent.text in the support reply filters.
     "💬 ViMi Pay · Покупатель ", "💬 ViMi Pay · Customer ",
     "✉️ ViMi Pay · Сообщение администратора",
