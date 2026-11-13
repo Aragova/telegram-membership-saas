@@ -245,12 +245,12 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
 )
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_catalog_for_invoice,
-    saas_v3_create_attempt,
     saas_price_profile,
     saas_v2_available_methods,
     saas_v2_create_attempt,
     saas_v2_invoice_balance,
     saas_v2_submit_proof,
+    saas_v3_create_attempt,
 )
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.modules.telegram_admin.service import (
