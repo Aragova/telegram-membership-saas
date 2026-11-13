@@ -4,7 +4,7 @@ No test Telegram controls, no production invoices, and no permanent changes.
 The privileged reconciliation under test is the exact migration 0077 function.
 """
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
