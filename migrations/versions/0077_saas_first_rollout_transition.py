@@ -1269,6 +1269,344 @@ CREATE OR REPLACE FUNCTION public.platform_saas_owner_trial_status()
           );
         END; $fn$
     """)
+    # Same due threshold in live preview and subscription Stars capture.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_unified_monthly_preview(
+        p_owner uuid, p_month date, p_project uuid DEFAULT NULL
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      actor uuid;
+      operator_allowed boolean;
+      beginning timestamptz;
+      ending timestamptz;
+      launch_at timestamptz;
+      trial_at timestamptz;
+      summary jsonb;
+      manual_count integer;
+      stars_count integer;
+      crypto_count integer;
+      unrated_count integer;
+      commission_rub numeric;
+      estimated_usd numeric;
+      star_credit_usd numeric;
+      crypto_credit_usd numeric;
+      missing_source_count integer;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      SELECT EXISTS(
+        SELECT 1 FROM public.telegram_users u
+        JOIN public.platform_operators po
+          ON po.telegram_user_id=u.telegram_user_id
+        WHERE u.id=actor AND po.role='owner'
+      ) INTO operator_allowed;
+      IF p_owner IS NULL OR p_month IS NULL
+         OR extract(day FROM p_month)<>1
+         OR (actor IS DISTINCT FROM p_owner AND NOT operator_allowed)
+         OR (p_project IS NOT NULL AND NOT EXISTS(
+           SELECT 1 FROM public.merchant_project_periods mp
+           WHERE mp.project_id=p_project AND mp.owner_user_id=p_owner
+         ))
+      THEN
+        RAISE EXCEPTION 'Unverified ViMi Pay commercial account/month'
+          USING ERRCODE='42501';
+      END IF;
+      beginning:=p_month::timestamp AT TIME ZONE 'Europe/Moscow';
+      ending:=(p_month::timestamp+interval '1 month')
+                AT TIME ZONE 'Europe/Moscow';
+      SELECT CASE WHEN b.enabled THEN b.effective_from ELSE NULL END
+        INTO launch_at FROM public.platform_saas_billing_control b
+       WHERE b.id=1;
+      SELECT min(t.claimed_at) INTO trial_at
+        FROM public.merchant_platform_trial_claims t
+        WHERE t.owner_user_id=p_owner AND t.scope='owner'
+          AND t.policy_key='vimi-saas-72h-v1';
+
+      WITH manual AS (
+        SELECT p.id AS source_id,'subscription'::text AS source_kind,
+               p.project_id,p.approved_at AS paid_at,
+               p.final_amount AS native_amount,p.currency_code AS currency
+          FROM public.payments p
+         WHERE p.approved_at>=beginning AND p.approved_at<ending
+           AND (p_project IS NULL OR p.project_id=p_project)
+        UNION ALL
+        SELECT f.id,'file_manual',f.project_id,f.paid_at,
+               f.amount,f.currency_code
+          FROM public.file_sale_manual_orders f
+         WHERE f.status='approved' AND f.paid_at>=beginning
+           AND f.paid_at<ending
+           AND (p_project IS NULL OR f.project_id=p_project)
+      ),
+      attributed AS (
+        SELECT m.*,
+          (SELECT count(*) FROM public.merchant_project_periods h
+           WHERE h.project_id=m.project_id AND h.owner_user_id=p_owner
+             AND h.started_at<=m.paid_at
+             AND (h.ended_at IS NULL OR h.ended_at>m.paid_at)
+          ) AS owner_periods,
+          (SELECT count(*) FROM public.platform_usage_events e
+           WHERE e.project_id=m.project_id
+             AND e.event_type='bot_connected'
+             AND e.occurred_at<=m.paid_at
+             AND NOT EXISTS(
+               SELECT 1 FROM public.platform_usage_events gone
+               WHERE gone.project_id=m.project_id
+                 AND gone.event_type='bot_removed'
+                 AND gone.source_id=e.source_id
+                 AND gone.occurred_at<=m.paid_at
+             )
+          ) AS bot_count,
+          (SELECT max(e.source_id::text)::uuid
+           FROM public.platform_usage_events e
+           WHERE e.project_id=m.project_id
+             AND e.event_type='bot_connected'
+             AND e.occurred_at<=m.paid_at
+             AND NOT EXISTS(
+               SELECT 1 FROM public.platform_usage_events gone
+               WHERE gone.project_id=m.project_id
+                 AND gone.event_type='bot_removed'
+                 AND gone.source_id=e.source_id
+                 AND gone.occurred_at<=m.paid_at
+             )
+          ) AS original_bot,
+          (SELECT min(h.merchant_id::text)::uuid
+           FROM public.merchant_project_periods h
+           WHERE h.project_id=m.project_id AND h.owner_user_id=p_owner
+             AND h.started_at<=m.paid_at
+             AND (h.ended_at IS NULL OR h.ended_at>m.paid_at)
+          ) AS merchant_id
+        FROM manual m
+      ),
+      all_sales AS (
+        SELECT a.source_id,a.source_kind,a.project_id,a.paid_at,
+               a.native_amount,a.currency,
+               CASE WHEN a.owner_periods<>1 OR a.bot_count<>1
+                  OR a.original_bot IS NULL OR a.merchant_id IS NULL
+                 THEN false
+                 WHEN launch_at IS NULL OR trial_at IS NULL
+                   OR NOT public.platform_saas_sale_active_at(a.paid_at)
+                   OR a.paid_at<greatest(
+                     launch_at,public.platform_saas_billable_after(p_owner)
+                   ) THEN false
+                 ELSE public.platform_saas_exemption_state(
+                   a.project_id,a.original_bot,a.merchant_id,
+                   p_owner,a.paid_at
+                 )='not_exempt'
+               END AS billable,
+               CASE WHEN a.currency='RUB' THEN 1::numeric
+                    ELSE rate.rub_per_unit END AS unit_rub
+          FROM attributed a
+          LEFT JOIN public.platform_saas_daily_fx_rates rate
+            ON rate.currency_code=a.currency
+           AND rate.rate_date=
+                 (a.paid_at AT TIME ZONE 'Europe/Moscow')::date
+           AND rate.source_name='CBR'
+          WHERE a.owner_periods>0
+        UNION ALL
+        SELECT s.source_id,s.source_kind,s.project_id,s.paid_at,
+               s.stars_amount::numeric,'XTR'::text,
+               (s.billing_eligible
+                AND s.paid_at>=public.platform_saas_billable_after(p_owner)),
+               s.usd_per_star*usd.rub_per_unit
+        FROM public.platform_saas_star_sales s
+        LEFT JOIN public.platform_saas_daily_fx_rates usd
+          ON usd.currency_code='USD'
+         AND usd.rate_date=
+              (s.paid_at AT TIME ZONE 'Europe/Moscow')::date
+        WHERE s.owner_user_id=p_owner
+          AND s.paid_at>=beginning AND s.paid_at<ending
+          AND (p_project IS NULL OR s.project_id=p_project)
+        UNION ALL
+        SELECT s.invoice_id,s.source_kind,s.project_id,s.paid_at,
+               s.original_amount,s.currency_code,
+               (s.billing_eligible
+                AND s.paid_at>=public.platform_saas_billable_after(p_owner)),
+               s.usd_per_unit*usd.rub_per_unit
+        FROM public.platform_saas_crypto_sales s
+        LEFT JOIN public.platform_saas_daily_fx_rates usd
+          ON usd.currency_code='USD'
+         AND usd.rate_date=s.sale_day
+        WHERE s.owner_user_id=p_owner
+          AND s.paid_at>=beginning AND s.paid_at<ending
+          AND (p_project IS NULL OR s.project_id=p_project)
+      ),
+      totals AS (
+        SELECT source_kind, count(*) AS sales,
+               count(*) FILTER(WHERE billable) AS eligible_sales,
+               count(*) FILTER(WHERE billable AND unit_rub IS NULL) AS unrated,
+               coalesce(sum(native_amount)
+                   FILTER(WHERE billable),0) AS native_gross,
+               -- Manual payments have always been rounded per
+               -- accepted purchase. Stars/Crypto keep full sale precision,
+               -- then round only the monthly aggregated payable total.
+               coalesce(sum(
+                 CASE WHEN source_kind IN ('subscription','file_manual')
+                   THEN round(native_amount*unit_rub*0.05,2)
+                   ELSE native_amount*unit_rub*0.05
+                 END
+               ) FILTER(WHERE billable AND unit_rub IS NOT NULL),0)
+                 AS commission_unrounded_rub
+        FROM all_sales GROUP BY source_kind
+      )
+      SELECT
+          coalesce(sum(sales) FILTER(
+             WHERE source_kind IN ('subscription','file_manual')),0),
+          coalesce(sum(sales) FILTER(
+             WHERE source_kind IN ('file_stars','subscription_stars')),0),
+          coalesce(sum(sales) FILTER(
+             WHERE source_kind IN ('file_crypto','subscription_crypto')),0),
+          coalesce(sum(unrated),0),
+          round(coalesce(sum(commission_unrounded_rub),0),2),
+          coalesce(jsonb_agg(jsonb_build_object(
+             'kind',source_kind,'sold',sales,'billable',eligible_sales,
+             'missing_rate',unrated,'native_gross',native_gross::text,
+             'commission_rub',round(commission_unrounded_rub,2)::text
+          ) ORDER BY source_kind),'[]'::jsonb)
+      INTO manual_count,stars_count,crypto_count,unrated_count,
+           commission_rub,summary
+      FROM totals;
+      SELECT coalesce(sum(c.commission_credit_usd),0) INTO star_credit_usd
+      FROM (
+        SELECT c.owner_user_id,c.project_id,c.commission_credit_usd,
+               c.refunded_at FROM public.platform_saas_star_refund_credits c
+        UNION ALL
+        SELECT c.owner_user_id,c.project_id,c.commission_credit_usd,
+               c.refunded_at
+        FROM public.platform_saas_star_subscription_credits c
+      ) c
+      WHERE c.owner_user_id=p_owner
+        AND c.refunded_at>=beginning AND c.refunded_at<ending
+        AND (p_project IS NULL OR c.project_id=p_project);
+      SELECT coalesce(sum(c.commission_credit_usd),0)
+        INTO crypto_credit_usd
+      FROM public.platform_saas_crypto_transfer_credits c
+      WHERE c.owner_user_id=p_owner
+        AND c.completed_at>=beginning AND c.completed_at<ending
+        AND (p_project IS NULL OR c.project_id=p_project);
+      SELECT count(*) INTO missing_source_count
+      FROM public.crypto_pay_invoices i
+      JOIN public.crypto_pay_apps app ON app.id=i.app_id
+      JOIN public.projects p ON p.id=i.project_id
+      WHERE i.status='paid' AND i.paid_at>=beginning
+        AND i.paid_at<ending AND p.owner_user_id=p_owner
+        AND (p_project IS NULL OR i.project_id=p_project)
+        AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_crypto_sales sale
+          WHERE sale.invoice_id=i.id
+        );
+      RETURN jsonb_build_object(
+        'owner_user_id',p_owner,'project_id',p_project,
+        'month',p_month,'billing_enabled',launch_at IS NOT NULL,
+        'rollout_from',launch_at,'preview_only',true,
+        'manual_sales',manual_count,'stars_sales',stars_count,
+        'crypto_sales',crypto_count,
+        'unrated_billable',unrated_count,
+        'uncaptured_crypto',missing_source_count,
+        'commission_rub',commission_rub::text,
+        'rails',summary,'star_refund_credit_usd',star_credit_usd::text,
+        'crypto_refund_credit_usd',crypto_credit_usd::text,
+        'credits_applied',false,
+        'issue_ready',launch_at IS NOT NULL AND unrated_count=0
+                       AND missing_source_count=0
+      );
+    END;
+    $f$
+    """)
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_capture_new_subscription_stars(
+          p_limit integer
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path=pg_catalog,public AS $fn$
+        DECLARE
+          p record;
+          history record;
+          rate_day date;
+          rate numeric;
+          trial_start timestamptz;
+          started timestamptz;
+          exempt boolean;
+          recorded integer:=0;
+          unresolved integer:=0;
+        BEGIN
+          PERFORM public.platform_saas_require_owner();
+          IF p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 200 THEN
+            RAISE EXCEPTION 'Invalid subscription Stars capture batch'
+              USING ERRCODE='22023';
+          END IF;
+          SELECT c.started_at INTO started
+          FROM public.platform_saas_star_capture_control c WHERE c.id=1;
+          IF started IS NULL THEN
+            RAISE EXCEPTION 'Missing Stars capture cutoff'
+              USING ERRCODE='42501';
+          END IF;
+          FOR p IN SELECT o.* FROM public.subscription_star_orders o
+            WHERE o.status='paid' AND o.paid_at>=started
+            AND o.telegram_charge_id IS NOT NULL
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_star_sales e
+              WHERE e.source_kind='subscription_stars'
+                AND e.source_id=o.id
+            )
+            AND (SELECT count(*) FROM public.merchant_project_periods h
+                 WHERE h.project_id=o.project_id AND h.started_at<=o.paid_at
+                 AND (h.ended_at IS NULL OR h.ended_at>o.paid_at))=1
+            AND EXISTS(
+              SELECT 1 FROM public.platform_saas_star_reward_rates r
+              WHERE r.effective_on<=
+                (o.paid_at AT TIME ZONE 'Europe/Moscow')::date
+            )
+            ORDER BY o.paid_at,o.id LIMIT p_limit
+          LOOP
+            SELECT merchant_id,owner_user_id INTO history
+            FROM public.merchant_project_periods h
+            WHERE h.project_id=p.project_id AND h.started_at<=p.paid_at
+              AND (h.ended_at IS NULL OR h.ended_at>p.paid_at);
+            SELECT effective_on,usd_per_star INTO rate_day,rate
+            FROM public.platform_saas_star_reward_rates r
+            WHERE r.effective_on<=
+              (p.paid_at AT TIME ZONE 'Europe/Moscow')::date
+            ORDER BY effective_on DESC LIMIT 1;
+            SELECT EXISTS(
+              SELECT 1 FROM public.telegram_users u
+              JOIN public.platform_operators po
+                ON po.telegram_user_id=u.telegram_user_id
+              WHERE u.id=history.owner_user_id AND po.role='owner'
+            ) INTO exempt;
+            SELECT min(t.claimed_at) INTO trial_start
+            FROM public.merchant_platform_trial_claims t
+            WHERE t.owner_user_id=history.owner_user_id
+              AND t.scope='owner' AND t.policy_key='vimi-saas-72h-v1';
+            INSERT INTO public.platform_saas_star_sales(
+                id,source_kind,source_id,project_id,merchant_id,
+                owner_user_id,telegram_bot_id,telegram_charge_id,
+                stars_amount,usd_per_star,reward_usd,commission_usd,
+                rate_effective_on,paid_at,billing_eligible
+            ) VALUES(
+                gen_random_uuid(),'subscription_stars',p.id,p.project_id,
+                history.merchant_id,history.owner_user_id,p.telegram_bot_id,
+                p.telegram_charge_id,p.stars_amount,rate,
+                p.stars_amount*rate,p.stars_amount*rate*0.05,
+                rate_day,p.paid_at,
+                NOT exempt AND trial_start IS NOT NULL
+                AND p.paid_at>=public.platform_saas_billable_after(history.owner_user_id)
+                AND public.platform_saas_sale_active_at(p.paid_at)
+            ) ON CONFLICT (source_kind,source_id) DO NOTHING;
+            IF FOUND THEN recorded:=recorded+1; END IF;
+          END LOOP;
+          SELECT count(*) INTO unresolved
+          FROM public.subscription_star_orders o
+          WHERE o.status='paid' AND o.paid_at>=started
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_star_sales s
+              WHERE s.source_kind='subscription_stars' AND s.source_id=o.id
+            );
+          RETURN jsonb_build_object(
+            'recorded',recorded,'unresolved',unresolved,
+            'fee_issued',false
+          );
+        END;
+        $fn$
+    """)
     # Informational future/due separation; old report keys and payable
     # status remain backward compatible with all existing buyer flows.
     op.execute("""
