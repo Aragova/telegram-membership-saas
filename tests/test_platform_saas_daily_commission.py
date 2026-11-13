@@ -81,6 +81,18 @@ async def test_daily_fx_used_for_real_approved_sales_and_idempotent_invoice(
                     "UPDATE platform_saas_billing_control SET enabled=true,"
                     " effective_from=:effective WHERE id=1"
                 ), {"effective": rollout_at})
+                # The immutable release ledger records actual active
+                # billing windows; a mutable current cutoff is not enough.
+                await conn.execute(text(
+                    "INSERT INTO platform_saas_release_audit "
+                    "(id,actor_id,action,registered_bots,nonoperator_owners,"
+                    "effective_from,created_at) "
+                    "VALUES (:id,:actor,'arm',1,1,:effective,:created)"
+                ), {
+                    "id": uuid4(), "actor": operator,
+                    "effective": rollout_at,
+                    "created": rollout_at - timedelta(minutes=5),
+                })
                 await conn.execute(text(
                     "UPDATE merchant_project_periods SET started_at=:start "
                     "WHERE project_id=:project AND ended_at IS NULL"
