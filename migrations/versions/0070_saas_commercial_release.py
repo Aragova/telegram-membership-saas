@@ -42,6 +42,21 @@ def upgrade() -> None:
         "ALTER TABLE public.platform_saas_release_audit "
         "FORCE ROW LEVEL SECURITY"
     )
+    op.create_table(
+        "platform_saas_commercial_enrollments",
+        sa.Column("owner_user_id", sa.Uuid(), primary_key=True),
+        sa.Column("effective_from", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.text("clock_timestamp()")),
+    )
+    op.execute(
+        "ALTER TABLE public.platform_saas_commercial_enrollments "
+        "ENABLE ROW LEVEL SECURITY"
+    )
+    op.execute(
+        "ALTER TABLE public.platform_saas_commercial_enrollments "
+        "FORCE ROW LEVEL SECURITY"
+    )
     op.execute("""
       CREATE TRIGGER trg_saas_pilot_immutable
       BEFORE UPDATE OR DELETE ON public.platform_saas_release_audit
@@ -49,6 +64,12 @@ def upgrade() -> None:
       public.platform_saas_credit_entry_immutable()
     """)
 
+    op.execute("""
+      CREATE TRIGGER trg_saas_commercial_enrollment_immutable
+      BEFORE UPDATE OR DELETE ON public.platform_saas_commercial_enrollments
+      FOR EACH ROW EXECUTE FUNCTION
+      public.platform_saas_credit_entry_immutable()
+    """)
     op.execute("""
     CREATE FUNCTION public.platform_saas_release_status()
     RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER
@@ -173,6 +194,10 @@ def upgrade() -> None:
           WHERE b.status='registered' AND po.telegram_user_id IS NULL
           GROUP BY p.owner_user_id
         LOOP
+          INSERT INTO public.platform_saas_commercial_enrollments(
+            owner_user_id,effective_from
+          ) VALUES(enrolled_owner.owner_user_id,start_at)
+          ON CONFLICT DO NOTHING;
           IF NOT EXISTS(
             SELECT 1 FROM public.merchant_platform_trial_claims t
             WHERE t.owner_user_id=enrolled_owner.owner_user_id
@@ -255,6 +280,7 @@ def upgrade() -> None:
       deferred integer:=0;
       invoice uuid;
       first_trial timestamptz;
+      owner_period_start timestamptz;
     BEGIN
       PERFORM public.platform_saas_require_owner();
       SELECT effective_from INTO started
@@ -275,7 +301,7 @@ def upgrade() -> None:
       -- explicitly excluded. A bot/account can never be invoiced twice
       -- because the canonical issuer locks the bot and invoice_key.
       FOR bot IN
-        SELECT b.id,b.created_at,p.owner_user_id
+        SELECT b.id,b.created_at,p.owner_user_id,p.id AS project_id
         FROM public.bot_instances b
         JOIN public.projects p ON p.id=b.project_id
         JOIN public.telegram_users u ON u.id=p.owner_user_id
@@ -290,6 +316,14 @@ def upgrade() -> None:
           WHERE t.owner_user_id=bot.owner_user_id AND t.scope='owner'
             AND t.policy_key='vimi-saas-72h-v1';
           IF first_trial IS NULL THEN deferred:=deferred+1;CONTINUE;END IF;
+          SELECT mp.started_at INTO owner_period_start
+          FROM public.merchant_project_periods mp
+          WHERE mp.project_id=bot.project_id
+            AND mp.owner_user_id=bot.owner_user_id
+            AND mp.ended_at IS NULL;
+          IF owner_period_start IS NULL THEN
+            deferred:=deferred+1;CONTINUE;
+          END IF;
           SELECT i.id,i.period_end,i.status
             INTO prior
           FROM public.platform_saas_invoices i
@@ -302,9 +336,13 @@ def upgrade() -> None:
             IF public.platform_saas_v2_remaining(prior.id)>0 THEN
               CONTINUE;
             END IF;
-            period_start:=greatest(prior.period_end,now_at);
+            period_start:=greatest(prior.period_end,now_at,
+                                   bot.created_at,owner_period_start);
           ELSE
-            period_start:=greatest(started,first_trial+interval '72 hours');
+            period_start:=greatest(
+              started,first_trial+interval '72 hours',
+              bot.created_at,owner_period_start
+            );
           END IF;
           IF period_start>now_at+interval '3 days' THEN CONTINUE; END IF;
           invoice:=public.platform_saas_issue_bot_invoice(
@@ -325,24 +363,42 @@ def upgrade() -> None:
         'month',(now_at AT TIME ZONE 'Europe/Moscow')::timestamp
         -interval '1 month'
       )::date;
+      -- Revisit ALL unsettled closed periods since commercial activation,
+      -- not just the latest month. Late FX/Stars/Crypto evidence must
+      -- eventually generate the missing bill without duplicate keys.
       FOR accounting IN
-        SELECT DISTINCT mp.merchant_id,mp.owner_user_id
-        FROM public.merchant_project_periods mp
+        SELECT DISTINCT mp.merchant_id,mp.owner_user_id,
+               months.m::date AS billing_month
+        FROM generate_series(
+          date_trunc('month',started AT TIME ZONE 'Europe/Moscow'),
+          date_trunc('month',
+                     (now_at AT TIME ZONE 'Europe/Moscow')
+                     -interval '1 month'),
+          interval '1 month'
+        ) AS months(m)
+        JOIN public.merchant_project_periods mp
+          ON mp.started_at <
+            ((months.m+interval '1 month') AT TIME ZONE 'Europe/Moscow')
+         AND (mp.ended_at IS NULL OR mp.ended_at>=
+              (months.m AT TIME ZONE 'Europe/Moscow'))
         JOIN public.telegram_users u ON u.id=mp.owner_user_id
         LEFT JOIN public.platform_operators po
           ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
         WHERE po.telegram_user_id IS NULL
-          AND mp.started_at<
-            (previous_month+interval '1 month')::timestamp
-                 AT TIME ZONE 'Europe/Moscow'
-          AND (mp.ended_at IS NULL OR mp.ended_at>=
-                previous_month::timestamp AT TIME ZONE 'Europe/Moscow')
-        ORDER BY mp.owner_user_id,mp.merchant_id LIMIT 100
+          AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_invoices i
+            WHERE i.invoice_key='commission:'||mp.merchant_id::text
+              ||':'||mp.owner_user_id::text||':'
+              ||to_char(months.m,'YYYY-MM-DD')
+              AND i.status='issued'
+          )
+        ORDER BY billing_month DESC,mp.owner_user_id,mp.merchant_id
+        LIMIT 100
       LOOP
         BEGIN
           invoice:=public.platform_saas_issue_commission_invoice(
             accounting.merchant_id,accounting.owner_user_id,
-            previous_month,'{}'::jsonb
+            accounting.billing_month,'{}'::jsonb
           );
           IF invoice IS NOT NULL THEN
             commission_issued:=commission_issued+1;
@@ -380,7 +436,8 @@ def upgrade() -> None:
          IF EXISTS(
            SELECT 1 FROM pg_roles WHERE rolname='membership_runtime'
          ) THEN
-           REVOKE ALL ON public.platform_saas_release_audit
+           REVOKE ALL ON public.platform_saas_release_audit,
+             public.platform_saas_commercial_enrollments
            FROM membership_runtime;
          END IF;
        END $revoke$
