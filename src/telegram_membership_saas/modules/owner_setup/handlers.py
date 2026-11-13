@@ -563,34 +563,15 @@ def _saas_invoices_rich(report) -> str:
             + tr("Срок: ", "Due: ")
             + escape(str(inv["due_at"])[:10]) + "</p>"
         )
-    foreign_locked = getattr(report, "foreign_unpaid_count", 0) > 0
     if report.unpaid:
-        if foreign_locked:
-            items.append("<p>⚠️ " + tr(
-                "Есть неоплаченные счета с зафиксированной иностранной "
-                "валютой. Общие рублёвые реквизиты здесь скрыты. "
-                "Откройте нужный счёт и проверьте валюту.",
-                "Some unpaid invoices are locked to a foreign currency. "
-                "Shared RUB payment details are hidden. Open the individual "
-                "invoice to verify its payment currency.",
-            ) + "</p>")
-        elif report.configured:
-            items.extend([
-                "<h4>" + tr("💳 Реквизиты платформы",
-                             "💳 Payment instructions") + "</h4>",
-                "<pre>" + escape(str(report.instructions)) + "</pre>",
-                "<p>" + tr(
-                    "Укажите номер счёта в платеже. Подтверждение "
-                    "поступления выполняет владелец ViMi Pay.",
-                    "Include the invoice ID. Only the ViMi Pay "
-                    "operator verifies receipt.",
-                ) + "</p>",
-            ])
-        else:
-            items.append("<p>" + tr(
-                "⚠️ Реквизиты не опубликованы. Не переводите деньги.",
-                "⚠️ No payment instructions. Do not send money.",
-            ) + "</p>")
+        items.append("<p>" + tr(
+            "💳 Нажмите «Оплатить» у нужного счёта, чтобы выбрать "
+            "валюту и актуальные способы оплаты ViMi Pay. "
+            "Реквизиты появятся после выбора способа.",
+            "💳 Press Pay on the invoice to choose currency and the "
+            "current ViMi Pay payment methods. Instructions appear "
+            "after selecting a method.",
+        ) + "</p>")
     items.append("<p><i>" + tr(
         "Это счета ViMi Pay, не счета ваших покупателей. "
         "Оплаченный доступ сохраняется.",
@@ -1160,33 +1141,12 @@ def create_owner_setup_router(
                 + escape(str(item["due_at"])[:10]) + " · " + state,
             ])
         if report.unpaid:
-            lines.append("")
-            if getattr(report, "foreign_unpaid_count", 0):
-                lines.append(tr(
-                    "⚠️ Есть неоплаченные валютные счета. Общие рублёвые "
-                    "реквизиты скрыты: откройте карточку нужного счёта.",
-                    "⚠️ Unpaid foreign-currency invoices exist. Shared RUB "
-                    "bank details are hidden; open the individual invoice.",
-                ))
-            elif report.configured:
-                lines.append(tr("💳 <b>Реквизиты ViMi Pay</b>",
-                                "💳 <b>ViMi Pay bank instructions</b>"))
-                lines.append("<pre>" + escape(str(report.instructions)) + "</pre>")
-                lines.append(tr(
-                    "Укажите полный номер счёта в назначении платежа. "
-                    "После перевода платформа проверит поступление. "
-                    "Отправка денег сама по себе не отмечает счёт оплаченным.",
-                    "Include the full invoice ID in your transfer memo. "
-                    "The platform verifies receipt independently; "
-                    "a transfer does not automatically mark an invoice paid.",
-                ))
-            else:
-                lines.append(tr(
-                    "⚠️ Реквизиты ещё не опубликованы. "
-                    "Не переводите деньги до их появления.",
-                    "⚠️ Payment instructions have not been published. "
-                    "Do not transfer funds until they appear.",
-                ))
+            lines.append(tr(
+                "💳 Нажмите «Оплатить» рядом со счётом. Затем выберите "
+                "валюту и способ оплаты из списка ViMi Pay.",
+                "💳 Tap Pay on the invoice, then choose a currency and "
+                "one of ViMi Pay's available methods.",
+            ))
         lines.append("")
         lines.append(tr(
             "<i>Это только счета за обслуживание ViMi Pay, "
