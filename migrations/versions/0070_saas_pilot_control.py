@@ -232,9 +232,131 @@ def upgrade() -> None:
       RETURN public.platform_saas_pilot_status();
     END; $f$
     """)
+    # One audited invoice reconciler shared by the existing supervisor.
+    # It never touches subscriptions, access or buyer payment records.
+    op.execute("""
+    CREATE FUNCTION public.platform_saas_issue_due_batch()
+    RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      started timestamptz;
+      now_at timestamptz:=clock_timestamp();
+      period_start timestamptz;
+      prior record;
+      bot record;
+      accounting record;
+      previous_month date;
+      bot_issued integer:=0;
+      commission_issued integer:=0;
+      deferred integer:=0;
+      invoice uuid;
+      first_trial timestamptz;
+    BEGIN
+      PERFORM public.platform_saas_require_owner();
+      SELECT effective_from INTO started
+      FROM public.platform_saas_billing_control
+      WHERE id=1 AND enabled;
+      IF started IS NULL OR started>now_at THEN
+        RETURN jsonb_build_object(
+          'enabled',false,'bot_invoices',0,
+          'commission_invoices',0,'deferred',0
+        );
+      END IF;
+      IF NOT pg_try_advisory_xact_lock(
+        hashtextextended('vimi:saas:due-reconcile',0)
+      ) THEN
+        RETURN jsonb_build_object('enabled',true,'busy',true);
+      END IF;
+      -- Connected LIVE accounts only. The operator's own network is
+      -- explicitly excluded. A bot/account can never be invoiced twice
+      -- because the canonical issuer locks the bot and invoice_key.
+      FOR bot IN
+        SELECT b.id,b.created_at,p.owner_user_id
+        FROM public.bot_instances b
+        JOIN public.projects p ON p.id=b.project_id
+        JOIN public.telegram_users u ON u.id=p.owner_user_id
+        LEFT JOIN public.platform_operators o
+          ON o.telegram_user_id=u.telegram_user_id AND o.role='owner'
+        WHERE b.status='registered' AND o.telegram_user_id IS NULL
+        ORDER BY b.created_at,b.id LIMIT 100
+      LOOP
+        BEGIN
+          SELECT min(claimed_at) INTO first_trial
+          FROM public.merchant_platform_trial_claims t
+          WHERE t.owner_user_id=bot.owner_user_id AND t.scope='owner'
+            AND t.policy_key='vimi-saas-72h-v1';
+          IF first_trial IS NULL THEN deferred:=deferred+1;CONTINUE;END IF;
+          SELECT i.id,i.period_end,i.status
+            INTO prior
+          FROM public.platform_saas_invoices i
+          WHERE i.bot_instance_id=bot.id AND i.kind='prepayment'
+            AND i.status='issued'
+          ORDER BY i.period_end DESC LIMIT 1;
+          IF prior.id IS NOT NULL THEN
+            -- Do not stack future debts while the prior month's bill
+            -- remains unpaid. Once paid, renew with a real calendar month.
+            IF public.platform_saas_v2_remaining(prior.id)>0 THEN
+              CONTINUE;
+            END IF;
+            period_start:=greatest(prior.period_end,now_at);
+          ELSE
+            period_start:=greatest(started,first_trial+interval '72 hours');
+          END IF;
+          IF period_start>now_at+interval '3 days' THEN CONTINUE; END IF;
+          invoice:=public.platform_saas_issue_bot_invoice(
+            bot.id,period_start,period_start+interval '1 month'
+          );
+          IF invoice IS NOT NULL THEN bot_issued:=bot_issued+1; END IF;
+        EXCEPTION WHEN OTHERS THEN
+          -- Audit-safe deferred invoice: never issue with uncertain
+          -- owner, FX, source or exemption evidence. Retry later.
+          deferred:=deferred+1;
+        END;
+      END LOOP;
+      -- Closed Moscow calendar month, once per actual historical
+      -- merchant+owner. Source completeness and FX are revalidated by
+      -- the canonical 0068 issuer, which fails closed rather than
+      -- issuing a partial Stars/Crypto invoice.
+      previous_month:=date_trunc(
+        'month',(now_at AT TIME ZONE 'Europe/Moscow')::timestamp
+        -interval '1 month'
+      )::date;
+      FOR accounting IN
+        SELECT DISTINCT mp.merchant_id,mp.owner_user_id
+        FROM public.merchant_project_periods mp
+        JOIN public.telegram_users u ON u.id=mp.owner_user_id
+        LEFT JOIN public.platform_operators po
+          ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
+        WHERE po.telegram_user_id IS NULL
+          AND mp.started_at<
+            (previous_month+interval '1 month')::timestamp
+                 AT TIME ZONE 'Europe/Moscow'
+          AND (mp.ended_at IS NULL OR mp.ended_at>=
+                previous_month::timestamp AT TIME ZONE 'Europe/Moscow')
+        ORDER BY mp.owner_user_id,mp.merchant_id LIMIT 100
+      LOOP
+        BEGIN
+          invoice:=public.platform_saas_issue_commission_invoice(
+            accounting.merchant_id,accounting.owner_user_id,
+            previous_month,'{}'::jsonb
+          );
+          IF invoice IS NOT NULL THEN
+            commission_issued:=commission_issued+1;
+          END IF;
+        EXCEPTION WHEN OTHERS THEN
+          deferred:=deferred+1;
+        END;
+      END LOOP;
+      RETURN jsonb_build_object(
+        'enabled',true,'bot_invoices',bot_issued,
+        'commission_invoices',commission_issued,'deferred',deferred
+      );
+    END; $f$
+    """)
     for signature in (
         "platform_saas_pilot_status()",
         "platform_saas_pilot_change(text,integer,integer)",
+        "platform_saas_issue_due_batch()",
     ):
         op.execute(f"REVOKE ALL ON FUNCTION public.{signature} FROM PUBLIC")
         op.execute(f"""
