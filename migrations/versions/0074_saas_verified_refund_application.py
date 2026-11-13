@@ -296,6 +296,53 @@ BEGIN
 END; $fn$""")
     op.execute("""REVOKE ALL ON FUNCTION
       public.platform_saas_reconcile_verified_refunds(uuid) FROM PUBLIC""")
+    # Existing buyer proof handler, unchanged signature and privileges.
+    # Its quote expiry/proof write now serializes with refund allocation.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_v2_submit_proof(
+      p_attempt uuid,p_bot bigint,p_chat bigint,p_message bigint,
+      p_file_id text,p_kind text
+    ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE actor uuid; original record; existing uuid; proof uuid;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      -- Both proof submission and verified-refund allocation use the same
+      -- advisory lock before checking quote expiry or credit eligibility.
+      -- An expired quote cannot race an uncommitted genuine payment proof.
+      PERFORM pg_advisory_xact_lock(
+        hashtextextended('vimi:saas:verified-refunds',0)
+      );
+      SELECT * INTO original
+      FROM public.platform_saas_payment_attempts_v2
+      WHERE id=p_attempt FOR UPDATE;
+      IF original.id IS NULL OR original.owner_user_id IS DISTINCT FROM actor
+         OR p_bot IS NULL OR p_bot<=0 OR p_chat IS NULL OR p_chat<=0
+         OR p_chat IS DISTINCT FROM (
+           SELECT u.telegram_user_id FROM public.telegram_users u
+           WHERE u.id=actor
+         )
+         OR p_message IS NULL OR p_message<=0
+         OR length(coalesce(p_file_id,'')) NOT BETWEEN 8 AND 512
+         OR p_kind NOT IN ('photo','document')
+         OR clock_timestamp()>original.expires_at THEN
+        RAISE EXCEPTION 'Original payer proof is unavailable'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT id INTO existing FROM public.platform_saas_payment_proofs_v2
+      WHERE attempt_id=p_attempt;
+      IF existing IS NOT NULL THEN RETURN existing; END IF;
+      proof:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_proofs_v2(
+        id,attempt_id,source_bot_id,source_chat_id,
+        source_message_id,source_file_id,file_type
+      ) VALUES(
+        proof,p_attempt,p_bot,p_chat,p_message,p_file_id,p_kind
+      );
+      RETURN proof;
+    END; $f$
+    """)
+
     op.execute("""
       DO $grant$ BEGIN
         IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime') THEN
