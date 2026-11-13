@@ -90,6 +90,59 @@ def preview_offer_screen(
     )
 
 
+def preview_crypto_method_screen(
+    offers: tuple[BuyerOffer, ...], *, price_id: UUID, page: int = 0,
+) -> tuple[str, InlineKeyboardMarkup] | None:
+    """Show the real Crypto Pay option without creating a payable invoice.
+
+    The provider deep link belongs exclusively to live buyer checkout;
+    previewing must never call createInvoice or generate access rights.
+    """
+    crypto_id = UUID(int=1)
+    offer = next(
+        (item for item in offers
+         if item.option.plan_price_id == price_id
+         and any(method.payment_method_id == crypto_id for method in item.methods)),
+        None,
+    )
+    if offer is None:
+        return None
+    option = offer.option
+    amount = format_amount(option.amount, option.currency_precision)
+    period = format_period(option.duration_value, option.duration_unit)
+    content = (
+        _preview_title()
+        + "💎 <b>Crypto Pay</b>\n\n"
+        + "📢 " + escape(offer.resource_label) + "\n"
+        + (""
+           if is_period_only_plan_name(
+               option.plan_name, option.duration_value, option.duration_unit,
+           )
+           else "🎟 <b>" + escape(option.plan_name) + "</b>\n")
+        + "⏳ " + escape(period) + "\n"
+        + "💰 <b>" + escape(display_price(
+            amount, option.currency_code,
+        )) + "</b>\n\n"
+        + tr(
+            "При реальной покупке покупатель получит ссылку Crypto Pay. "
+            "Проверка оплаты и выдача доступа выполняются автоматически.",
+            "In a real purchase, the buyer receives a Crypto Pay link. "
+            "Payment verification and access are handled automatically.",
+        )
+        + _preview_disclaimer()
+    )
+    return content, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=tr("⬅️ К тарифу", "⬅️ Back to plan"),
+            callback_data=f"own:pvoffer:{encode_uuid(price_id)}:{page}",
+        )],
+        [InlineKeyboardButton(
+            text=tr("⬅️ Панель администратора", "⬅️ Admin panel"),
+            callback_data="own:dashboard",
+        )],
+    ])
+
+
 def _instruction_pages(instruction: str, *, max_escaped: int) -> tuple[str, ...]:
     """Split on characters BEFORE HTML escaping, never inside an entity."""
     parts = []
