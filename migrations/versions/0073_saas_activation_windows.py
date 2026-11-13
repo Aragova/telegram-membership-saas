@@ -21,9 +21,16 @@ def upgrade() -> None:
     op.execute("""CREATE FUNCTION public.platform_saas_first_activation()
 RETURNS timestamptz LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
-  SELECT min(effective_from)
-  FROM public.platform_saas_release_audit
-  WHERE action='arm' AND effective_from IS NOT NULL;
+  SELECT min(a.effective_from)
+  FROM public.platform_saas_release_audit a
+  WHERE a.action='arm' AND a.effective_from IS NOT NULL
+    -- An ARM cancelled during its five-minute delay never became live.
+    AND NOT EXISTS(
+      SELECT 1 FROM public.platform_saas_release_audit stopped
+      WHERE stopped.action='stop'
+        AND stopped.created_at>=a.created_at
+        AND stopped.created_at<a.effective_from
+    );
 $f$""")
     op.execute("""CREATE FUNCTION public.platform_saas_sale_active_at(p_paid timestamptz)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
@@ -31,11 +38,17 @@ SET search_path=pg_catalog,public AS $f$
   SELECT coalesce((
     SELECT v.action='arm'
     FROM (
-      SELECT action,
-        CASE WHEN action='arm' THEN effective_from ELSE created_at END
-          AS action_at,created_at
-      FROM public.platform_saas_release_audit
-      WHERE action IN ('arm','stop')
+      SELECT a.action,
+        CASE WHEN a.action='arm' THEN a.effective_from ELSE a.created_at END
+          AS action_at,a.created_at
+      FROM public.platform_saas_release_audit a
+      WHERE a.action IN ('arm','stop')
+        AND (a.action<>'arm' OR NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_release_audit stopped
+          WHERE stopped.action='stop'
+            AND stopped.created_at>=a.created_at
+            AND stopped.created_at<a.effective_from
+        ))
     ) v
     WHERE p_paid IS NOT NULL AND v.action_at<=p_paid
     ORDER BY v.action_at DESC,v.created_at DESC
