@@ -35,10 +35,20 @@ SET search_path=pg_catalog,public AS $fn$
      ON mp.owner_user_id=e.owner_user_id
     AND mp.started_at<=e.effective_from
     AND (mp.ended_at IS NULL OR mp.ended_at>e.effective_from)
-   JOIN public.bot_instances b
-     ON b.project_id=mp.project_id
-    AND b.created_at<e.effective_from
+   -- Connection/removal usage events are immutable even after a bot
+   -- is retired and its bot_instances row has been physically removed.
+   JOIN public.platform_usage_events connected
+     ON connected.project_id=mp.project_id
+    AND connected.event_type='bot_connected'
+    AND connected.occurred_at<e.effective_from
    WHERE e.owner_user_id=p_owner
+     AND NOT EXISTS(
+       SELECT 1 FROM public.platform_usage_events gone
+       WHERE gone.project_id=connected.project_id
+         AND gone.source_id=connected.source_id
+         AND gone.event_type='bot_removed'
+         AND gone.occurred_at<=e.effective_from
+     )
  );
 $fn$;""")
     op.execute("""CREATE FUNCTION public.platform_saas_billable_after(p_owner uuid)
