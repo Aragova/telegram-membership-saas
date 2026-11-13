@@ -12,7 +12,12 @@ from uuid import UUID
 from aiogram import Bot, Router
 from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter
-from aiogram.types import Message
+from aiogram.types import (
+    Message,
+    RichBlockParagraph,
+    RichBlockSectionHeading,
+    RichText,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
@@ -24,6 +29,53 @@ from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
 
 _LOG = logging.getLogger(__name__)
 _PREFIX = "🧾 ViMi Pay · "
+
+
+def _rich_text_prefix(value: object, *, max_chars: int = 160, depth: int = 0) -> str | None:
+    """Read only bounded text nodes from Telegram's RichTextUnion.
+
+    Rich bot messages do not populate Message.text. Their visible content
+    arrives as RichMessage.blocks, potentially with a nested inline <code>
+    UUID. Do not parse unknown objects or scrape arbitrary JSON/text dumps.
+    """
+    if depth > 8:
+        return None
+    if isinstance(value, str):
+        return value[:max_chars]
+    if isinstance(value, list):
+        pieces: list[str] = []
+        remaining = max_chars
+        for element in value[:48]:
+            if remaining <= 0:
+                break
+            part = _rich_text_prefix(
+                element, max_chars=remaining, depth=depth + 1,
+            )
+            if part is None:
+                return None
+            pieces.append(part)
+            remaining -= len(part)
+        return "".join(pieces)
+    if isinstance(value, RichText):
+        return _rich_text_prefix(
+            value.text, max_chars=max_chars, depth=depth + 1,
+        ) if hasattr(value, "text") else None
+    return None
+
+
+def _invoice_prompt_text(prompt: Message) -> str | None:
+    """Handle both classic HTML and already-issued Telegram Rich invoices."""
+    plain = prompt.text or prompt.caption
+    if plain:
+        return plain
+    rich = getattr(prompt, "rich_message", None)
+    blocks = getattr(rich, "blocks", None)
+    if not blocks:
+        return None
+    first = blocks[0]
+    if not isinstance(first, (RichBlockParagraph, RichBlockSectionHeading)):
+        return None
+    return _rich_text_prefix(first.text)
 
 
 def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
@@ -45,7 +97,7 @@ def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
         or prompt.from_user.id != bot_id
     ):
         return None
-    text = prompt.text or prompt.caption or ""
+    text = _invoice_prompt_text(prompt) or ""
     if not text.startswith(_PREFIX):
         return None
     remainder = text[len(_PREFIX):].strip()
