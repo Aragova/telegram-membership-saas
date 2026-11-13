@@ -1204,7 +1204,8 @@ def create_owner_setup_router(
         if nav:
             rows.append(nav)
         for item in report.invoices:
-            rows.append([_button(
+            invoice_token=encode_uuid(UUID(str(item["id"])))
+            controls=[_button(
                 ("✅ " if item["status"] == "paid" else "🧾 ")
                 + str(item["id"])[:8] + " · "
                 + (
@@ -1213,9 +1214,15 @@ def create_owner_setup_router(
                     if (item.get("settlement") or {}).get("locked")
                     else str(item["amount_rub"]) + " ₽"
                 ),
-                "saasbill:" + encode_uuid(UUID(str(item["id"])))
-                + ":" + str(page),
-            )])
+                "saasbill:" + invoice_token + ":" + str(page),
+            )]
+            if item["status"] != "paid":
+                controls.append(_button(
+                    tr("💳 Оплатить", "💳 Pay"),
+                    "spm:" + invoice_token + ":RUB:" + _encode_saas_page(page),
+                    "success",
+                ))
+            rows.append(controls)
         rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
         rows.append([_button(
             tr("⬅️ Мои боты", "⬅️ My bots") if project_id is None
