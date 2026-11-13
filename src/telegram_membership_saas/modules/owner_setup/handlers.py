@@ -6046,16 +6046,14 @@ def create_owner_setup_router(
                     payload={"mode": mode, "target": target},
                     text=tr(
                         "💱 <b>Добавить валюту</b>\n\n"
-                        "Введите международный код, например: UAH, BYN, "
-                        "GBP, CNY, JPY, BTC. Доступны валюты ISO 4217 "
-                        "и криптовалюты из справочника ViMi Pay.\n\n"
-                        "Выбранная валюта появится только в этом боте. "
+                        "Введите обычный код валюты, например UAH, BYN, "
+                        "GBP, CNY или JPY. ⭐ Telegram Stars и 💎 Crypto Pay "
+                        "настраиваются в разделе «Способы оплаты».\n\n"
                         "Цена и способ оплаты настраиваются отдельно.",
                         "💱 <b>Add currency</b>\n\n"
-                        "Enter an international code, e.g. UAH, BYN, "
-                        "GBP, CNY, JPY, BTC. ISO 4217 and existing ViMi Pay "
-                        "cryptocurrency codes are supported.\n\n"
-                        "The currency is added only to this bot. "
+                        "Enter a fiat currency code, such as UAH, BYN, "
+                        "GBP, CNY or JPY. ⭐ Telegram Stars and 💎 Crypto Pay "
+                        "are configured in Payment methods.\n\n"
                         "Prices and payment instructions are configured separately.",
                     ),
                 )
