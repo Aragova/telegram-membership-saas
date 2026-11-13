@@ -7,6 +7,14 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from aiogram.types import (
+    Message,
+    RichBlockParagraph,
+    RichBlockSectionHeading,
+    RichMessage,
+    RichTextBold,
+    RichTextCode,
+)
 
 from telegram_membership_saas.modules import platform_saas_receipt_handlers as ingress
 from telegram_membership_saas.telegram_adapter import (
@@ -144,6 +152,109 @@ async def test_registered_receipt_ack_precedes_optional_operator_push(monkeypatc
     ).message.handlers[0].callback(message, bot)
     bot.send_document.assert_awaited_once()
     assert bot.send_document.await_args.args[0] == 999
+
+
+
+@pytest.mark.parametrize("first_block", ["paragraph", "heading"])
+@pytest.mark.asyncio
+async def test_old_rich_invoice_receipt_pdf_registers_in_existing_queue(
+    monkeypatch, first_block,
+):
+    """Telegram 10.1 Rich messages have rich_message.blocks, not .text."""
+    message, attempt = _receipt()
+    original = message.reply_to_message
+    original.text = None
+    original.caption = None
+    content = [
+        "🧾 ViMi Pay · ", RichTextCode(text=str(attempt)),
+        "\n\n💳 ViMi Pay · RUB",
+    ]
+    block = (
+        RichBlockParagraph(text=content)
+        if first_block == "paragraph" else
+        RichBlockSectionHeading(size=3, text=content)
+    )
+    original.rich_message = RichMessage(blocks=[block])
+    registered = AsyncMock()
+    monkeypatch.setattr(
+        ingress, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", registered)
+    monkeypatch.setattr(
+        ingress, "get_settings",
+        lambda: SimpleNamespace(platform_owner_telegram_id=None),
+    )
+    bot = SimpleNamespace(id=123, send_message=AsyncMock())
+    router = ingress.create_saas_receipt_router(object(), project_id=uuid4())
+    assert ingress.receipt_attempt_id(message, bot.id) == attempt
+    assert await router.message.handlers[0].filters[0].callback(
+        message, bot,
+    )
+    await router.message.handlers[0].callback(message, bot)
+    registered.assert_awaited_once()
+    assert registered.await_args.kwargs["attempt_id"] == attempt
+    assert registered.await_args.kwargs["file_type"] == "document"
+    assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
+
+
+def test_rich_invoice_reply_parses_from_actual_aiogram_message_payload():
+    """Use the Bot API payload shape, not mocked Message.text shortcuts."""
+    invoice = uuid4()
+    header = "🧾 ViMi Pay · "
+    user = {"id": 456, "is_bot": False, "first_name": "Merchant"}
+    source_bot = {"id": 123, "is_bot": True, "first_name": "ViMi"}
+    chat = {"id": 456, "type": "private", "first_name": "Merchant"}
+    receipt = Message.model_validate({
+        "message_id": 201,
+        "date": 1794620000,
+        "chat": chat,
+        "from": user,
+        "document": {
+            "file_id": "fake-document", "file_unique_id": "unique-document",
+        },
+        "reply_to_message": {
+            "message_id": 200,
+            "date": 1794619900,
+            "chat": chat,
+            "from": source_bot,
+            "rich_message": {
+                "blocks": [{
+                    "type": "paragraph",
+                    "text": [header, {
+                        "type": "code", "text": str(invoice),
+                    }, "\n\n💳 RUB"],
+                }],
+            },
+        },
+    })
+    assert receipt.reply_to_message.text is None
+    assert receipt.reply_to_message.rich_message is not None
+    assert ingress.receipt_attempt_id(receipt, source_bot["id"]) == invoice
+    assert ingress.receipt_attempt_id(receipt, 111) is None
+
+
+def test_rich_receipt_rejects_unrelated_blocks_and_deceptive_content():
+    message, attempt = _receipt()
+    prompt = message.reply_to_message
+    prompt.text = None
+    prompt.caption = None
+    prompt.rich_message = RichMessage(blocks=[
+        RichBlockParagraph(text=[
+            "📂 File Sales · ", RichTextCode(text=str(attempt)),
+        ]),
+    ])
+    assert ingress.receipt_attempt_id(message, 123) is None
+    prompt.rich_message = RichMessage(blocks=[
+        RichBlockParagraph(text=RichTextBold(text="🧾 ViMi Pay · invalid")),
+    ])
+    assert ingress.receipt_attempt_id(message, 123) is None
+    prompt.rich_message = RichMessage(blocks=[
+        RichBlockParagraph(text=[
+            "🧾 ViMi Pay · ", RichTextCode(text=str(attempt)),
+        ]),
+    ])
+    prompt.from_user.id = 999
+    assert ingress.receipt_attempt_id(message, 123) is None
 
 
 def test_receipt_filter_rejects_foreign_bot_spoofed_or_unrelated_documents():
