@@ -67,6 +67,7 @@ from telegram_membership_saas.modules.owner_setup.bulk_sales import (
 )
 from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_catalog_screen,
+    preview_crypto_method_screen,
     preview_method_screen,
     preview_offer_screen,
 )
@@ -3176,7 +3177,11 @@ def create_owner_setup_router(
             raise PermissionError("Нет прав на управление этим ботом")
 
         async with system_project_session_scope(factory, project_id) as session:
-            offers = await list_buyer_offers(session, project_id=project_id)
+            # Pass the connected bot identity so this read-only preview has
+            # the same enabled Crypto Pay choices as real buyer checkout.
+            offers = await list_buyer_offers(
+                session, project_id=project_id, bot_id=bot.id,
+            )
             if method_id is not None and price_id is not None:
                 # Method must still be checkout-eligible for this exact price.
                 eligible = any(
@@ -3186,20 +3191,28 @@ def create_owner_setup_router(
                 )
                 if not eligible:
                     raise ValueError("Способ оплаты недоступен в этом проекте")
-                method = await session.scalar(
-                    select(PaymentMethod).where(
-                        PaymentMethod.id == method_id,
-                        PaymentMethod.project_id == project_id,
-                        PaymentMethod.status == "active",
+                if method_id.int == 1:
+                    # Synthetic Crypto Pay checkout method is not a bank
+                    # PaymentMethod row. Never open a real provider invoice
+                    # from owner preview, even for a stale callback.
+                    rendered = preview_crypto_method_screen(
+                        offers, price_id=price_id, page=page,
                     )
-                )
-                if method is None:
-                    raise ValueError("Способ оплаты недоступен в этом проекте")
-                rendered = preview_method_screen(
-                    offers, price_id=price_id, payment_method_id=method_id,
-                    instruction_template=method.instruction_template, page=page,
-                    instruction_page=instruction_page,
-                )
+                else:
+                    method = await session.scalar(
+                        select(PaymentMethod).where(
+                            PaymentMethod.id == method_id,
+                            PaymentMethod.project_id == project_id,
+                            PaymentMethod.status == "active",
+                        )
+                    )
+                    if method is None:
+                        raise ValueError("Способ оплаты недоступен в этом проекте")
+                    rendered = preview_method_screen(
+                        offers, price_id=price_id, payment_method_id=method_id,
+                        instruction_template=method.instruction_template,
+                        page=page, instruction_page=instruction_page,
+                    )
             elif price_id is not None:
                 rendered = preview_offer_screen(
                     offers, price_id=price_id, page=page,
