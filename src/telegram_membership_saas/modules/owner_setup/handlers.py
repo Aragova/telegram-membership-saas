@@ -915,15 +915,24 @@ def create_owner_setup_router(
                 rows.append(platform_navigation(user_id))
         else:
             next_step = _next_setup_step(data)
-            trial = await merchant_saas_trial_status(
-                factory, actor_user_id=actor_id, project_id=project_id,
-            )
+            # Delegated project admins can manage the bot but do not own
+            # its account-level SaaS finances. Never block their dashboard
+            # just because the owner-only trial read is forbidden.
+            try:
+                trial = await merchant_saas_trial_status(
+                    factory, actor_user_id=actor_id, project_id=project_id,
+                )
+            except PermissionError:
+                trial = None
             text = (
                 tr("✦ <b>Панель администратора</b>\n",
                    "✦ <b>Admin dashboard</b>\n") +
                 f"<b>{escape(data.project_name)}</b>\n"
                 f"🌍 {escape(data.timezone)}\n\n"
-                + trial_status_classic(trial, timezone=data.timezone) + "\n\n"
+                + (
+                    trial_status_classic(trial, timezone=data.timezone) + "\n\n"
+                    if trial is not None else ""
+                )
                 + "\n".join(_progress(data))
                 + "\n\n"
                 + (
