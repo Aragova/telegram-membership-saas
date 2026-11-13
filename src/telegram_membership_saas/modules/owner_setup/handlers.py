@@ -96,7 +96,9 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
     parse_buyer_notification,
 )
 from telegram_membership_saas.modules.owner_setup.currencies import (
+    disable_owner_stars_price,
     enable_owner_currency,
+    list_owner_fiat_currencies,
 )
 from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
     parse_customer_command,
@@ -2590,9 +2592,10 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
         )
         rows = []
-        codes = await owner_available_currencies(
+        codes = await list_owner_fiat_currencies(
             factory, actor_id=actor_id, project_id=project_id,
         )
+        fiat_prices = [price for price in data.prices if price.currency in codes]
         lines = [
             "📦 <b>" + escape(data.name) + "</b>",
             tr("Статус: ", "Status: ") + _status(data.status),
@@ -2601,9 +2604,10 @@ def create_owner_setup_router(
             "",
             tr("<b>Цены и оплата</b>", "<b>Prices and payments</b>"),
         ]
-        if not data.prices:
-            lines.append(tr("Цена ещё не указана.", "No price has been set yet."))
-        for price in data.prices:
+        if not fiat_prices:
+            lines.append(tr("Цена в обычной валюте ещё не указана.",
+                            "No fiat price has been set yet."))
+        for price in fiat_prices:
             lines.append(
                 ("✅ " if price.method_count or price.currency == "XTR" else "⚠️ ")
                 + escape(display_price(
@@ -2625,8 +2629,7 @@ def create_owner_setup_router(
             tr("➕ Другая валюта", "➕ Another currency"),
             "currencyadd:price:" + plan_id.hex,
         )])
-        if any(not price.method_count and price.currency != "XTR"
-               for price in data.prices):
+        if any(not price.method_count for price in fiat_prices):
             rows.append([
                 _button("➕ Подключить способ оплаты", "newmethod", "success"),
             ])
@@ -2804,9 +2807,10 @@ def create_owner_setup_router(
                     + encode_uuid(project_id),
                     "success" if bulk.enable_action else "danger",
                 )])
-        rows.append([_button(
-            "💎 Crypto Pay", "cryptopay", "success",
-        )])
+        rows.append([
+            _button("⭐ Telegram Stars", "starspage:0", "success"),
+            _button("💎 Crypto Pay", "cryptopay", "success"),
+        ])
         rows.append([_button("➕ Добавить способ", "newmethod", "success")])
         if methods or page > 0:
             rows.append([_button("➡️ Перейти к тарифам", "plans")])
@@ -3123,7 +3127,7 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID, *,
         project_id: UUID, mode: str, plan_id: UUID | None = None,
     ):
-        codes = await owner_available_currencies(
+        codes = await list_owner_fiat_currencies(
             factory, actor_id=actor_id, project_id=project_id,
         )
         rows = [
@@ -5975,7 +5979,7 @@ def create_owner_setup_router(
                 )
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
-                if currency not in await owner_available_currencies(
+                if currency not in await list_owner_fiat_currencies(
                     factory, actor_id=actor_id, project_id=project_id,
                 ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
@@ -6131,7 +6135,7 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id, project_id=project_id,
                     method_id=method_id,
                 )
-                codes = await owner_available_currencies(
+                codes = await list_owner_fiat_currencies(
                     factory, actor_id=actor_id, project_id=project_id,
                 )
                 rows = [
@@ -6866,7 +6870,7 @@ def create_owner_setup_router(
             elif flow.step == "currency_custom_code":
                 code = await enable_owner_currency(
                     factory, actor_id=actor_id, project_id=project_id,
-                    code=text,
+                    code=text, fiat_only=True,
                 )
                 mode = flow.payload.get("mode")
                 target = flow.payload.get("target")
