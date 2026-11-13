@@ -205,6 +205,47 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                         })
                 assert getattr(retired.value.orig,"sqlstate",None)=="42501"
                 await _identity(conn,operator)
+                # Legacy imported bank details have a stable identity even
+                # after their catalog method has been renamed. Obsolete bank
+                # edits update the authoritative row, never resurrect a
+                # disabled named method or rewrite old payment attempts.
+                await conn.execute(text("RESET ROLE"))
+                await conn.execute(text(
+                    "UPDATE platform_saas_payment_catalog_methods "
+                    "SET legacy_source='bank:RUB' WHERE id=:id"
+                ), {"id":method})
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await _identity(conn,operator)
+                await _call(conn,"platform_saas_payment_details_set",{
+                    "text":"Replaced legacy bank reference 555888",
+                },as_json=False)
+                current=await _call(conn,"platform_saas_catalog_read",{})
+                imported=next(x for x in current if x["id"]==str(method))
+                assert imported["instructions"]=="Replaced legacy bank reference 555888"
+                assert imported["name"]=="Bank transfer"
+                await _call(conn,"platform_saas_payment_details_set",{
+                    "text":None,
+                },as_json=False)
+                current=await _call(conn,"platform_saas_catalog_read",{})
+                assert not next(x for x in current if x["id"]==str(method))["enabled"]
+                await _call(conn,"platform_saas_payment_details_set",{
+                    "text":"Stale keyboard cannot re-enable 555888",
+                },as_json=False)
+                current=await _call(conn,"platform_saas_catalog_read",{})
+                assert not next(x for x in current if x["id"]==str(method))["enabled"]
+                # Both reminder phases must consult the named catalog,
+                # not the obsolete one-method-per-currency table.
+                await conn.execute(text("RESET ROLE"))
+                for fn in ("platform_saas_notice_schedule",
+                           "platform_saas_notice_claim"):
+                    body=(await conn.execute(text(
+                        "SELECT pg_get_functiondef(("
+                        ":signature)::regprocedure)"
+                    ), {"signature":"public."+fn+"()"})).scalar_one()
+                    assert "platform_saas_payment_catalog_currencies" in body
+                    assert "platform_saas_payment_methods_v2" not in body
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await _identity(conn,operator)
                 await _call(conn,"platform_saas_catalog_remove",{
                     "id":method,
                 },as_json=False)
