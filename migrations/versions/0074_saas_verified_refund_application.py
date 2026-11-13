@@ -773,6 +773,40 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_due_batch()
     """)
     op.execute("""REVOKE ALL ON FUNCTION
       public.platform_saas_verified_receipt_guard() FROM PUBLIC""")
+    # A void would strand an already allocated immutable refund claim.
+    op.execute("""
+      CREATE FUNCTION public.platform_saas_verified_credit_void_guard()
+      RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path=pg_catalog,public AS $fn$
+      BEGIN
+        IF OLD.status='issued' AND NEW.status='void'
+          AND (
+            EXISTS(
+              SELECT 1 FROM public.platform_saas_verified_credit_allocations a
+              WHERE a.invoice_id=OLD.id
+            )
+            OR EXISTS(
+              SELECT 1 FROM public.platform_saas_verified_credit_claims c
+              JOIN public.platform_saas_invoice_lines l
+                ON l.id=c.invoice_line_id
+              WHERE l.invoice_id=OLD.id
+            )
+          )
+        THEN
+          RAISE EXCEPTION 'Invoice with applied verified refund is immutable'
+            USING ERRCODE='42501';
+        END IF;
+        RETURN NEW;
+      END; $fn$
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_verified_credit_void_guard
+      BEFORE UPDATE ON public.platform_saas_invoices
+      FOR EACH ROW EXECUTE FUNCTION
+      public.platform_saas_verified_credit_void_guard()
+    """)
+    op.execute("""REVOKE ALL ON FUNCTION
+      public.platform_saas_verified_credit_void_guard() FROM PUBLIC""")
 
 
 def downgrade() -> None:
