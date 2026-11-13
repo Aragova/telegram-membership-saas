@@ -40,6 +40,16 @@ async def test_first_rollout_voids_only_uncollected_legacy_bills():
                 activated = (await conn.execute(
                     text("SELECT clock_timestamp()")
                 )).scalar_one()
+                await conn.execute(text(
+                    "INSERT INTO platform_saas_release_audit"
+                    " (id,actor_id,action,registered_bots,nonoperator_owners,"
+                    " effective_from,created_at)"
+                    " VALUES(:id,:actor,'arm',1,1,:start,:created)"
+                ), {
+                    "id": uuid4(), "actor": old_owner,
+                    "start": activated,
+                    "created": activated-timedelta(minutes=5),
+                })
                 old_trial = activated - timedelta(hours=72)
                 old_end = activated + timedelta(hours=72)
                 await conn.execute(text(
