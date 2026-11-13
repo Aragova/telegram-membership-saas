@@ -255,3 +255,137 @@ async def test_verified_star_refund_applies_once_and_carries_after_payment(
     finally:
         await engine.dispose()
         await admin.dispose()
+
+
+async def test_three_tiny_verified_stars_refunds_clear_cumulative_rounding():
+    """Three 0.0637 RUB fees invoice to 0.19, never leave a phantom kopeck."""
+    cfg = Settings()
+    engine = build_engine(cfg)
+    factory = build_session_factory(engine)
+    admin = create_async_engine(cfg.migration_database_url)
+    try:
+        operator_tg = _tid()
+        operator = await ensure_telegram_actor(
+            factory, telegram_id=operator_tg, username=None, first_name=None,
+        )
+        owner, merchant, project, bot, _ = await _project(factory, _tid())
+        at = datetime.now(UTC)
+        day = at.astimezone(ZoneInfo("Europe/Moscow")).date()
+        async with admin.connect() as conn:
+            tx = await conn.begin()
+            try:
+                await conn.execute(text(
+                    "INSERT INTO platform_operators(telegram_user_id,role)"
+                    " VALUES(:id,'owner')"
+                ), {"id": operator_tg})
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(operator)})
+                await conn.execute(text(
+                    "INSERT INTO platform_saas_daily_fx_rates "
+                    "(rate_date,currency_code,rub_per_unit,source_name,"
+                    "source_date,published_by) "
+                    "VALUES(:day,'USD',98,'CBR',:day,:actor)"
+                    " ON CONFLICT DO NOTHING"
+                ), {"day": day, "actor": operator})
+                bot_tg = (await conn.execute(text(
+                    "SELECT telegram_bot_id FROM bot_instances WHERE id=:id"
+                ), {"id": bot})).scalar_one()
+                folder, product = uuid4(), uuid4()
+                await conn.execute(text(
+                    "INSERT INTO file_sale_folders(id,project_id,name,status)"
+                    " VALUES(:id,:project,'Tiny refunds','active')"
+                ), {"id": folder, "project": project})
+                await conn.execute(text(
+                    "INSERT INTO file_sale_products("
+                    "id,project_id,folder_id,telegram_bot_id,name,"
+                    "status,stars_price)"
+                    " VALUES(:id,:project,:folder,:bot,"
+                    "'Tiny refunds','published',1)"
+                ), {"id": product, "project": project,
+                    "folder": folder, "bot": bot_tg})
+                invoice = await _invoice(
+                    conn, owner, merchant, bot, kind="commission",
+                    total="0.19", period_start=at-timedelta(hours=1),
+                )
+                for _ in range(3):
+                    purchase, star_sale, refund, line = (
+                        uuid4(), uuid4(), uuid4(), uuid4()
+                    )
+                    charge = "one-star-" + uuid4().hex
+                    payload = "fs:" + uuid4().hex
+                    await conn.execute(text(
+                        "INSERT INTO file_sale_purchases "
+                        "(id,project_id,product_id,telegram_bot_id,"
+                        "telegram_user_id,stars_amount,product_name,"
+                        "invoice_payload,telegram_charge_id,status,paid_at)"
+                        " VALUES(:id,:project,:product,:bot,7171,1,"
+                        "'Tiny refunds',:payload,:charge,'paid',:at)"
+                    ), {"id": purchase, "project": project,
+                        "product": product, "bot": bot_tg,
+                        "payload": payload, "charge": charge, "at": at})
+                    await conn.execute(text(
+                        "INSERT INTO platform_saas_star_sales("
+                        "id,source_kind,source_id,project_id,merchant_id,"
+                        "owner_user_id,telegram_bot_id,telegram_charge_id,"
+                        "stars_amount,usd_per_star,reward_usd,commission_usd,"
+                        "rate_effective_on,paid_at,billing_eligible)"
+                        " VALUES(:id,'file_stars',:purchase,:project,:merchant,"
+                        ":owner,:bot,:charge,1,0.013,0.013,0.00065,"
+                        "(SELECT max(effective_on) FROM "
+                        "platform_saas_star_reward_rates WHERE effective_on<=:day),"
+                        ":at,true)"
+                    ), {"id": star_sale, "purchase": purchase,
+                        "project": project, "merchant": merchant, "owner": owner,
+                        "bot": bot_tg, "charge": charge, "at": at, "day": day})
+                    await conn.execute(text(
+                        "INSERT INTO platform_saas_invoice_lines "
+                        "(id,invoice_id,project_id,source_kind,source_id,"
+                        "bot_instance_id,original_amount,original_currency,"
+                        "rub_per_unit,fee_rate,charge_rub)"
+                        " VALUES(:id,:invoice,:project,'file_stars',:purchase,"
+                        ":bot,1,'XTR',1.274,0.05,0.0637)"
+                    ), {"id": line, "invoice": invoice, "project": project,
+                        "purchase": purchase, "bot": bot})
+                    await conn.execute(text(
+                        "INSERT INTO file_sale_star_refunds("
+                        "id,project_id,purchase_id,telegram_bot_id,"
+                        "telegram_user_id,telegram_charge_id,invoice_payload,"
+                        "stars_amount,refunded_at)"
+                        " VALUES(:id,:project,:purchase,:bot,7171,"
+                        ":charge,:payload,1,:at)"
+                    ), {"id": refund, "project": project,
+                        "purchase": purchase, "bot": bot_tg,
+                        "charge": charge, "payload": payload, "at": at})
+                await conn.execute(text(
+                    "UPDATE platform_saas_invoices SET status='issued'"
+                    " WHERE id=:invoice"
+                ), {"invoice": invoice})
+                result = await _json(
+                    conn, "public.platform_saas_capture_star_refunds(50)"
+                )
+                assert result["recorded"] >= 3
+                applied = await _json(
+                    conn, "public.platform_saas_reconcile_verified_refunds(:owner)",
+                    owner=owner,
+                )
+                assert applied == {"claimed": 3, "allocated": 3}
+                claimed = (await conn.execute(text(
+                    "SELECT coalesce(sum(credit_rub),0) FROM "
+                    "platform_saas_verified_credit_claims "
+                    "WHERE owner_user_id=:owner"
+                ), {"owner": owner})).scalar_one()
+                assert claimed == Decimal("0.19")
+                remaining = (await conn.execute(text(
+                    "SELECT public.platform_saas_v2_remaining(:invoice)"
+                ), {"invoice": invoice})).scalar_one()
+                assert remaining == Decimal("0")
+                assert await _json(
+                    conn, "public.platform_saas_reconcile_verified_refunds(:owner)",
+                    owner=owner,
+                ) == {"claimed": 0, "allocated": 0}
+            finally:
+                await tx.rollback()
+    finally:
+        await engine.dispose()
+        await admin.dispose()
