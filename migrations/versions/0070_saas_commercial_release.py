@@ -201,9 +201,12 @@ def upgrade() -> None:
         -- Existing connected owners receive remaining/free trial credit,
         -- never retroactive billable sales. Prior claims cannot be reset.
         FOR enrolled_owner IN
-          SELECT p.owner_user_id,min(b.created_at) AS first_connected
+          SELECT p.owner_user_id,min(greatest(b.created_at,mp.started_at)) AS first_connected
           FROM public.bot_instances b
           JOIN public.projects p ON p.id=b.project_id
+          JOIN public.merchant_project_periods mp
+            ON mp.project_id=p.id AND mp.owner_user_id=p.owner_user_id
+           AND mp.ended_at IS NULL
           JOIN public.telegram_users u ON u.id=p.owner_user_id
           LEFT JOIN public.platform_operators po
             ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
@@ -327,9 +330,12 @@ def upgrade() -> None:
       -- During the activation delay, first-bot trial triggers are inactive.
       -- Reconcile those accounts without rewriting any historical claim.
       FOR recovery_owner IN
-        SELECT p.owner_user_id,min(b.created_at) AS first_connected
+        SELECT p.owner_user_id,min(greatest(b.created_at,mp.started_at)) AS first_connected
         FROM public.bot_instances b
         JOIN public.projects p ON p.id=b.project_id
+        JOIN public.merchant_project_periods mp
+          ON mp.project_id=p.id AND mp.owner_user_id=p.owner_user_id
+         AND mp.ended_at IS NULL
         JOIN public.telegram_users u ON u.id=p.owner_user_id
         LEFT JOIN public.platform_operators po
           ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
