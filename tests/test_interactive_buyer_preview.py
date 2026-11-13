@@ -1,14 +1,16 @@
 """Owner's read-only preview follows actual buyer offers without creating sales."""
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_catalog_screen,
+    preview_crypto_method_screen,
     preview_method_screen,
     preview_offer_screen,
 )
@@ -275,6 +277,122 @@ async def test_preview_requires_connected_owner_permission(monkeypatch):
     select_project.assert_not_awaited()
     bot.send_message.assert_not_awaited()
 
+
+
+
+def _crypto_offer(fixture):
+    original = fixture.offers[0]
+    crypto_method = replace(
+        original.methods[0],
+        payment_method_id=UUID(int=1),
+        payment_method_name="💎 Crypto Pay",
+    )
+    return BuyerOffer(
+        option=original.option,
+        methods=(*original.methods, crypto_method),
+        resource_label=original.resource_label,
+    )
+
+
+def test_preview_shows_crypto_with_no_payable_link_or_buyer_callback():
+    fixture = _offers()
+    preview_offers = (_crypto_offer(fixture),)
+    content, keyboard = preview_offer_screen(
+        preview_offers, price_id=fixture.rub_price,
+    )
+    crypto_callback = (
+        "own:pvmethod:" + encode_uuid(fixture.rub_price)
+        + ":" + encode_uuid(UUID(int=1)) + ":0"
+    )
+    assert "💎 Crypto Pay" in str(_buttons(keyboard))
+    assert any(cb == crypto_callback for _, cb in _buttons(keyboard))
+    assert not any(cb.startswith("buy:") for _, cb in _buttons(keyboard))
+    page = preview_crypto_method_screen(
+        preview_offers, price_id=fixture.rub_price,
+    )
+    assert page is not None
+    detail, controls = page
+    assert "💎 <b>Crypto Pay</b>" in detail
+    assert "500 RUB" in detail
+    assert "Демонстрация" in detail
+    assert "createInvoice" not in detail
+    assert all(button.url is None for row in controls.inline_keyboard
+               for button in row)
+    assert all((button.callback_data or "").startswith("own:")
+               for row in controls.inline_keyboard for button in row)
+    assert preview_crypto_method_screen(
+        fixture.offers, price_id=fixture.rub_price,
+    ) is None  # A stale synthetic callback cannot invent Crypto availability.
+
+
+async def test_owner_preview_crypto_uses_connected_bot_and_never_issues_invoice(
+    monkeypatch,
+):
+    fixture = _offers()
+    actor = uuid4()
+    monkeypatch.setattr(
+        owner_ui, "ensure_telegram_actor", AsyncMock(return_value=actor),
+    )
+    monkeypatch.setattr(
+        owner_ui, "can_manage_project", AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        owner_ui, "get_selected_project",
+        AsyncMock(return_value=fixture.project_id),
+    )
+    get_offers = AsyncMock(return_value=(_crypto_offer(fixture),))
+    monkeypatch.setattr(owner_ui, "list_buyer_offers", get_offers)
+    session = MagicMock()
+    session.scalar = AsyncMock()
+
+    @asynccontextmanager
+    async def read_scope(*_args, **_kwargs):
+        yield session
+
+    monkeypatch.setattr(
+        owner_ui, "system_project_session_scope",
+        MagicMock(side_effect=read_scope),
+    )
+    router = owner_ui.create_owner_setup_router(
+        MagicMock(), fixed_project_id=fixture.project_id,
+    )
+    callback = next(
+        x.callback for x in router.callback_query.handlers
+        if x.callback.__name__ == "owner_callback"
+    )
+    query = SimpleNamespace(
+        data="own:pvoffer:" + encode_uuid(fixture.rub_price) + ":0",
+        message=SimpleNamespace(
+            chat=SimpleNamespace(type="private", id=401), message_id=15,
+        ),
+        from_user=SimpleNamespace(id=401, username="owner", first_name="Owner"),
+        answer=AsyncMock(),
+    )
+    bot = MagicMock()
+    bot.id = 300
+    bot.send_message = AsyncMock()
+    bot.edit_message_text = AsyncMock()
+
+    await callback(query, bot)
+    assert get_offers.await_args.kwargs == {
+        "project_id": fixture.project_id, "bot_id": 300,
+    }
+    assert "💎 Crypto Pay" in str(_buttons(
+        bot.edit_message_text.await_args.kwargs["reply_markup"],
+    ))
+    query.data = (
+        "own:pvmethod:" + encode_uuid(fixture.rub_price)
+        + ":" + encode_uuid(UUID(int=1)) + ":0"
+    )
+    await callback(query, bot)
+    assert "💎 <b>Crypto Pay</b>" in bot.edit_message_text.await_args.args[0]
+    assert "Демонстрация" in bot.edit_message_text.await_args.args[0]
+    session.scalar.assert_not_awaited()
+    assert all(button.url is None for row in
+               bot.edit_message_text.await_args.kwargs[
+                   "reply_markup"
+               ].inline_keyboard for button in row)
+    bot.send_invoice.assert_not_called()
 
 def test_max_allowed_instruction_is_paginated_without_broken_html_entities():
     fixture = _offers()
