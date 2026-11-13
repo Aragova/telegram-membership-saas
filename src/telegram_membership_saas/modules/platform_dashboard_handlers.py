@@ -37,6 +37,8 @@ from telegram_membership_saas.modules.platform_dashboard import (
 )
 from telegram_membership_saas.modules.platform_risk import platform_merchant_risk_report
 from telegram_membership_saas.modules.platform_saas_billing_service import (
+    commercial_release_change,
+    commercial_release_status,
     confirm_saas_receipt,
     platform_saas_invoice_report,
 )
@@ -1475,6 +1477,141 @@ def create_platform_dashboard_router(
                         "v2proofs:" + page_token,
                     )]]), message_id=message_id,
                 )
+            elif tokens[1:] == ["commercial"]:
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                status = await commercial_release_status(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, settings=config,
+                )
+                bot_count = int(status["registered_bots"])
+                other_count = int(status["nonoperator_owners"])
+                enabled = bool(status["billing_enabled"])
+                lines = [
+                    tr("💰 <b>ViMi Pay · Монетизация</b>",
+                       "💰 <b>ViMi Pay · Monetization</b>"),
+                    tr("Статус: ", "Status: ") + (
+                        tr("<b>Работает</b>", "<b>Active</b>")
+                        if enabled else
+                        tr("<b>Выключено</b>", "<b>Disabled</b>")
+                    ),
+                    tr("Подключено ботов: ", "Connected bots: ")
+                    + str(bot_count),
+                    tr("Боты владельца платформы: ", "Platform-owner bots: ")
+                    + str(status["operator_bots"])
+                    + tr(" (без начислений)", " (exempt)"),
+                    tr("Боты других аккаунтов: ", "Other-owner bots: ")
+                    + str(status["nonoperator_bots"]),
+                    tr("Других аккаунтов: ", "Other owner accounts: ")
+                    + str(other_count),
+                    tr("Непроверенных освобождений: ",
+                       "Unverified creator exemptions: ")
+                    + str(status["operator_exemption_pending"]),
+                    tr("Счета к оплате: ", "Outstanding invoices: ")
+                    + str(status["open_invoices"]),
+                    tr("Ограничения: ", "New-commerce holds: ")
+                    + (tr("включены", "enabled")
+                       if status["holds_enabled"] else
+                       tr("выключены", "off")),
+                    tr("72 часа бесплатно, затем 150 ₽/$3 за бот и 5% "
+                       "от подтверждённых продаж.",
+                       "72h free, then RUB 150/$3 per bot and 5% "
+                       "of verified sales."),
+                    tr("Покупки и действующий доступ не отключаются.",
+                       "Existing paid access and purchases stay active."),
+                ]
+                if status["billing_from"]:
+                    lines.append(tr("Начало: ", "Effective: ")
+                                 + escape(str(status["billing_from"])))
+                rows = [[_button(
+                    tr("⏹ Отключить монетизацию",
+                       "⏹ Disable monetization")
+                    if enabled else
+                    tr("💰 Включить монетизацию",
+                       "💰 Enable monetization"),
+                    "commercialconfirm:" + (
+                        "stop" if enabled else "arm"
+                    ) + ":" + str(bot_count) + ":" + str(other_count),
+                )], [_button(
+                    tr("⬅️ Счета", "⬅️ Invoices"), "billing:0",
+                )]]
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text="\n".join(lines), reply_markup=_keyboard(rows),
+                    message_id=message_id,
+                )
+            elif len(tokens) == 5 and tokens[1] == "commercialconfirm":
+                _, _, action, bot_count_str, owner_count_str = tokens
+                if (action not in ("arm", "stop")
+                    or not bot_count_str.isdecimal()
+                    or not owner_count_str.isdecimal()):
+                    raise ValueError("Invalid monetization request")
+                body = (
+                    tr("⚠️ <b>Запустить реальную монетизацию?</b>\n"
+                       "Без начислений задним числом; существующие другие "
+                       "аккаунты получат оставшийся/уже истёкший 72-часовой "
+                       "период. Ограничения новых продаж только после "
+                       "7 дней просрочки. Оплаченный доступ сохраняется.",
+                       "⚠️ <b>Activate real monetization?</b>\n"
+                       "No retroactive charges. Existing other accounts "
+                       "keep their 72h trial credit. New checkouts may be "
+                       "held after seven overdue days; paid access remains.")
+                    if action == "arm" else
+                    tr("⏹ <b>Выключить коммерческие начисления?</b>\n"
+                       "История платежей и доступ покупателей сохраняются.",
+                       "⏹ <b>Disable commercial billing?</b>\n"
+                       "Payment history and buyer access are retained.")
+                )
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id, text=body,
+                    reply_markup=_keyboard([
+                        [_button(
+                            tr("✅ Подтвердить", "✅ Confirm"),
+                            "commercialapply:" + action + ":"
+                            + bot_count_str + ":" + owner_count_str,
+                        )],
+                        [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                 "commercial")],
+                    ]), message_id=message_id,
+                )
+            elif len(tokens) == 5 and tokens[1] == "commercialapply":
+                _, _, action, bot_count_str, owner_count_str = tokens
+                if (action not in ("arm", "stop")
+                    or not bot_count_str.isdecimal()
+                    or not owner_count_str.isdecimal()):
+                    raise ValueError("Invalid monetization confirmation")
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                await commercial_release_change(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    action=action, expected_bots=int(bot_count_str),
+                    expected_other_owners=int(owner_count_str),
+                    settings=config,
+                )
+                status = await commercial_release_status(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, settings=config,
+                )
+                await _render_platform_screen(
+                    bot, chat_id=query.from_user.id,
+                    text=tr("💰 Монетизация: ", "💰 Monetization: ")
+                    + (tr("<b>активирована</b>", "<b>activated</b>")
+                       if status["billing_enabled"] else
+                       tr("<b>выключена</b>", "<b>disabled</b>"))
+                    + tr("\nДата начала: ", "\nEffective from: ")
+                    + escape(str(status["billing_from"] or "—")),
+                    reply_markup=_keyboard([[_button(
+                        tr("⬅️ Монетизация", "⬅️ Monetization"),
+                        "commercial",
+                    )]]), message_id=message_id,
+                )
             elif len(tokens) == 3 and tokens[1] == "billing":
                 page_token = tokens[2]
                 if not page_token.isascii() or not page_token.isdecimal():
@@ -1509,6 +1646,10 @@ def create_platform_dashboard_router(
                     nav.append(_button("➡️", f"billing:{page + 1}"))
                 if nav:
                     rows.append(nav)
+                rows.append([_button(
+                    tr("💰 Монетизация", "💰 Monetization"),
+                    "commercial",
+                )])
                 rows.append([_button(
                     tr("🧾 Чеки на проверку", "🧾 Pending payment proofs"),
                     "v2proofs:0",
