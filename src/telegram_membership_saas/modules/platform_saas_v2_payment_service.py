@@ -38,6 +38,8 @@ async def _rpc(
         "platform_saas_v2_approve_attempt": ("attempt", "bank_reference"),
         "platform_saas_v2_reject_attempt": ("attempt", "reason"),
         "platform_saas_v2_pending_proofs": ("page",),
+        "platform_saas_price_profile_read": (),
+        "platform_saas_price_profile_set": ("currency",),
     }
     keys = names.get(name)
     if keys is None or set(arguments) != set(keys):
@@ -52,12 +54,33 @@ async def _rpc(
         "platform_saas_v2_methods_read",
         "platform_saas_v2_create_attempt",
         "platform_saas_v2_pending_proofs",
+        "platform_saas_price_profile_read",
+        "platform_saas_price_profile_set",
     }:
         query = query.columns(data=JSONB)
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
     ) as session:
         return (await session.execute(query, arguments)).scalar_one()
+
+
+async def saas_price_profile(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, currency: str | None = None,
+    project_id: UUID | None = None,
+) -> dict:
+    """Owner's real RUB 150 or USD 3 service plan, no simulation."""
+    if currency is not None and currency not in {"RUB", "USD"}:
+        raise ValueError("Unknown ViMi Pay monthly service price")
+    result = await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name=("platform_saas_price_profile_set" if currency is not None
+              else "platform_saas_price_profile_read"),
+        arguments=({"currency": currency} if currency is not None else {}),
+    )
+    if not isinstance(result, dict) or result.get("currency") not in ("RUB", "USD"):
+        raise RuntimeError("Invalid ViMi Pay service price")
+    return result
 
 
 async def saas_v2_available_methods(
