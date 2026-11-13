@@ -5,7 +5,6 @@ with SAVEPOINT-backed helper sessions. A second connection verifies rollback.
 """
 import os
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
