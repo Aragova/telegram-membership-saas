@@ -5,6 +5,7 @@ but each button performs a fresh server-side role check.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from html import escape
@@ -42,6 +43,7 @@ from telegram_membership_saas.modules.platform_saas_billing_service import (
     confirm_saas_receipt,
     platform_saas_invoice_report,
 )
+from telegram_membership_saas.modules.platform_saas_proof_media import show_pending_platform_proof
 from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_invoice_classic,
     issued_invoice_rich,
@@ -1611,6 +1613,8 @@ def create_platform_dashboard_router(
                         + escape(str(item["source_message"]))
                     )
                     rows.append([
+                        _button(tr("📎 Чек", "📎 Receipt"),
+                                "v2proof:" + token + ":" + page_token),
                         _button("✅ #" + str(attempt_id)[:8],
                                 "v2review:ok:" + token + ":" + page_token),
                         _button("❌ #" + str(attempt_id)[:8],
@@ -1634,6 +1638,43 @@ def create_platform_dashboard_router(
                     text="\n".join(lines), reply_markup=_keyboard(rows),
                     message_id=message_id,
                 )
+            elif len(tokens) == 4 and tokens[1] == "v2proof":
+                # A receipt belongs to the bot that received it. The
+                # central bot must re-upload bytes, never another bot's
+                # file_id. No persistent receipt media or new debug menu.
+                _, _, attempt_token, page_token = tokens
+                if (not page_token.isascii() or not page_token.isdecimal()
+                        or int(page_token) > 100000):
+                    raise ValueError("Invalid receipt page")
+                attempt_id = decode_uuid(attempt_token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                await query.answer()
+                try:
+                    await show_pending_platform_proof(
+                        factory, central_bot=bot,
+                        operator_id=query.from_user.id, actor_id=actor_id,
+                        attempt_id=attempt_id, settings=config,
+                        locale_is_english=current_language() == "en",
+                    )
+                except Exception:
+                    # Never log bot-token/API URLs or original receipt data.
+                    logging.getLogger(__name__).warning(
+                        "ViMi Pay pending receipt cannot be fetched"
+                    )
+                    await bot.send_message(
+                        query.from_user.id,
+                        tr("⚠️ Чек недоступен через исходного бота. "
+                           "Проверьте подключение бота или запросите "
+                           "повторную отправку чека. Платёж не подтверждён.",
+                           "⚠️ The source bot cannot deliver this receipt. "
+                           "Check its connection or request another proof. "
+                           "No payment was approved."),
+                    )
+                return
             elif len(tokens) == 5 and tokens[1] == "v2review":
                 _, _, decision, attempt_token, page_token = tokens
                 if decision not in ("ok", "no"):
