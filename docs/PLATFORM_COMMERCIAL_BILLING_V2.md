@@ -1,3 +1,31 @@
+## 2026-11-13 — Operator proof viewer for the existing invoice queue (PR #153)
+
+The existing central `👑 Финансы → ⏳ Проверка платежей` now includes
+`📎 Чек / Receipt` on each **pending** submission. This is an operational
+bank-review action, not a test or duplicate checkout button.
+
+Telegram media `file_id` is scoped to the bot that received the user's
+proof. The central bot must **not** attempt to send that `file_id` itself.
+Instead the operator-authorized, read-only SQL lookup finds the actual
+registered source bot's project without exposing its credential; an existing
+project-scoped token read decrypts the source credential in memory. The
+original bot fetches the media, and the **central** bot immediately uploads
+the bytes to the configured platform operator's chat. Media is not persisted
+to the database or server filesystem; existing immutable proof metadata and
+confirmed/rejected payment allocations are unchanged. The viewer is limited
+to still-pending attempts and fails closed for removed/disabled bots, invalid
+credentials, oversized media or unavailable Telegram files. A proof originally
+submitted to the central bot (which has no customer BotInstance) is instead
+downloaded with that already-authenticated central bot, without requiring
+a tenant project or encryption key. No automatic bank approval follows
+receipt viewing.
+
+This does not grant a token to customer-supervisor, add a scheduler, change
+`compose.light100.yaml`, or enable SaaS billing/holds. For old pending proofs
+with an unavailable original bot, the operator must request resubmission.
+
+---
+
 ## 2026-11-13 — First-live-rollout correction (PR #148)
 
 The observed network has 29 platform-owner bots (exempt), 11 + 12 bots on

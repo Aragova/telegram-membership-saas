@@ -38,6 +38,7 @@ async def _rpc(
         "platform_saas_v2_approve_attempt": ("attempt", "bank_reference"),
         "platform_saas_v2_reject_attempt": ("attempt", "reason"),
         "platform_saas_v2_pending_proofs": ("page",),
+        "platform_saas_pending_proof_source": ("attempt",),
         "platform_saas_price_profile_read": (),
         "platform_saas_price_profile_set": ("currency",),
         "platform_saas_catalog_read": (),
@@ -64,6 +65,7 @@ async def _rpc(
         "platform_saas_v2_methods_read",
         "platform_saas_v2_create_attempt",
         "platform_saas_v2_pending_proofs",
+        "platform_saas_pending_proof_source",
         "platform_saas_price_profile_read",
         "platform_saas_price_profile_set",
         "platform_saas_catalog_read",
@@ -215,6 +217,30 @@ async def saas_v2_pending_proofs(
     )
     if not isinstance(result, dict) or not isinstance(result.get("items"), list):
         raise RuntimeError("Invalid bank review queue")
+    return result
+
+
+async def saas_pending_proof_source(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int, attempt_id: UUID,
+    settings: Settings | None = None,
+) -> dict:
+    """Only the database-provisioned operator can read a pending media source.
+
+    This returns a project locator, never a decrypted bot token or media.
+    """
+    _check_actor(actor_telegram_id, settings)
+    result = await _rpc(
+        factory, actor_id=actor_id,
+        name="platform_saas_pending_proof_source",
+        arguments={"attempt": attempt_id},
+    )
+    if not isinstance(result, dict) or not all(
+        result.get(field) for field in (
+            "source_bot", "source_file", "file_type",
+        )
+    ):
+        raise ValueError("Pending receipt source unavailable")
     return result
 
 
