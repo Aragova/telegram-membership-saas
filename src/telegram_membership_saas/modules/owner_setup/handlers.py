@@ -468,6 +468,29 @@ def _saas_stars_rich(stars: dict) -> str:
     return "\n".join(lines)
 
 
+def _encode_saas_page(page: int) -> str:
+    """Compact base36 page token: even page 100000 fits Telegram callbacks."""
+    if page<0 or page>100000:
+        raise ValueError("Invoice page out of range")
+    digits="0123456789abcdefghijklmnopqrstuvwxyz"
+    result=""
+    while page:
+        result=digits[page%36]+result
+        page//=36
+    return result or "0"
+
+
+def _decode_saas_page(token: str) -> int:
+    if not token or len(token)>4 or any(
+        x not in "0123456789abcdefghijklmnopqrstuvwxyz" for x in token
+    ):
+        raise ValueError("Invalid invoice page")
+    page=int(token,36)
+    if page>100000:
+        raise ValueError("Invoice page out of range")
+    return page
+
+
 def _saas_invoice_is_upcoming(item: dict) -> bool:
     """Only a future UTC due date is 'upcoming'; never infer paid status."""
     value = item.get("due_at")
@@ -1252,7 +1275,7 @@ def create_owner_setup_router(
             buttons.append([_button(
                 tr("💳 Оплатить полностью или частично",
                    "💳 Pay in full or partially"),
-                "spm:" + encode_uuid(invoice_id) + ":RUB:" + str(page),
+                "spm:" + encode_uuid(invoice_id) + ":RUB:" + _encode_saas_page(page),
                 "success",
             )])
         # New payments use one full/partial v2 path. Historical locked
@@ -4160,6 +4183,21 @@ def create_owner_setup_router(
                 await show_home(bot, user_id, actor_id)
                 await query.answer()
                 return
+            if action.startswith(("saasv2pay:","saasv2amount:",
+                                  "saasv2create:")):
+                # Old Telegram keyboards must NOT bypass disabled central
+                # methods by creating a v2 attempt from legacy bank records.
+                # They now enter the same authoritative operator selector.
+                legacy=action.split(":")
+                if len(legacy)<3:
+                    raise ValueError("Invalid legacy payment link")
+                token=legacy[1]
+                decode_uuid(token)
+                page_token=legacy[2]
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid legacy invoice page")
+                action=("spm:"+token+":RUB:"
+                        +_encode_saas_page(int(page_token)))
             if action.startswith(("spm:","spv:","spc:")):
                 # Native pay flow for platform invoices. Currency and
                 # methods come from the central operator catalog, not
@@ -4175,10 +4213,7 @@ def create_owner_setup_router(
                     raise ValueError("Invalid payment amount")
                 invoice_id=decode_uuid(parts[1])
                 page_text=parts[-1]
-                if (not page_text.isascii() or
-                    not page_text.isdecimal() or int(page_text)>100000):
-                    raise ValueError("Invalid invoice page")
-                page=int(page_text)
+                page=_decode_saas_page(page_text)
                 balance=await saas_v2_invoice_balance(
                     factory,actor_id=actor_id,invoice_id=invoice_id,
                     project_id=fixed_project_id,
@@ -4258,11 +4293,11 @@ def create_owner_setup_router(
                                 +":"+currency+":")
                         rows=[
                             [_button(tr("✅ Оплатить полностью","✅ Pay in full"),
-                                     prefix+"100:"+page_text,"success")],
+                                     prefix+"F:"+page_text,"success")],
                             [_button(tr("50% остатка","50% remaining"),
-                                     prefix+"50:"+page_text),
+                                     prefix+"H:"+page_text),
                              _button(tr("25% остатка","25% remaining"),
-                                     prefix+"25:"+page_text)],
+                                     prefix+"Q:"+page_text)],
                             [_button(tr("⬅️ Способы оплаты","⬅️ Payment methods"),
                                      "spm:"+invoice_token+":"+currency
                                      +":"+page_text)],
@@ -4277,8 +4312,8 @@ def create_owner_setup_router(
                             parse_mode="HTML",reply_markup=_markup(rows),
                         )
                     else:
-                        fraction=parts[4]
-                        if fraction not in ("25","50","100"):
+                        fraction={"F":100,"H":50,"Q":25}.get(parts[4])
+                        if fraction is None:
                             raise ValueError("Invalid payment amount")
                         amount=(remaining*Decimal(fraction)/Decimal(100)
                                ).quantize(Decimal("0.01"))
