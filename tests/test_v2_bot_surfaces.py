@@ -130,6 +130,15 @@ async def test_tenant_disallows_token_connection_and_pins_its_project(monkeypatc
     assert "own:plans" in controls
     assert "own:connect" not in controls
 
+    # A delegated project admin can still open the identical management
+    # dashboard although SaaS trial finance is owner-only.
+    monkeypatch.setattr(
+        ui, "merchant_saas_trial_status",
+        AsyncMock(side_effect=PermissionError("Only owner may view billing")),
+    )
+    await _handler(router, "owner_callback")(_callback("dashboard"), bot)
+    assert "Панель администратора" in bot.send_message.await_args.args[1]
+
 
 async def test_connected_bot_never_allows_unauthorized_admin_callback(monkeypatch):
     router = ui.create_owner_setup_router(
