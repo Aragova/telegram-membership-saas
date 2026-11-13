@@ -3,8 +3,9 @@
 Revision ID: 0070_saas_pilot
 Revises: 0069_saas_balance
 
-No migration-time billing changes. Each real switch requires an authenticated
-platform owner, fresh bot/account preflight and explicit two-step Telegram UI.
+No migration-time billing changes. The only activation control belongs in
+the existing central Finance screen. A first rollout enrolls existing
+nonoperator bot owners without rewriting prior trial claims.
 """
 from collections.abc import Sequence
 
@@ -122,6 +123,8 @@ def upgrade() -> None:
       start_at timestamptz;
       old_billing boolean;
       old_holds boolean;
+      enrolled_owner record;
+      trial_merchant uuid;
     BEGIN
       actor:=public.platform_saas_require_owner();
       IF p_action NOT IN ('arm','stop','holdon','holdoff') THEN
@@ -154,12 +157,50 @@ def upgrade() -> None:
         END IF;
         -- No backdated bills, no quota/charge before this DB-clock cutoff.
         start_at:=clock_timestamp()+interval '5 minutes';
+        -- Existing connected owners receive remaining/free trial credit,
+        -- never retroactive billable sales. Prior claims cannot be reset.
+        FOR enrolled_owner IN
+          SELECT p.owner_user_id,min(b.created_at) AS first_connected
+          FROM public.bot_instances b
+          JOIN public.projects p ON p.id=b.project_id
+          JOIN public.telegram_users u ON u.id=p.owner_user_id
+          LEFT JOIN public.platform_operators po
+            ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
+          WHERE b.status='registered' AND po.telegram_user_id IS NULL
+          GROUP BY p.owner_user_id
+        LOOP
+          IF NOT EXISTS(
+            SELECT 1 FROM public.merchant_platform_trial_claims t
+            WHERE t.owner_user_id=enrolled_owner.owner_user_id
+              AND t.policy_key='vimi-saas-72h-v1' AND t.scope='owner'
+          ) THEN
+            SELECT m.id INTO trial_merchant
+            FROM public.merchant_identities m
+            WHERE m.initial_owner_user_id=enrolled_owner.owner_user_id
+            ORDER BY m.created_at,m.id LIMIT 1;
+            IF trial_merchant IS NULL THEN
+              trial_merchant:=gen_random_uuid();
+              INSERT INTO public.merchant_identities(
+                id,initial_owner_user_id
+              ) VALUES(trial_merchant,enrolled_owner.owner_user_id);
+            END IF;
+            INSERT INTO public.merchant_platform_trial_claims(
+              id,merchant_id,owner_user_id,policy_key,scope,claimed_at
+            ) VALUES(
+              gen_random_uuid(),trial_merchant,
+              enrolled_owner.owner_user_id,'vimi-saas-72h-v1','owner',
+              greatest(enrolled_owner.first_connected,
+                       start_at-interval '72 hours')
+            ) ON CONFLICT DO NOTHING;
+          END IF;
+        END LOOP;
         UPDATE public.platform_saas_billing_control
         SET enabled=true,effective_from=start_at WHERE id=1;
         UPDATE public.platform_saas_access_policy
         SET enabled=true,effective_from=start_at WHERE id=1;
+        -- Seven-day grace only for newly issued post-rollout invoices.
         UPDATE public.platform_saas_hold_control
-        SET enabled=false,effective_from=NULL WHERE id=1;
+        SET enabled=true,effective_from=start_at,grace_days=7 WHERE id=1;
       ELSIF p_action='holdon' THEN
         IF old_billing IS DISTINCT FROM true OR old_holds IS TRUE THEN
           RAISE EXCEPTION 'Activate billing before hold pilot'
