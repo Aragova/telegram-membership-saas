@@ -18,10 +18,33 @@ converts the unpaid native USD fraction at that attempt's verified rates, with
 its RUB-book allocation retained as immutable historical evidence. Regular
 150 RUB profiles and manual customer prices are unchanged.
 
-**Remaining activation gate:** source-linked verified Stars/Crypto Pay refunds
-must reduce collectable SaaS liability exactly once, including partial payments,
-overpayment credit and holds. No new customer-facing test buttons or
-commercial activation are introduced by these hardening changes.
+**Verified refund application in the same PR (migrations 0073–0074):**
+- The append-only activation audit establishes historical ON/OFF windows. A
+  STOP/ARM cycle keeps old earned but deferred fees and unpaid hold eligibility,
+  while purchases made during OFF intervals remain in buyer history but cannot
+  accrue 5% platform commission. Stars/Crypto late evidence is valued by its
+  original paid date and live interval.
+- Only original-source provider-verified Stars file/subscription refunds and
+  Crypto Pay merchant transfer credits linked to a positive issued commission
+  line can create an immutable claim. The original sale-day official USD→RUB
+  rate is reused; no new FX quote or synthetic provider refund is manufactured.
+  Each provider evidence ID is unique, and partial refund credit totals are
+  capped by the exact original commission line.
+- A separate immutable allocation links each credit to unpaid SaaS invoice
+  amounts. Original issuer totals and receipts are never rewritten; credit
+  after full payment is held for the owner's next unpaid bill. The canonical
+  remaining function now subtracts verified credit allocations and existing
+  receipts, and the bank-approval/legacy receipt guards reject over-collection.
+- Existing merchant/owner invoices, overdue restrictions and notices read the
+  same remaining liability. The RU/EN Rich issued-invoice card shows applied
+  Stars/Crypto refund credits and the live remaining RUB reference balance;
+  separate historical manual refund notes remain visibly unapplied.
+- Each sweep runs in existing customer-supervisor reconciliation, plus before
+  a payer starts a new v2 attempt. No new buyer commands, test buttons,
+  standalone refund action or per-bot scheduler.
+
+Live commercial switches remain OFF until exact-HEAD database CI and Codex
+review are clean and the platform owner approves staging rollout.
 
 ---
 
