@@ -111,6 +111,10 @@ async def test_tenant_disallows_token_connection_and_pins_its_project(monkeypatc
     current = AsyncMock(return_value=project_id)
     monkeypatch.setattr(ui, "get_selected_project", current)
     monkeypatch.setattr(
+        ui, "merchant_saas_trial_status",
+        AsyncMock(return_value={"state": "trial", "remaining_seconds": 3600}),
+    )
+    monkeypatch.setattr(
         ui, "setup_overview", AsyncMock(return_value=_overview(project_id)),
     )
     bot = _bot()
