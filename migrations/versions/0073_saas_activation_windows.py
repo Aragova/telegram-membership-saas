@@ -24,8 +24,8 @@ SET search_path=pg_catalog,public AS $f$
   SELECT min(effective_from)
   FROM public.platform_saas_release_audit
   WHERE action='arm' AND effective_from IS NOT NULL;
-$f$;
-CREATE FUNCTION public.platform_saas_sale_active_at(p_paid timestamptz)
+$f$""")
+    op.execute("""CREATE FUNCTION public.platform_saas_sale_active_at(p_paid timestamptz)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
   SELECT coalesce((
