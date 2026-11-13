@@ -98,7 +98,6 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
 from telegram_membership_saas.modules.owner_setup.currencies import (
     disable_owner_stars_price,
     enable_owner_currency,
-    list_owner_fiat_currencies,
 )
 from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
     parse_customer_command,
@@ -2592,8 +2591,9 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id, plan_id=plan_id,
         )
         rows = []
-        codes = await list_owner_fiat_currencies(
+        codes = await owner_available_currencies(
             factory, actor_id=actor_id, project_id=project_id,
+            fiat_only=True,
         )
         fiat_prices = [price for price in data.prices if price.currency in codes]
         lines = [
@@ -3201,8 +3201,9 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID, *,
         project_id: UUID, mode: str, plan_id: UUID | None = None,
     ):
-        codes = await list_owner_fiat_currencies(
+        codes = await owner_available_currencies(
             factory, actor_id=actor_id, project_id=project_id,
+            fiat_only=True,
         )
         rows = [
             [_button(
@@ -6059,8 +6060,9 @@ def create_owner_setup_router(
                 )
             elif action.startswith("price:"):
                 _, plan_hex, currency = action.split(":")
-                if currency not in await list_owner_fiat_currencies(
+                if currency not in await owner_available_currencies(
                     factory, actor_id=actor_id, project_id=project_id,
+                    fiat_only=True,
                 ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
                 await prompt(
@@ -6258,8 +6260,9 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id, project_id=project_id,
                     method_id=method_id,
                 )
-                codes = await list_owner_fiat_currencies(
+                codes = await owner_available_currencies(
                     factory, actor_id=actor_id, project_id=project_id,
+                    fiat_only=True,
                 )
                 rows = [
                     [_button(
