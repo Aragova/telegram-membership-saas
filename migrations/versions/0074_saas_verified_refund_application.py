@@ -226,6 +226,16 @@ BEGIN
         AND NOT EXISTS(
           SELECT 1 FROM public.platform_saas_payment_attempts_v2 pending
           WHERE pending.invoice_id=i.id
+            -- A live quote can already have been paid; after its deadline
+            -- an unsubmitted quote is no longer a collectible transfer.
+            -- A submitted proof remains reserved until settled/rejected.
+            AND (
+              pending.expires_at>clock_timestamp()
+              OR EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_proofs_v2 proof
+                WHERE proof.attempt_id=pending.id
+              )
+            )
             AND NOT EXISTS(
               SELECT 1 FROM public.platform_saas_payment_allocations_v2 ap
               WHERE ap.attempt_id=pending.id
