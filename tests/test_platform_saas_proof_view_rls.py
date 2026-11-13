@@ -116,6 +116,32 @@ async def test_receipt_file_locator_is_operator_only_and_pending_only():
                 assert record["instructions"] == "TEST recipient 12345678900"
                 assert not any("token" in key for key in record)
 
+                # The central bot is deliberately not registered as a
+                # customer BotInstance. Such proofs must remain viewable.
+                await _identity(conn, owner)
+                central_attempt = await _call(
+                    conn, "platform_saas_v3_create_attempt", {
+                        "invoice": invoice, "amount_rub": Decimal("150.00"),
+                        "currency": "RUB", "method": method,
+                    },
+                )
+                central_attempt_id = UUID(str(central_attempt["id"]))
+                central_tg_bot_id = _tid()
+                await _call(conn, "platform_saas_v2_submit_proof", {
+                    "attempt": central_attempt_id,
+                    "bot_id": central_tg_bot_id,
+                    "chat_id": owner_tg, "message_id": 722,
+                    "file_id": "test-central-bot-file-id",
+                    "file_type": "document",
+                }, json=False)
+                await _identity(conn, operator)
+                central_record = await _call(
+                    conn, "platform_saas_pending_proof_source",
+                    {"attempt": central_attempt_id},
+                )
+                assert central_record["source_bot"] == central_tg_bot_id
+                assert central_record["source_project"] is None
+
                 await _call(conn, "platform_saas_v2_reject_attempt", {
                     "attempt": attempt_id, "reason": "Test bank funds not received",
                 }, json=False)
