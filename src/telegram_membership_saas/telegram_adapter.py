@@ -30,6 +30,9 @@ from telegram_membership_saas.modules.platform_dashboard_handlers import (
     PlatformBankNavigationMiddleware,
     create_platform_dashboard_router,
 )
+from telegram_membership_saas.modules.platform_saas_receipt_handlers import (
+    create_saas_receipt_router,
+)
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
@@ -58,6 +61,8 @@ def create_dispatcher(
             session_factory, project_id=project_id,
             render_main_menu=render_main_menu,
         ))
+        # Register durable ViMi Pay receipt replies before generic handlers.
+        dispatcher.include_router(create_saas_receipt_router(session_factory))
         if get_settings().platform_owner_telegram_id is not None:
             # Navigation through ANY central router must cancel the operator
             # bank-entry form before another message can be interpreted as
@@ -138,6 +143,10 @@ def create_customer_dispatcher(
     dispatcher.include_router(create_language_router(
         session_factory, project_id=project_id,
         render_main_menu=render_main_menu,
+    ))
+    # A PDF replying to a platform invoice must bypass active file editors.
+    dispatcher.include_router(create_saas_receipt_router(
+        session_factory, project_id=project_id,
     ))
     # The tenant owner is recognized by database permissions on /start.
     # Buyers fall through to the same bot's storefront, never its admin UI.

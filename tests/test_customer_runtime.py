@@ -58,7 +58,7 @@ def _sf(monkeypatch, *, project_status="active", bots=()):
 def test_connected_dispatcher_separates_tenant_admin_and_buyer_routes():
     dispatcher = create_customer_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "vimi-language", "crypto-pay-secret-guard",
+        "vimi-language", "vimi-saas-proof-ingress", "crypto-pay-secret-guard",
         "secure-owner-transfer", "project-support",
         "digital-file-sales", "manual-file-checkout", "owner-tenant", "customer-broadcasts",
         "telegram-access", "telegram-commerce"
@@ -68,7 +68,8 @@ def test_connected_dispatcher_separates_tenant_admin_and_buyer_routes():
 def test_central_can_drop_buyer_routes_for_cutover():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
     assert [r.name for r in dispatcher.sub_routers] == [
-        "vimi-language", "secure-owner-transfer", "central-registrar",
+        "vimi-language", "vimi-saas-proof-ingress",
+        "secure-owner-transfer", "central-registrar",
         "central-buyer-redirect"
     ]
 
@@ -76,7 +77,8 @@ def test_central_can_drop_buyer_routes_for_cutover():
 def test_central_default_preserves_old_staging_path():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4())
     assert [r.name for r in dispatcher.sub_routers] == [
-        "vimi-language", "secure-owner-transfer", "central-registrar",
+        "vimi-language", "vimi-saas-proof-ingress",
+        "secure-owner-transfer", "central-registrar",
         "telegram-access", "telegram-admin",
         "telegram-commerce"
     ]
