@@ -60,7 +60,8 @@ BEGIN
       'invoice_id',NULL,'period_start',NULL,'period_end',NULL,
       'turnover','[]'::jsonb,'service_rub','0',
       'subscription_rub','0','file_rub','0','total_rub','0',
-      'paid_rub','0','total_due_rub','0','first_period',true);
+      'paid_rub','0','credit_rub','0',
+      'total_due_rub','0','first_period',true);
   END IF;
   SELECT
     coalesce(sum(l.charge_rub) FILTER(
@@ -85,14 +86,22 @@ BEGIN
     'kind',kind,'currency',currency,'sold',sold,'gross',gross::text
   ) ORDER BY kind,currency),'[]'::jsonb) INTO turnover FROM groups;
   remaining:=public.platform_saas_v2_remaining(bill.id);
-  received:=bill.total_rub-remaining;
+  SELECT coalesce(sum(r.amount_rub),0) INTO received
+    FROM public.platform_saas_receipts r WHERE r.invoice_id=bill.id;
+  received:=received+coalesce((
+    SELECT sum(a.allocated_rub)
+    FROM public.platform_saas_payment_allocations_v2 a
+    WHERE a.invoice_id=bill.id
+  ),0);
   RETURN jsonb_build_object(
     'bot_id',bot_id,'project_id',p_project,'invoice_id',bill.id,
     'period_start',bill.period_start,'period_end',bill.period_end,
     'turnover',turnover,'service_rub',service_rub::text,
     'subscription_rub',round(subscriptions_rub,2)::text,
     'file_rub',round(files_rub,2)::text,'total_rub',bill.total_rub::text,
-    'paid_rub',received::text,'total_due_rub',remaining::text,
+    'paid_rub',received::text,
+    'credit_rub',(bill.total_rub-remaining-received)::text,
+    'total_due_rub',remaining::text,
     'first_period',NOT EXISTS(
       SELECT 1 FROM public.platform_saas_invoices prior
       WHERE prior.bot_instance_id=bot_id AND prior.owner_user_id=actor
