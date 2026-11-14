@@ -1,4 +1,5 @@
 """Supervisor: safe, stage-specific Telegram diagnostics without token leaks."""
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
