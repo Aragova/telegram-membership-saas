@@ -1,3 +1,26 @@
+## 2026-11-14 — Follow-up to #167: two failing startup preflights (draft #168)
+
+Staging deployment #59 applied #167 successfully. Two customer bots
+(`@bambi_top_bot`, `@barbertom6_bot`) kept cycling through
+`identity_api_failed` and `startup_stalled`, while other bots remained
+available. Repeated per-bot `getMe`/webhook probes produced timeouts;
+forced-IPv4 direct `getMe` succeeded for `@bambi_top_bot` once and
+timed out for `@barbertom6_bot`. Server/container HTTPS root probes
+succeeded, which does not establish reliable Bot API availability.
+Absence of `Customer bot ready` in logs is not proof of its absence:
+that log line is INFO and the supervisor log stream appears WARNING-only.
+
+Draft follow-up bounds **individual** read-only preflight API calls to
+12s, makes native timeouts transient, limits best-effort native menu
+setup to 12s and identifies the safe startup phase at the unchanged
+120s watchdog deadline. It is designed to avoid false generic
+startup diagnostics while preserving failure-closed authorization,
+existing payment/access workers and all other bots. Live recovery and
+failure attribution remain unconfirmed until staged deployment and
+observation. No server deploy or merge is implied by this entry.
+
+---
+
 ## 2026-11-14 — Telegram preflight resilience and fleet restart jitter (#167)
 
 Live customer fleet: @danielpremium_bot recovered after #166 watchdog correction,
