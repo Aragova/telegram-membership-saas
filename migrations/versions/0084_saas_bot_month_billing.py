@@ -457,6 +457,48 @@ END; $f$
       FROM PUBLIC
     """)
 
+    op.execute("""
+CREATE FUNCTION public.platform_saas_bot_period_end(
+  p_bot uuid,p_start timestamptz
+) RETURNS timestamptz LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE
+  anchor timestamptz;
+  next_month timestamp;
+  last_day integer;
+  wanted_day integer;
+  time_part interval;
+BEGIN
+  IF p_bot IS NULL OR p_start IS NULL THEN
+    RAISE EXCEPTION 'Missing bot billing anniversary'
+      USING ERRCODE='22023';
+  END IF;
+  SELECT min(i.period_start) INTO anchor
+  FROM public.platform_saas_invoices i
+  JOIN public.bot_instances b ON b.id=i.bot_instance_id
+  JOIN public.projects p ON p.id=b.project_id
+  WHERE i.bot_instance_id=p_bot AND i.owner_user_id=p.owner_user_id
+    AND i.kind='prepayment' AND i.status='issued'
+    AND i.period_start<=p_start;
+  anchor:=coalesce(anchor,p_start);
+  wanted_day:=extract(day FROM (anchor AT TIME ZONE 'Europe/Moscow'))::integer;
+  next_month:=date_trunc(
+    'month',p_start AT TIME ZONE 'Europe/Moscow'
+  )+interval '1 month';
+  last_day:=extract(day FROM
+    (next_month+interval '1 month'-interval '1 day')::date
+  )::integer;
+  time_part:=(anchor AT TIME ZONE 'Europe/Moscow')::time;
+  RETURN (next_month+make_interval(
+    days=>least(wanted_day,last_day)-1
+  )+time_part) AT TIME ZONE 'Europe/Moscow';
+END; $f$
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+      public.platform_saas_bot_period_end(uuid,timestamptz) FROM PUBLIC
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
