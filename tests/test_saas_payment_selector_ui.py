@@ -65,21 +65,16 @@ async def test_central_account_pay_selector_routes_to_approved_method(
         first=await choose("spm:"+token+":RUB:"+compact)
         buttons={button.callback_data for row in first.inline_keyboard
                  for button in row}
-        assert "own:saasbill:"+token+":"+str(page) in buttons
+        assert "own:saasinvoices:0" in buttons
         nxt="own:spv:"+token+":"+encode_uuid(method)+":RUB:"+compact
         assert nxt in buttons
-        amount_page=await choose(nxt[4:])
-        prices={button.callback_data for row in amount_page.inline_keyboard
-                for button in row}
-        pay="own:spc:"+token+":"+encode_uuid(method)+":RUB:F:"+compact
-        assert pay in prices
-        assert len(pay.encode("utf-8"))<=64
-        await choose(pay[4:])
+        # Method selection creates one FULL payment attempt immediately.
+        await choose(nxt[4:])
         assert new_attempt.await_args.kwargs["invoice_id"]==invoice
         assert new_attempt.await_args.kwargs["method_id"]==method
         assert new_attempt.await_args.kwargs["currency"]=="RUB"
         assert "Bank details test 123456" in bot.send_message.await_args.args[1]
-        assert "own:saasbill:"+token+":"+str(page) in {
+        assert "own:saasinvoices:0" in {
             button.callback_data
             for row in bot.send_message.await_args.kwargs[
                 "reply_markup"
@@ -88,5 +83,5 @@ async def test_central_account_pay_selector_routes_to_approved_method(
     finally:
         _language.reset(locale)
     selected.assert_not_awaited()
-    assert balance.await_count==3
-    assert catalog.await_count==3
+    assert balance.await_count==2
+    assert catalog.await_count==2

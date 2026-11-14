@@ -157,7 +157,7 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                 with pytest.raises(DBAPIError) as disabled:
                     async with conn.begin_nested():
                         await _call(conn,"platform_saas_v3_create_attempt",{
-                            "invoice":invoice,"amount_rub":Decimal("1.00"),
+                            "invoice":invoice,"amount_rub":Decimal("150.00"),
                             "currency":"RUB","method":method,
                         })
                 assert getattr(disabled.value.orig,"sqlstate",None)=="42501"
@@ -172,7 +172,7 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                 with pytest.raises(DBAPIError) as detached:
                     async with conn.begin_nested():
                         await _call(conn,"platform_saas_v3_create_attempt",{
-                            "invoice":invoice,"amount_rub":Decimal("1.00"),
+                            "invoice":invoice,"amount_rub":Decimal("150.00"),
                             "currency":"USD","method":method,
                         })
                 assert getattr(detached.value.orig,"sqlstate",None)=="42501"
@@ -188,7 +188,7 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                                    if m["name"]=="💳 RUB")
                 await _identity(conn,owner)
                 old=await _call(conn,"platform_saas_v2_create_attempt",{
-                    "invoice":invoice,"amount_rub":Decimal("1.00"),
+                    "invoice":invoice,"amount_rub":Decimal("150.00"),
                     "currency":"RUB",
                 })
                 assert old["instructions"]=="Legacy RUB test account number 33221100"
@@ -200,7 +200,7 @@ async def test_central_named_methods_validate_currencies_and_preserve_quotes():
                 with pytest.raises(DBAPIError) as retired:
                     async with conn.begin_nested():
                         await _call(conn,"platform_saas_v2_create_attempt",{
-                            "invoice":invoice,"amount_rub":Decimal("1.00"),
+                            "invoice":invoice,"amount_rub":Decimal("150.00"),
                             "currency":"RUB",
                         })
                 assert getattr(retired.value.orig,"sqlstate",None)=="42501"

@@ -100,30 +100,29 @@ def test_long_star_plan_button_keeps_complete_branding():
 
 
 @pytest.mark.parametrize("lang", ["ru", "en"])
-def test_classic_platform_billing_uses_full_stars_brand(lang):
+def test_classic_unified_bill_uses_full_stars_brand(lang):
     from telegram_membership_saas.localization import _language
-    from telegram_membership_saas.modules.owner_setup.handlers import (
-        _saas_preview_classic,
+    from telegram_membership_saas.modules.platform_saas_bill_ui import (
+        unified_merchant_bill_classic,
     )
 
-    preview = {
-        "month": "2026-11",
-        "rows": [{
-            "currency": "XTR", "gross": "500", "missing": 0,
-            "fee_rub": "0",
-        }],
-        "is_platform_owner": True,
-        "fiat_commission_rub": "0",
-        "next_bot_fee_rub": "0",
-        "stars_need_reconciliation": True,
-        "missing_daily_rates": 0,
-        "billing_enabled": False,
+    summary = {
+        "invoice_id": "test-bot-invoice",
+        "period_start": "2026-12-16T00:00:00+03:00",
+        "period_end": "2027-01-16T00:00:00+03:00",
+        "first_period": False,
+        "project_id": "test-bot",
+        "turnover": [
+            {"kind": "file", "currency": "XTR", "gross": "500", "sold": 1},
+        ],
+        "service_rub": "150", "subscription_rub": "0", "file_rub": "0",
+        "total_rub": "150", "paid_rub": "0", "credit_rub": "0",
+        "total_due_rub": "150",
     }
     token = _language.set(lang)
     try:
-        text = _saas_preview_classic(preview)
+        text = unified_merchant_bill_classic(summary)
     finally:
         _language.reset(token)
     assert "500 ⭐ Telegram Stars" in text
-    assert "⭐ Telegram Stars:" in text
     assert "XTR" not in text

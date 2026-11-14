@@ -1,4 +1,4 @@
-"""Append-only ViMi Pay partial payments against an actual issued invoice.
+"""Append-only ViMi Pay bank payments: full new attempts, old history safe.
 
 No real money moves. Operator rows, payment methods and invoice records are
 seeded only in a privileged PostgreSQL transaction that is ALWAYS rolled back.
@@ -121,7 +121,7 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                         await _call(
                             conn, "platform_saas_v2_create_attempt",
                             {"invoice": invoice,
-                             "amount_rub": Decimal("100"),
+                             "amount_rub": Decimal("150"),
                              "currency": "RUB"},
                         )
                 assert getattr(retired.value.orig, "sqlstate", None) == "42501"
@@ -139,19 +139,28 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 assert Decimal(usd_quote["amount"]) > 0
                 # FX cents are quoted, the exact RUB debt is not rewritten.
                 assert usd_quote["currency"] == "USD"
+                # The old v2 RPC must still refuse future intentional
+                # partial transfers, despite historical ledger support.
+                with pytest.raises(DBAPIError) as partial:
+                    async with conn.begin_nested():
+                        await _call(conn, "platform_saas_v2_create_attempt", {
+                            "invoice": invoice, "amount_rub": Decimal("100"),
+                            "currency": "RUB",
+                        })
+                assert getattr(partial.value.orig, "sqlstate", None) == "23514"
                 quote = await _call(conn, "platform_saas_v2_create_attempt", {
-                    "invoice": invoice, "amount_rub": Decimal("100"),
+                    "invoice": invoice, "amount_rub": Decimal("150"),
                     "currency": "RUB",
                 })
-                assert quote["amount"] == "100.00"
-                assert Decimal(quote["amount_rub"]) == Decimal("100")
+                assert quote["amount"] == "150.00"
+                assert Decimal(quote["amount_rub"]) == Decimal("150")
                 assert "bank RUB" in quote["instructions"]
                 attempt_id = quote["id"]
                 await _actor(conn, outsider)
                 with pytest.raises(DBAPIError) as forbidden:
                     async with conn.begin_nested():
                         await _call(conn, "platform_saas_v2_create_attempt", {
-                            "invoice": invoice, "amount_rub": Decimal("1"),
+                            "invoice": invoice, "amount_rub": Decimal("150"),
                             "currency": "RUB",
                         })
                 assert getattr(forbidden.value.orig, "sqlstate", None) == "42501"
@@ -185,79 +194,35 @@ async def test_partial_fiat_bank_proofs_cannot_overpay_or_double_credit():
                 balance = await _call(conn, "platform_saas_v2_invoice_balance", {
                     "invoice": invoice,
                 })
-                assert balance["remaining_rub"] == "50.00"
-                assert balance["partial_rub"] == "100.00"
-                assert balance["paid"] is False
+                assert balance["remaining_rub"] == "0.00"
+                assert balance["partial_rub"] == "150.00"
+                assert balance["paid"] is True
                 merchant_view = await _call(
                     conn, "platform_saas_owner_invoice_report",
                     {"page": 0, "size": 6},
                 )
-                assert merchant_view["unpaid"] == 1
-                assert Decimal(merchant_view["outstanding_rub"]) == Decimal("50")
-                assert merchant_view["invoices"][0]["status"] == "unpaid"
-                assert Decimal(
-                    merchant_view["invoices"][0]["remaining_rub"]
-                ) == Decimal("50")
-                await _actor(conn, operator)
-                central_view = await _call(
-                    conn, "platform_saas_hold_invoice_report",
-                    {"page": 0, "size": 10},
-                )
-                assert central_view["unpaid"] >= 1
-                assert Decimal(central_view["unpaid_rub"]) >= Decimal("50")
-                assert Decimal(central_view["received_rub"]) >= Decimal("100")
-                own_invoice = next(
-                    item for item in central_view["invoices"]
-                    if item["id"] == str(invoice)
-                )
-                assert Decimal(own_invoice["remaining_rub"]) == Decimal("50")
-                await _actor(conn, owner)
-                with pytest.raises(DBAPIError) as too_big:
+                assert merchant_view["unpaid"] == 0
+                assert Decimal(merchant_view["outstanding_rub"]) == 0
+                assert merchant_view["invoices"][0]["status"] == "paid"
+                # Once fully settled, no further bank attempt can be created.
+                with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await _call(conn, "platform_saas_v2_create_attempt", {
-                            "invoice": invoice, "amount_rub": Decimal("51"),
+                            "invoice": invoice, "amount_rub": Decimal("50"),
                             "currency": "RUB",
                         })
-                assert getattr(too_big.value.orig, "sqlstate", None) == "23514"
-                last = await _call(conn, "platform_saas_v2_create_attempt", {
-                    "invoice": invoice, "amount_rub": Decimal("50"),
-                    "currency": "RUB",
-                })
-                last_id = last["id"]
-                await _call(conn, "platform_saas_v2_submit_proof", {
-                    "attempt": last_id, "bot": 123987123,
-                    "chat": owner_tg, "message": 547, "file_id": "private-file-id-456",
-                    "kind": "document",
-                })
-                await _actor(conn, operator)
-                assert await _call(conn, "platform_saas_v2_approve_attempt", {
-                    "attempt": last_id, "reference": "BANK-VIMI-00002",
-                })
-                balance = await _call(conn, "platform_saas_v2_invoice_balance", {
-                    "invoice": invoice,
-                })
-                assert balance["remaining_rub"] == "0.00"
-                assert balance["paid"] is True
-                await _actor(conn, owner)
-                owner_view = await _call(
-                    conn, "platform_saas_owner_invoice_report",
-                    {"page": 0, "size": 6},
-                )
-                assert owner_view["unpaid"] == 0
-                assert Decimal(owner_view["outstanding_rub"]) == 0
-                assert owner_view["invoices"][0]["status"] == "paid"
                 await _actor(conn, operator)
                 central_view = await _call(
                     conn, "platform_saas_hold_invoice_report",
                     {"page": 0, "size": 10},
                 )
-                assert Decimal(central_view["received_rub"]) >= Decimal("150")
                 own_invoice = next(
                     item for item in central_view["invoices"]
                     if item["id"] == str(invoice)
                 )
                 assert own_invoice["status"] == "paid"
                 assert Decimal(own_invoice["remaining_rub"]) == 0
+                assert Decimal(central_view["received_rub"]) >= Decimal("150")
                 await conn.execute(text("RESET ROLE"))
                 with pytest.raises(DBAPIError) as voided:
                     async with conn.begin_nested():
