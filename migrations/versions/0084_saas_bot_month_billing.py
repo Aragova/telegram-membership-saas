@@ -683,11 +683,17 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
           -- Prevent overlapping monthly charges for the same connection.
           IF EXISTS(
             SELECT 1 FROM public.platform_saas_invoices prior
+            LEFT JOIN public.platform_saas_bot_service_activations coverage
+              ON coverage.invoice_id=prior.id
             WHERE prior.bot_instance_id=p_bot
               AND prior.kind='prepayment' AND prior.status<>'void'
               AND prior.invoice_key<>service_key
-              AND tstzrange(prior.period_start,prior.period_end,'[)')
-                  && tstzrange(p_start,p_end,'[)')
+              AND tstzrange(
+                prior.period_start,
+                greatest(prior.period_end,
+                  coalesce(coverage.effective_end,prior.period_end)),
+                '[)'
+              ) && tstzrange(p_start,p_end,'[)')
           ) THEN
             RAISE EXCEPTION 'Overlapping service invoices are forbidden'
               USING ERRCODE='23514';
@@ -1157,8 +1163,15 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_due_batch()
           END IF;
           -- A transferred bot must not inherit the previous owner's debt,
           -- but service periods of both owners must never overlap.
-          SELECT max(i.period_end) INTO last_issued_end
+          -- A late-activated, fully paid service month can extend beyond
+          -- its immutable printed invoice period. Transferring the bot
+          -- must respect the paid coverage, not issue a duplicate charge.
+          SELECT max(greatest(i.period_end,
+                     coalesce(a.effective_end,i.period_end)))
+            INTO last_issued_end
           FROM public.platform_saas_invoices i
+          LEFT JOIN public.platform_saas_bot_service_activations a
+            ON a.invoice_id=i.id
           WHERE i.bot_instance_id=bot.id AND i.kind='prepayment'
             AND i.status='issued';
           SELECT i.id,i.period_end,i.status
@@ -1266,7 +1279,7 @@ BEGIN
   FROM public.platform_saas_invoices i
   LEFT JOIN public.platform_saas_bot_service_activations a
     ON a.invoice_id=i.id
-  WHERE i.bot_instance_id=p_bot AND i.owner_user_id=owner_id
+  WHERE i.bot_instance_id=p_bot
     AND i.kind='prepayment' AND i.status='issued'
     AND public.platform_saas_v2_remaining(i.id)=0;
   IF last_covered IS NOT NULL THEN
