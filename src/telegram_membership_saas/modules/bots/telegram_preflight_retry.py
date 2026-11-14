@@ -11,7 +11,13 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from random import uniform
 
-from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
+from aiogram.exceptions import (
+    TelegramNetworkError,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
+
+
 PREFLIGHT_ATTEMPTS = 4
 RETRY_BASE_SECONDS = 0.4
 RETRY_CAP_SECONDS = 3.0
