@@ -163,10 +163,12 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
         AND l.original_currency='USD'
       LIMIT 1;
       IF native_usd IS NOT NULL THEN
-        -- Historically allocated RUB receipts / refund credits reduce the
-        -- *native* $3 service obligation proportionally at issue-day book
-        -- value. The remaining source commission is converted at pay-day FX.
-        -- Allocation priority is service first, then other invoice lines.
+        -- Confirmed bank receipts cover the $3 service fee first (at
+        -- its original book value), then commissions. Verified provider
+        -- refund credits apply only to those commissions: a refunded sale
+        -- must NEVER discount or reprice the separate $3 bot service fee.
+        -- Both remain in the immutable RUB balance; only today's quote
+        -- converts the genuinely unpaid native service fraction.
         IF base_service_rub IS NULL OR base_service_rub<=0
            OR native_usd<=0 THEN
           RAISE EXCEPTION 'Invalid original USD service snapshot'
@@ -174,7 +176,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
         END IF;
         remaining_service_rub:=greatest(0,least(
           due,base_service_rub,
-          base_service_rub-(item.total_rub-due)
+          base_service_rub-paid
         ));
         remaining_other_rub:=greatest(0,due-remaining_service_rub);
         remaining_native_usd:=native_usd*remaining_service_rub/base_service_rub;
@@ -1547,10 +1549,12 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
         AND l.original_currency='USD'
       LIMIT 1;
       IF native_usd IS NOT NULL THEN
-        -- Historically allocated RUB receipts / refund credits reduce the
-        -- *native* $3 service obligation proportionally at issue-day book
-        -- value. The remaining source commission is converted at pay-day FX.
-        -- Allocation priority is service first, then other invoice lines.
+        -- Confirmed bank receipts cover the $3 service fee first (at
+        -- its original book value), then commissions. Verified provider
+        -- refund credits apply only to those commissions: a refunded sale
+        -- must NEVER discount or reprice the separate $3 bot service fee.
+        -- Both remain in the immutable RUB balance; only today's quote
+        -- converts the genuinely unpaid native service fraction.
         IF base_service_rub IS NULL OR base_service_rub<=0
            OR native_usd<=0 THEN
           RAISE EXCEPTION 'Invalid original USD service snapshot'
@@ -1558,7 +1562,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
         END IF;
         remaining_service_rub:=greatest(0,least(
           due,base_service_rub,
-          base_service_rub-(item.total_rub-due)
+          base_service_rub-paid
         ));
         remaining_other_rub:=greatest(0,due-remaining_service_rub);
         remaining_native_usd:=native_usd*remaining_service_rub/base_service_rub;
