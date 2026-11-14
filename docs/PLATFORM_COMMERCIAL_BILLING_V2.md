@@ -16,7 +16,10 @@ anniversary the one invoice contains (a) prepaid next month's service fee,
 *confirmed files* for the **immediately previous completed service interval**.
 Service periods run anniversary-to-anniversary, not Moscow's 1st-to-1st.
 The exact day/time is retained with a short-month clamp (31 Jan → 28 Feb →
-31 Mar). Source confirmation, ownership at sale, billing activation, creator
+31 Mar). When ownership is transferred, the bot's *actually paid*
+`effective_end` (not an expired printed service invoice end) governs the
+recipient's earliest new bill and cross-owner overlap checks, preserving the
+old owner's purchased coverage without transferring the old owner's debt. Source confirmation, ownership at sale, billing activation, creator
 exemptions, sale-day CBR FX, genuine provider reward valuations and verified
 refund-credit evidence remain authoritative. No provisional month-to-date
 commission is added to an already issued invoice.
@@ -44,7 +47,10 @@ settlement, immediately block only that bot's *new* paid checkout/publication
 and unjustified free grants. Do not stop Telegram polling, bot support,
 already paid subscriptions/files, reviews/delivery of already accepted
 orders, access expiry/cleanup or the ability to pay. Do not hold a different
-bot of the same owner. Resume new commerce after real full settlement.
+bot of the same owner. Resume new commerce after real full settlement. Direct complimentary
+`entitlement_grants.source='manual'` INSERTs are also blocked while that
+bot is held, preventing free-premium bypass; existing paid entitlements and
+previously accepted purchases remain accessible.
 
 **Historical compatibility.** Old ledger 'commission' invoices remain
 readable and auditable as historical exceptions, but the live reconciler no
