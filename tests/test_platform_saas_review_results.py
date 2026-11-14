@@ -178,7 +178,9 @@ async def test_review_notice_can_return_to_existing_invoice_in_both_modes(
     (bot.send_message if rich_supported else
      bot.send_rich_message).assert_not_awaited()
     kwargs = sent.await_args.kwargs
-    assert kwargs["chat_id"] == item["source_chat"]
+    assert (
+        kwargs["chat_id"] if rich_supported else sent.await_args.args[0]
+    ) == item["source_chat"]
     markup = kwargs["reply_markup"]
     assert len(markup.inline_keyboard) == 1
     assert len(markup.inline_keyboard[0]) == 1
