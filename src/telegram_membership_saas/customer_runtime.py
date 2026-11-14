@@ -178,8 +178,8 @@ async def verify_resource_permissions(
     for resource in resources:
         try:
             member = await retry_telegram_preflight(
-                lambda: bot.get_chat_member(
-                    chat_id=resource.external_id,
+                lambda chat_id=resource.external_id: bot.get_chat_member(
+                    chat_id=chat_id,
                     user_id=bot.id,
                 ),
             )
