@@ -1,3 +1,43 @@
+## 2026-11-14 — Owner-network debt enforcement and 12h proof review (PR #162)
+
+**This later owner-approved enforcement decision supersedes the PR #161
+"only the overdue bot" hold rule**, while preserving PR #161's bot-specific
+invoice creation, anniversary, commission, full payment and exemption logic.
+Every account remains financially liable for its own invoices. If any real
+issued, due, unpaid ViMi Pay service or historical commission bill exists,
+all nonexempt bots of that debtor are subject to a new-commerce hold and
+eligible new bot registration is blocked, not just the billed bot. Access
+for already paid buyers, support, Telegram polling, refund evidence, access
+expiry and bank review continue without interruption. Owned platform bots
+retain the existing exemption.
+
+One submitted original bank proof starts a **maximum 12-hour**, automatic,
+pending-review protection for that invoice. This clock is anchored to the
+earliest immutable proof timestamp on that invoice, NOT last upload or last
+payment attempt. A second fake PDF never extends it. Rejected or allocated
+earlier proof disables the temporary protection, even if another proof is
+submitted. If any due invoice is no longer protected and still unpaid, the
+whole debtor's nonexempt network becomes held. An operator's confirmed full
+receipt removes the debt and allows the normal coverage/renewal state to
+resume; an operator's rejection never marks the bill paid.
+
+At submission, after 6h and after 11h the CENTRAL @vimipay_bot sends normal
+RU/EN private bank-proof alerts *only while no decision was taken*. Each
+opens exactly the already-existing proof queue, whose existing buttons
+approve/reject after real bank verification. No new pages or direct fake
+approval buttons. Pending proof reminders that fall after the 12h window are
+cancelled. The one operator review workflow keeps the actual source media
+read-only and private. None of these notifications approves a payment,
+creates a bill or changes the configured live billing switch.
+
+Read-only merchant bill adds upcoming date, issued due timestamp, first-proof
+protection deadline, and a clear held/paid/pending status with no technical
+UUID in review list. Central owner screen distinguishes *issued before due*
+from an unissued projected upcoming bill and shows the real Moscow deadline.
+
+---
+
+
 ## 2026-11-14 — APPROVED billing contract for PR #161 (supersedes all older proposals)
 
 **One connected bot = one real issued monthly ViMi Pay invoice.** No owner-wide

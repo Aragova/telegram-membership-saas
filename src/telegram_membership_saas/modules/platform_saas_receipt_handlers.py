@@ -10,7 +10,6 @@ import logging
 from uuid import UUID
 
 from aiogram import Bot, Router
-from aiogram.exceptions import AiogramError
 from aiogram.filters import BaseFilter
 from aiogram.types import (
     Message,
@@ -20,7 +19,6 @@ from aiogram.types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
@@ -176,30 +174,9 @@ def create_saas_receipt_router(
             ),
         )
 
-        # Proof metadata is durable and belongs to the original source bot.
-        # Owner push is best-effort: the central operator can always open
-        # the pending queue and use the on-demand proof viewer (PR #153).
-        operator_tg = get_settings().platform_owner_telegram_id
-        if operator_tg and operator_tg != message.from_user.id:
-            try:
-                caption = (
-                    "🧾 ViMi Pay · " + attempt.hex + "\n"
-                    + tr(
-                        "Платёжный чек на проверку. Сумму и реквизиты "
-                        "сверьте с карточкой в 👑 Финансы.",
-                        "Payment proof for review. Match bank details "
-                        "and amount against 👑 Finances.",
-                    )
-                )
-                if file_type == "photo":
-                    await bot.send_photo(operator_tg, file_id, caption=caption)
-                else:
-                    await bot.send_document(operator_tg, file_id, caption=caption)
-            except AiogramError:
-                _LOG.warning(
-                    "ViMi Pay operator receipt push unavailable; "
-                    "pending receipt is persisted"
-                )
+        # The proof INSERT atomically enqueues one central-bot notification.
+        # Do not try to notify the platform owner from each connected bot:
+        # many operators have never /started that particular bot.
 
 
     return router

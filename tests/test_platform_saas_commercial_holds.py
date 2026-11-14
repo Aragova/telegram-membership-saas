@@ -96,15 +96,12 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                 "UPDATE platform_saas_invoices SET status='issued' WHERE id=:id"
             ), {"id": invoice})
         assert await _owner_state(admin_engine, owner) == "disabled"
-        # A seven-day grace starts from the later of due, issuance and
-        # rollout. Future-point-in-time checks do not change DB clock.
+        # The new owner-network debt has no seven-day grace. The only
+        # possible temporary protection is a verified pending first proof.
         await _switch(admin_engine, billing=True, hold=True, grace=7)
-        assert await _owner_state(admin_engine, owner) == "grace"
+        assert await _owner_state(admin_engine, owner) == "held"
         assert await _owner_state(
             admin_engine, owner, at=now + timedelta(days=5),
-        ) == "grace"
-        assert await _owner_state(
-            admin_engine, owner, at=now + timedelta(days=9),
         ) == "held"
 
         # In real time, zero-day grace makes this source immediately overdue.
@@ -135,7 +132,7 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                             })
                     assert getattr(error.value.orig, "sqlstate", None) == "P6711"
             # A free grant is a direct entitlement INSERT, not a payment
-            # request. Its own trigger must freeze only this overdue bot.
+            # request. It must freeze every nonexempt bot of this owner.
             async with admin.begin():
                 await admin.execute(text(
                     "SELECT set_config('app.current_project_id',:id,true)"
@@ -175,19 +172,19 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                 await session.flush()
         assert getattr(error.value.orig, "sqlstate", None) == "P6711"
 
-        # An unrelated second bot of the SAME owner does not inherit
-        # this bot's debt, nor does it receive a free second trial.
-        async with tenant_session_scope(
-            factory, TenantContext(user_id=owner, project_id=other_project),
-        ) as session:
-            other_bot = BotInstance(
-                project_id=other_project, telegram_bot_id=_tid(),
-                username="unpaid_second", display_name="Unpaid second",
-                token_ciphertext="test-placeholder", status="registered",
-            )
-            session.add(other_bot)
-            await session.flush()
-            assert other_bot.id is not None
+        # Owner-level liability MUST block a new connected bot during
+        # overdue debt, rather than creating a fresh clean bot to evade it.
+        with pytest.raises(DBAPIError) as refused:
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner, project_id=other_project),
+            ) as session:
+                session.add(BotInstance(
+                    project_id=other_project, telegram_bot_id=_tid(),
+                    username="unpaid_second", display_name="Unpaid second",
+                    token_ciphertext="test-placeholder", status="registered",
+                ))
+                await session.flush()
+        assert getattr(refused.value.orig, "sqlstate", None) == "P6711"
 
         # The ORIGINAL bot is never disabled; existing access isn't touched.
         async with tenant_session_scope(
@@ -216,12 +213,18 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                 raise
 
         assert await _owner_state(admin_engine, owner) == "clear"
-        # Settling the original bot does not mutate the other bot.
+        # Genuine bank settlement restores normal bot registration.
         async with tenant_session_scope(
             factory, TenantContext(user_id=owner, project_id=other_project),
         ) as session:
-            other = await session.get(BotInstance, other_bot.id)
-            assert other is not None and other.status == "registered"
+            other_bot = BotInstance(
+                project_id=other_project, telegram_bot_id=_tid(),
+                username="paid_second", display_name="Paid second",
+                token_ciphertext="test-placeholder", status="registered",
+            )
+            session.add(other_bot)
+            await session.flush()
+            assert other_bot.id is not None
 
     finally:
         await _switch(admin_engine, billing=False, hold=False)

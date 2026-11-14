@@ -1,3 +1,30 @@
+## 2026-11-14 — Unified PR #162, approved six-part commercial enforcement
+
+PR #162 is a single integrated DRAFT for the owner's explicitly approved next
+stage, not a notification-only follow-up. Overdue real ViMi Pay invoices from
+one liable owner now hold NEW paid checkout, manual free grants and eligible
+new bot connections on ALL of that owner's nonexempt registered bots. Existing
+paid subscriptions/files, bot polling, support, proof review and access cleanup
+continue; platform-owned exempt bots remain exempt. After the FIRST immutable
+bank proof on each debt, the still-pending invoice permits a maximum 12h
+temporary protection; a later proof cannot reset the first timestamp, a
+rejection/approval of any attempt ends the exception. A still-overdue invoice
+is held immediately after those 12h even without an operator's decision.
+
+The already-existing CENTRAL @vimipay_bot monitor loop delivers the genuine
+Telegram push to the configured platform operator from a durable proof outbox
+at submission, after 6h and after 11h if still pending. All notifications have
+exactly one navigation button to EXISTING `plat:v2proofs:0` reviewer and its
+existing approval/rejection controls; no extra review queue, handler, UI
+menu or worker. Proof media still comes from original source bot on demand.
+Connected admin's normal bill and central review screen show readable RU/EN
+status, real Moscow due timestamps and no raw receipt UUID list clutter.
+Migrations 0085 + 0086 before runtime, exact-head CI and owner approval before
+merge, no billing activation or invoice void as a side effect.
+
+---
+
+
 ## 2026-11-14 — PR #161: BOT-scoped anniversary invoices, full settlement
 
 Approved binding decision: one bot → one monthly invoice; first bill after
