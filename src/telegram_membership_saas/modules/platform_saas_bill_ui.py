@@ -159,7 +159,7 @@ def unified_merchant_bill_rich(bill: dict) -> str:
     if bill.get("invoice_id") is None:
         lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
         lines.append("<p>" + tr(
-            "Счёт пока не выставлен. Оплата доступна только по реальному счёту.",
+            "Счёт ещё не выставлен. Оплата доступна только по реальному счёту.",
             "No invoice issued yet. Pay only an actual issued invoice.",
         ) + "</p>")
         return "\n".join(lines)
