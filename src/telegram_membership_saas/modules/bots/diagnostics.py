@@ -8,7 +8,10 @@ from __future__ import annotations
 from aiogram.exceptions import (
     TelegramAPIError,
     TelegramConflictError,
+    TelegramForbiddenError,
     TelegramNetworkError,
+    TelegramNotFound,
+    TelegramRetryAfter,
     TelegramUnauthorizedError,
 )
 
@@ -23,6 +26,10 @@ HEALTH_ERROR_CODES = frozenset({
     "polling_network_failed", "polling_api_failed",
     "polling_conflict", "polling_stalled", "polling_handler_stalled",
     "polling_check_failed",
+    "identity_rate_limited", "webhook_rate_limited",
+    "resource_network_failed", "resource_api_failed",
+    "resource_rate_limited", "resource_check_failed",
+    "resource_access_denied",
 })
 
 
@@ -42,12 +49,20 @@ def telegram_stage_code(stage: str, exc: Exception) -> str:
     getUpdates errors can be swallowed and retried internally by aiogram;
     the supervisor receives this fixed code from its observer separately.
     """
-    if stage not in {"identity", "webhook", "polling"}:
+    if stage not in {"identity", "webhook", "polling", "resource"}:
         raise ValueError("Unsupported Telegram diagnostic stage")
     if isinstance(exc, TelegramUnauthorizedError):
         return "invalid_credentials"
     if stage == "polling" and isinstance(exc, TelegramConflictError):
         return "polling_conflict"
+    if stage == "resource" and isinstance(
+        exc, (TelegramForbiddenError, TelegramNotFound),
+    ):
+        # Telegram denied access or no longer knows the connected resource.
+        # This is a permissions/configuration issue, not a network failure.
+        return "resource_access_denied"
+    if isinstance(exc, TelegramRetryAfter):
+        return f"{stage}_rate_limited" if stage != "polling" else "polling_api_failed"
     if isinstance(exc, (TelegramNetworkError, OSError, TimeoutError)):
         return f"{stage}_network_failed"
     if isinstance(exc, TelegramAPIError):
