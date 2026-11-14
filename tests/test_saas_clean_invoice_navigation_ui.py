@@ -149,6 +149,7 @@ async def test_payment_selector_edits_one_message_and_preserves_rails(
         ) else "Payment instructions" in str(first.kwargs["reply_markup"])
         assert "₽ " in str(first.kwargs["reply_markup"])
         assert first.kwargs["message_id"] == 88
+        assert "own:saasinvoices:0" in str(first.kwargs["reply_markup"])
         assert bot.send_message.await_count == 0
 
         q2 = _callback(f"spv:{token}:{method_token}:RUB:0")
@@ -169,6 +170,9 @@ async def test_payment_selector_edits_one_message_and_preserves_rails(
         instruction = bot.send_message.await_args.args[1]
         assert "Bank text" in instruction
         assert "Курс ЦБ: 1" not in instruction
+        assert "own:saasinvoices:0" in str(
+            bot.send_message.await_args.kwargs["reply_markup"]
+        )
     finally:
         _language.reset(language)
 
