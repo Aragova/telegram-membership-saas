@@ -4017,8 +4017,10 @@ def create_owner_setup_router(
                         currency=available[0]
                     rows=[]
                     currencies=[_button(
-                        ("🟢 " if c==currency else "")+display_currency(c),
+                        ("✅ " if c==currency else "")
+                        + _saas_currency_label(c),
                         "spm:"+invoice_token+":"+c+":"+page_text,
+                        "success" if c==currency else "primary",
                     ) for c in available]
                     rows.extend(currencies[i:i+3] for i in
                                 range(0,len(currencies),3))
@@ -4026,7 +4028,9 @@ def create_owner_setup_router(
                         if method["currency"]!=currency:
                             continue
                         rows.append([_button(
-                            "💳 "+str(method["name"])[:43],
+                            "💳 "+_saas_method_label(
+                                method["name"],currency,
+                            )[:40],
                             "spv:"+invoice_token+":"+encode_uuid(
                                 UUID(str(method["id"])))+":"+currency
                             +":"+page_text,"success",
@@ -4035,16 +4039,20 @@ def create_owner_setup_router(
                         tr("⬅️ К счёту","⬅️ Invoice"),
                         "saasbill:"+invoice_token+":"+str(page),
                     )])
-                    await bot.send_message(
-                        user_id,
-                        tr("💳 <b>Оплата счёта ViMi Pay</b>\n"
-                           "Выберите валюту и способ оплаты.\n"
-                           "Остаток: ",
-                           "💳 <b>Pay ViMi Pay invoice</b>\n"
-                           "Choose currency and payment method.\n"
-                           "Remaining: ")
-                        +"<b>"+format(remaining,".2f")+" ₽</b>",
-                        parse_mode="HTML",reply_markup=_markup(rows),
+                    await _show_saas_payment_step(
+                        bot, query,
+                        tr(
+                            "💳 <b>Оплата ViMi Pay</b>\n"
+                            "Осталось оплатить: ",
+                            "💳 <b>ViMi Pay payment</b>\n"
+                            "Amount remaining: ",
+                        )
+                        +"<b>"+format(remaining,".2f")+" ₽</b>\n\n"
+                        +tr("Валюта: ","Currency: ")
+                        +escape(_saas_currency_label(currency))+"\n"
+                        +tr("Выберите способ оплаты:",
+                            "Choose a payment method:"),
+                        rows,
                     )
                 else:
                     method_id=decode_uuid(parts[2])
@@ -4057,29 +4065,44 @@ def create_owner_setup_router(
                             "Способ оплаты был выключен. Выберите другой.",
                             "This payment method is no longer active.",
                         ))
-                    method_label=escape(str(chosen["name"]))
+                    method_label=escape(_saas_method_label(
+                        chosen["name"],currency,
+                    ))
                     if kind=="spv":
                         prefix=("spc:"+invoice_token+":"+encode_uuid(method_id)
                                 +":"+currency+":")
+                        half=(remaining*Decimal("0.50")).quantize(Decimal("0.01"))
+                        quarter=(remaining*Decimal("0.25")).quantize(Decimal("0.01"))
                         rows=[
-                            [_button(tr("✅ Оплатить полностью","✅ Pay in full"),
-                                     prefix+"F:"+page_text,"success")],
-                            [_button(tr("50% остатка","50% remaining"),
-                                     prefix+"H:"+page_text),
-                             _button(tr("25% остатка","25% remaining"),
-                                     prefix+"Q:"+page_text)],
+                            [_button(
+                                tr("✅ Вся сумма", "✅ Full amount")
+                                +" · "+format(remaining,".2f")+" ₽",
+                                prefix+"F:"+page_text,"success",
+                            )],
+                            [_button(
+                                "50% · "+format(half,".2f")+" ₽",
+                                prefix+"H:"+page_text,
+                            ),_button(
+                                "25% · "+format(quarter,".2f")+" ₽",
+                                prefix+"Q:"+page_text,
+                            )],
                             [_button(tr("⬅️ Способы оплаты","⬅️ Payment methods"),
                                      "spm:"+invoice_token+":"+currency
                                      +":"+page_text)],
                         ]
-                        await bot.send_message(
-                            user_id,"💳 <b>"+method_label+"</b> · "
-                            +escape(display_currency(currency))+"\n"
-                            +tr("Остаток: ","Remaining: ")
-                            +"<b>"+format(remaining,".2f")+" ₽</b>\n"
-                            +tr("Выберите сумму оплаты:",
-                                "Choose amount to pay:"),
-                            parse_mode="HTML",reply_markup=_markup(rows),
+                        await _show_saas_payment_step(
+                            bot, query,
+                            tr("💳 <b>Сумма оплаты</b>\n",
+                               "💳 <b>Payment amount</b>\n")
+                            +tr("Способ: ","Method: ")
+                            +method_label+"\n"
+                            +tr("Валюта: ","Currency: ")
+                            +escape(_saas_currency_label(currency))+"\n"
+                            +tr("Осталось: ","Remaining: ")
+                            +"<b>"+format(remaining,".2f")+" ₽</b>\n\n"
+                            +tr("Выберите сумму перевода:",
+                                "Choose how much to transfer:"),
+                            rows,
                         )
                     else:
                         fraction={"F":100,"H":50,"Q":25}.get(parts[4])
@@ -4105,8 +4128,11 @@ def create_owner_setup_router(
                             +tr("💰 Перевести: ","💰 Transfer: ")
                             +"<b>"+escape(str(attempt["amount"])+" "
                                           +str(attempt["currency"]))+"</b>"
-                            +"\n"+tr("💱 Курс ЦБ: ","💱 CBR quote: ")
-                            +escape(str(attempt["rub_per_unit"]))
+                            +(
+                                "\n"+tr("💱 Курс ЦБ: ","💱 CBR quote: ")
+                                +escape(str(attempt["rub_per_unit"]))
+                                if attempt["currency"]!="RUB" else ""
+                            )
                             +"\n\n<pre>"+escape(str(attempt["instructions"]))
                             +"</pre>\n\n"
                             +tr(
