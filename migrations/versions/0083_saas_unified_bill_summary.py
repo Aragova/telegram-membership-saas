@@ -103,7 +103,16 @@ BEGIN
   ),0);
   RETURN jsonb_build_object(
     'bot_id',bot_id,'project_id',p_project,'invoice_id',bill.id,
-    'period_start',bill.period_start,'period_end',bill.period_end,
+    'period_start',coalesce((
+      SELECT a.effective_start
+      FROM public.platform_saas_bot_service_activations a
+      WHERE a.invoice_id=bill.id
+    ),bill.period_start),
+    'period_end',coalesce((
+      SELECT a.effective_end
+      FROM public.platform_saas_bot_service_activations a
+      WHERE a.invoice_id=bill.id
+    ),bill.period_end),
     'turnover',turnover,'service_rub',service_rub::text,
     'service_native',service_native::text,
     'service_currency',service_currency,
@@ -116,7 +125,11 @@ BEGIN
       SELECT 1 FROM public.platform_saas_invoices prior
       WHERE prior.bot_instance_id=bot_id AND prior.owner_user_id=actor
         AND prior.kind='prepayment' AND prior.status='issued'
-        AND prior.period_end=bill.period_start
+        AND coalesce((
+          SELECT a.effective_end
+          FROM public.platform_saas_bot_service_activations a
+          WHERE a.invoice_id=prior.id
+        ),prior.period_end)=bill.period_start
     )
   );
 END; $f$
