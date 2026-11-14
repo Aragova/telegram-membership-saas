@@ -1866,6 +1866,8 @@ DECLARE
   covered_start timestamptz;
   covered_end timestamptz;
   anchor timestamptz;
+  prior_anchor timestamptz;
+  current_owner uuid;
   following timestamp;
   last_day integer;
   day_of_month integer;
@@ -1876,40 +1878,58 @@ BEGIN
   WHERE i.id=NEW.invoice_id FOR UPDATE;
   IF inv.id IS NULL OR inv.kind<>'prepayment'
      OR inv.status<>'issued' THEN RETURN NEW; END IF;
+  -- Finance evidence and live ownership must be serialized. A recipient
+  -- cannot buy the same service coverage while the previous owner's
+  -- late payment is being confirmed.
+  SELECT p.owner_user_id INTO current_owner
+  FROM public.bot_instances b
+  JOIN public.projects p ON p.id=b.project_id
+  WHERE b.id=inv.bot_instance_id
+  FOR SHARE OF p;
+  IF current_owner IS DISTINCT FROM inv.owner_user_id THEN
+    -- Verified seller-refund credits may still settle old owner history
+    -- without granting service to a bot now owned by someone else.
+    IF TG_TABLE_NAME='platform_saas_verified_credit_allocations'
+    THEN RETURN NEW; END IF;
+    RAISE EXCEPTION
+      'Transferred bot invoice requires operator refund reconciliation'
+      USING ERRCODE='P6712';
+  END IF;
   IF public.platform_saas_v2_remaining(inv.id)>0 THEN RETURN NEW; END IF;
   IF EXISTS(
     SELECT 1 FROM public.platform_saas_bot_service_activations a
     WHERE a.invoice_id=inv.id
   ) THEN RETURN NEW; END IF;
   confirmed:=clock_timestamp();
-  -- Service is paid from verified activation. Any overdue gap
-  -- remains frozen, even when the original invoice's printed end date
-  -- is still in the future. The first paid activation fixes the bot's
-  -- anniversary; later late reactivations resume coverage from payment.
-  IF confirmed<=inv.period_start THEN
+  SELECT a.anniversary_anchor INTO prior_anchor
+  FROM public.platform_saas_bot_service_activations a
+  WHERE a.bot_instance_id=inv.bot_instance_id
+    AND a.owner_user_id=inv.owner_user_id
+    AND a.effective_end<=inv.period_start
+  ORDER BY a.effective_end DESC LIMIT 1;
+  -- Backward compatibility: older paid periods predate the activation
+  -- ledger. Never mistake the current invoice for the prior paid month.
+  IF prior_anchor IS NULL THEN
+    SELECT min(i.period_start) INTO prior_anchor
+    FROM public.platform_saas_invoices i
+    WHERE i.bot_instance_id=inv.bot_instance_id
+      AND i.owner_user_id=inv.owner_user_id
+      AND i.id<>inv.id AND i.kind='prepayment' AND i.status='issued'
+      AND i.period_end<=inv.period_start
+      AND public.platform_saas_v2_remaining(i.id)=0;
+  END IF;
+  IF prior_anchor IS NOT NULL AND confirmed<=inv.period_end THEN
+    -- Ordinary renewal: retain the original Jan 31 anniversary even
+    -- when February's invoice is verified a little after the due time.
     covered_start:=inv.period_start;
     covered_end:=inv.period_end;
-    SELECT a.anniversary_anchor INTO anchor
-    FROM public.platform_saas_bot_service_activations a
-    WHERE a.bot_instance_id=inv.bot_instance_id
-      AND a.owner_user_id=inv.owner_user_id
-      AND a.effective_end<=inv.period_start
-    ORDER BY a.effective_end DESC LIMIT 1;
-    IF anchor IS NULL THEN
-      SELECT min(i.period_start) INTO anchor
-      FROM public.platform_saas_invoices i
-      WHERE i.bot_instance_id=inv.bot_instance_id
-        AND i.owner_user_id=inv.owner_user_id
-        AND i.kind='prepayment' AND i.status='issued'
-        AND i.period_start<=inv.period_start;
-      anchor:=coalesce(anchor,inv.period_start);
-    END IF;
+    anchor:=prior_anchor;
   ELSE
-    -- A full late settlement buys a CURRENT month of service. The
-    -- invoice's original period and immutable money are not changed.
-    covered_start:=confirmed;
-    anchor:=confirmed;
-    following:=date_trunc('month',confirmed AT TIME ZONE 'Europe/Moscow')
+    -- First post-trial activation OR long-frozen late renewal:
+    -- fresh paid coverage begins at verified settlement, not on paper.
+    covered_start:=greatest(confirmed,inv.period_start);
+    anchor:=covered_start;
+    following:=date_trunc('month',anchor AT TIME ZONE 'Europe/Moscow')
                +interval '1 month';
     last_day:=extract(day FROM (
       following+interval '1 month'-interval '1 day'
