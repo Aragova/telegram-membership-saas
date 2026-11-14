@@ -160,7 +160,8 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(monkeypatc
             events.append("unlocked")
 
     async def fake_customer(
-        _factory, *, project_id, telegram_bot_id, settings, on_poll_response
+        _factory, *, project_id, telegram_bot_id, settings,
+        on_poll_response, on_poll_failure
     ):
         await asyncio.sleep(0.03)
         on_poll_response()
@@ -211,7 +212,8 @@ async def test_repeated_cancel_never_releases_lease_before_slow_customer_teardow
             events.append("lease_released")
 
     async def slow_customer(
-        _factory, *, project_id, telegram_bot_id, settings, on_poll_response
+        _factory, *, project_id, telegram_bot_id, settings,
+        on_poll_response, on_poll_failure
     ):
         worker_started.set()
         try:
