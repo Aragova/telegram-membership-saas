@@ -26,6 +26,10 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance, BotInstanceStatus
+from telegram_membership_saas.modules.bots.diagnostics import (
+    CustomerBotDiagnosticError,
+    telegram_stage_code,
+)
 from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.broadcasts.worker import run_broadcast_loop
 from telegram_membership_saas.modules.crypto_pay.recovery import run_crypto_pay_recovery_loop
@@ -49,13 +53,23 @@ class ObservedCustomerBot(RichUiBot):
     """Report only successful getUpdates responses, even when there are no updates."""
 
     def __init__(
-        self, *, token: str, on_poll_response: Callable[[], None] | None = None
+        self, *, token: str,
+        on_poll_response: Callable[[], None] | None = None,
+        on_poll_failure: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(token=token)
         self._poll_response = on_poll_response
+        self._poll_failure = on_poll_failure
 
     async def __call__(self, method, request_timeout=None):
-        result = await super().__call__(method, request_timeout=request_timeout)
+        try:
+            result = await super().__call__(method, request_timeout=request_timeout)
+        except Exception as exc:
+            if isinstance(method, GetUpdates) and self._poll_failure is not None:
+                # Only a fixed safe code leaves this method. Aiogram keeps
+                # its existing retry behavior; do NOT swallow the error.
+                self._poll_failure(telegram_stage_code("polling", exc))
+            raise
         if isinstance(method, GetUpdates) and self._poll_response is not None:
             self._poll_response()
         return result
@@ -112,16 +126,25 @@ async def load_customer_bot(
 
 
 async def check_customer_bot_identity(bot: Bot, telegram_bot_id: int) -> None:
-    # Never include transport details (which can contain a token-bearing URL).
+    """Fail closed at the EXACT stage while preserving token secrecy."""
     try:
         actual = await bot.get_me()
-        if actual.id != telegram_bot_id or not actual.is_bot:
-            raise ValueError("Incorrect Telegram bot identity")
+    except Exception as exc:
+        raise CustomerBotDiagnosticError(
+            telegram_stage_code("identity", exc)
+        ) from None
+    if actual.id != telegram_bot_id or not actual.is_bot:
+        raise CustomerBotDiagnosticError("identity_mismatch")
+
+    try:
         webhook = await bot.get_webhook_info()
-        if webhook.url:
-            raise ValueError("Telegram webhook is already configured")
-    except Exception:
-        raise RuntimeError("Customer bot Telegram identity or webhook check failed") from None
+    except Exception as exc:
+        raise CustomerBotDiagnosticError(
+            telegram_stage_code("webhook", exc)
+        ) from None
+    if webhook.url:
+        # Never expose the webhook URL to Telegram UI or runtime logs.
+        raise CustomerBotDiagnosticError("webhook_active")
 
 
 async def verify_resource_permissions(
@@ -171,6 +194,7 @@ async def run_customer_bot_instance(
     settings: Settings,
     on_started: Callable[[], Awaitable[None]] | None = None,
     on_poll_response: Callable[[], None] | None = None,
+    on_poll_failure: Callable[[str], None] | None = None,
 ) -> None:
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
@@ -189,7 +213,8 @@ async def run_customer_bot_instance(
         )
         try:
             bot = ObservedCustomerBot(
-                token=config.token, on_poll_response=on_poll_response
+                token=config.token, on_poll_response=on_poll_response,
+                on_poll_failure=on_poll_failure,
             )
         except Exception:
             raise RuntimeError("Customer bot credential is invalid") from None
