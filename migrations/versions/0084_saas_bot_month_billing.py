@@ -1869,7 +1869,11 @@ BEGIN
     WHERE a.invoice_id=inv.id
   ) THEN RETURN NEW; END IF;
   confirmed:=clock_timestamp();
-  IF confirmed<=inv.period_end THEN
+  -- Service is paid from verified activation. Any overdue gap
+  -- remains frozen, even when the original invoice's printed end date
+  -- is still in the future. The first paid activation fixes the bot's
+  -- anniversary; later late reactivations resume coverage from payment.
+  IF confirmed<=inv.period_start THEN
     covered_start:=inv.period_start;
     covered_end:=inv.period_end;
     SELECT a.anniversary_anchor INTO anchor
