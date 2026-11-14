@@ -71,7 +71,7 @@ async def test_central_account_invoice_button_does_not_require_project(
     assert "TEST bank &amp; &lt;details&gt;" not in msg
     assert ("Счета ViMi Pay" if language == "ru"
             else "ViMi Pay invoices") in msg
-    assert ("Оплатить" if language == "ru" else "Pay") not in msg
+    assert ("💳 Оплатить" if language == "ru" else "💳 Pay") not in msg
     buttons = [
         b
         for row in bot.send_message.await_args.kwargs[
