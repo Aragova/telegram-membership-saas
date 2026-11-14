@@ -132,12 +132,45 @@ async def test_new_proof_push_once_operator_only_and_cancel_if_reviewed():
                 ) is None
 
                 second, _ = await submit(8002)
+                # Make only the second proof's future reminders due now
+                # without rewriting the immutable source receipt itself.
+                await conn.execute(text("SET LOCAL ROLE postgres"))
+                await conn.execute(text(
+                    "UPDATE platform_saas_proof_alert_outbox "
+                    "SET available_at=clock_timestamp()-interval '1 minute' "
+                    "WHERE attempt_id=:attempt AND kind<>'new'"
+                ), {"attempt": second})
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _identity(conn, operator)
+                # A subsequent real uploaded receipt can still notify the
+                # operator once, but cannot start a new 6/11-hour countdown.
+                second_alert = await _call(
+                    conn, "platform_saas_proof_alert_claim", {},
+                )
+                assert second_alert["id"] == str(second)
+                assert second_alert["kind"] == "new"
+                assert await _call(conn, "platform_saas_proof_alert_finish", {
+                    "id": second, "kind": "new",
+                    "generation": 1, "sent": True,
+                }, json=False)
+                assert await _call(
+                    conn, "platform_saas_proof_alert_claim", {},
+                ) is None
+
                 await _call(conn, "platform_saas_v2_reject_attempt", {
                     "attempt": second,
                     "reason": "TEST BANK FUNDS NOT RECEIVED",
                 }, json=False)
-                # Rejected before dispatch: no misleading phone alert.
+                await conn.execute(text("SET LOCAL ROLE postgres"))
+                await conn.execute(text(
+                    "UPDATE platform_saas_proof_alert_outbox "
+                    "SET available_at=clock_timestamp()-interval '1 minute' "
+                    "WHERE attempt_id=:attempt AND kind<>'new'"
+                ), {"attempt": first})
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await _identity(conn, operator)
+                # Rejecting ANY proof for the invoice ends protection
+                # and cancels even the first proof's unsent reminders.
                 assert await _call(
                     conn, "platform_saas_proof_alert_claim", {},
                 ) is None
