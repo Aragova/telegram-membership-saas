@@ -502,82 +502,23 @@ def _saas_invoice_is_upcoming(item: dict) -> bool:
     return due.tzinfo is not None and due > datetime.now(ZoneInfo("UTC"))
 
 
-def _saas_invoices_rich(report) -> str:
-    """Keep platform invoices a separate compact Rich section."""
-    items = [
-        "<h4>" + tr("📑 Счета платформы", "📑 Platform invoices") + "</h4>",
-        "<table bordered compact>",
-        "<tr><td>" + tr("Выставлено", "Issued") + "</td><td>"
-        + str(report.total) + "</td></tr>",
-        "<tr><td>" + tr("Все неоплаченные", "All unpaid") + "</td><td>"
-        + str(report.unpaid) + "</td></tr>",
-        "<tr><td>" + tr("К оплате сейчас", "Due now") + "</td><td>"
-        + escape(format(
-            getattr(report, "due_now_rub", report.outstanding_rub), ".2f",
-        )) + " ₽</td></tr>",
-        "<tr><td>" + tr("Предстоящие счета", "Upcoming invoices") + "</td><td>"
-        + str(getattr(report, "upcoming_count", 0)) + " · "
-        + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽</td></tr>",
-    ]
-    pending_count = getattr(report, "pending_credit_count", 0)
-    if pending_count:
-        items.append(
-            "<tr><td>" + tr("↩️ Возвраты без зачёта",
-                              "↩️ Credits not allocated") + "</td><td>"
-            + escape(format(report.pending_credit_rub, ".2f"))
-            + " ₽ · " + str(pending_count) + "</td></tr>"
-        )
-    items.append("</table>")
-    if not report.invoices:
-        items.append("<p>" + tr(
-            "Счетов к оплате пока нет.", "No platform invoices yet.",
-        ) + "</p>")
-    for inv in report.invoices:
-        title = (
-            tr("Обслуживание", "Service") if inv["kind"] == "prepayment"
-            else tr("Комиссия", "Commission")
-        )
-        state = (
-            tr("Оплачено", "Paid") if inv["status"] == "paid"
-            else tr("Плановый счёт, срок ещё не наступил", "Upcoming, not due yet")
-            if _saas_invoice_is_upcoming(inv)
-            else tr("Ожидает оплаты", "Awaiting payment")
-        )
-        settlement = inv.get("settlement") or {}
+def _saas_invoice_button_label(item: dict) -> str:
+    """Human-friendly bill names; immutable invoice IDs stay in callbacks."""
+    kind = (
+        tr("Обслуживание ViMi Pay", "ViMi Pay service")
+        if item["kind"] == "prepayment"
+        else tr("Комиссия ViMi Pay", "ViMi Pay commission")
+    )
+    settlement = item.get("settlement") or {}
+    if settlement.get("locked"):
         amount = (
-            str(settlement["amount"]) + " " + str(settlement["currency"])
-            if settlement.get("locked") else str(inv["amount_rub"]) + " ₽"
+            f"{Decimal(str(settlement['amount'])):.2f} "
+            + str(settlement["currency"])
         )
-        items.append(
-            "<p><b>" + escape(title) + ": "
-            + escape(amount) + "</b> · "
-            + escape(state) + "</p>"
-        )
-        if settlement.get("locked") and settlement.get("currency") != "RUB":
-            items.append("<p><i>" + tr("Рублёвая база: ",
-                                    "RUB reference: ")
-                         + escape(str(inv["amount_rub"])) + " ₽</i></p>")
-        items.append(
-            "<p>№ <code>" + escape(str(inv["id"])) + "</code> · "
-            + tr("Срок: ", "Due: ")
-            + escape(str(inv["due_at"])[:10]) + "</p>"
-        )
-    if report.unpaid:
-        items.append("<p>" + tr(
-            "💳 Нажмите «Оплатить» у нужного счёта, чтобы выбрать "
-            "валюту и актуальные способы оплаты ViMi Pay. "
-            "Реквизиты появятся после выбора способа.",
-            "💳 Press Pay on the invoice to choose currency and the "
-            "current ViMi Pay payment methods. Instructions appear "
-            "after selecting a method.",
-        ) + "</p>")
-    items.append("<p><i>" + tr(
-        "Это счета ViMi Pay, не счета ваших покупателей. "
-        "Оплаченный доступ сохраняется.",
-        "ViMi Pay charges, not your customers' invoices. "
-        "Previously paid access is retained.",
-    ) + "</i></p>")
-    return "\n".join(items)
+    else:
+        amount = f"{Decimal(str(item['amount_rub'])):.2f} ₽"
+    icon = "✅" if item["status"] == "paid" else "🧾"
+    return icon + " " + kind + " · " + amount
 
 
 def _saas_preview_classic(preview: dict) -> str:
@@ -1069,140 +1010,49 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID | None, *, page: int = 0,
     ) -> None:
+        """Only real platform invoices and a return to the main menu.
+
+        Sales reports, trial analytics and account status belong in their
+        existing dedicated views, not the entry point to Pay.
+        """
         report = await merchant_saas_statements(
             factory, actor_user_id=actor_id, project_id=project_id,
             page=page,
         )
-        service_price = await saas_price_profile(
-            factory, actor_id=actor_id, project_id=project_id,
-        )
-        trial = await merchant_saas_trial_status(
-            factory, actor_user_id=actor_id, project_id=project_id,
-        )
-        unified = None
-        if project_id is not None:
-            month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
-            unified = await merchant_saas_unified_monthly_preview(
-                factory, actor_user_id=actor_id,
-                project_id=project_id, month=month,
-            )
-        lines = [
-            tr("🧾 <b>ViMi Pay · Счета платформы</b>",
-               "🧾 <b>ViMi Pay · Platform invoices</b>"),
-            trial_status_classic(trial, timezone="Europe/Moscow"),
-            "",
-            tr("Всего: ", "Total: ") + str(report.total),
-            tr("Неоплаченных всего: ", "Total unpaid: ") + str(report.unpaid),
-            tr("К оплате сейчас: ", "Due now: ")
-            + escape(format(getattr(report, "due_now_rub", report.outstanding_rub), ".2f")) + " ₽",
-            tr("Плановые счета: ", "Upcoming: ")
-            + str(getattr(report, "upcoming_count", 0)) + " · "
-            + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽",
-            tr("Тариф обслуживания: ", "Service price: ")
-            + ("$3 / " if service_price["currency"] == "USD"
-               else "150 ₽ / ")
-            + tr("бот в месяц", "bot per month"),
-            "",
-        ]
-        if getattr(report, "pending_credit_count", 0):
-            lines.append(
-                tr("↩️ Возвраты в ожидании зачёта: ",
-                   "↩️ Refund credits pending allocation: ")
-                + escape(format(report.pending_credit_rub, ".2f"))
-                + " ₽ (" + str(report.pending_credit_count) + ")"
-            )
-        if not report.invoices:
-            lines.append(tr("Счетов пока нет.", "No platform invoices yet."))
-        for item in report.invoices:
-            is_paid = item["status"] == "paid"
-            state = (
-                tr("Оплачен", "Paid") if is_paid
-                else tr("Срок ещё не наступил", "Not due yet")
-                if _saas_invoice_is_upcoming(item)
-                else tr("Ожидает оплаты", "Awaiting payment")
-            )
-            kind = (
-                tr("Обслуживание бота", "Bot service") if item["kind"] == "prepayment"
-                else tr("Комиссия с продаж", "Sales commission")
-            )
-            settlement = item.get("settlement") or {}
-            display_amount = (
-                str(settlement["amount"]) + " " + str(settlement["currency"])
-                if settlement.get("locked")
-                else str(item["amount_rub"]) + " ₽"
-            )
-            lines.extend([
-                ("✅ " if is_paid else "⏳ ") + "<b>"
-                + escape(display_amount) + "</b> · "
-                + escape(kind),
-                "  № <code>" + escape(str(item["id"])) + "</code>",
-                "  " + tr("Срок: ", "Due: ")
-                + escape(str(item["due_at"])[:10]) + " · " + state,
-            ])
-        if report.unpaid:
-            lines.append(tr(
-                "💳 Нажмите «Оплатить» рядом со счётом. Затем выберите "
-                "валюту и способ оплаты из списка ViMi Pay.",
-                "💳 Tap Pay on the invoice, then choose a currency and "
-                "one of ViMi Pay's available methods.",
-            ))
-        lines.append("")
-        lines.append(tr(
-            "<i>Это только счета за обслуживание ViMi Pay, "
-            "не счета ваших покупателей. Оплаченный доступ не отзывается.</i>",
-            "<i>These are platform service invoices, not customer "
-            "invoices. Previously paid access is preserved.</i>",
-        ))
-        # Service price profile is a settings field, NOT a Pay button.
         rows: list[list[InlineKeyboardButton]] = []
-        nav = []
+        for item in report.invoices:
+            rows.append([_button(
+                _saas_invoice_button_label(item),
+                "saasbill:" + encode_uuid(UUID(str(item["id"])))
+                + ":" + str(page),
+                "success" if item["status"] != "paid" else "primary",
+            )])
+        nav: list[InlineKeyboardButton] = []
         if page:
             nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
         if (page + 1) * 6 < report.total:
             nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
         if nav:
             rows.append(nav)
-        for item in report.invoices:
-            invoice_token=encode_uuid(UUID(str(item["id"])))
-            controls=[_button(
-                ("✅ " if item["status"] == "paid" else "🧾 ")
-                + str(item["id"])[:8] + " · "
-                + (
-                    str(item["settlement"]["amount"]) + " "
-                    + str(item["settlement"]["currency"])
-                    if (item.get("settlement") or {}).get("locked")
-                    else str(item["amount_rub"]) + " ₽"
-                ),
-                "saasbill:" + invoice_token + ":" + str(page),
-            )]
-            if item["status"] != "paid":
-                controls.append(_button(
-                    tr("💳 Оплатить", "💳 Pay"),
-                    "spm:" + invoice_token + ":RUB:" + _encode_saas_page(page),
-                    "success",
-                ))
-            rows.append(controls)
-        rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
         rows.append([_button(
-            tr("⬅️ Мои боты", "⬅️ My bots") if project_id is None
-            else tr("⬅️ Настройки", "⬅️ Settings"),
-            "projects" if project_id is None else "settings",
+            tr("🏠 Главное меню", "🏠 Main menu"),
+            "dashboard" if project_id is not None else "projects",
         )])
-        if unified is not None:
-            await send_owner_rich(
-                bot, chat_id=user_id,
-                rich_html=trial_status_rich(trial, timezone="Europe/Moscow") + "\n"
-                + unified_monthly_rich(unified) + "\n"
-                + _saas_invoices_rich(report),
-                classic_html=unified_monthly_classic(unified)
-                + "\n\n" + "\n".join(lines),
-                reply_markup=_markup(rows),
-            )
-        else:
-            await bot.send_message(
-                user_id, "\n".join(lines), parse_mode="HTML",
-                reply_markup=_markup(rows),
-            )
+        body = tr(
+            "🧾 <b>Счета ViMi Pay</b>\n\n"
+            "Выберите выставленный счёт:",
+            "🧾 <b>ViMi Pay invoices</b>\n\n"
+            "Select an issued invoice:",
+        ) if report.invoices else tr(
+            "🧾 <b>Счета ViMi Pay</b>\n\n"
+            "Выставленных счетов пока нет.",
+            "🧾 <b>ViMi Pay invoices</b>\n\n"
+            "No invoices have been issued yet.",
+        )
+        await bot.send_message(
+            user_id, body, parse_mode="HTML",
+            reply_markup=_markup(rows),
+        )
 
     async def show_saas_issued_invoice(
         bot: Bot, user_id: int, actor_id: UUID,
