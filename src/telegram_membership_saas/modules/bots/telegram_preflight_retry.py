@@ -45,6 +45,8 @@ def preflight_retry_delay(exc: Exception, attempt: int) -> float | None:
 
 async def retry_telegram_preflight(
     operation: Callable[[], Awaitable[T]],
+    *,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> T:
     """Retry one idempotent Telegram read, returning its native result.
 
@@ -61,5 +63,5 @@ async def retry_telegram_preflight(
             delay = preflight_retry_delay(exc, attempt)
             if delay is None:
                 raise
-            await asyncio.sleep(delay)
+            await sleep(delay)
     raise AssertionError("Unreachable Telegram preflight retry state")
