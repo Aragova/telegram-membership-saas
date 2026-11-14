@@ -1486,6 +1486,248 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
     END; $f$
     """)
 
+    # Real source-linked refunds on mixed bot renewal invoices must
+    # remain available to their ORIGINAL bot only, with line-level caps.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_reconcile_verified_refunds(
+    p_owner uuid DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $fn$
+DECLARE
+  actor uuid;
+  is_operator boolean;
+  entry record;
+  claim record;
+  bill record;
+  already_claimed numeric;
+  already_invoiced numeric;
+  exact_prior numeric;
+  exact_current numeric;
+  claim_amount numeric;
+  source_status text;
+  used_amount numeric;
+  available numeric;
+  due numeric;
+  applied numeric;
+  created integer:=0;
+  allocated integer:=0;
+BEGIN
+  actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+  SELECT EXISTS (
+    SELECT 1 FROM public.telegram_users u
+    JOIN public.platform_operators o ON o.telegram_user_id=u.telegram_user_id
+    WHERE u.id=actor AND o.role='owner'
+  ) INTO is_operator;
+  IF actor IS NULL OR (p_owner IS NULL AND NOT is_operator)
+    OR (p_owner IS NOT NULL AND actor<>p_owner AND NOT is_operator)
+  THEN
+    RAISE EXCEPTION 'Verified credits require owning account or platform owner'
+      USING ERRCODE='42501';
+  END IF;
+  -- Monetary account ledger: one source and one allocation are immutable.
+  -- Serialize across capture, bank confirmation and overdue balance reads.
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended('vimi:saas:verified-refunds',0)
+  );
+  FOR entry IN
+    SELECT src.*,l.id AS line_id,l.charge_rub,
+           i.id AS original_invoice_id,i.total_rub AS original_invoice_total,
+           fx.rub_per_unit
+    FROM (
+      SELECT 'stars_file'::text AS refund_kind,c.id AS proof_id,
+             s.owner_user_id,s.source_kind,s.source_id,
+             s.paid_at,c.commission_credit_usd
+      FROM public.platform_saas_star_refund_credits c
+      JOIN public.platform_saas_star_sales s ON s.id=c.original_sale_id
+        AND s.owner_user_id=c.owner_user_id
+        AND s.source_kind='file_stars' AND s.billing_eligible
+      UNION ALL
+      SELECT 'stars_subscription',c.id,s.owner_user_id,
+             s.source_kind,s.source_id,s.paid_at,c.commission_credit_usd
+      FROM public.platform_saas_star_subscription_credits c
+      JOIN public.platform_saas_star_sales s ON s.id=c.original_sale_id
+        AND s.owner_user_id=c.owner_user_id
+        AND s.source_kind='subscription_stars' AND s.billing_eligible
+      UNION ALL
+      SELECT 'crypto_transfer',c.id,s.owner_user_id,
+             s.source_kind,s.invoice_id,s.paid_at,c.commission_credit_usd
+      FROM public.platform_saas_crypto_transfer_credits c
+      JOIN public.platform_saas_crypto_sales s ON s.id=c.original_sale_id
+        AND s.owner_user_id=c.owner_user_id AND s.billing_eligible
+    ) src
+    JOIN public.platform_saas_invoice_lines l
+      ON l.source_kind=src.source_kind AND l.source_id=src.source_id
+      AND l.fee_rate=0.05
+    JOIN public.platform_saas_invoices i ON i.id=l.invoice_id
+      AND i.owner_user_id=src.owner_user_id
+      AND i.kind IN ('commission','prepayment')
+      AND i.status='issued'
+    JOIN public.platform_saas_daily_fx_rates fx
+      ON fx.rate_date=(src.paid_at AT TIME ZONE 'Europe/Moscow')::date
+      AND fx.currency_code='USD' AND fx.source_name='CBR'
+      AND fx.source_date<=fx.rate_date
+      AND fx.source_date>=fx.rate_date-interval '14 days'
+    WHERE (p_owner IS NULL OR src.owner_user_id=p_owner)
+      AND NOT EXISTS(
+        SELECT 1 FROM public.platform_saas_verified_credit_claims c
+        WHERE c.source_kind=src.refund_kind AND c.source_credit_id=src.proof_id
+      )
+    ORDER BY src.paid_at,src.proof_id LIMIT 200
+  LOOP
+    -- Serialize with the invoice transition guard. An in-flight VOID must
+    -- complete first, and the committed status is rechecked under row lock.
+    SELECT i.status INTO source_status
+    FROM public.platform_saas_invoices i
+    WHERE i.id=entry.original_invoice_id FOR UPDATE;
+    IF source_status IS DISTINCT FROM 'issued' THEN CONTINUE; END IF;
+    SELECT coalesce(sum(credit_rub),0) INTO already_claimed
+    FROM public.platform_saas_verified_credit_claims c
+    WHERE c.invoice_line_id=entry.line_id;
+    SELECT coalesce(sum(c.credit_rub),0),
+           coalesce(sum(c.exact_credit_rub),0)
+      INTO already_invoiced,exact_prior
+    FROM public.platform_saas_verified_credit_claims c
+    JOIN public.platform_saas_invoice_lines l
+      ON l.id=c.invoice_line_id
+    WHERE l.invoice_id=entry.original_invoice_id;
+    exact_current:=round(entry.commission_credit_usd*entry.rub_per_unit,18);
+    -- Invoice totals are rounded once after summing exact individual sale
+    -- commissions. Rounding each refund independently leaves phantom cents,
+    -- or overcredits partial returns. Delta of cumulative rounded totals
+    -- assigns any remainder to the precise refund that crosses the boundary.
+    claim_amount:=greatest(0,least(
+      round(exact_prior+exact_current,2)-already_invoiced,
+      entry.charge_rub-already_claimed,
+      entry.original_invoice_total-already_invoiced
+    ));
+    INSERT INTO public.platform_saas_verified_credit_claims(
+      id,source_kind,source_credit_id,invoice_line_id,owner_user_id,
+      credit_rub,exact_credit_rub
+    ) VALUES(
+      gen_random_uuid(),entry.refund_kind,entry.proof_id,
+      entry.line_id,entry.owner_user_id,claim_amount,exact_current
+    ) ON CONFLICT(source_kind,source_credit_id) DO NOTHING;
+    IF FOUND THEN created:=created+1; END IF;
+  END LOOP;
+  -- Each source-linked verified refund can be used only up to its face
+  -- value. A refund recorded after invoice settlement becomes account
+  -- credit for later invoices, not a negative historical payment.
+  FOR claim IN
+    SELECT c.*, c.credit_rub-coalesce((
+       SELECT sum(a.amount_rub)
+       FROM public.platform_saas_verified_credit_allocations a
+       WHERE a.claim_id=c.id
+    ),0) AS available
+    FROM public.platform_saas_verified_credit_claims c
+    WHERE (p_owner IS NULL OR c.owner_user_id=p_owner)
+      AND c.credit_rub>coalesce((
+        SELECT sum(a.amount_rub)
+        FROM public.platform_saas_verified_credit_allocations a
+        WHERE a.claim_id=c.id
+      ),0)
+      -- Skip claims without an actually payable, unreserved target so a
+      -- blocked oldest 200 cannot starve other owners indefinitely.
+      AND EXISTS(
+        SELECT 1 FROM public.platform_saas_invoices i
+        WHERE i.owner_user_id=c.owner_user_id AND i.status='issued'
+          AND (
+            i.id=(SELECT l.invoice_id FROM public.platform_saas_invoice_lines l
+                  WHERE l.id=c.invoice_line_id)
+            OR i.bot_instance_id=(SELECT l.bot_instance_id
+                FROM public.platform_saas_invoice_lines l
+                WHERE l.id=c.invoice_line_id)
+          )
+          AND public.platform_saas_v2_remaining(i.id)>0
+          AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_verified_credit_allocations a
+            WHERE a.claim_id=c.id AND a.invoice_id=i.id
+          )
+          AND NOT EXISTS(
+            SELECT 1 FROM public.platform_saas_payment_attempts_v2 pending
+            WHERE pending.invoice_id=i.id
+              AND (
+                pending.expires_at>clock_timestamp()
+                OR EXISTS(
+                  SELECT 1 FROM public.platform_saas_payment_proofs_v2 proof
+                  WHERE proof.attempt_id=pending.id
+                )
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_allocations_v2 ap
+                WHERE ap.attempt_id=pending.id
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_rejections_v2 rp
+                WHERE rp.attempt_id=pending.id
+              )
+          )
+      )
+    ORDER BY c.recorded_at,c.id LIMIT 200
+  LOOP
+    available:=claim.available;
+    FOR bill IN
+      SELECT i.id FROM public.platform_saas_invoices i
+      WHERE i.owner_user_id=claim.owner_user_id AND i.status='issued'
+        -- Preserve original-bot refunds: never use a verified credit
+        -- against another bot's invoice from the same merchant account.
+        AND (
+          i.id=(SELECT l.invoice_id FROM public.platform_saas_invoice_lines l
+                WHERE l.id=claim.invoice_line_id)
+          OR i.bot_instance_id=(
+             SELECT l.bot_instance_id FROM public.platform_saas_invoice_lines l
+             WHERE l.id=claim.invoice_line_id)
+        )
+        -- A quoted or proof-submitted transfer may be in flight. Preserve
+        -- its full immutable bank amount for legitimate operator approval.
+        -- Unspent verified credit carries into a later invoice instead.
+        AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_payment_attempts_v2 pending
+          WHERE pending.invoice_id=i.id
+            -- A live quote can already have been paid; after its deadline
+            -- an unsubmitted quote is no longer a collectible transfer.
+            -- A submitted proof remains reserved until settled/rejected.
+            AND (
+              pending.expires_at>clock_timestamp()
+              OR EXISTS(
+                SELECT 1 FROM public.platform_saas_payment_proofs_v2 proof
+                WHERE proof.attempt_id=pending.id
+              )
+            )
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_payment_allocations_v2 ap
+              WHERE ap.attempt_id=pending.id
+            )
+            AND NOT EXISTS(
+              SELECT 1 FROM public.platform_saas_payment_rejections_v2 rp
+              WHERE rp.attempt_id=pending.id
+            )
+        )
+        AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_verified_credit_allocations a
+          WHERE a.claim_id=claim.id AND a.invoice_id=i.id
+        )
+      ORDER BY CASE WHEN i.id=(
+        SELECT l.invoice_id FROM public.platform_saas_invoice_lines l
+        WHERE l.id=claim.invoice_line_id
+      ) THEN 0 ELSE 1 END, i.due_at,i.id
+      FOR UPDATE
+    LOOP
+      EXIT WHEN available<0.01;
+      due:=public.platform_saas_v2_remaining(bill.id);
+      applied:=least(available,due);
+      IF applied>=0.01 THEN
+        INSERT INTO public.platform_saas_verified_credit_allocations(
+          id,claim_id,invoice_id,amount_rub
+        ) VALUES(gen_random_uuid(),claim.id,bill.id,applied);
+        available:=available-applied;
+        allocated:=allocated+1;
+      END IF;
+    END LOOP;
+  END LOOP;
+  RETURN jsonb_build_object('claimed',created,'allocated',allocated);
+END; $fn$
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
