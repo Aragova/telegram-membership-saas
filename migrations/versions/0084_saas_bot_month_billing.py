@@ -1224,6 +1224,17 @@ BEGIN
     WHERE b.project_id=NEW.project_id AND b.status='registered';
     IF bot_count<>1 THEN RETURN NEW; END IF;
   END IF;
+  IF source_bot IS NULL AND TG_TABLE_NAME IN (
+    'file_sale_manual_orders','file_sale_purchases'
+  ) THEN
+    -- Even a malformed pre-insert order cannot bypass the hold by
+    -- omitting the bot id. A legitimately issued order remains bound
+    -- to the original Telegram bot by its own constraints.
+    SELECT count(*),max(b.id::text)::uuid INTO bot_count,source_bot
+    FROM public.bot_instances b
+    WHERE b.project_id=NEW.project_id AND b.status='registered';
+    IF bot_count<>1 THEN source_bot:=NULL; END IF;
+  END IF;
   IF source_bot IS NULL THEN RETURN NEW; END IF;
   hold_state:=public.platform_saas_bot_hold_state(source_bot,checked_at);
   IF hold_state<>'held' THEN RETURN NEW; END IF;
