@@ -20,15 +20,19 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.execute("""
       CREATE TABLE public.platform_saas_proof_alert_outbox (
-        attempt_id uuid PRIMARY KEY REFERENCES
+        attempt_id uuid NOT NULL REFERENCES
           public.platform_saas_payment_attempts_v2(id) ON DELETE RESTRICT,
+        kind text NOT NULL CHECK (
+          kind IN ('new','six_hour','eleven_hour')
+        ),
         status text NOT NULL DEFAULT 'pending' CHECK (
           status IN ('pending','sending','sent','cancelled')
         ),
         attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
         available_at timestamptz NOT NULL DEFAULT clock_timestamp(),
         claimed_at timestamptz,
-        delivered_at timestamptz
+        delivered_at timestamptz,
+        PRIMARY KEY (attempt_id,kind)
       )
     """)
     op.execute("""
@@ -63,8 +67,17 @@ def upgrade() -> None:
       RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
       SET search_path=pg_catalog,public AS $f$
       BEGIN
-        INSERT INTO public.platform_saas_proof_alert_outbox(attempt_id)
-        VALUES(NEW.attempt_id) ON CONFLICT (attempt_id) DO NOTHING;
+        INSERT INTO public.platform_saas_proof_alert_outbox(
+          attempt_id,kind,available_at
+        )
+        SELECT NEW.attempt_id, events.kind,
+               NEW.submitted_at + events.delay
+        FROM (VALUES
+          ('new',interval '0 seconds'),
+          ('six_hour',interval '6 hours'),
+          ('eleven_hour',interval '11 hours')
+        ) AS events(kind,delay)
+        ON CONFLICT (attempt_id,kind) DO NOTHING;
         RETURN NEW;
       END; $f$
     """)
@@ -91,9 +104,13 @@ def upgrade() -> None:
           ) OR EXISTS (
             SELECT 1 FROM public.platform_saas_payment_rejections_v2 rejected
             WHERE rejected.attempt_id=n.attempt_id
-          ));
+          ) OR (n.kind<>'new' AND EXISTS(
+            SELECT 1 FROM public.platform_saas_payment_proofs_v2 old
+            WHERE old.attempt_id=n.attempt_id
+              AND old.submitted_at+interval '12 hours'<=now_at
+          )));
 
-        SELECT n.attempt_id,n.attempts INTO item
+        SELECT n.attempt_id,n.kind,n.attempts INTO item
         FROM public.platform_saas_proof_alert_outbox n
         WHERE n.available_at <= now_at
           AND (
@@ -101,7 +118,7 @@ def upgrade() -> None:
             OR (n.status='sending'
                 AND n.claimed_at < now_at - interval '5 minutes')
           )
-        ORDER BY n.available_at,n.attempt_id
+        ORDER BY n.available_at,n.attempt_id,n.kind
         LIMIT 1 FOR UPDATE OF n SKIP LOCKED;
         IF NOT FOUND THEN RETURN NULL; END IF;
 
@@ -109,11 +126,11 @@ def upgrade() -> None:
         SET status='sending',
             attempts=n.attempts+1,
             claimed_at=now_at
-        WHERE n.attempt_id=item.attempt_id;
+        WHERE n.attempt_id=item.attempt_id AND n.kind=item.kind;
 
         RETURN (
           SELECT jsonb_build_object(
-            'id',n.attempt_id,'generation',n.attempts,
+            'id',n.attempt_id,'kind',n.kind,'generation',n.attempts,
             'amount',a.amount_currency::text,
             'currency',a.currency_code,
             'pending_count',(
@@ -130,19 +147,20 @@ def upgrade() -> None:
           FROM public.platform_saas_proof_alert_outbox n
           JOIN public.platform_saas_payment_attempts_v2 a
             ON a.id=n.attempt_id
-          WHERE n.attempt_id=item.attempt_id
+          WHERE n.attempt_id=item.attempt_id AND n.kind=item.kind
         );
       END; $f$
     """)
     op.execute("""
       CREATE FUNCTION public.platform_saas_proof_alert_finish(
-        p_attempt uuid,p_generation integer,p_sent boolean
+        p_attempt uuid,p_kind text,p_generation integer,p_sent boolean
       ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
       SET search_path=pg_catalog,public AS $f$
       DECLARE changed integer;
       BEGIN
         PERFORM public.platform_saas_require_owner();
-        IF p_attempt IS NULL OR p_generation IS NULL OR p_sent IS NULL THEN
+        IF p_attempt IS NULL OR p_kind IS NULL
+           OR p_generation IS NULL OR p_sent IS NULL THEN
           RAISE EXCEPTION 'Invalid operator alert acknowledgment'
             USING ERRCODE='22023';
         END IF;
@@ -155,7 +173,7 @@ def upgrade() -> None:
                 secs => LEAST(1800,30 * (1 << LEAST(n.attempts,6)))
               ) END,
             claimed_at=NULL
-        WHERE n.attempt_id=p_attempt
+        WHERE n.attempt_id=p_attempt AND n.kind=p_kind
           AND n.status='sending' AND n.attempts=p_generation;
         GET DIAGNOSTICS changed = ROW_COUNT;
         RETURN changed=1;
@@ -167,7 +185,7 @@ def upgrade() -> None:
     """)
     for signature in (
         "platform_saas_proof_alert_claim()",
-        "platform_saas_proof_alert_finish(uuid,integer,boolean)",
+        "platform_saas_proof_alert_finish(uuid,text,integer,boolean)",
     ):
         op.execute(
             f"REVOKE ALL ON FUNCTION public.{signature} FROM PUBLIC"
@@ -192,7 +210,7 @@ def downgrade() -> None:
     )
     op.execute(
         "DROP FUNCTION IF EXISTS "
-        "public.platform_saas_proof_alert_finish(uuid,integer,boolean)"
+        "public.platform_saas_proof_alert_finish(uuid,text,integer,boolean)"
     )
     op.execute(
         "DROP FUNCTION IF EXISTS public.platform_saas_proof_alert_claim()"
