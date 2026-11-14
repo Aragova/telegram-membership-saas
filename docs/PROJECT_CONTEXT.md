@@ -1,3 +1,32 @@
+## 2026-11-14 — PR #161: one merchant Rich bill (draft, NOT deployed)
+
+Owner rejected the separate issued-invoice list from merged #160. The
+connected admin bot's single `🧾 Счёт` must show a concise Rich bill with
+(1) account-wide unpaid service, (2) this bot's actual completed subscription
+turnover by currency and sales count, with provisional 5% for the current
+Moscow month, (3) files similarly, and (4) the real account-wide amount
+payable across service and **already-issued** commission, after receipts and
+verified refunds. Current-month unissued commission must not inflate the
+payable balance. Keep RU/EN and HTML fallback. Central account billing shows
+all account sales without requiring a still-connected bot.
+
+PR #161 uses a new read-only, owner-checked summary RPC, unchanged issuer /
+refund / bank ledgers and a single contextual Pay button. Existing payment
+attempts only settle one canonical invoice: one open obligation goes directly
+to the current central-catalog selector; multiple obligations use one hidden
+pay-only allocation chooser, NOT separate main-menu bills. A true one-bank-
+transfer-to-many-invoices operation is NOT implemented and needs an atomic
+multi-invoice allocation design before offering it. Never claim the summary
+total was paid by a partial individual-invoice receipt. Legacy callbacks
+remain usable; unused service-only preview routines were removed.
+
+This is an **unmerged draft** requiring exact-HEAD PostgreSQL CI, review,
+owner approval and a separate staging deployment. No new test controls, bot
+workers, commercial billing activation, or `compose.light100.yaml` changes.
+See `docs/PLATFORM_COMMERCIAL_BILLING_V2.md`.
+
+---
+
 ## 2026-11-13 — ViMi Pay commercial billing PR #145 (Draft)
 
 Commercial release remains one integrated PR, no new test modes or standalone
