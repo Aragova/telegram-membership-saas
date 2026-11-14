@@ -1,4 +1,4 @@
-"""Unified ViMi Pay Rich bill: completed sales by rail, one live payable."""
+"""Issued per-bot Rich statement and first activation without commissions."""
 
 from copy import deepcopy
 
@@ -10,82 +10,82 @@ from telegram_membership_saas.modules.platform_saas_bill_ui import (
     unified_merchant_bill_rich,
 )
 
-SUMMARY = {
-    "month": "2026-11-01",
-    "project_id": "scoped-bot",
+BILL = {
+    "bot_id": "private-bot", "project_id": "private-project",
+    "invoice_id": "never-expose-uuid",
+    "period_start": "2026-12-16T10:00:00+03:00",
+    "period_end": "2027-01-16T10:00:00+03:00",
+    "first_period": False,
     "turnover": [
         {"kind": "subscription", "currency": "RUB",
          "sold": 20, "gross": "10000.00"},
         {"kind": "subscription", "currency": "XTR",
          "sold": 2, "gross": "250"},
-        {"kind": "file", "currency": "EUR",
-         "sold": 3, "gross": "30.00"},
         {"kind": "file", "currency": "USD",
          "sold": 10, "gross": "100.00"},
-        {"kind": "file", "currency": "BTC",
-         "sold": 1, "gross": "0.005"},
     ],
-    "service_due_rub": "150.00",
-    "commission_due_rub": "700.00",
+    "service_rub": "150.00", "subscription_rub": "500.00",
+    "file_rub": "200.00", "total_rub": "850.00",
+    "paid_rub": "0.00", "credit_rub": "0.00",
     "total_due_rub": "850.00",
-    "unpaid_count": 2,
-    "first_invoice_id": "secret-uuid",
-}
-PREVIEW = {
-    "rails": [
-        {"kind": "subscription", "commission_rub": "500.00"},
-        {"kind": "subscription_stars", "commission_rub": "15.00"},
-        {"kind": "file_manual", "commission_rub": "200.00"},
-        {"kind": "file_crypto", "commission_rub": "10.00"},
-    ],
-    "unrated_billable": 0, "uncaptured_crypto": 0,
 }
 
 
-@pytest.mark.parametrize("language", ["ru", "en"])
-def test_bill_one_card_includes_subscription_file_and_service(language):
-    token = _language.set(language)
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_one_bot_monthly_bill_includes_service_and_both_sales(lang):
+    token = _language.set(lang)
     try:
-        rich = unified_merchant_bill_rich(SUMMARY, PREVIEW)
-        classic = unified_merchant_bill_classic(SUMMARY, PREVIEW)
+        rich = unified_merchant_bill_rich(BILL)
+        classic = unified_merchant_bill_classic(BILL)
     finally:
         _language.reset(token)
     for view in (rich, classic):
         assert "10000 RUB" in view
         assert "250 ⭐ Telegram Stars" in view
         assert "100 USD" in view
-        assert "30 EUR" in view
-        assert "0.005 BTC" in view
-        assert "150.00 ₽" in view
-        assert "700.00 ₽" in view
-        assert "850.00 ₽" in view
-        assert "secret-uuid" not in view
-    assert rich.count("<table bordered compact>") == 3
+        assert "150.00 ₽" in view and "850.00 ₽" in view
+        assert "16.12.2026" in view
+        assert "never-expose-uuid" not in view
+        assert ("Продажи подписок" if lang == "ru"
+                else "Subscription sales") in view
+        assert ("Продажи файлов" if lang == "ru"
+                else "File sales") in view
+    assert rich.count("<table bordered compact>") == 2
     assert "<table" not in classic
-    assert "515.00 ₽" in rich and "210.00 ₽" in rich
-    assert ("Подписки" if language == "ru" else "Subscriptions") in rich
-    assert ("Файлы" if language == "ru" else "Files") in rich
 
 
-def test_provisional_sales_never_inflate_payable_account_balance():
-    summary = deepcopy(SUMMARY)
-    summary.update(service_due_rub="150", commission_due_rub="0",
-                   total_due_rub="150")
-    preview = deepcopy(PREVIEW)
-    preview["unrated_billable"] = 1
+def test_first_month_contains_only_service_and_full_pay():
+    first = deepcopy(BILL)
+    first.update(first_period=True, turnover=[], subscription_rub="0",
+                 file_rub="0", total_rub="150", total_due_rub="150")
     token = _language.set("ru")
     try:
-        rich = unified_merchant_bill_rich(summary, preview)
+        rich = unified_merchant_bill_rich(first)
     finally:
         _language.reset(token)
-    assert "Итого к оплате</b></td><td><b>150.00 ₽" in rich
-    assert "515.00 ₽" in rich
-    assert "210.00 ₽" in rich
-    assert "⚠️" in rich
+    assert "Абонплата за бота" in rich and "150.00 ₽" in rich
+    assert "Продажи файлов" not in rich
+    assert "Продажи подписок" not in rich
 
 
-def test_inconsistent_financial_totals_cannot_be_rendered():
-    summary = deepcopy(SUMMARY)
-    summary["total_due_rub"] = "851"
+def test_paid_and_refund_credit_are_separate_from_amount_due():
+    bill = deepcopy(BILL)
+    bill.update(paid_rub="600", credit_rub="100", total_due_rub="150")
+    html = unified_merchant_bill_classic(bill)
+    assert "600.00 ₽" in html and "100.00 ₽" in html
+    assert "150.00 ₽" in html
+
+
+def test_inconsistent_invoice_totals_fail_closed():
+    bill = deepcopy(BILL)
+    bill["total_due_rub"] = "851"
     with pytest.raises(ValueError, match="Inconsistent"):
-        unified_merchant_bill_rich(summary, PREVIEW)
+        unified_merchant_bill_rich(bill)
+
+
+def test_trial_has_no_issued_invoice_or_payable_amount():
+    bill = deepcopy(BILL)
+    bill.update(invoice_id=None, turnover=[], total_due_rub="0")
+    text = unified_merchant_bill_rich(bill)
+    assert "no invoice" in text.lower() or "Счёт ещё не выставлен" in text
+    assert "850.00 ₽" not in text
