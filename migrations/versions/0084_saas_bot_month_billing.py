@@ -522,13 +522,17 @@ BEGIN
     RAISE EXCEPTION 'Missing bot billing anniversary'
       USING ERRCODE='22023';
   END IF;
-  SELECT min(i.period_start) INTO anchor
+  SELECT coalesce(a.anniversary_anchor,i.period_start) INTO anchor
   FROM public.platform_saas_invoices i
+  LEFT JOIN public.platform_saas_bot_service_activations a
+    ON a.invoice_id=i.id
   JOIN public.bot_instances b ON b.id=i.bot_instance_id
   JOIN public.projects p ON p.id=b.project_id
   WHERE i.bot_instance_id=p_bot AND i.owner_user_id=p.owner_user_id
     AND i.kind='prepayment' AND i.status='issued'
-    AND i.period_start<=p_start;
+    AND i.period_start<=p_start
+  ORDER BY coalesce(a.effective_end,i.period_end) DESC,
+           i.period_start DESC LIMIT 1;
   anchor:=coalesce(anchor,p_start);
   wanted_day:=extract(day FROM (anchor AT TIME ZONE 'Europe/Moscow'))::integer;
   next_month:=date_trunc(
@@ -679,11 +683,16 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
             RETURN invoice_id;
           END IF;
 
-          SELECT i.id,i.period_start,i.period_end INTO prior_service
+          SELECT i.id,i.period_start,i.period_end,
+                 coalesce(a.effective_start,i.period_start) AS covered_start,
+                 coalesce(a.effective_end,i.period_end) AS covered_end
+            INTO prior_service
           FROM public.platform_saas_invoices i
+          LEFT JOIN public.platform_saas_bot_service_activations a
+            ON a.invoice_id=i.id
           WHERE i.bot_instance_id=p_bot AND i.owner_user_id=entry.owner_user_id
             AND i.kind='prepayment' AND i.status='issued'
-            AND i.period_end=p_start
+            AND coalesce(a.effective_end,i.period_end)=p_start
           ORDER BY i.period_start DESC LIMIT 1;
           IF prior_service.id IS NOT NULL
              AND public.platform_saas_v2_remaining(prior_service.id)>0
@@ -724,7 +733,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
           base_fee:=invoice_rub;
           IF prior_service.id IS NOT NULL THEN
             quote:=public.platform_saas_bot_previous_sales(
-              p_bot,prior_service.period_start,prior_service.period_end,
+              p_bot,prior_service.covered_start,prior_service.covered_end,
               entry.owner_user_id,entry.merchant_id
             );
             SELECT coalesce(sum((row.value->>'charge')::numeric),0)
@@ -948,12 +957,17 @@ CREATE OR REPLACE FUNCTION public.platform_saas_line_guard()
                    source_bot IS DISTINCT FROM parent.bot_instance_id
                    OR NOT EXISTS(
                      SELECT 1 FROM public.platform_saas_invoices prior
+                     LEFT JOIN public.platform_saas_bot_service_activations a
+                       ON a.invoice_id=prior.id
                      WHERE prior.bot_instance_id=parent.bot_instance_id
                        AND prior.owner_user_id=parent.owner_user_id
                        AND prior.kind='prepayment' AND prior.status='issued'
-                       AND prior.period_end=parent.period_start
-                       AND sale.paid_at>=prior.period_start
-                       AND sale.paid_at<prior.period_end
+                       AND coalesce(a.effective_end,prior.period_end)=
+                           parent.period_start
+                       AND sale.paid_at>=coalesce(
+                           a.effective_start,prior.period_start)
+                       AND sale.paid_at<coalesce(
+                           a.effective_end,prior.period_end)
                        AND public.platform_saas_v2_remaining(prior.id)=0
                    )
                  )
@@ -1141,7 +1155,11 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_due_batch()
             IF public.platform_saas_v2_remaining(prior.id)>0 THEN
               CONTINUE;
             END IF;
-            period_start:=prior.period_end;
+            period_start:=coalesce((
+              SELECT a.effective_end
+              FROM public.platform_saas_bot_service_activations a
+              WHERE a.invoice_id=prior.id
+            ),prior.period_end);
           ELSE
             period_start:=greatest(
               started,public.platform_saas_billable_after(bot.owner_user_id),
@@ -1224,8 +1242,10 @@ BEGIN
       AND i.due_at<=p_at AND public.platform_saas_v2_remaining(i.id)>0
   ) INTO is_unpaid;
   IF is_unpaid THEN RETURN 'held'; END IF;
-  SELECT max(i.period_end) INTO last_covered
+  SELECT max(coalesce(a.effective_end,i.period_end)) INTO last_covered
   FROM public.platform_saas_invoices i
+  LEFT JOIN public.platform_saas_bot_service_activations a
+    ON a.invoice_id=i.id
   WHERE i.bot_instance_id=p_bot AND i.owner_user_id=owner_id
     AND i.kind='prepayment' AND i.status='issued'
     AND public.platform_saas_v2_remaining(i.id)=0;
