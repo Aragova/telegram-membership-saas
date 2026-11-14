@@ -18,8 +18,8 @@ from aiogram.methods import GetUpdates
 
 from telegram_membership_saas import customer_runtime as runtime
 from telegram_membership_saas.customer_supervisor import safe_error_code
-from telegram_membership_saas.modules.bots.diagnostics import CustomerBotDiagnosticError
 from telegram_membership_saas.modules.bots import telegram_preflight_retry as preflight
+from telegram_membership_saas.modules.bots.diagnostics import CustomerBotDiagnosticError
 
 TOKEN = "123456:" + "A" * 35
 SECRET = "https://api.telegram.org/bot" + TOKEN + "/getMe"
