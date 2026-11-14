@@ -163,12 +163,11 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
         AND l.original_currency='USD'
       LIMIT 1;
       IF native_usd IS NOT NULL THEN
-        -- Confirmed bank receipts cover the $3 service fee first (at
-        -- its original book value), then commissions. Verified provider
-        -- refund credits apply only to those commissions: a refunded sale
-        -- must NEVER discount or reprice the separate $3 bot service fee.
-        -- Both remain in the immutable RUB balance; only today's quote
-        -- converts the genuinely unpaid native service fraction.
+        -- Confirmed bank receipts reduce the native $3 service portion
+        -- first at its original book value. Verified provider refunds are
+        -- separate RUB credits, not bank cash; they reduce the remaining
+        -- invoice balance. Clamp the service portion to that balance so
+        -- carried credits cannot cause an overcharge or negative quote.
         IF base_service_rub IS NULL OR base_service_rub<=0
            OR native_usd<=0 THEN
           RAISE EXCEPTION 'Invalid original USD service snapshot'
@@ -1549,12 +1548,11 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
         AND l.original_currency='USD'
       LIMIT 1;
       IF native_usd IS NOT NULL THEN
-        -- Confirmed bank receipts cover the $3 service fee first (at
-        -- its original book value), then commissions. Verified provider
-        -- refund credits apply only to those commissions: a refunded sale
-        -- must NEVER discount or reprice the separate $3 bot service fee.
-        -- Both remain in the immutable RUB balance; only today's quote
-        -- converts the genuinely unpaid native service fraction.
+        -- Confirmed bank receipts reduce the native $3 service portion
+        -- first at its original book value. Verified provider refunds are
+        -- separate RUB credits, not bank cash; they reduce the remaining
+        -- invoice balance. Clamp the service portion to that balance so
+        -- carried credits cannot cause an overcharge or negative quote.
         IF base_service_rub IS NULL OR base_service_rub<=0
            OR native_usd<=0 THEN
           RAISE EXCEPTION 'Invalid original USD service snapshot'
