@@ -411,6 +411,11 @@ async def finalize_transfer(
                     "Передача пока недоступна. / Trial recipients may connect "
                     "only one bot."
                 ) from None
+            if getattr(exc.orig, "sqlstate", None) == "P6712":
+                raise ValueError(
+                    "Перед передачей бота необходимо закрыть его счёт ViMi Pay. "
+                    "/ Settle the bot's ViMi Pay bill before transferring it."
+                ) from None
             raise
         # Merchant SECURITY DEFINER project trigger atomically closes the
         # old owner's historical period, opens the new one, and consumes the
