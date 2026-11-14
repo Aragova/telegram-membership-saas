@@ -1,3 +1,36 @@
+## 2026-11-14 — Merchant billing UI cleanup (PR #160)
+
+Approved merchant navigation is one concise chain:
+`connected bot admin home → 🧾 Счёт → invoice → 💳 Оплатить →
+currency + central methods → amount → real bank proof prompt`.
+
+The 🧾 Счёт entry screen now lists only real issued invoice buttons labeled
+by **purpose and amount** (for example, `🧾 Обслуживание ViMi Pay · 150 ₽`)
+and one `🏠 Главное меню` button. The empty state has only Main menu.
+Pagination appears only when there are more invoices. The invoice itself
+shows purpose, payable amount, due date, status, remaining due and only
+nonzero applied credits or historic adjustments. One Pay button opens the
+existing central-authoritative method catalog; one Back returns to invoices.
+No UUIDs, unset-payment-currency rows, zero-value audit entries, trial
+preview, aggregate sales table, extra Pay on the list, Refresh or return
+to unrelated Settings in the invoice entry UX.
+
+The currency selector now uses human RU/EN currency labels and operator
+method names; a method named simply `RUB` is rendered as `Оплата по
+реквизитам / Payment instructions`, not `RUB · RUB`. Currency and
+amount navigation **edits the current payment card in place**, with a
+fallback send only for an old/uneditable Telegram message. Full, 50% and
+25% partial payment options keep existing immutable allocation/quote code.
+Only after confirming the amount do we emit a distinct native HTML bank
+proof prompt (required for reply-to-photo/PDF handling).
+
+Historical FX lock and financial audits stay in the database; no change to
+invoices, payment methods, CBR valuations, RLS, subscription access, billing
+activation or `compose.light100.yaml`. Prior Telegram callback links
+remain valid for existing posted messages.
+
+---
+
 ## 2026-11-14 — PR #156: honest refresh feedback in the central proof queue
 
 The existing `🔄 Обновить / Refresh` button in
