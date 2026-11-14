@@ -1,3 +1,31 @@
+## 2026-11-14 — Supervisor connection diagnostics (PR #165)
+
+Live staging revealed one bot repeatedly dropping with the formerly ambiguous
+`telegram_check_failed` status, while other connected bots stayed healthy.
+The bot logged HTTP connection resets, and the 45-second stale-poll rule plus
+existing 45-second failure backoff caused repeated project-only restarts.
+The owner observed an unreachable admin command; Docker stayed healthy.
+
+PR #165 adds **token-safe, fixed-code diagnostics**, not a recovery rewrite:
+distinguish actual `getMe` identity mismatch, invalid credentials, getMe
+network/API failures, active webhook versus getWebhookInfo failures, and
+getUpdates network/API/conflict/unknown stalls. The actual failing stage
+is propagated into the existing project-RLS health record and SAME central
+Monitoring incident alert with consistent RU/EN text. Poll observer captures
+only type-based codes even if aiogram swallows/retries a network exception;
+a successful getUpdates clears the previous error. Never print raw Telegram
+exception text, tokens, webhook URLs or HTTP request endpoints.
+
+Keep the original 45-second polling freshness rule, 45-second restart
+backoff, project advisory leases, existing shared supervisor, no new
+database table/migration, no extra chat menu/buttons, no changes to billing,
+access or active paid subscribers. Real Telegram and Crypto Pay availability
+cannot be inferred from CI; after review/deploy observe the *affected bot*
+and inspect safe `reason=` codes, then decide whether network intervention
+is necessary.
+
+---
+
 ## 2026-11-14 — Merchant bank-decision notification navigation (#164)
 
 Staging test of #163 proved successful Rich rejection notification in the original

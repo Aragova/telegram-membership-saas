@@ -145,7 +145,12 @@ def test_supervisor_never_reveals_token_in_safe_error_code():
     assert safe_error_code(ProjectWorkerBusy("locked")) == "lock_lost"
 
 
-async def test_stalled_telegram_poll_clears_live_health_before_unlock(monkeypatch):
+@pytest.mark.parametrize("reported_failure", [
+    None, "polling_network_failed", "polling_conflict",
+])
+async def test_stalled_telegram_poll_clears_live_health_before_unlock(
+    monkeypatch, reported_failure,
+):
     from telegram_membership_saas import customer_supervisor as runtime
 
     events = []
@@ -160,18 +165,25 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(monkeypatc
             events.append("unlocked")
 
     async def fake_customer(
-        _factory, *, project_id, telegram_bot_id, settings, on_poll_response
+        _factory, *, project_id, telegram_bot_id, settings,
+        on_poll_response, on_poll_failure
     ):
         await asyncio.sleep(0.03)
         on_poll_response()
+        if reported_failure is not None:
+            on_poll_failure(reported_failure)
         events.append("telegram_poll_ok")
         try:
             await asyncio.Event().wait()
         finally:
             events.append("customer_stopped")
 
+    errors = []
+
     async def health(*_args, **kwargs):
         events.append(kwargs["state"])
+        if kwargs["state"] == "error":
+            errors.append(kwargs["error_code"])
 
     monkeypatch.setattr(runtime, "project_worker_lock", lease)
     monkeypatch.setattr(runtime, "claim_bot_health", AsyncMock())
@@ -188,6 +200,7 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(monkeypatc
     assert "starting" in events
     assert "running" in events
     assert "error" in events
+    assert errors == [reported_failure or "polling_stalled"]
     assert events.index("customer_stopped") < events.index("unlocked")
 
 
@@ -211,7 +224,8 @@ async def test_repeated_cancel_never_releases_lease_before_slow_customer_teardow
             events.append("lease_released")
 
     async def slow_customer(
-        _factory, *, project_id, telegram_bot_id, settings, on_poll_response
+        _factory, *, project_id, telegram_bot_id, settings,
+        on_poll_response, on_poll_failure
     ):
         worker_started.set()
         try:

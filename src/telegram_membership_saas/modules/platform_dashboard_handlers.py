@@ -281,6 +281,60 @@ _ERROR_TEXT = {
         "Telegram не подтвердил подключение: проверьте API и webhook",
         "Telegram connection check failed: verify API and webhook",
     ),
+    # Diagnostic taxonomy is shared by runtime health, owner screen and
+    # incident alert. Never quote Telegram exception messages or webhook URLs.
+    "identity_mismatch": (
+        "getMe вернул другой ID бота; проверьте подключение токена",
+        "getMe returned another bot ID; check the connected token",
+    ),
+    "identity_network_failed": (
+        "Сетевая ошибка при getMe: соединение с Telegram прервано",
+        "Network error during getMe: Telegram connection interrupted",
+    ),
+    "identity_api_failed": (
+        "Telegram API отклонил проверку getMe",
+        "Telegram API rejected getMe identity check",
+    ),
+    "identity_check_failed": (
+        "Не удалось завершить проверку getMe",
+        "Could not finish getMe identity check",
+    ),
+    "webhook_active": (
+        "Обнаружен активный webhook; polling не может стартовать",
+        "Active webhook detected; polling cannot start",
+    ),
+    "webhook_network_failed": (
+        "Сетевая ошибка при getWebhookInfo: Telegram не ответил",
+        "Network error during getWebhookInfo: Telegram did not respond",
+    ),
+    "webhook_api_failed": (
+        "Telegram API отклонил проверку getWebhookInfo",
+        "Telegram API rejected getWebhookInfo check",
+    ),
+    "webhook_check_failed": (
+        "Не удалось завершить проверку getWebhookInfo",
+        "Could not finish getWebhookInfo check",
+    ),
+    "polling_network_failed": (
+        "Сеть обрывается при getUpdates: нет успешных ответов 45 секунд",
+        "Network failures during getUpdates: no successful poll for 45 seconds",
+    ),
+    "polling_api_failed": (
+        "Ошибка Telegram API при getUpdates: нет успешных ответов 45 секунд",
+        "Telegram API errors during getUpdates: no successful poll for 45 seconds",
+    ),
+    "polling_conflict": (
+        "Конфликт getUpdates: другой процесс использует polling этого бота",
+        "getUpdates conflict: another process is polling this bot",
+    ),
+    "polling_stalled": (
+        "getUpdates не завершался успешно более 45 секунд; причина не определена",
+        "No successful getUpdates for over 45 seconds; cause unknown",
+    ),
+    "polling_check_failed": (
+        "Неизвестный сбой при getUpdates: нет успешных ответов 45 секунд",
+        "Unexpected getUpdates failure: no successful poll for 45 seconds",
+    ),
     "missing_admin_rights": (
         "Боту не хватает прав администратора в канале",
         "Bot is missing channel administrator rights",
@@ -368,7 +422,9 @@ def _monitoring_diagnosis(
         return (
             tr("🟡 Перезапускается", "🟡 Restarting")
             if is_restarting else
-            tr("🔴 Ошибка запуска", "🔴 Startup error"),
+            (tr("🔴 Потеря polling", "🔴 Polling unavailable")
+             if code.startswith("polling_") else
+             tr("🔴 Ошибка запуска", "🔴 Startup error")),
             tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
             tr("Supervisor зафиксировал ошибку. Проверьте повторный запуск.",
                "Supervisor recorded an error. Check the next startup attempt."),

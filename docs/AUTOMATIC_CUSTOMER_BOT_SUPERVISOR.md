@@ -1,3 +1,23 @@
+## 2026-11-14 — Exact-stage diagnostics (PR #165)
+
+The existing customer worker restart and polling threshold are unchanged.
+The worker reports explicit `identity_*`, `webhook_*` and `polling_*` codes
+rather than merging all of them under legacy `telegram_check_failed`.
+Network/Telegram API errors are categorized by exception TYPE only. A
+getUpdates failure does not immediately mark a bot dead: aiogram retains
+its normal retries; if no successful poll is recorded for 45 seconds,
+the supervisor retains the last safe reason, or `polling_stalled` if there
+was no observed error. Safe reason codes appear in the existing owner
+Monitoring dashboard and central alerts in RU/EN. Previous stored
+`telegram_check_failed` rows remain readable.
+
+No webhook is deleted automatically, no bot token is rotated, no new
+supervisor or monitoring queue is started, and no database migration
+is necessary. A confirmed Telegram network failure still needs network/
+provider investigation; improved error labels alone do not repair connectivity.
+
+---
+
 # ViMi Pay — automatic customer bot runtime
 
 This closes the infrastructure gap between owner onboarding and live buyer

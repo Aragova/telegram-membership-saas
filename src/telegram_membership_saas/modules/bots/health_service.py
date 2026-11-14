@@ -10,13 +10,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 
 STATES = frozenset({"setup_needed", "queued", "starting", "running", "stopped", "error"})
-ERROR_CODES = frozenset({
-    "startup_failed", "invalid_credentials", "telegram_check_failed",
-    "missing_admin_rights", "worker_stopped", "lock_lost",
-})
+ERROR_CODES = HEALTH_ERROR_CODES
 
 
 async def claim_bot_health(
@@ -147,6 +145,19 @@ def public_health_label(
         labels = {
             "invalid_credentials": "🔴 Ошибка токена — подключите бота повторно",
             "telegram_check_failed": "🔴 Проверьте токен и webhook бота",
+            "identity_mismatch": "🔴 getMe: ID бота не совпадает",
+            "identity_network_failed": "🔴 getMe: сетевая ошибка Telegram",
+            "identity_api_failed": "🔴 getMe: ошибка Telegram API",
+            "identity_check_failed": "🔴 getMe: проверка не завершена",
+            "webhook_active": "🔴 Найден активный webhook",
+            "webhook_network_failed": "🔴 getWebhookInfo: сетевая ошибка",
+            "webhook_api_failed": "🔴 getWebhookInfo: ошибка Telegram API",
+            "webhook_check_failed": "🔴 getWebhookInfo: проверка не завершена",
+            "polling_network_failed": "🔴 getUpdates: обрыв соединения",
+            "polling_api_failed": "🔴 getUpdates: ошибка Telegram API",
+            "polling_conflict": "🔴 getUpdates: конфликт polling",
+            "polling_stalled": "🔴 getUpdates: нет ответов",
+            "polling_check_failed": "🔴 getUpdates: ошибка опроса",
             "missing_admin_rights": "🔴 Проверьте права бота в канале",
             "lock_lost": "🟡 Бот перезапускается",
             "worker_stopped": "🟡 Бот перезапускается",
