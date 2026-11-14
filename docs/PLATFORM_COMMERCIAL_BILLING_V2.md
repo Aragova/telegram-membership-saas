@@ -1,3 +1,32 @@
+## 2026-11-14 — PR #158: audited test-invoice void in the existing central invoice card
+
+In `👑 Финансы → 🧾 Счета ViMi Pay → <issued 150 RUB prepayment>`,
+the platform owner sees a single `🗑 Аннулировать тестовый счёт` action
+**only while commercial billing is disabled**. A second confirmation card
+displays the exact invoice UUID, owner UUID and amount, with **Confirm**
+and **Cancel** buttons. No new top-level menu, debug action or alternative
+ledger is created.
+
+The underlying `platform_saas_void_test_prepayment` SQL function
+requires the provisioned platform operator and revalidates the exact
+prepayment identity and 150 RUB amount inside a transaction. It refuses
+live/commercial billing, any real payments, fiat currency settlements,
+partial allocations, verified refund allocations or claims, manual credits,
+and **any pending/unrejected PDF/photo proof**. Existing rejected proofs
+do not prevent test cleanup, but remain immutable. The existing invoice
+state guard and payment triggers still apply. On success the invoice is
+marked `void` (never deleted) and an append-only operator audit record is
+created. The invoice immediately leaves the issued/debt list by the existing
+invoice report logic. Replayed or stale callback confirmations fail closed.
+
+This is **not** a general-purpose cancellation, not a refund or write-off
+workflow for actual customers, and cannot be used after live commercial
+activation. Historical payment attempts, attached proof metadata and
+all invoice lines are preserved. Commercial holds/real payments remain
+untouched; `compose.light100.yaml` is unchanged.
+
+---
+
 ## 2026-11-14 — PR #156: honest refresh feedback in the central proof queue
 
 The existing `🔄 Обновить / Refresh` button in
