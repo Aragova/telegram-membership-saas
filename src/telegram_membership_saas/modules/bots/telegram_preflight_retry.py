@@ -21,12 +21,15 @@ PREFLIGHT_ATTEMPTS = 4
 RETRY_BASE_SECONDS = 0.4
 RETRY_CAP_SECONDS = 3.0
 MAX_RATE_LIMIT_WAIT_SECONDS = 20.0
+# aiogram's default HTTP timeout is 60s. Four such attempts can exceed
+# the supervisor's 120s startup watchdog before the error is classified.
+PREFLIGHT_REQUEST_TIMEOUT_SECONDS = 12.0
 
 
 def is_transient_telegram_error(exc: Exception) -> bool:
     """Only transport, 5xx and 429. Never retry invalid token/403/400."""
     return isinstance(
-        exc, (TelegramNetworkError, TelegramServerError, TelegramRetryAfter),
+        exc, (TelegramNetworkError, TelegramServerError, TelegramRetryAfter, TimeoutError),
     )
 
 
@@ -50,6 +53,7 @@ async def retry_telegram_preflight[T](
     operation: Callable[[], Awaitable[T]],
     *,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    timeout_seconds: float = PREFLIGHT_REQUEST_TIMEOUT_SECONDS,
 ) -> T:
     """Retry one idempotent Telegram read, returning its native result.
 
@@ -59,7 +63,9 @@ async def retry_telegram_preflight[T](
     """
     for attempt in range(PREFLIGHT_ATTEMPTS):
         try:
-            return await operation()
+            # wait_for cancels an in-flight request on timeout; only the
+            # three idempotent read-only preflight methods use this helper.
+            return await asyncio.wait_for(operation(), timeout=timeout_seconds)
         except Exception as exc:
             if attempt == PREFLIGHT_ATTEMPTS - 1:
                 raise
