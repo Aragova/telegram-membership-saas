@@ -271,6 +271,12 @@ BEGIN
       AND i.status='issued'
       AND i.due_at<=clock_timestamp()
       AND public.platform_saas_v2_remaining(i.id)>0
+      AND EXISTS(
+        SELECT 1 FROM public.platform_saas_billing_control c
+        WHERE c.id=1 AND c.enabled
+          AND c.effective_from IS NOT NULL
+          AND i.issued_at>=c.effective_from
+      )
   ) THEN
     RAISE EXCEPTION 'Owner debt must be reconciled before bot transfer'
       USING ERRCODE='P6712';
