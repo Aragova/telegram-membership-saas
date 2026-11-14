@@ -97,18 +97,52 @@ def upgrade() -> None:
         -- A bank decision cancels an unsent notification. No new queue.
         UPDATE public.platform_saas_proof_alert_outbox n
         SET status='cancelled'
-        WHERE n.status IN ('pending','sending')
-          AND (EXISTS (
-            SELECT 1 FROM public.platform_saas_payment_allocations_v2 paid
-            WHERE paid.attempt_id=n.attempt_id
-          ) OR EXISTS (
-            SELECT 1 FROM public.platform_saas_payment_rejections_v2 rejected
-            WHERE rejected.attempt_id=n.attempt_id
-          ) OR (n.kind<>'new' AND EXISTS(
-            SELECT 1 FROM public.platform_saas_payment_proofs_v2 old
-            WHERE old.attempt_id=n.attempt_id
-              AND old.submitted_at+interval '12 hours'<=now_at
-          )));
+        FROM public.platform_saas_payment_attempts_v2 attempt
+        WHERE attempt.id=n.attempt_id
+          AND n.status IN ('pending','sending')
+          AND (
+            -- A reviewed proof never triggers more alerts.
+            EXISTS (
+              SELECT 1 FROM public.platform_saas_payment_allocations_v2 paid
+              WHERE paid.attempt_id=n.attempt_id
+            )
+            OR EXISTS (
+              SELECT 1 FROM public.platform_saas_payment_rejections_v2 rejected
+              WHERE rejected.attempt_id=n.attempt_id
+            )
+            OR (n.kind<>'new' AND (
+              -- Only the FIRST proof for this invoice owns the 6/11-hour
+              -- reminders. A new attempt cannot create another countdown.
+              n.attempt_id IS DISTINCT FROM (
+                SELECT first_attempt.id
+                FROM public.platform_saas_payment_attempts_v2 first_attempt
+                JOIN public.platform_saas_payment_proofs_v2 first_proof
+                  ON first_proof.attempt_id=first_attempt.id
+                WHERE first_attempt.invoice_id=attempt.invoice_id
+                ORDER BY first_proof.submitted_at,first_attempt.id
+                LIMIT 1
+              )
+              OR EXISTS (
+                SELECT 1 FROM public.platform_saas_payment_proofs_v2 proof
+                WHERE proof.attempt_id=n.attempt_id
+                  AND proof.submitted_at + interval '12 hours'<=now_at
+              )
+              -- Any decision on the invoice ends its first-proof
+              -- protection, including if ANOTHER attempt was rejected.
+              OR EXISTS (
+                SELECT 1 FROM public.platform_saas_payment_allocations_v2 paid
+                JOIN public.platform_saas_payment_attempts_v2 decided
+                  ON decided.id=paid.attempt_id
+                WHERE decided.invoice_id=attempt.invoice_id
+              )
+              OR EXISTS (
+                SELECT 1 FROM public.platform_saas_payment_rejections_v2 bad
+                JOIN public.platform_saas_payment_attempts_v2 decided
+                  ON decided.id=bad.attempt_id
+                WHERE decided.invoice_id=attempt.invoice_id
+              )
+            ))
+          );
 
         SELECT n.attempt_id,n.kind,n.attempts INTO item
         FROM public.platform_saas_proof_alert_outbox n
