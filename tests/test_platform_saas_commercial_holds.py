@@ -134,6 +134,21 @@ async def test_off_by_default_grace_and_confirmed_receipt_release_holds():
                                 "id": uuid4(), "project": project,
                             })
                     assert getattr(error.value.orig, "sqlstate", None) == "P6711"
+            # A free grant is a direct entitlement INSERT, not a payment
+            # request. Its own trigger must freeze only this overdue bot.
+            async with admin.begin():
+                await admin.execute(text(
+                    "SELECT set_config('app.current_project_id',:id,true)"
+                ), {"id": str(project)})
+                with pytest.raises(DBAPIError) as held_manual:
+                    async with admin.begin_nested():
+                        await admin.execute(text(
+                            "INSERT INTO entitlement_grants("
+                            "id,project_id,source)"
+                            " VALUES(:id,:project,'manual')"
+                        ), {"id": uuid4(), "project": project})
+                assert getattr(held_manual.value.orig, "sqlstate", None) == "P6711"
+
             # A forged/unbound project must not disclose another owner's
             # overdue status through a SECURITY DEFINER BEFORE INSERT.
             async with admin.begin():
