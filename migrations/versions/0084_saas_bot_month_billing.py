@@ -1532,6 +1532,10 @@ BEGIN
   FOR entry IN
     SELECT src.*,l.id AS line_id,l.charge_rub,
            i.id AS original_invoice_id,i.total_rub AS original_invoice_total,
+           (SELECT round(coalesce(sum(il.charge_rub),0),2)
+              FROM public.platform_saas_invoice_lines il
+              WHERE il.invoice_id=i.id AND il.source_kind<>'bot_fee')
+             AS original_commission_cap,
            fx.rub_per_unit
     FROM (
       SELECT 'stars_file'::text AS refund_kind,c.id AS proof_id,
@@ -1597,8 +1601,10 @@ BEGIN
     -- assigns any remainder to the precise refund that crosses the boundary.
     claim_amount:=greatest(0,least(
       round(exact_prior+exact_current,2)-already_invoiced,
-      entry.charge_rub-already_claimed,
-      entry.original_invoice_total-already_invoiced
+      -- Monthly Stars/Crypto commissions are rounded once, not per sale.
+      -- Refund allocation may carry the final kopeck on a later source.
+      -- Cap against total sales commission, NEVER service prepayment.
+      entry.original_commission_cap-already_invoiced
     ));
     INSERT INTO public.platform_saas_verified_credit_claims(
       id,source_kind,source_credit_id,invoice_line_id,owner_user_id,
