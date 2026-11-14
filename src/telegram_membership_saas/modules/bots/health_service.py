@@ -11,12 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionm
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
+from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
 
 STATES = frozenset({"setup_needed", "queued", "starting", "running", "stopped", "error"})
-ERROR_CODES = frozenset({
-    "startup_failed", "invalid_credentials", "telegram_check_failed",
-    "missing_admin_rights", "worker_stopped", "lock_lost",
-})
+ERROR_CODES = HEALTH_ERROR_CODES
 
 
 async def claim_bot_health(
