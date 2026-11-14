@@ -15,7 +15,8 @@ are required on every configured active resource.
 
 Existing supervisor worker failure retry is now bounded exponential backoff
 with per-project jitter (45/90/180/300 seconds before jitter), reset after
-a sustained 5-minute run or planned cancellation/configuration change.
+a sustained 5-minute run, planned cancellation, or a changed
+registration/token version even when the previous worker has already exited.
 No new worker processes, webhook cutover, tokens, DB migrations, or
 billing changes. Live bot Telegram and access behavior must still be
 checked after staging deployment; CI simulates network/permission faults
