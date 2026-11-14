@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import blake2s
+from random import uniform
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -57,6 +58,8 @@ logger = logging.getLogger(__name__)
 SCAN_SECONDS = 10
 HEARTBEAT_SECONDS = 3
 FAILURE_BACKOFF_SECONDS = 45
+MAX_FAILURE_BACKOFF_SECONDS = 300
+FAILURE_STREAK_RESET_SECONDS = 300
 # aiogram's default HTTP session timeout (60s) plus 10s long polling
 # permits a single in-flight getUpdates to take up to 70s. 45s killed
 # healthy requests and counted preflight as polling. Keep a bounded margin.
@@ -80,6 +83,7 @@ class BotTarget:
 class RunningTarget:
     target: BotTarget
     task: asyncio.Task[None]
+    started_at: float = field(default_factory=monotonic)
 
 
 def assign_project_shards(
@@ -351,6 +355,7 @@ class CustomerBotSupervisor:
         self.settings = settings
         self.workers: dict[UUID, RunningTarget] = {}
         self.retry_after: dict[UUID, float] = {}
+        self.failure_streak: dict[UUID, int] = {}
         self._supervisor_id = uuid4()
         # Only shard zero runs official FX ingestion. No per-bot timers.
         self._fx_task: asyncio.Task[None] | None = None
@@ -398,11 +403,23 @@ class CustomerBotSupervisor:
                 ))[0]
                 del self.workers[pid]
                 if was_cancelled or isinstance(outcome, ProjectWorkerBusy):
-                    # Cancellation and another shard's still-draining lease
-                    # are normal transitions; retry promptly on next scan.
+                    # Cancellation / planned config changes never count toward
+                    # failed-restart escalation. Don't delay the replacement.
                     self.retry_after.pop(pid, None)
+                    self.failure_streak.pop(pid, None)
                 else:
-                    self.retry_after[pid] = monotonic() + FAILURE_BACKOFF_SECONDS
+                    if monotonic() - current.started_at >= FAILURE_STREAK_RESET_SECONDS:
+                        self.failure_streak.pop(pid, None)
+                    streak = min(4, self.failure_streak.get(pid, 0) + 1)
+                    self.failure_streak[pid] = streak
+                    base = min(
+                        MAX_FAILURE_BACKOFF_SECONDS,
+                        FAILURE_BACKOFF_SECONDS * 2 ** (streak - 1),
+                    )
+                    # Full jitter on the extra window; each project retries
+                    # independently without a synchronized 50-bot wave.
+                    delay = base + uniform(0.0, min(base * 0.25, 20.0))
+                    self.retry_after[pid] = monotonic() + delay
             elif pid not in ready or ready[pid] != current.target:
                 cancel_once(current.task)
 
