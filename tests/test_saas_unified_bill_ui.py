@@ -10,7 +10,6 @@ from telegram_membership_saas.modules.platform_saas_bill_ui import (
     unified_merchant_bill_rich,
 )
 
-
 SUMMARY = {
     "month": "2026-11-01",
     "project_id": "scoped-bot",
