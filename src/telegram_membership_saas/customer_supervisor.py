@@ -356,6 +356,9 @@ class CustomerBotSupervisor:
         self.workers: dict[UUID, RunningTarget] = {}
         self.retry_after: dict[UUID, float] = {}
         self.failure_streak: dict[UUID, int] = {}
+        # The delayed retry belongs to one exact registration version.
+        # Replacing credentials must never inherit the old bot's cooldown.
+        self.retry_target: dict[UUID, BotTarget] = {}
         self._supervisor_id = uuid4()
         # Only shard zero runs official FX ingestion. No per-bot timers.
         self._fx_task: asyncio.Task[None] | None = None
@@ -407,11 +410,13 @@ class CustomerBotSupervisor:
                     # failed-restart escalation. Don't delay the replacement.
                     self.retry_after.pop(pid, None)
                     self.failure_streak.pop(pid, None)
+                    self.retry_target.pop(pid, None)
                 else:
                     if monotonic() - current.started_at >= FAILURE_STREAK_RESET_SECONDS:
                         self.failure_streak.pop(pid, None)
                     streak = min(4, self.failure_streak.get(pid, 0) + 1)
                     self.failure_streak[pid] = streak
+                    self.retry_target[pid] = current.target
                     base = min(
                         MAX_FAILURE_BACKOFF_SECONDS,
                         FAILURE_BACKOFF_SECONDS * 2 ** (streak - 1),
@@ -422,6 +427,15 @@ class CustomerBotSupervisor:
                     self.retry_after[pid] = monotonic() + delay
             elif pid not in ready or ready[pid] != current.target:
                 cancel_once(current.task)
+
+        # A changed or removed registered bot must not inherit any failure
+        # cooldown from old credentials, even when the old worker exited
+        # on an earlier scan and there is nothing left to cancel.
+        for pid, old_target in list(self.retry_target.items()):
+            if ready.get(pid) != old_target:
+                self.retry_target.pop(pid, None)
+                self.failure_streak.pop(pid, None)
+                self.retry_after.pop(pid, None)
 
         # Each running project consumes one dedicated PostgreSQL advisory-lock
         # connection. Never admit more than the configured safe DB capacity.
