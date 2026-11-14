@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.customer_runtime import run_customer_bot_instance
-from telegram_membership_saas.modules.bots.diagnostics import CustomerBotDiagnosticError
 from telegram_membership_saas.db import (
     build_engine,
     build_lease_engine,
@@ -29,6 +28,7 @@ from telegram_membership_saas.db import (
 from telegram_membership_saas.modules.bots.deletion_service import (
     finalize_bot_retirement,
 )
+from telegram_membership_saas.modules.bots.diagnostics import CustomerBotDiagnosticError
 from telegram_membership_saas.modules.bots.health_service import (
     claim_bot_health,
     write_bot_health,
