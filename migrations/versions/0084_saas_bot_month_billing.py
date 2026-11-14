@@ -1783,6 +1783,102 @@ BEGIN
 END; $fn$
     """)
 
+    op.execute("""
+CREATE FUNCTION public.platform_saas_record_bot_service_activation()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $fn$
+DECLARE
+  inv record;
+  confirmed timestamptz;
+  covered_start timestamptz;
+  covered_end timestamptz;
+  anchor timestamptz;
+  following timestamp;
+  last_day integer;
+  day_of_month integer;
+  hhmm interval;
+BEGIN
+  IF TG_OP<>'INSERT' THEN RETURN NEW; END IF;
+  SELECT i.* INTO inv FROM public.platform_saas_invoices i
+  WHERE i.id=NEW.invoice_id FOR UPDATE;
+  IF inv.id IS NULL OR inv.kind<>'prepayment'
+     OR inv.status<>'issued' THEN RETURN NEW; END IF;
+  IF public.platform_saas_v2_remaining(inv.id)>0 THEN RETURN NEW; END IF;
+  IF EXISTS(
+    SELECT 1 FROM public.platform_saas_bot_service_activations a
+    WHERE a.invoice_id=inv.id
+  ) THEN RETURN NEW; END IF;
+  confirmed:=clock_timestamp();
+  IF confirmed<=inv.period_end THEN
+    covered_start:=inv.period_start;
+    covered_end:=inv.period_end;
+    SELECT a.anniversary_anchor INTO anchor
+    FROM public.platform_saas_bot_service_activations a
+    WHERE a.bot_instance_id=inv.bot_instance_id
+      AND a.owner_user_id=inv.owner_user_id
+      AND a.effective_end<=inv.period_start
+    ORDER BY a.effective_end DESC LIMIT 1;
+    IF anchor IS NULL THEN
+      SELECT min(i.period_start) INTO anchor
+      FROM public.platform_saas_invoices i
+      WHERE i.bot_instance_id=inv.bot_instance_id
+        AND i.owner_user_id=inv.owner_user_id
+        AND i.kind='prepayment' AND i.status='issued'
+        AND i.period_start<=inv.period_start;
+      anchor:=coalesce(anchor,inv.period_start);
+    END IF;
+  ELSE
+    -- A full late settlement buys a CURRENT month of service. The
+    -- invoice's original period and immutable money are not changed.
+    covered_start:=confirmed;
+    anchor:=confirmed;
+    following:=date_trunc('month',confirmed AT TIME ZONE 'Europe/Moscow')
+               +interval '1 month';
+    last_day:=extract(day FROM (
+      following+interval '1 month'-interval '1 day'
+    )::date)::integer;
+    day_of_month:=extract(day FROM
+      (anchor AT TIME ZONE 'Europe/Moscow'))::integer;
+    hhmm:=(anchor AT TIME ZONE 'Europe/Moscow')-
+      date_trunc('day',anchor AT TIME ZONE 'Europe/Moscow');
+    covered_end:=(following+make_interval(
+      days=>least(day_of_month,last_day)-1
+    )+hhmm) AT TIME ZONE 'Europe/Moscow';
+  END IF;
+  INSERT INTO public.platform_saas_bot_service_activations(
+    invoice_id,bot_instance_id,owner_user_id,
+    anniversary_anchor,effective_start,effective_end
+  ) VALUES(
+    inv.id,inv.bot_instance_id,inv.owner_user_id,
+    anchor,covered_start,covered_end
+  ) ON CONFLICT(invoice_id) DO NOTHING;
+  RETURN NEW;
+END; $fn$
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_activation_bank_receipt
+      AFTER INSERT ON public.platform_saas_receipts
+      FOR EACH ROW EXECUTE FUNCTION
+        public.platform_saas_record_bot_service_activation()
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_activation_bank_allocation
+      AFTER INSERT ON public.platform_saas_payment_allocations_v2
+      FOR EACH ROW EXECUTE FUNCTION
+        public.platform_saas_record_bot_service_activation()
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_activation_verified_refund
+      AFTER INSERT ON public.platform_saas_verified_credit_allocations
+      FOR EACH ROW EXECUTE FUNCTION
+        public.platform_saas_record_bot_service_activation()
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+        public.platform_saas_record_bot_service_activation()
+      FROM PUBLIC
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
