@@ -37,29 +37,6 @@ from an unissued projected upcoming bill and shows the real Moscow deadline.
 
 ---
 
-## 2026-11-14 — Incoming central payment-proof alerts (PR #162)
-
-A newly submitted bank proof for a real ViMi Pay invoice creates one durable
-outbox row keyed by the original payment attempt, in the same PostgreSQL
-transaction as the proof. Only the configured and DB-authorized platform
-operator claims the alert. The existing central @vimipay_bot loop sends a
-normal RU/EN Telegram private message with the amount, pending count and
-ONE button opening the existing `plat:v2proofs:0` receipt-review queue.
-The notification is neither bank confirmation nor a financial mutation.
-The receiving customer bot only acknowledges the payer. It no longer
-tries to send media to the operator, because that bot may not have an
-operator /start chat. The existing authenticated on-demand receipt viewer
-remains the only way to view the original media in the central bot.
-
-Delivery uses a unique attempt key, claimed generation, 5-minute expired
-claim retry and bounded backoff. Already settled/rejected pending notices
-are cancelled, and old proofs are not retroactively enqueued on rollout.
-Telegram message delivery is best-effort, with no guarantee of sound/pop-up
-on muted chats or disabled phone notifications. No additional queue,
-duplicate buttons, new scheduled reminders, approval automation, hold rule,
-payment catalog or billing-control change.
-
----
 
 ## 2026-11-14 — APPROVED billing contract for PR #161 (supersedes all older proposals)
 
