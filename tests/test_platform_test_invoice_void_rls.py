@@ -199,7 +199,8 @@ async def test_live_billing_switch_blocks_test_invoice_void():
                 ), {"tg": operator_tg})
                 await conn.execute(text(
                     "UPDATE platform_saas_billing_control"
-                    " SET enabled=true WHERE id=1"
+                    " SET enabled=true,effective_from=clock_timestamp()"
+                    " WHERE id=1"
                 ))
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _actor(conn, operator)
