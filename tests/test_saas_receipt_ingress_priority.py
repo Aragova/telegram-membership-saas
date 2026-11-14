@@ -82,10 +82,6 @@ async def test_platform_receipt_from_real_bot_prompt_registers_and_responds(
     monkeypatch.setattr(ingress, "ensure_telegram_actor",
                         AsyncMock(return_value=actor))
     monkeypatch.setattr(ingress, "saas_v2_submit_proof", register)
-    monkeypatch.setattr(
-        ingress, "get_settings",
-        lambda: SimpleNamespace(platform_owner_telegram_id=None),
-    )
     bot = SimpleNamespace(id=123, send_message=AsyncMock())
     router = ingress.create_saas_receipt_router(
         object(), project_id=uuid4(),
@@ -126,33 +122,24 @@ async def test_failed_receipt_registration_yields_visible_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_registered_receipt_ack_precedes_optional_operator_push(monkeypatch):
+async def test_receipt_ack_does_not_push_from_foreign_customer_bot(monkeypatch):
     message, _ = _receipt()
     monkeypatch.setattr(
         ingress, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
     )
     monkeypatch.setattr(ingress, "saas_v2_submit_proof", AsyncMock())
-    monkeypatch.setattr(
-        ingress, "get_settings",
-        lambda: SimpleNamespace(platform_owner_telegram_id=999),
-    )
     bot = SimpleNamespace(
         id=123, send_message=AsyncMock(), send_document=AsyncMock(),
+        send_photo=AsyncMock(),
     )
 
-    async def check_operator_push(*_args, **_kwargs):
-        # Telegram source-bot delivery can fail or be slow. The payer
-        # receives confirmation immediately after durable DB submission.
-        bot.send_message.assert_awaited_once()
-        assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
-
-    bot.send_document.side_effect = check_operator_push
     await ingress.create_saas_receipt_router(
         object(),
     ).message.handlers[0].callback(message, bot)
-    bot.send_document.assert_awaited_once()
-    assert bot.send_document.await_args.args[0] == 999
-
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.args[0] == message.chat.id
+    bot.send_document.assert_not_awaited()
+    bot.send_photo.assert_not_awaited()
 
 
 @pytest.mark.parametrize("first_block", ["paragraph", "heading"])
@@ -180,10 +167,6 @@ async def test_old_rich_invoice_receipt_pdf_registers_in_existing_queue(
         ingress, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
     )
     monkeypatch.setattr(ingress, "saas_v2_submit_proof", registered)
-    monkeypatch.setattr(
-        ingress, "get_settings",
-        lambda: SimpleNamespace(platform_owner_telegram_id=None),
-    )
     bot = SimpleNamespace(id=123, send_message=AsyncMock())
     router = ingress.create_saas_receipt_router(object(), project_id=uuid4())
     assert ingress.receipt_attempt_id(message, bot.id) == attempt
