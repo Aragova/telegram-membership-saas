@@ -189,7 +189,6 @@ jobs:
                       "platform_saas_v2_reject_attempt(uuid,text)",
                       "platform_saas_v2_pending_proofs(integer)",
                       "platform_saas_pending_proof_source(uuid)",
-                      "platform_saas_void_test_prepayment(uuid,uuid,numeric)",
                       "platform_saas_catalog_read()",
                       "platform_saas_catalog_create(text,text,text)",
                       "platform_saas_catalog_update(uuid,text,text)",
