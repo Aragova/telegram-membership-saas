@@ -25,6 +25,14 @@ def _native(amount: object, code: str) -> str:
     return escape(number + " " + display_currency(code))
 
 
+def _service_amount(bill: dict) -> str:
+    if bill.get("service_currency") == "USD":
+        return "$" + escape(format(Decimal(str(
+            bill.get("service_native", 3)
+        )), ".2f"))
+    return _money(bill["service_rub"])
+
+
 def _date(value: object) -> str:
     if not value:
         return ""
@@ -104,7 +112,7 @@ def unified_merchant_bill_rich(bill: dict) -> str:
         + _date(bill.get("period_end")) + "</p>",
         "<h4>" + tr("🤖 Обслуживание", "🤖 Service") + "</h4>",
         "<p>" + tr("Абонплата за бота: ", "Bot subscription fee: ")
-        + "<b>" + _money(bill["service_rub"]) + "</b></p>",
+        + "<b>" + _service_amount(bill) + "</b></p>",
     ])
     if not bill.get("first_period", False):
         lines.extend(_section_rich(bill, "subscription"))
@@ -144,7 +152,7 @@ def unified_merchant_bill_classic(bill: dict) -> str:
         "",
         tr("🤖 <b>Обслуживание</b>", "🤖 <b>Service</b>"),
         tr("Абонплата за бота: ", "Bot fee: ")
-        + "<b>" + _money(bill["service_rub"]) + "</b>",
+        + "<b>" + _service_amount(bill) + "</b>",
     ])
     if not bill.get("first_period", False):
         for kind in ("subscription", "file"):
