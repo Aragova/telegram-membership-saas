@@ -202,7 +202,7 @@ BEGIN
   IF scoped IS DISTINCT FROM NEW.project_id THEN
     RETURN NEW; -- existing tenant RLS fails closed for foreign projects
   END IF;
-  -- Another bot's debt can NEVER block connecting an unrelated new bot.
+  -- Due debt of this owner blocks new bots, even under another project.
   IF TG_TABLE_NAME='bot_instances' THEN
     SELECT p.owner_user_id INTO owner_id FROM public.projects p
     WHERE p.id=NEW.project_id;
