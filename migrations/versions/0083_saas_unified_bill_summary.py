@@ -33,6 +33,8 @@ DECLARE
   files_rub numeric:=0;
   remaining numeric:=0;
   received numeric:=0;
+  service_native numeric:=0;
+  service_currency text:='RUB';
 BEGIN
   actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
   IF actor IS NULL OR p_project IS NULL THEN
@@ -59,6 +61,7 @@ BEGIN
     RETURN jsonb_build_object('bot_id',bot_id,'project_id',p_project,
       'invoice_id',NULL,'period_start',NULL,'period_end',NULL,
       'turnover','[]'::jsonb,'service_rub','0',
+      'service_native','0','service_currency','RUB',
       'subscription_rub','0','file_rub','0','total_rub','0',
       'paid_rub','0','credit_rub','0',
       'total_due_rub','0','first_period',true);
@@ -73,6 +76,11 @@ BEGIN
       WHERE l.source_kind IN ('file_manual','file_stars','file_crypto')),0)
   INTO service_rub,subscriptions_rub,files_rub
   FROM public.platform_saas_invoice_lines l WHERE l.invoice_id=bill.id;
+  SELECT l.original_amount,l.original_currency
+  INTO service_native,service_currency
+  FROM public.platform_saas_invoice_lines l
+  WHERE l.invoice_id=bill.id AND l.source_kind='bot_fee'
+  LIMIT 1;
   WITH groups AS (
     SELECT CASE WHEN l.source_kind LIKE 'subscription%' THEN 'subscription'
                 ELSE 'file' END AS kind,
@@ -97,6 +105,8 @@ BEGIN
     'bot_id',bot_id,'project_id',p_project,'invoice_id',bill.id,
     'period_start',bill.period_start,'period_end',bill.period_end,
     'turnover',turnover,'service_rub',service_rub::text,
+    'service_native',service_native::text,
+    'service_currency',service_currency,
     'subscription_rub',round(subscriptions_rub,2)::text,
     'file_rub',round(files_rub,2)::text,'total_rub',bill.total_rub::text,
     'paid_rub',received::text,
