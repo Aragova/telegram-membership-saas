@@ -22,7 +22,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-async def test_expired_service_invoice_settlement_restores_real_coverage():
+@pytest.mark.parametrize("days_since_invoice_start", [10, 65])
+async def test_expired_service_invoice_settlement_restores_real_coverage(
+    days_since_invoice_start,
+):
     cfg = Settings()
     engine = build_engine(cfg)
     factory = build_session_factory(engine)
@@ -34,7 +37,7 @@ async def test_expired_service_invoice_settlement_restores_real_coverage():
             factory, telegram_id=operator_tg, username=None, first_name=None,
         )
         now = datetime.now(UTC)
-        old_start = now - timedelta(days=65)
+        old_start = now - timedelta(days=days_since_invoice_start)
         async with admin.connect() as conn:
             tx = await conn.begin()
             try:
@@ -82,7 +85,12 @@ async def test_expired_service_invoice_settlement_restores_real_coverage():
                     "FROM platform_saas_invoices WHERE id=:id"
                 ), {"id": invoice})).one()
                 assert original.period_start == old_start
-                assert original.period_end < now
+                if days_since_invoice_start > 30:
+                    assert original.period_end < now
+                else:
+                    # Even a payment inside the paper service month must
+                    # start coverage at verified activation, not trial end.
+                    assert original.period_end > now
                 assert original.total_rub == Decimal("150.00")
                 assert (await conn.execute(text(
                     "SELECT public.platform_saas_bot_hold_state("
