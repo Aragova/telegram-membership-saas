@@ -2,6 +2,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramConflictError,
@@ -9,7 +10,6 @@ from aiogram.exceptions import (
     TelegramUnauthorizedError,
 )
 from aiogram.methods import GetUpdates
-import pytest
 
 from telegram_membership_saas.customer_runtime import (
     ObservedCustomerBot,
@@ -21,9 +21,7 @@ from telegram_membership_saas.modules.bots.diagnostics import (
     HEALTH_ERROR_CODES,
     telegram_stage_code,
 )
-from telegram_membership_saas.modules.platform_dashboard_handlers import (
-    _ERROR_TEXT,
-)
+from telegram_membership_saas.modules.platform_dashboard_handlers import _ERROR_TEXT
 from telegram_membership_saas.modules.platform_monitor_alerts import SAFE_CODES
 
 TOKEN = "123456:" + "A" * 35
