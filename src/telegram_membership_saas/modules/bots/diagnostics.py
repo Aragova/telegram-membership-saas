@@ -14,14 +14,15 @@ from aiogram.exceptions import (
 
 # Keep historical values readable for already-recorded incidents.
 HEALTH_ERROR_CODES = frozenset({
-    "startup_failed", "invalid_credentials", "telegram_check_failed",
+    "startup_failed", "startup_stalled", "invalid_credentials", "telegram_check_failed",
     "missing_admin_rights", "worker_stopped", "lock_lost",
     "identity_mismatch", "identity_network_failed",
     "identity_api_failed", "identity_check_failed",
     "webhook_active", "webhook_network_failed",
     "webhook_api_failed", "webhook_check_failed",
     "polling_network_failed", "polling_api_failed",
-    "polling_conflict", "polling_stalled", "polling_check_failed",
+    "polling_conflict", "polling_stalled", "polling_handler_stalled",
+    "polling_check_failed",
 })
 
 

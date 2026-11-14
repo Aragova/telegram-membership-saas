@@ -1,3 +1,23 @@
+## 2026-11-14 — Phase-aware polling watchdog (#166)
+
+The per-project supervisor now distinguishes startup from active polling.
+The first actual getUpdates call starts the polling clock; preflight calls
+and database checks cannot exhaust it. Startup has a separate 120-second
+deadline. After polling begins, timeout is 90 seconds since the first
+getUpdates call or latest successful response. This exceeds the aiogram
+default 60-second session + 10-second long-poll request timeout, avoiding
+premature worker termination. A missing next getUpdates caused by slow
+sequential update handling is `polling_handler_stalled`; a still-pending
+getUpdates is `polling_stalled`; real intercepted Telegram network and
+conflict exceptions retain their specific existing codes. These appear in
+the existing RU/EN Monitoring without exposing raw tokens or URLs.
+
+No webhook deletion, extra polling process, migration, menu, financial
+switch change or advisory-lock shortcut. Existing backoff and full
+shutdown-before-lease-release are preserved.
+
+---
+
 ## 2026-11-14 — Exact-stage diagnostics (PR #165)
 
 The existing customer worker restart and polling threshold are unchanged.

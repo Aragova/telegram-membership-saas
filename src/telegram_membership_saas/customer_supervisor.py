@@ -57,7 +57,11 @@ logger = logging.getLogger(__name__)
 SCAN_SECONDS = 10
 HEARTBEAT_SECONDS = 3
 FAILURE_BACKOFF_SECONDS = 45
-POLLING_STALE_SECONDS = 45
+# aiogram's default HTTP session timeout (60s) plus 10s long polling
+# permits a single in-flight getUpdates to take up to 70s. 45s killed
+# healthy requests and counted preflight as polling. Keep a bounded margin.
+STARTUP_STALE_SECONDS = 120
+POLLING_STALE_SECONDS = 90
 # Each supervisor owns one operational pool (5 + 10 possible overflow connections).
 # Leave additional PostgreSQL slots for the central bot, API and maintenance.
 OPERATIONAL_POOL_BUDGET_PER_SHARD = 15
@@ -220,18 +224,28 @@ async def run_target(
             # polling task. Only successful getUpdates, including empty
             # responses, prove real Telegram reachability.
             booted_at = monotonic()
+            first_poll_request_at: float | None = None
             last_poll_response: float | None = None
             last_poll_failure: str | None = None
+            poll_inflight = False
+
+            def observed_poll_request() -> None:
+                nonlocal first_poll_request_at, poll_inflight
+                if first_poll_request_at is None:
+                    first_poll_request_at = monotonic()
+                poll_inflight = True
 
             def observed_poll_response() -> None:
-                nonlocal last_poll_response, last_poll_failure
+                nonlocal last_poll_response, last_poll_failure, poll_inflight
                 last_poll_response = monotonic()
                 last_poll_failure = None
+                poll_inflight = False
 
             def observed_poll_failure(code: str) -> None:
-                nonlocal last_poll_failure
+                nonlocal last_poll_failure, poll_inflight
                 # The observer only produces fixed codes, never raw errors.
                 last_poll_failure = code
+                poll_inflight = False
 
             async def heartbeat() -> None:
                 while True:
@@ -240,14 +254,28 @@ async def run_target(
                         else HEARTBEAT_SECONDS
                     )
                     await confirm_project_lock(lease, project_id)
+                    now_at = monotonic()
+                    first_request = first_poll_request_at
                     last_ok = last_poll_response
-                    silence = monotonic() - (
-                        last_ok if last_ok is not None else booted_at
-                    )
-                    if silence > POLLING_STALE_SECONDS:
-                        raise CustomerBotDiagnosticError(
-                            last_poll_failure or "polling_stalled"
+                    if first_request is None:
+                        # Do not count getMe, webhook, channel checks or
+                        # command installation against the polling deadline.
+                        if now_at - booted_at > STARTUP_STALE_SECONDS:
+                            raise CustomerBotDiagnosticError("startup_stalled")
+                    else:
+                        silence = now_at - (
+                            last_ok if last_ok is not None else first_request
                         )
+                        if silence > POLLING_STALE_SECONDS:
+                            if last_poll_failure is not None:
+                                code = last_poll_failure
+                            elif poll_inflight:
+                                code = "polling_stalled"
+                            else:
+                                # With handle_as_tasks=False, a blocked
+                                # incoming handler can pause getUpdates.
+                                code = "polling_handler_stalled"
+                            raise CustomerBotDiagnosticError(code)
                     await write_bot_health(
                         factory, project_id=project_id, bot_id=bot_id,
                         instance_id=instance_id,
@@ -258,6 +286,7 @@ async def run_target(
                 factory, project_id=project_id, telegram_bot_id=bot_id,
                 settings=settings, on_poll_response=observed_poll_response,
                 on_poll_failure=observed_poll_failure,
+                on_poll_request=observed_poll_request,
             ))
             guard = asyncio.create_task(heartbeat())
             try:

@@ -1,3 +1,31 @@
+## 2026-11-14 — Customer Supervisor polling watchdog timing (#166)
+
+Staging #57 diagnosed one real unreachable customer bot with repeated
+`polling_stalled` every ~100–115 seconds. The supervisor's 45-second clock
+started **before** token/DB, getMe, webhook, permissions and public-command
+preflight. The aiogram 3.31 default HTTP session timeout is 60 seconds plus
+10 seconds of polling, so its own 70-second allowed request could be killed
+by our watchdog after only 45 seconds. Under `handle_as_tasks=False`, a
+slow incoming update handler can also delay the next getUpdates request.
+
+PR #166 makes the readiness watchdog phase-aware, without hiding defects:
+a separate bounded 120-second startup deadline until the first real
+getUpdates request; 90 seconds after the first request or last successful
+response, exceeding aiogram's in-flight HTTP timeout with a bounded margin.
+Distinguishes `startup_stalled`, `polling_stalled`,
+`polling_handler_stalled` and the existing exception-based network/
+conflict codes, using token-safe existing RU/EN Monitoring. No duplicate
+workers, Telegram menu or buttons, database migration, configuration
+rewriting or billing changes. The existing failed-worker backoff and
+advisory-lock teardown remain in force.
+
+**This fixes an actual premature-restart bug, not all possible ISP/Telegram
+connection resets.** After owner-approved merge/staging rollout, inspect the
+affected bot's response to /menu and its new reason code; do not rotate
+tokens or bulk-restart the fleet without evidence.
+
+---
+
 ## 2026-11-14 — Supervisor connection diagnostics (PR #165)
 
 Live staging revealed one bot repeatedly dropping with the formerly ambiguous

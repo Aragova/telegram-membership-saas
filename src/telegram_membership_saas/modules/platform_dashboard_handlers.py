@@ -315,9 +315,17 @@ _ERROR_TEXT = {
         "Не удалось завершить проверку getWebhookInfo",
         "Could not finish getWebhookInfo check",
     ),
+    "startup_stalled": (
+        "Запуск бота не дошёл до первого getUpdates за 120 секунд",
+        "Bot startup did not reach its first getUpdates within 120 seconds",
+    ),
+    "polling_handler_stalled": (
+        "Обработчик входящего события блокирует следующий getUpdates более 90 секунд",
+        "An update handler has blocked the next getUpdates for over 90 seconds",
+    ),
     "polling_network_failed": (
-        "Сеть обрывается при getUpdates: нет успешных ответов 45 секунд",
-        "Network failures during getUpdates: no successful poll for 45 seconds",
+        "Сеть обрывается при getUpdates: нет успешных ответов 90 секунд",
+        "Network failures during getUpdates: no successful poll for 90 seconds",
     ),
     "polling_api_failed": (
         "Ошибка Telegram API при getUpdates: нет успешных ответов 45 секунд",
@@ -328,12 +336,12 @@ _ERROR_TEXT = {
         "getUpdates conflict: another process is polling this bot",
     ),
     "polling_stalled": (
-        "getUpdates не завершался успешно более 45 секунд; причина не определена",
-        "No successful getUpdates for over 45 seconds; cause unknown",
+        "Нет ответа getUpdates более 90 секунд; причина не определена",
+        "No successful getUpdates for over 90 seconds; cause unknown",
     ),
     "polling_check_failed": (
-        "Неизвестный сбой при getUpdates: нет успешных ответов 45 секунд",
-        "Unexpected getUpdates failure: no successful poll for 45 seconds",
+        "Неизвестный сбой при getUpdates: нет успешных ответов 90 секунд",
+        "Unexpected getUpdates failure: no successful poll for 90 seconds",
     ),
     "missing_admin_rights": (
         "Боту не хватает прав администратора в канале",

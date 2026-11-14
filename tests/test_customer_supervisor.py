@@ -166,10 +166,12 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(
 
     async def fake_customer(
         _factory, *, project_id, telegram_bot_id, settings,
-        on_poll_response, on_poll_failure
+        on_poll_response, on_poll_failure, on_poll_request
     ):
         await asyncio.sleep(0.03)
+        on_poll_request()
         on_poll_response()
+        on_poll_request()
         if reported_failure is not None:
             on_poll_failure(reported_failure)
         events.append("telegram_poll_ok")
@@ -225,7 +227,7 @@ async def test_repeated_cancel_never_releases_lease_before_slow_customer_teardow
 
     async def slow_customer(
         _factory, *, project_id, telegram_bot_id, settings,
-        on_poll_response, on_poll_failure
+        on_poll_response, on_poll_failure, on_poll_request
     ):
         worker_started.set()
         try:
@@ -377,3 +379,112 @@ def test_supervisor_capacity_configuration_rejects_unbounded_values():
         _settings(customer_supervisor_max_bots=0)
     with pytest.raises(ValueError):
         _settings(customer_supervisor_max_bots=1000)
+
+
+@pytest.mark.parametrize(("phase", "expected"), [
+    ("startup", "startup_stalled"),
+    ("handler", "polling_handler_stalled"),
+    ("inflight", "polling_stalled"),
+])
+async def test_supervisor_distinguishes_startup_polling_and_handler_stalls(
+    monkeypatch, phase, expected,
+):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    events = []
+    errors = []
+
+    @asynccontextmanager
+    async def lease(_engine, _project):
+        try:
+            yield MagicMock()
+        finally:
+            events.append("lease_released")
+
+    async def customer(
+        _factory, *, project_id, telegram_bot_id, settings,
+        on_poll_response, on_poll_failure, on_poll_request,
+    ):
+        if phase != "startup":
+            on_poll_request()
+            if phase == "handler":
+                on_poll_response()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("customer_closed")
+
+    async def write(*_args, **kwargs):
+        if kwargs["state"] == "error":
+            errors.append(kwargs["error_code"])
+
+    monkeypatch.setattr(runtime, "project_worker_lock", lease)
+    monkeypatch.setattr(runtime, "claim_bot_health", AsyncMock())
+    monkeypatch.setattr(runtime, "confirm_project_lock", AsyncMock())
+    monkeypatch.setattr(runtime, "run_customer_bot_instance", customer)
+    monkeypatch.setattr(runtime, "write_bot_health", write)
+    monkeypatch.setattr(runtime, "HEARTBEAT_SECONDS", 0.02)
+    monkeypatch.setattr(runtime, "STARTUP_STALE_SECONDS", 0.06)
+    monkeypatch.setattr(runtime, "POLLING_STALE_SECONDS", 0.06)
+
+    await asyncio.wait_for(
+        runtime.run_target(
+            MagicMock(), MagicMock(), _target(), settings=_settings(),
+        ),
+        timeout=2,
+    )
+    assert errors == [expected]
+    assert events == ["customer_closed", "lease_released"]
+
+
+async def test_slow_preflight_does_not_start_polling_watchdog(monkeypatch):
+    """No false kill at 45s-equivalent while preparing the Telegram bot."""
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    first_poll = asyncio.Event()
+    done = asyncio.Event()
+    writes = []
+
+    @asynccontextmanager
+    async def lease(_engine, _project):
+        yield MagicMock()
+
+    async def customer(
+        _factory, *, project_id, telegram_bot_id, settings,
+        on_poll_response, on_poll_failure, on_poll_request,
+    ):
+        # Preflight is longer than the polling timeout, but shorter than
+        # its separate startup deadline.
+        await asyncio.sleep(0.11)
+        on_poll_request()
+        on_poll_response()
+        first_poll.set()
+        await done.wait()
+
+    async def health(*_args, **kwargs):
+        writes.append(kwargs["state"])
+
+    monkeypatch.setattr(runtime, "project_worker_lock", lease)
+    monkeypatch.setattr(runtime, "claim_bot_health", AsyncMock())
+    monkeypatch.setattr(runtime, "confirm_project_lock", AsyncMock())
+    monkeypatch.setattr(runtime, "run_customer_bot_instance", customer)
+    monkeypatch.setattr(runtime, "write_bot_health", health)
+    monkeypatch.setattr(runtime, "HEARTBEAT_SECONDS", 0.02)
+    monkeypatch.setattr(runtime, "POLLING_STALE_SECONDS", 0.06)
+    monkeypatch.setattr(runtime, "STARTUP_STALE_SECONDS", 0.25)
+
+    task = asyncio.create_task(
+        runtime.run_target(
+            MagicMock(), MagicMock(), _target(), settings=_settings(),
+        ),
+    )
+    try:
+        await asyncio.wait_for(first_poll.wait(), timeout=1)
+        await asyncio.sleep(0.025)
+        assert not task.done()
+        assert "error" not in writes
+        assert "running" in writes
+    finally:
+        task.cancel()
+        done.set()
+        await asyncio.gather(task, return_exceptions=True)
