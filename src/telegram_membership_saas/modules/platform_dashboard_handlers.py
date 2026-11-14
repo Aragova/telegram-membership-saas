@@ -931,7 +931,7 @@ def create_platform_dashboard_router(
                 "Bank funds verified. The merchant notification is queued.",
             ),
             "rejected": tr(
-                "Чек отклонён. Счёт остаётся неоплаченным. "
+                "Заявка отклонена. Счёт остаётся неоплаченным. "
                 "Уведомление администратору поставлено в отправку.",
                 "Receipt rejected. The invoice remains unpaid. "
                 "The merchant notification is queued.",
