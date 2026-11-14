@@ -1,3 +1,28 @@
+## 2026-11-14 — Bounded Telegram preflight retries (#167)
+
+The startup-only getMe, getWebhookInfo and getChatMember checks now use
+four bounded attempts for Telegram network errors, 5xx and permitted 429,
+with full-jitter exponential delays and bounded retry_after handling.
+These methods are read-only. We never retry payment, Telegram send,
+subscription/access mutation, or financial confirmation via this mechanism.
+Invalid token, webhook conflicts, real missing channel permissions, 400,
+403 and other permanent failures fail immediately. The former blanket
+getChatMember exception handler had incorrectly mapped temporary network
+outages into missing rights. A repeated network failure is now surfaced as
+a safe `resource_network_failed` (or other stage code) and remains
+fail-closed rather than allowing unchecked buyer access. Actual permissions
+are required on every configured active resource.
+
+Existing supervisor worker failure retry is now bounded exponential backoff
+with per-project jitter (45/90/180/300 seconds before jitter), reset after
+a sustained 5-minute run or planned cancellation/configuration change.
+No new worker processes, webhook cutover, tokens, DB migrations, or
+billing changes. Live bot Telegram and access behavior must still be
+checked after staging deployment; CI simulates network/permission faults
+and cannot prove provider availability.
+
+---
+
 ## 2026-11-14 — Phase-aware polling watchdog (#166)
 
 The per-project supervisor now distinguishes startup from active polling.
