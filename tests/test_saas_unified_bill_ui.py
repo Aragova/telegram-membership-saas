@@ -1,4 +1,5 @@
 """Unified ViMi Pay Rich bill: completed sales by rail, one live payable."""
+
 from copy import deepcopy
 
 import pytest
