@@ -101,6 +101,9 @@ async def test_paid_half_of_three_dollars_stays_one_dollar_fifty():
                     "UPDATE public.platform_saas_invoices "
                     "SET status='issued' WHERE id=:id"
                 ), {"id": invoice})
+                # A real operator is the only party authorized to confirm
+                # historic payment evidence, including rollback-only fixtures.
+                await _identity(conn, operator)
                 # Preexisting partial RUB evidence remains immutable;
                 # today's USD rate must not convert it twice.
                 await conn.execute(text(
