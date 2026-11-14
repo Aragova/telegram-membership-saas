@@ -10,8 +10,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
-from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
+from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 
 STATES = frozenset({"setup_needed", "queued", "starting", "running", "stopped", "error"})
 ERROR_CODES = HEALTH_ERROR_CODES
