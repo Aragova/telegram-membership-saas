@@ -9,11 +9,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from random import uniform
-from typing import TypeVar
 
 from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, TelegramServerError
-
-T = TypeVar("T")
 PREFLIGHT_ATTEMPTS = 4
 RETRY_BASE_SECONDS = 0.4
 RETRY_CAP_SECONDS = 3.0
@@ -43,7 +40,7 @@ def preflight_retry_delay(exc: Exception, attempt: int) -> float | None:
     return uniform(0.0, min(RETRY_CAP_SECONDS, RETRY_BASE_SECONDS * 2 ** attempt))
 
 
-async def retry_telegram_preflight(
+async def retry_telegram_preflight[T](
     operation: Callable[[], Awaitable[T]],
     *,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
