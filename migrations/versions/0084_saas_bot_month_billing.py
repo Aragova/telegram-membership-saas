@@ -1242,6 +1242,81 @@ END; $f$
       FROM PUBLIC
     """)
 
+    # Stars subscription orders have a separate trigger from the other
+    # commerce routes: do not accidentally retain the owner-wide hold.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_guard_new_star_subscription()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $guard$
+DECLARE
+  caller_project uuid;
+  liable_owner uuid;
+  merchant uuid;
+  source_bot uuid;
+  checked_at timestamptz:=clock_timestamp();
+BEGIN
+  caller_project:=NULLIF(current_setting('app.current_project_id',true),'')::uuid;
+  IF caller_project IS DISTINCT FROM NEW.project_id THEN RETURN NEW; END IF;
+  SELECT p.owner_user_id,p.merchant_id INTO liable_owner,merchant
+  FROM public.projects p WHERE p.id=NEW.project_id;
+  IF liable_owner IS NULL THEN RETURN NEW; END IF;
+  SELECT b.id INTO source_bot FROM public.bot_instances b
+  WHERE b.project_id=NEW.project_id
+    AND b.telegram_bot_id=NEW.telegram_bot_id
+    AND b.status='registered';
+  IF source_bot IS NULL THEN RETURN NEW; END IF;
+  IF public.platform_saas_bot_hold_state(source_bot,checked_at)<>'held'
+  THEN RETURN NEW; END IF;
+  IF public.platform_saas_exemption_state(
+    NEW.project_id,source_bot,merchant,liable_owner,checked_at
+  )='exempt' THEN RETURN NEW; END IF;
+  RAISE EXCEPTION 'New ViMi Pay subscription checkout is on hold'
+    USING ERRCODE='P6711';
+END; $guard$
+    """)
+    # Crypto Pay issues its invoice on a separate provider rail. Gate new
+    # issuance by the exact paid bot, without disrupting old confirmations.
+    op.execute("""
+CREATE FUNCTION public.platform_saas_guard_new_crypto_checkout()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $guard$
+DECLARE
+  caller_project uuid;
+  liable_owner uuid;
+  merchant uuid;
+  source_bot uuid;
+  checked_at timestamptz:=clock_timestamp();
+BEGIN
+  caller_project:=NULLIF(current_setting('app.current_project_id',true),'')::uuid;
+  IF caller_project IS DISTINCT FROM NEW.project_id THEN RETURN NEW; END IF;
+  SELECT p.owner_user_id,p.merchant_id INTO liable_owner,merchant
+  FROM public.projects p WHERE p.id=NEW.project_id;
+  IF liable_owner IS NULL THEN RETURN NEW; END IF;
+  SELECT b.id INTO source_bot FROM public.bot_instances b
+  WHERE b.project_id=NEW.project_id
+    AND b.telegram_bot_id=NEW.telegram_bot_id
+    AND b.status='registered';
+  IF source_bot IS NULL THEN RETURN NEW; END IF;
+  IF public.platform_saas_bot_hold_state(source_bot,checked_at)<>'held'
+  THEN RETURN NEW; END IF;
+  IF public.platform_saas_exemption_state(
+    NEW.project_id,source_bot,merchant,liable_owner,checked_at
+  )='exempt' THEN RETURN NEW; END IF;
+  RAISE EXCEPTION 'New ViMi Pay Crypto Pay checkout is on hold'
+    USING ERRCODE='P6711';
+END; $guard$
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_hold_new_crypto_checkout
+      BEFORE INSERT ON public.crypto_pay_invoices
+      FOR EACH ROW
+      EXECUTE FUNCTION public.platform_saas_guard_new_crypto_checkout()
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+      public.platform_saas_guard_new_crypto_checkout() FROM PUBLIC
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
