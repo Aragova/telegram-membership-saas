@@ -237,7 +237,6 @@ from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_bill_summary,
     merchant_saas_statements,
     merchant_saas_trial_status,
-    merchant_saas_unified_monthly_preview,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
     lock_saas_invoice_currency_expected,
@@ -812,102 +811,68 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID | None, *, page: int = 0,
     ) -> None:
-        """One financial Rich bill, not a carousel of service/commission invoices.
-
-        The owner sees the requested bot's current-month sales while the
-        account-wide real outstanding balance stays faithful to the ledger.
-        No future provisional commission is silently made payable.
-        """
-        month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
+        """One issued invoice per bot; never sum another bot's finances."""
+        if project_id is None:
+            # Preserve original historical account receipts after a transfer.
+            # Current per-bot statements are opened INSIDE each connected bot.
+            report = await merchant_saas_statements(
+                factory, actor_user_id=actor_id, page=page,
+            )
+            rows: list[list[InlineKeyboardButton]] = []
+            for item in report.invoices:
+                rows.append([_button(
+                    tr("🧾 Архивный счёт", "🧾 Historical invoice") + " · "
+                    + str(item["amount_rub"]) + " ₽",
+                    "saasbill:" + encode_uuid(UUID(str(item["id"])))
+                    + ":" + str(page),
+                )])
+            nav: list[InlineKeyboardButton] = []
+            if page:
+                nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
+            if (page + 1) * 6 < report.total:
+                nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
+            if nav:
+                rows.append(nav)
+            rows.append([_button(
+                tr("🏠 Главное меню", "🏠 Main menu"), "projects",
+            )])
+            await bot.send_message(
+                user_id,
+                tr(
+                    "🧾 <b>Архив платежей ViMi Pay</b>\n"
+                    "Текущий единый счёт каждого бота находится "
+                    "в его собственной админ-панели.",
+                    "🧾 <b>ViMi Pay payment history</b>\n"
+                    "Each bot has its own current invoice "
+                    "in its admin panel.",
+                ),
+                parse_mode="HTML", reply_markup=_markup(rows),
+            )
+            return
+        # This project must have exactly one connected bot. SQL verifies
+        # live ownership and returns one canonical issued invoice and lines.
         summary = await merchant_saas_bill_summary(
-            factory, actor_user_id=actor_id, month=month,
-            project_id=project_id,
-        )
-        preview = await merchant_saas_unified_monthly_preview(
-            factory, actor_user_id=actor_id, month=month,
+            factory, actor_user_id=actor_id,
+            month=datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1),
             project_id=project_id,
         )
         rows: list[list[InlineKeyboardButton]] = []
         due = Decimal(str(summary["total_due_rub"]))
-        if due > 0:
-            invoice_id = summary.get("first_invoice_id")
-            if int(summary["unpaid_count"]) == 1 and invoice_id:
-                target = (
-                    "spm:" + encode_uuid(UUID(str(invoice_id))) + ":RUB:0"
-                )
-            else:
-                # Existing settlement engine binds proofs to a real invoice.
-                # Do not pretend one bank transfer can allocate to several
-                # outstanding invoices until account-wide settlement exists.
-                target = "saaspaychoices:0"
+        invoice_id = summary.get("invoice_id")
+        if due > 0 and invoice_id is not None:
             rows.append([_button(
-                tr("💳 Оплатить", "💳 Pay"), target, "success",
+                tr("💳 Оплатить", "💳 Pay"),
+                "spm:" + encode_uuid(UUID(str(invoice_id))) + ":RUB:0",
+                "success",
             )])
-        rows.append([_button(
-            tr("🏠 Главное меню", "🏠 Main menu"),
-            "dashboard" if project_id is not None else "projects",
-        )])
+        rows.append([_button(tr(
+            "🏠 Главное меню", "🏠 Main menu",
+        ), "dashboard")])
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=unified_merchant_bill_rich(summary, preview),
-            classic_html=unified_merchant_bill_classic(summary, preview),
+            rich_html=unified_merchant_bill_rich(summary),
+            classic_html=unified_merchant_bill_classic(summary),
             reply_markup=_markup(rows),
-        )
-
-    async def show_saas_payment_choices(
-        bot: Bot, user_id: int, actor_id: UUID,
-        project_id: UUID | None, *, page: int,
-    ) -> None:
-        """Internal allocation chooser only if multiple real debts are open.
-
-        This is not a second bill or separate sales dashboard. Each existing
-        payment attempt still belongs to one immutable invoice.
-        """
-        report = await merchant_saas_statements(
-            factory, actor_user_id=actor_id,
-            project_id=project_id, page=page,
-        )
-        rows: list[list[InlineKeyboardButton]] = []
-        for item in report.invoices:
-            invoice_id = UUID(str(item["id"]))
-            balance = await saas_v2_invoice_balance(
-                factory, actor_id=actor_id, invoice_id=invoice_id,
-                project_id=project_id,
-            )
-            remaining = Decimal(str(balance["remaining_rub"]))
-            if remaining <= 0:
-                continue
-            label = (
-                tr("Обслуживание", "Service")
-                if item["kind"] == "prepayment"
-                else tr("Комиссия", "Commission")
-            )
-            rows.append([_button(
-                "💳 " + label + " · " + format(remaining, ".2f") + " ₽",
-                "spm:" + encode_uuid(invoice_id) + ":RUB:"
-                + _encode_saas_page(page), "success",
-            )])
-        nav: list[InlineKeyboardButton] = []
-        if page:
-            nav.append(_button("⬅️", "saaspaychoices:" + str(page - 1)))
-        if (page + 1) * 6 < report.total:
-            nav.append(_button("➡️", "saaspaychoices:" + str(page + 1)))
-        if nav:
-            rows.append(nav)
-        rows.append([_button(
-            tr("⬅️ К счёту", "⬅️ Bill"), "saasinvoices:0",
-        )])
-        await bot.send_message(
-            user_id,
-            tr(
-                "💳 <b>Оплата ViMi Pay</b>\\n"
-                "Выберите начисление для оплаты. "
-                "Каждое зачисление сохраняет отдельное подтверждение.",
-                "💳 <b>ViMi Pay payment</b>\\n"
-                "Choose the charge to pay. Each payment has its "
-                "own bank-verification record.",
-            ).replace("\\\\n", "\\n"),
-            parse_mode="HTML", reply_markup=_markup(rows),
         )
 
     async def show_saas_issued_invoice(
@@ -3971,12 +3936,10 @@ def create_owner_setup_router(
                 await query.answer()
                 return
             if action.startswith("saaspaychoices:"):
-                page_text = action.split(":", 1)[1]
-                if not page_text.isascii() or not page_text.isdecimal():
-                    raise ValueError("Invalid payment selection page")
-                await show_saas_payment_choices(
+                # Old Telegram keyboard: no longer allow splitting one bill
+                # into individual charges. Return to the owner's bill.
+                await show_saas_statements(
                     bot, user_id, actor_id, fixed_project_id,
-                    page=int(page_text),
                 )
                 await query.answer()
                 return
