@@ -46,6 +46,62 @@ def _date(value: object) -> str:
         return escape(str(value)[:10])
 
 
+def _instant(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(ZoneInfo("Europe/Moscow"))
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _date_time(value: object) -> str:
+    moment = _instant(value)
+    return moment.strftime("%d.%m.%Y %H:%M МСК") if moment else ""
+
+
+def _bill_status(bill: dict) -> list[str]:
+    """Actual issued/payment state, not a synthetic bill or test action."""
+    due = _instant(bill.get("due_at"))
+    now = datetime.now(ZoneInfo("Europe/Moscow"))
+    owed = Decimal(str(bill.get("total_due_rub", 0)))
+    state = str(bill.get("hold_state") or "clear")
+    result: list[str] = []
+    if bill.get("invoice_id") is None:
+        next_at = _date_time(bill.get("upcoming_at"))
+        if next_at:
+            result.append(tr("📅 Предстоящий счёт: ",
+                             "📅 Upcoming invoice: ") + next_at)
+        return result
+    if owed == 0:
+        result.append(tr("✅ Статус: оплачено", "✅ Status: paid"))
+        upcoming = _date_time(bill.get("upcoming_at"))
+        if upcoming:
+            result.append(tr("📅 Следующий расчёт: ", "📅 Next bill: ")
+                          + upcoming)
+    elif due and due > now:
+        result.append(tr("🟡 Статус: выставлен", "🟡 Status: issued"))
+        result.append(tr("📅 Оплатить до: ", "📅 Pay by: ")
+                      + _date_time(bill["due_at"]))
+    else:
+        result.append(tr("🔴 Статус: просрочен", "🔴 Status: overdue"))
+        if due:
+            result.append(tr("📅 Срок оплаты: ", "📅 Due date: ")
+                          + _date_time(bill["due_at"]))
+        protected = _instant(bill.get("review_until"))
+        if protected and protected > now and state == "review":
+            result.append(tr("⏳ Чек на проверке · защита до ",
+                             "⏳ Receipt pending · protection until ")
+                          + _date_time(bill["review_until"]))
+    if state == "held":
+        result.append(tr("⛔ Новые продажи в сети ограничены до оплаты долга.",
+                         "⛔ New sales across your network are on hold."))
+    return result
+
+
 def _sales(bill: dict, *, kind: str) -> tuple[list[dict], int, str]:
     rows = [r for r in bill["turnover"] if r["kind"] == kind]
     count = sum(int(r["sold"]) for r in rows)
@@ -101,11 +157,13 @@ def unified_merchant_bill_rich(bill: dict) -> str:
     _validate(bill)
     lines = ["<h3>" + tr("🧾 Счёт ViMi Pay", "🧾 ViMi Pay invoice") + "</h3>"]
     if bill.get("invoice_id") is None:
+        lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
         lines.append("<p>" + tr(
-            "Счёт ещё не выставлен. Во время пробного периода оплаты нет.",
-            "No invoice has been issued yet. The trial requires no payment.",
+            "Счёт пока не выставлен. Оплата доступна только по реальному счёту.",
+            "No invoice issued yet. Pay only an actual issued invoice.",
         ) + "</p>")
         return "\n".join(lines)
+    lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
     lines.extend([
         "<p>" + tr("Обслуживание: ", "Service period: ")
         + _date(bill.get("period_start")) + " – "
@@ -140,11 +198,13 @@ def unified_merchant_bill_classic(bill: dict) -> str:
     _validate(bill)
     lines = [tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay invoice</b>")]
     if bill.get("invoice_id") is None:
+        lines.extend(_bill_status(bill))
         lines.append(tr(
-            "Счёт ещё не выставлен.",
+            "Счёт пока не выставлен.",
             "No invoice has been issued yet.",
         ))
         return "\n".join(lines)
+    lines.extend(_bill_status(bill))
     lines.extend([
         tr("Период: ", "Service period: ")
         + _date(bill.get("period_start")) + " – "
