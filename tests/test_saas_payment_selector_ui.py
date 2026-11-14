@@ -65,7 +65,7 @@ async def test_central_account_pay_selector_routes_to_approved_method(
         first=await choose("spm:"+token+":RUB:"+compact)
         buttons={button.callback_data for row in first.inline_keyboard
                  for button in row}
-        assert "own:saasbill:"+token+":"+str(page) in buttons
+        assert "own:saasinvoices:0" in buttons
         nxt="own:spv:"+token+":"+encode_uuid(method)+":RUB:"+compact
         assert nxt in buttons
         amount_page=await choose(nxt[4:])
@@ -79,7 +79,7 @@ async def test_central_account_pay_selector_routes_to_approved_method(
         assert new_attempt.await_args.kwargs["method_id"]==method
         assert new_attempt.await_args.kwargs["currency"]=="RUB"
         assert "Bank details test 123456" in bot.send_message.await_args.args[1]
-        assert "own:saasbill:"+token+":"+str(page) in {
+        assert "own:saasinvoices:0" in {
             button.callback_data
             for row in bot.send_message.await_args.kwargs[
                 "reply_markup"
