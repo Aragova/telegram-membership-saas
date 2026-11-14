@@ -104,15 +104,37 @@ async def test_paid_half_of_three_dollars_stays_one_dollar_fifty():
                 # A real operator is the only party authorized to confirm
                 # historic payment evidence, including rollback-only fixtures.
                 await _identity(conn, operator)
-                # Preexisting partial RUB evidence remains immutable;
-                # today's USD rate must not convert it twice.
+                # Legacy fractional bank payments use immutable v2
+                # quote/proof/allocation records. Direct receipt insertion
+                # is rightly forbidden for incomplete service settlement.
+                old_attempt = uuid4()
                 await conn.execute(text(
-                    "INSERT INTO public.platform_saas_receipts("
-                    "id,invoice_id,confirmed_by,amount_rub)"
-                    " VALUES (:id,:invoice,:operator,150)"
+                    "INSERT INTO public.platform_saas_payment_attempts_v2("
+                    "id,invoice_id,owner_user_id,amount_rub,currency_code,"
+                    "rub_per_unit,amount_currency,quote_date,source_date,"
+                    "instructions_snapshot,expires_at) VALUES("
+                    ":id,:invoice,:owner,150,'RUB',1,150,:day,NULL,"
+                    "'Historical verified bank transfer',:expiry)"
                 ), {
-                    "id": uuid4(), "invoice": invoice,
-                    "operator": operator,
+                    "id": old_attempt, "invoice": invoice, "owner": owner,
+                    "day": issue_day, "expiry": now + timedelta(days=1),
+                })
+                await conn.execute(text(
+                    "INSERT INTO public.platform_saas_payment_proofs_v2("
+                    "id,attempt_id,source_bot_id,source_chat_id,"
+                    "source_message_id,source_file_id,file_type) VALUES("
+                    ":id,:attempt,123987123,123987456,12345,"
+                    "'historical-bank-proof-file','photo')"
+                ), {"id": uuid4(), "attempt": old_attempt})
+                await conn.execute(text(
+                    "INSERT INTO public.platform_saas_payment_allocations_v2("
+                    "id,attempt_id,invoice_id,received_currency,"
+                    "received_amount,allocated_rub,bank_reference,confirmed_by)"
+                    " VALUES(:id,:attempt,:invoice,'RUB',150,150,"
+                    "'OLD-PAYMENT-CONFIRMED-001',:operator)"
+                ), {
+                    "id": uuid4(), "attempt": old_attempt,
+                    "invoice": invoice, "operator": operator,
                 })
                 assert (await conn.execute(text(
                     "SELECT public.platform_saas_v2_remaining(:invoice)"
