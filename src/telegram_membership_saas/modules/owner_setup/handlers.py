@@ -157,7 +157,6 @@ from telegram_membership_saas.modules.owner_setup.premium_welcome import (
     central_welcome_classic,
     central_welcome_rich,
     trial_status_classic,
-    trial_status_rich,
 )
 from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
     rich_channel_card,
@@ -229,13 +228,10 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_quote_classic,
     issued_quote_rich,
     quote_fingerprint,
-    unified_monthly_classic,
-    unified_monthly_rich,
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_statements,
     merchant_saas_trial_status,
-    merchant_saas_unified_monthly_preview,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
     lock_saas_invoice_currency_expected,
