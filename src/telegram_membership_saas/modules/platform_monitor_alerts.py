@@ -33,8 +33,8 @@ from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.db_base import Base
 from telegram_membership_saas.localization import recipient_language, tr
-from telegram_membership_saas.modules.identity.models import TelegramUser
 from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
+from telegram_membership_saas.modules.identity.models import TelegramUser
 from telegram_membership_saas.modules.platform_saas_notices import (
     deliver_one_saas_notice,
     schedule_saas_reminders,
