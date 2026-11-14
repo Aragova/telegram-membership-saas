@@ -175,6 +175,36 @@ async def merchant_saas_project_preview(
     return result
 
 
+async def merchant_saas_bill_summary(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, month: date,
+    project_id: UUID | None = None,
+) -> dict:
+    """One read-only owner bill: native turnovers and account-wide real due.
+
+    Connected-bot turnover is scoped to that bot; actual liabilities are
+    account-wide because service and closed-month invoice allocations may
+    span several bots. No issued invoices or payment attempts are changed.
+    """
+    if month.day != 1:
+        raise ValueError("The accounting month must start on day one")
+    stmt = text(
+        "SELECT public.platform_saas_merchant_bill_summary("
+        ":month,:project) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        result = (await session.execute(stmt, {
+            "month": month, "project": project_id,
+        })).scalar_one()
+    if not isinstance(result, dict) or not isinstance(
+        result.get("turnover"), list,
+    ):
+        raise RuntimeError("Invalid ViMi Pay unified bill")
+    return result
+
+
 async def merchant_saas_statements(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID,
