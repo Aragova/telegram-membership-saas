@@ -1,3 +1,33 @@
+## 2026-11-14 — Per-request bounded Telegram preflight and stage diagnostics (draft #168)
+
+Production staging #59 (merged #167) showed two registered bots, 
+`@bambi_top_bot` and `@barbertom6_bot`, repeatedly report
+`identity_api_failed` and `startup_stalled`. Direct read-only network
+checks proved the container can reach Telegram over IPv4, while Bot API
+reads intermittently time out. No evidence establishes invalid tokens,
+missing channel permissions or an overall fleet failure.
+
+Preflight `getMe`, `getWebhookInfo`, `getChatMember` now each enforce
+a 12-second deadline **per read attempt**, with the existing maximum of
+four retries for transient errors. Native async timeouts classify as
+Telegram network errors. Permanent authorization/permission failures
+still fail immediately and never cause grants. The legacy 120-second
+supervisor startup watchdog remains, but its timeout reason now shows
+only a fixed, safe stage: initialization, identity, webhook, resource,
+commands or first polling request. The nonessential native command
+menu cannot delay buyer polling by more than 12 seconds. No unbounded
+retry, token/error-body logging, DB migration, new UI control, or
+commercial workflow change is introduced.
+
+**Safety/limits:** This prevents long aiogram HTTP defaults from
+multiplying past the supervisor deadline; it cannot fix a broken
+network route, a truly unavailable Telegram endpoint, or provider
+ratelimits. Test the real target bots and the existing 50-bot fleet
+after review/CI and owner-approved staging deployment. Do not claim
+live recovery from passing CI alone.
+
+---
+
 ## 2026-11-14 — Bounded Telegram preflight retries (#167)
 
 The startup-only getMe, getWebhookInfo and getChatMember checks now use
