@@ -1,6 +1,4 @@
 """One connected-bot bill screen: no visible FX table, native Stars rows."""
-from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
