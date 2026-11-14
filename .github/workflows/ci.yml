@@ -150,6 +150,8 @@ jobs:
                       "platform_saas_notice_schedule()",
                       "platform_saas_notice_claim()",
                       "platform_saas_notice_finish(uuid,integer,boolean)",
+                      "platform_saas_proof_alert_claim()",
+                      "platform_saas_proof_alert_finish(uuid,integer,boolean)",
                       "platform_saas_publish_fx_rate(date,text,numeric)",
                       "platform_saas_monthly_fx(date)",
                       "platform_saas_project_preview(uuid,date)",
