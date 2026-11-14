@@ -56,12 +56,18 @@ class ObservedCustomerBot(RichUiBot):
         self, *, token: str,
         on_poll_response: Callable[[], None] | None = None,
         on_poll_failure: Callable[[str], None] | None = None,
+        on_poll_request: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(token=token)
         self._poll_response = on_poll_response
         self._poll_failure = on_poll_failure
+        self._poll_request = on_poll_request
 
     async def __call__(self, method, request_timeout=None):
+        # An in-flight request is not proof of a successful Telegram response.
+        # This milestone also excludes all preflight work from polling timeout.
+        if isinstance(method, GetUpdates) and self._poll_request is not None:
+            self._poll_request()
         try:
             result = await super().__call__(method, request_timeout=request_timeout)
         except Exception as exc:
@@ -195,6 +201,7 @@ async def run_customer_bot_instance(
     on_started: Callable[[], Awaitable[None]] | None = None,
     on_poll_response: Callable[[], None] | None = None,
     on_poll_failure: Callable[[str], None] | None = None,
+    on_poll_request: Callable[[], None] | None = None,
 ) -> None:
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
@@ -215,6 +222,7 @@ async def run_customer_bot_instance(
             bot = ObservedCustomerBot(
                 token=config.token, on_poll_response=on_poll_response,
                 on_poll_failure=on_poll_failure,
+                on_poll_request=on_poll_request,
             )
         except Exception:
             raise RuntimeError("Customer bot credential is invalid") from None
