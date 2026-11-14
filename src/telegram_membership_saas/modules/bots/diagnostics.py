@@ -30,6 +30,9 @@ HEALTH_ERROR_CODES = frozenset({
     "resource_network_failed", "resource_api_failed",
     "resource_rate_limited", "resource_check_failed",
     "resource_access_denied",
+    "startup_initializing_stalled", "startup_identity_stalled",
+    "startup_webhook_stalled", "startup_resource_stalled",
+    "startup_commands_stalled", "startup_polling_stalled",
 })
 
 
