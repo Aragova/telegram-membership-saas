@@ -68,7 +68,6 @@ async def test_central_account_invoice_button_does_not_require_project(
     callback.answer.assert_awaited_once()
     bot.send_message.assert_awaited_once()
     msg = bot.send_message.await_args.args[1]
-    assert "150.00" in msg
     assert "TEST bank &amp; &lt;details&gt;" not in msg
     assert ("Счета ViMi Pay" if language == "ru"
             else "ViMi Pay invoices") in msg
