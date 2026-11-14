@@ -1,3 +1,48 @@
+## 2026-11-14 — Single merchant Rich bill (post-#160 correction)
+
+The existing `🧾 Счёт / 🧾 Bill` admin entry is **one financial overview**,
+not a list of "Service ViMi Pay" and "Commission ViMi Pay" receipts.
+Show, in this order:
+
+1. Service: **actual unsettled account-wide service invoice balance**.
+2. Subscriptions: the current Moscow month's completed purchases grouped by
+   their **native currency**, with count and gross, and provisional 5% fee.
+3. Files: the same native-currency gross/count and provisional 5% breakdown.
+   Include approved manual sales, verified ⭐ Telegram Stars, and verified
+   💎 Crypto Pay on both sides. Never add unlike native currencies together.
+4. Payable account balance: settled invoice obligations remaining **after**
+   verified bank receipts and applied refund credits. Separate outstanding
+   **service** from already **issued** closed-month commission. Show the real
+   aggregate total. Never include unissued current-month commission in payable
+   or present a projected 5% as a bill.
+
+The turnover section on a connected admin bot belongs only to its project;
+the **account-wide** service/commission debt is explicitly labeled as such.
+A central owner account without a selected bot sees account-wide turnover.
+A project owner / authenticated user cannot see another merchant's records.
+
+The overview has exactly one contextual `💳 Оплатить / Pay` action if real
+debt exists and one `🏠 Главное меню / Main menu` action. With no debt
+there is no Pay action, but service and both sales sections remain readable.
+Native Rich markup has a compact HTML fallback. Do not leak invoice UUIDs,
+raw FX audit rows, zero-value refund columns, unused service profile toggle
+buttons, refresh buttons or unrelated Settings into the overview.
+
+**Accounting/checkout safety:** real obligations are still separate immutable
+per-bot prepaid-service and closed-Moscow-month commission invoice rows.
+One-bank-attempt-per-invoice remains the settlement invariant. If exactly one
+unpaid invoice remains, the overview's Pay action goes directly to the
+existing currency/method/amount selector. If multiple are due, Pay opens
+a *payment-allocation choice* after leaving the unified overview. It does
+not invent an unsafe all-invoice bank attempt, silently claim the entire
+account balance settled from a single invoice, or create duplicate invoice
+screens on the main page. A true single-transfer consolidated settlement
+requires a separate atomic cross-invoice allocation design before activation.
+Historical callback links continue to work. No new test buttons or commercial
+activation. Preserve the existing `compose.light100.yaml`.
+
+---
+
 ## 2026-11-14 — Merchant billing UI cleanup (PR #160)
 
 Approved merchant navigation is one concise chain:
