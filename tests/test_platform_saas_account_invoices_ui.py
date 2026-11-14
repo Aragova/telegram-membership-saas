@@ -70,14 +70,24 @@ async def test_central_account_invoice_button_does_not_require_project(
     msg = bot.send_message.await_args.args[1]
     assert "150.00" in msg
     assert "TEST bank &amp; &lt;details&gt;" not in msg
-    assert ("Оплатить" if language == "ru" else "Pay") in msg
+    assert ("Счета ViMi Pay" if language == "ru"
+            else "ViMi Pay invoices") in msg
+    assert ("Оплатить" if language == "ru" else "Pay") not in msg
     buttons = [
-        b.callback_data
+        b
         for row in bot.send_message.await_args.kwargs[
             "reply_markup"
         ].inline_keyboard
         for b in row
     ]
-    assert "own:saasinvoices:0" in buttons
-    assert any(action.startswith("own:spm:") for action in buttons)
-    assert "own:projects" in buttons
+    assert len(buttons) == 2
+    assert buttons[0].callback_data.startswith("own:saasbill:")
+    assert "150.00 ₽" in buttons[0].text
+    assert ("Обслуживание" if language == "ru" else "service") in buttons[0].text
+    assert buttons[1].callback_data == "own:projects"
+    assert ("Главное меню" if language == "ru"
+            else "Main menu") in buttons[1].text
+    assert not any(
+        b.callback_data.startswith(("own:spm:", "own:saasbillchoose:"))
+        for b in buttons
+    )
