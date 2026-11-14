@@ -101,6 +101,10 @@ def upgrade() -> None:
         WHERE attempt.id=n.attempt_id
           AND n.status IN ('pending','sending')
           AND (
+            -- A settled/voided invoice must not keep nagging the operator
+            -- even when an older proof was not individually reviewed.
+            public.platform_saas_v2_remaining(attempt.invoice_id)<=0
+            OR
             -- A reviewed proof never triggers more alerts.
             EXISTS (
               SELECT 1 FROM public.platform_saas_payment_allocations_v2 paid
