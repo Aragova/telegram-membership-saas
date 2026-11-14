@@ -488,7 +488,8 @@ BEGIN
   last_day:=extract(day FROM
     (next_month+interval '1 month'-interval '1 day')::date
   )::integer;
-  time_part:=(anchor AT TIME ZONE 'Europe/Moscow')::time;
+  time_part:=(anchor AT TIME ZONE 'Europe/Moscow')
+      -date_trunc('day',anchor AT TIME ZONE 'Europe/Moscow');
   RETURN (next_month+make_interval(
     days=>least(wanted_day,last_day)-1
   )+time_part) AT TIME ZONE 'Europe/Moscow';
