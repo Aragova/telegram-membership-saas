@@ -1,3 +1,17 @@
+## 2026-11-14 — Merchant bank-decision notification navigation (#164)
+
+Staging test of #163 proved successful Rich rejection notification in the original
+channel admin bot, but exposed a navigation dead end in the delivered message.
+The result notice now has exactly ONE inline button, **⬅️ К счёту / ⬅️ Invoice**,
+for BOTH confirmed and rejected payments, in BOTH Telegram Rich and classic
+fallback. It uses the existing connected-bot owner callback
+`own:saasinvoices:0`; that screen provides pay-if-unpaid and main-menu
+navigation. No new handlers, billing forms, database migration, duplicated
+menu options, or payment changes. Added RU/EN delivery regression tests.
+Do not send a bare result message without a route back to the invoice.
+
+---
+
 ## 2026-11-14 — Operator bank-review completion + payer result (PR #163)
 
 The live staging #162 proof push works. However operator payment review

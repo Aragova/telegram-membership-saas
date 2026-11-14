@@ -142,3 +142,58 @@ async def test_no_decision_does_not_send(monkeypatch):
         settings=SimpleNamespace(), actor_id=uuid4(),
     )
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("locale", ["ru", "en"])
+@pytest.mark.parametrize("decision", ["rejected", "approved"])
+@pytest.mark.parametrize("rich_supported", [False, True])
+async def test_review_notice_can_return_to_existing_invoice_in_both_modes(
+    monkeypatch, locale, decision, rich_supported,
+):
+    """One real admin callback, no new UI route and no navigation dead end."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        notice, "tr",
+        lambda ru, en: ru if locale == "ru" else en,
+    )
+    monkeypatch.setattr(notice, "rich_enabled", lambda: rich_supported)
+    monkeypatch.setattr(
+        notice, "InputRichMessage",
+        lambda *, html: SimpleNamespace(html=html),
+    )
+    bot = SimpleNamespace(
+        send_rich_message=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+    item = _item(decision=decision)
+    await notice._send_result(bot, item["source_chat"], item)
+
+    sent = (
+        bot.send_rich_message if rich_supported
+        else bot.send_message
+    )
+    sent.assert_awaited_once()
+    (bot.send_message if rich_supported else
+     bot.send_rich_message).assert_not_awaited()
+    kwargs = sent.await_args.kwargs
+    assert (
+        kwargs["chat_id"] if rich_supported else sent.await_args.args[0]
+    ) == item["source_chat"]
+    markup = kwargs["reply_markup"]
+    assert len(markup.inline_keyboard) == 1
+    assert len(markup.inline_keyboard[0]) == 1
+    button = markup.inline_keyboard[0][0]
+    assert button.callback_data == "own:saasinvoices:0"
+    assert button.text == (
+        "⬅️ К счёту" if locale == "ru" else "⬅️ Invoice"
+    )
+    # The result message must not strand its reader by only telling them
+    # to search for the bill manually.
+    body = (
+        kwargs["rich_message"].html if rich_supported
+        else sent.await_args.args[1]
+    )
+    assert "button below" in body if locale == "en" else "ниже" in body
+    assert item["id"] not in body

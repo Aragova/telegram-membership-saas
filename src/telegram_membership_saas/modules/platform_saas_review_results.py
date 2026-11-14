@@ -13,6 +13,7 @@ from uuid import UUID
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -87,16 +88,16 @@ def _texts(item: dict) -> tuple[str, str]:
     )
     reason = escape(str(item.get("reason") or "").strip())
     info = (
-        tr("Оплата подтверждена ViMi Pay. Проверьте актуальный счёт "
-           "в меню бота.", "ViMi Pay verified the funds. Check your "
-           "current invoice in this bot's menu.")
+        tr("Оплата подтверждена ViMi Pay. Актуальный счёт можно "
+           "открыть кнопкой ниже.", "ViMi Pay verified the funds. "
+           "Open the current invoice using the button below.")
         if approved else
         tr("Чек не принят, сумма не зачтена. Счёт остаётся "
-           "неоплаченным. Проверьте причину и откройте 🧾 Счёт "
-           "в меню бота для повторной оплаты.",
+           "неоплаченным. Нажмите «К счёту» ниже, чтобы "
+           "повторить оплату.",
            "Your receipt was not accepted and no funds were credited. "
-           "The invoice remains unpaid. Review the reason and open "
-           "🧾 Bill in this bot's menu to try again.")
+           "The invoice remains unpaid. Use the Invoice button below "
+           "to try again.")
     )
     reason_row = (
         "<tr><th>" + tr("Причина", "Reason") + "</th><td>"
@@ -123,8 +124,24 @@ def _texts(item: dict) -> tuple[str, str]:
     return rich, classic
 
 
+def _result_navigation() -> InlineKeyboardMarkup:
+    """Re-use the actual admin bot's existing invoice screen, not a new menu.
+
+    own:saasinvoices:0 is already handled inside the owner setup router for
+    BOTH paid and unpaid invoices; the resulting screen has its own menu
+    navigation. Never expose a technical invoice UUID in callback text.
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text=tr("⬅️ К счёту", "⬅️ Invoice"),
+            callback_data="own:saasinvoices:0",
+        ),
+    ]])
+
+
 async def _send_result(bot: Bot, chat_id: int, item: dict) -> None:
     rich, classic = _texts(item)
+    reply_markup = _result_navigation()
     sender = getattr(bot, "send_rich_message", None)
     if (
         rich_enabled() and InputRichMessage is not None
@@ -134,6 +151,7 @@ async def _send_result(bot: Bot, chat_id: int, item: dict) -> None:
         try:
             await sender(
                 chat_id=chat_id, rich_message=InputRichMessage(html=rich),
+                reply_markup=reply_markup,
             )
             return
         except TelegramBadRequest as exc:
@@ -145,7 +163,9 @@ async def _send_result(bot: Bot, chat_id: int, item: dict) -> None:
             if "method not found" not in str(exc).lower():
                 raise
     with classic_messages():
-        await bot.send_message(chat_id, classic, parse_mode="HTML")
+        await bot.send_message(
+            chat_id, classic, parse_mode="HTML", reply_markup=reply_markup,
+        )
 
 
 async def _send_using_source_bot(
