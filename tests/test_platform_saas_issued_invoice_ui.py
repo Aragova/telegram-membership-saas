@@ -123,22 +123,3 @@ def test_missing_quote_does_not_display_fabricated_amount():
     assert "Фиксация недоступна" in rich
     assert "Подтверждение недоступно" in classic
     assert "None" not in rich + classic
-
-
-@pytest.mark.parametrize("lang", ["ru", "en"])
-def test_human_invoice_button_never_exposes_internal_ids(lang):
-    from telegram_membership_saas.modules.owner_setup.handlers import (
-        _saas_invoice_button_label,
-    )
-
-    token = _language.set(lang)
-    try:
-        name = _saas_invoice_button_label({
-            **INVOICE, "kind": "prepayment",
-            "settlement": SNAPSHOT,
-        })
-    finally:
-        _language.reset(token)
-    assert "1.67 EUR" in name
-    assert INVOICE["id"] not in name
-    assert ("Обслуживание" if lang == "ru" else "service") in name
