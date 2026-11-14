@@ -1140,6 +1140,8 @@ CREATE FUNCTION public.platform_saas_bot_hold_state(
 SET search_path=pg_catalog,public AS $f$
 DECLARE
   owner_id uuid;
+  merchant_id uuid;
+  project_id uuid;
   started timestamptz;
   billing_started timestamptz;
   enabled boolean;
@@ -1149,7 +1151,8 @@ BEGIN
   IF p_bot IS NULL OR p_at IS NULL THEN
     RAISE EXCEPTION 'Invalid bot hold check' USING ERRCODE='22023';
   END IF;
-  SELECT p.owner_user_id INTO owner_id
+  SELECT p.owner_user_id,p.merchant_id,b.project_id
+    INTO owner_id,merchant_id,project_id
   FROM public.bot_instances b JOIN public.projects p ON p.id=b.project_id
   WHERE b.id=p_bot AND b.status='registered';
   IF owner_id IS NULL THEN RETURN 'disabled'; END IF;
@@ -1160,11 +1163,11 @@ BEGIN
   IF NOT coalesce(enabled,false) OR started IS NULL
      OR billing_started IS NULL
      OR p_at<greatest(started,billing_started) THEN RETURN 'disabled'; END IF;
-  IF EXISTS(
-    SELECT 1 FROM public.telegram_users u
-    JOIN public.platform_operators o ON o.telegram_user_id=u.telegram_user_id
-    WHERE u.id=owner_id AND o.role='owner'
-  ) THEN RETURN 'clear'; END IF;
+  -- Platform staff may administrate someone else's paid channel.
+  -- An operator role alone is NOT proof of a creator-owned exemption.
+  IF public.platform_saas_exemption_state(
+    project_id,p_bot,merchant_id,owner_id,p_at
+  )='exempt' THEN RETURN 'clear'; END IF;
   SELECT EXISTS(
     SELECT 1 FROM public.platform_saas_invoices i
     WHERE i.bot_instance_id=p_bot AND i.owner_user_id=owner_id
