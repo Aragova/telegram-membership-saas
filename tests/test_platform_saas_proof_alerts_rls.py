@@ -122,10 +122,10 @@ async def test_new_proof_push_once_operator_only_and_cancel_if_reviewed():
                 ) is None
                 # Fenced finish refuses an older/incorrect claim.
                 assert not await _call(conn, "platform_saas_proof_alert_finish", {
-                    "id": first, "generation": 0, "sent": True,
+                    "id": first, "kind": "new", "generation": 0, "sent": True,
                 }, json=False)
                 assert await _call(conn, "platform_saas_proof_alert_finish", {
-                    "id": first, "generation": 1, "sent": True,
+                    "id": first, "kind": "new", "generation": 1, "sent": True,
                 }, json=False)
                 assert await _call(
                     conn, "platform_saas_proof_alert_claim", {},
