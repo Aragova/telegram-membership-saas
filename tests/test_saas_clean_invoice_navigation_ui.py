@@ -52,7 +52,7 @@ async def test_connected_invoice_menu_has_only_bill_and_main(monkeypatch, lang):
     monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
     report = MerchantSaasStatements(
         total=1, unpaid=1, outstanding_rub=150,
-        configured=True, instructions="PRIVATE BANK DETAILS",
+        configured=True, instructions="PRIVATE BANK DETAILS", page=0,
         invoices=({
             "id": str(invoice_id), "kind": "prepayment",
             "status": "unpaid", "amount_rub": "150.00",
@@ -174,7 +174,7 @@ async def test_no_invoice_menu_displays_only_main_button(monkeypatch):
     monkeypatch.setattr(ui, "merchant_saas_statements", AsyncMock(
         return_value=MerchantSaasStatements(
             total=0, unpaid=0, outstanding_rub=0,
-            configured=True, instructions=None, invoices=(),
+            configured=True, instructions=None, invoices=(), page=0,
         ),
     ))
     bot = MagicMock()
