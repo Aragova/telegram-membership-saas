@@ -484,18 +484,6 @@ def _decode_saas_page(token: str) -> int:
     return page
 
 
-def _saas_invoice_is_upcoming(item: dict) -> bool:
-    """Only a future UTC due date is 'upcoming'; never infer paid status."""
-    value = item.get("due_at")
-    if not value:
-        return False
-    try:
-        due = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    return due.tzinfo is not None and due > datetime.now(ZoneInfo("UTC"))
-
-
 async def _show_saas_payment_step(
     bot: Bot, query: CallbackQuery, html: str,
     rows: list[list[InlineKeyboardButton]],
