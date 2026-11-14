@@ -16,7 +16,8 @@ async def _language(*_args):
 
 def _item():
     return {
-        "id": str(uuid4()), "generation": 1, "amount": "150.00",
+        "id": str(uuid4()), "kind": "new",
+        "generation": 1, "amount": "150.00",
         "currency": "RUB", "pending_count": 2,
     }
 
@@ -52,6 +53,7 @@ async def test_central_alert_is_regular_private_message_with_existing_queue(
     finish.assert_awaited_once()
     assert finish.await_args.kwargs["platform_actor_id"] == actor
     assert str(finish.await_args.kwargs["attempt_id"]) == item["id"]
+    assert finish.await_args.kwargs["kind"] == "new"
     assert finish.await_args.kwargs["generation"] == 1
     assert finish.await_args.kwargs["sent"] is True
 
@@ -93,3 +95,15 @@ def test_alert_text_russian_and_english(monkeypatch):
     assert "Новый чек на проверку" in alerts._message(_item())
     monkeypatch.setattr(alerts, "tr", lambda ru, en: en)
     assert "New receipt for review" in alerts._message(_item())
+
+
+@pytest.mark.parametrize("kind,label", [
+    ("new","Новый чек на проверку"),
+    ("six_hour","Чек ожидает 6 часов"),
+    ("eleven_hour","Остался 1 час"),
+])
+def test_reminder_text_uses_same_review_queue(monkeypatch,kind,label):
+    monkeypatch.setattr(alerts,"tr",lambda ru,en: ru)
+    data=_item()
+    data["kind"]=kind
+    assert label in alerts._message(data)
