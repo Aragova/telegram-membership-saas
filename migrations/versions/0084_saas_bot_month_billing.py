@@ -2017,6 +2017,49 @@ END; $guard$
       public.platform_saas_guard_held_manual_grant() FROM PUBLIC
     """)
 
+
+    # An overdue service invoice cannot be dodged by transferring the bot
+    # before a bank proof is reviewed. The existing dual-consent, token
+    # replacement and merchant-history transfer guard remains authoritative.
+    op.execute("""
+CREATE FUNCTION public.platform_saas_guard_transfer_unpaid_invoice()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $guard$
+BEGIN
+  IF TG_OP<>'UPDATE'
+     OR NEW.owner_user_id IS NOT DISTINCT FROM OLD.owner_user_id
+  THEN RETURN NEW; END IF;
+  IF EXISTS(
+    SELECT 1 FROM public.bot_instances b
+    WHERE b.project_id=OLD.id AND b.status='registered'
+      AND (
+        public.platform_saas_bot_hold_state(b.id,clock_timestamp())='held'
+        OR EXISTS(
+          SELECT 1 FROM public.platform_saas_invoices i
+          WHERE i.bot_instance_id=b.id
+            AND i.owner_user_id=OLD.owner_user_id
+            AND i.kind='prepayment' AND i.status='issued'
+            AND public.platform_saas_v2_remaining(i.id)>0
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION 'Unpaid ViMi Pay service must be reconciled before transfer'
+      USING ERRCODE='P6712';
+  END IF;
+  RETURN NEW;
+END; $guard$
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_guard_transfer_unpaid_invoice
+      BEFORE UPDATE OF owner_user_id ON public.projects
+      FOR EACH ROW EXECUTE FUNCTION
+      public.platform_saas_guard_transfer_unpaid_invoice()
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+      public.platform_saas_guard_transfer_unpaid_invoice() FROM PUBLIC
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
