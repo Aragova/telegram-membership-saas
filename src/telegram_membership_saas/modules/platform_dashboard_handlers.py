@@ -1616,17 +1616,24 @@ def create_platform_dashboard_router(
                 for index, item in enumerate(items, start=1):
                     attempt_id = UUID(str(item["id"]))
                     token = encode_uuid(attempt_id)
-                    submitted = datetime.fromisoformat(
-                        str(item["submitted_at"]).replace("Z", "+00:00"),
-                    ).astimezone(ZoneInfo(config.platform_timezone))
+                    receipt_time = item.get("submitted_at")
+                    stamp = ""
+                    if receipt_time:
+                        try:
+                            submitted = datetime.fromisoformat(
+                                str(receipt_time).replace("Z", "+00:00"),
+                            ).astimezone(ZoneInfo(config.platform_timezone))
+                            stamp = submitted.strftime("%d.%m.%Y %H:%M")
+                        except ValueError:
+                            pass
                     lines.append(
                         "\n" + tr("🧾 <b>Чек №", "🧾 <b>Receipt #")
                         + str(page * 8 + index) + "</b>\n"
                         + tr("Сумма: ", "Amount: ") + "<b>"
                         + escape(str(item["amount"]) + " " + str(item["currency"]))
-                        + "</b>\n"
-                        + tr("Получен: ", "Received: ")
-                        + escape(submitted.strftime("%d.%m.%Y %H:%M"))
+                        + "</b>"
+                        + ("\n" + tr("Получен: ", "Received: ")
+                           + escape(stamp) if stamp else "")
                     )
                     rows.append([
                         _button(tr("📎 Чек", "📎 Receipt"),
