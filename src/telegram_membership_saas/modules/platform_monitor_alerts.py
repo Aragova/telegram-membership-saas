@@ -34,6 +34,7 @@ from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.db_base import Base
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.identity.models import TelegramUser
+from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
 from telegram_membership_saas.modules.platform_saas_notices import (
     deliver_one_saas_notice,
     schedule_saas_reminders,
@@ -56,10 +57,7 @@ HEALTHY_FOR_RECOVERY = timedelta(minutes=2)
 HEARTBEAT_MAX_AGE = timedelta(seconds=120)
 DELIVERY_LEASE = timedelta(minutes=5)
 
-SAFE_CODES = frozenset({
-    "startup_failed", "invalid_credentials", "telegram_check_failed",
-    "missing_admin_rights", "worker_stopped", "lock_lost",
-})
+SAFE_CODES = HEALTH_ERROR_CODES
 
 
 class PlatformMonitorIncident(Base):
