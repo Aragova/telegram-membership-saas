@@ -38,43 +38,47 @@ CREDITS = {
 }
 
 
-@pytest.mark.parametrize("lang,word", [
-    ("ru", "Выставленный счёт"),
-    ("en", "Issued invoice"),
+@pytest.mark.parametrize("lang,title", [
+    ("ru", "Счёт ViMi Pay"), ("en", "ViMi Pay invoice"),
 ])
-def test_issued_invoice_rich_and_classic_are_bilingual_and_escape_sources(lang, word):
+def test_issued_invoice_is_compact_and_hides_technical_fields(lang, title):
     token = _language.set(lang)
     try:
         rich = issued_invoice_rich(INVOICE, SNAPSHOT, CREDITS)
         classic = issued_invoice_classic(INVOICE, SNAPSHOT, CREDITS)
     finally:
         _language.reset(token)
-    assert word in rich and word in classic
-    assert "<table bordered compact>" in rich
+    for display in (rich, classic):
+        assert title in display
+        assert "1.67 EUR" in display
+        assert "150.00 ₽" in display
+        assert "25.00 ₽" in display
+        assert INVOICE["id"] not in display
+        assert "89.6603" not in display
+        assert "2026-11-10" not in display
+        assert "bank:<refund>" not in display
+        assert "bank:&lt;refund&gt;" not in display
+        assert "Валюта платежа" not in display
+    assert "<table" not in rich
     assert "<table" not in classic
-    for data in (rich, classic):
-        assert "1.67 EUR" in data
-        assert "89.6603 ₽" in data
-        assert "2026-11-10" in data
-        assert "25.00 ₽" in data
-        assert "bank:&lt;refund&gt;&amp;001" in data
-        assert "<refund>" not in data
-        assert "150.00 ₽" in data
 
 
 @pytest.mark.parametrize("lang", ["ru", "en"])
-def test_unlocked_invoice_is_not_presented_as_payable_in_foreign_currency(lang):
+def test_unlocked_invoice_only_shows_actual_due_without_fake_currency(lang):
     token = _language.set(lang)
     try:
         rich = issued_invoice_rich(
             INVOICE, {"locked": False},
             {"total_credited_rub": Decimal(0), "entries": []},
+            {"remaining_rub": "150.00", "verified_refund_credit_rub": "0"},
         )
     finally:
         _language.reset(token)
-    assert "<table bordered compact>" in rich
+    assert "150.00 ₽" in rich
     assert "1.67 EUR" not in rich
     assert "89.6603" not in rich
+    assert "Не выбрана" not in rich
+    assert "<table" not in rich
 
 
 @pytest.mark.parametrize("lang,freeze_notice", [
@@ -122,60 +126,19 @@ def test_missing_quote_does_not_display_fabricated_amount():
 
 
 @pytest.mark.parametrize("lang", ["ru", "en"])
-def test_mixed_currency_account_hides_shared_rub_payment_instructions(lang):
-    from types import SimpleNamespace
-
+def test_human_invoice_button_never_exposes_internal_ids(lang):
     from telegram_membership_saas.modules.owner_setup.handlers import (
-        _saas_invoices_rich,
+        _saas_invoice_button_label,
     )
 
-    report = SimpleNamespace(
-        total=2, unpaid=2, outstanding_rub=Decimal("300.00"),
-        configured=True, instructions="RUB BANK 123456789",
-        foreign_unpaid_count=1,  # Even if foreign invoice is on another page.
-        pending_credit_count=0,
-        invoices=[{
-            "id": INVOICE["id"], "kind": "prepayment",
-            "status": "unpaid", "amount_rub": "150.00",
-            "due_at": INVOICE["due_at"],
-            "settlement": {"locked": False},
-        }],
-    )
     token = _language.set(lang)
     try:
-        rich = _saas_invoices_rich(report)
+        name = _saas_invoice_button_label({
+            **INVOICE, "kind": "prepayment",
+            "settlement": SNAPSHOT,
+        })
     finally:
         _language.reset(token)
-    assert "RUB BANK" not in rich
-    assert ("выбрать" if lang == "ru" else
-            "choose") in rich
-    assert ("способы оплаты" if lang == "ru" else
-            "payment methods") in rich
-    assert "150.00 ₽" in rich
-
-
-@pytest.mark.parametrize("lang", ["ru", "en"])
-def test_invoice_list_uses_real_locked_foreign_amount(lang):
-    from types import SimpleNamespace
-
-    from telegram_membership_saas.modules.owner_setup.handlers import (
-        _saas_invoices_rich,
-    )
-
-    report = SimpleNamespace(
-        total=1, unpaid=1, outstanding_rub=Decimal("150.00"),
-        configured=False, instructions=None,
-        foreign_unpaid_count=1, pending_credit_count=0,
-        invoices=[{
-            "id": INVOICE["id"], "kind": "prepayment",
-            "status": "unpaid", "amount_rub": "150.00",
-            "due_at": INVOICE["due_at"], "settlement": SNAPSHOT,
-        }],
-    )
-    token = _language.set(lang)
-    try:
-        rich = _saas_invoices_rich(report)
-    finally:
-        _language.reset(token)
-    assert "1.67 EUR" in rich
-    assert "150.00 ₽" in rich  # Reference only, not payment amount.
+    assert "1.67 EUR" in name
+    assert INVOICE["id"] not in name
+    assert ("Обслуживание" if lang == "ru" else "service") in name
