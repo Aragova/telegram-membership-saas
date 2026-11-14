@@ -42,6 +42,7 @@ from telegram_membership_saas.modules.platform_saas_billing_service import (
     commercial_release_status,
     confirm_saas_receipt,
     platform_saas_invoice_report,
+    void_saas_test_prepayment,
 )
 from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_invoice_classic,
@@ -1989,6 +1990,16 @@ def create_platform_dashboard_router(
                         label[:64], "billcommit:" + token + ":" + str(page)
                         + ":" + receipt_fingerprint(invoice_id, item, snapshot),
                     )])
+                if (
+                    not report.enabled and not is_paid
+                    and item["kind"] == "prepayment"
+                    and Decimal(str(item["total_rub"])) == Decimal("150.00")
+                ):
+                    rows.append([_button(
+                        tr("🗑 Аннулировать тестовый счёт",
+                           "🗑 Void test invoice"),
+                        "billvoidask:" + token + ":" + str(page),
+                    )])
                 rows.append([_button(
                     tr("⬅️ К счетам", "⬅️ Invoices"), f"billing:{page}",
                 )])
@@ -2009,6 +2020,129 @@ def create_platform_dashboard_router(
                     ),
                     reply_markup=_keyboard(rows),
                 )
+            elif len(tokens) in (4, 5) and tokens[1] in (
+                "billvoidask", "billvoidok",
+            ):
+                action = tokens[1]
+                if (action == "billvoidask" and len(tokens) != 4) or (
+                    action == "billvoidok" and len(tokens) != 5
+                ):
+                    raise ValueError("Invalid test invoice action")
+                token, page_token = tokens[2:4]
+                if (not page_token.isascii() or not page_token.isdecimal()
+                        or int(page_token) > 100000):
+                    raise ValueError("Invalid test invoice page")
+                page = int(page_token)
+                invoice_id = decode_uuid(token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
+                )
+                report = await platform_saas_invoice_report(
+                    factory, actor_user_id=actor_id,
+                    actor_telegram_id=query.from_user.id, page=page,
+                    settings=config,
+                )
+                item = next((
+                    row for row in report.invoices
+                    if row["id"] == str(invoice_id)
+                ), None)
+                if (
+                    report.enabled or item is None
+                    or item["kind"] != "prepayment"
+                    or item["status"] == "paid"
+                    or Decimal(str(item["total_rub"])) != Decimal("150.00")
+                ):
+                    raise ValueError("Test invoice not eligible for cancellation")
+                snapshot = await saas_invoice_currency_snapshot(
+                    factory, actor_user_id=actor_id, invoice_id=invoice_id,
+                )
+                fingerprint = receipt_fingerprint(
+                    invoice_id, item, snapshot,
+                )
+                if action == "billvoidask":
+                    await _render_platform_screen(
+                        bot, chat_id=query.from_user.id, message_id=message_id,
+                        text=tr(
+                            "⚠️ <b>Аннулировать только тестовый счёт?</b>\n"
+                            "№ <code>" + escape(str(invoice_id)) + "</code>\n"
+                            "Владелец: <code>"
+                            + escape(str(item["owner"])) + "</code>\n"
+                            "Сумма: <b>150.00 ₽</b>\n\n"
+                            "Только если деньги не поступали. Все чеки "
+                            "должны быть отклонены. История сохранится, "
+                            "счёт получит статус void. "
+                            "Это не отмена реального долга.",
+                            "⚠️ <b>Void a test invoice only?</b>\n"
+                            "No. <code>" + escape(str(invoice_id)) + "</code>\n"
+                            "Owner: <code>" + escape(str(item["owner"]))
+                            + "</code>\nAmount: <b>150.00 RUB</b>\n\n"
+                            "Only when no money was received. All proofs "
+                            "must be rejected. History is preserved and "
+                            "the invoice becomes void. "
+                            "Never use this for a real debt.",
+                        ),
+                        reply_markup=_keyboard([
+                            [_button(
+                                tr("✅ Подтвердить аннулирование",
+                                   "✅ Confirm test void"),
+                                "billvoidok:" + token + ":" + str(page)
+                                + ":" + fingerprint,
+                            )],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "billcheck:" + token + ":" + str(page))],
+                        ]),
+                    )
+                else:
+                    if tokens[4] != fingerprint:
+                        raise ValueError("Invoice changed during confirmation")
+                    try:
+                        result = await void_saas_test_prepayment(
+                            factory, actor_user_id=actor_id,
+                            actor_telegram_id=query.from_user.id,
+                            invoice_id=invoice_id,
+                            expected_owner_id=UUID(str(item["owner"])),
+                            expected_amount=Decimal(str(item["total_rub"])),
+                            settings=config,
+                        )
+                    except Exception:
+                        # Do not expose SQL or financial details to Telegram.
+                        await _render_platform_screen(
+                            bot, chat_id=query.from_user.id,
+                            message_id=message_id,
+                            text=tr(
+                                "⚠️ Аннулирование запрещено: счёт изменился, "
+                                "есть оплата, зачёт или непроверенный чек. "
+                                "Ничего не удалено.",
+                                "⚠️ Cannot void: invoice changed, a payment, "
+                                "credit or pending proof exists. "
+                                "Nothing was deleted.",
+                            ),
+                            reply_markup=_keyboard([[_button(
+                                tr("⬅️ К счетам", "⬅️ Invoices"),
+                                "billing:" + str(page),
+                            )]]),
+                        )
+                        await query.answer()
+                        return
+                    if result.get("status") != "void":
+                        raise RuntimeError("Test invoice not voided")
+                    await _render_platform_screen(
+                        bot, chat_id=query.from_user.id,
+                        text=tr(
+                            "✅ Тестовый счёт аннулирован. "
+                            "История и отклонённые чеки сохранены. "
+                            "Реальных зачислений нет.",
+                            "✅ Test invoice voided. Historical records "
+                            "and rejected proofs are preserved. "
+                            "No real funds were credited.",
+                        ),
+                        reply_markup=_keyboard([[_button(
+                            tr("⬅️ К счетам", "⬅️ Invoices"),
+                            "billing:" + str(page),
+                        )]]), message_id=message_id,
+                    )
             elif len(tokens) == 5 and tokens[1] == "billcommit":
                 _, _, token, page_token, reviewed_token = tokens
                 if not page_token.isascii() or not page_token.isdecimal():
