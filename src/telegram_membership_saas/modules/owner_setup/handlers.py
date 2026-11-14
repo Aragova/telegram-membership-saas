@@ -3840,88 +3840,51 @@ def create_owner_setup_router(
                     method_label=escape(_saas_method_label(
                         chosen["name"],currency,
                     ))
-                    if kind=="spv":
-                        prefix=("spc:"+invoice_token+":"+encode_uuid(method_id)
-                                +":"+currency+":")
-                        half=(remaining*Decimal("0.50")).quantize(Decimal("0.01"))
-                        quarter=(remaining*Decimal("0.25")).quantize(Decimal("0.01"))
-                        rows=[
-                            [_button(
-                                tr("✅ Вся сумма", "✅ Full amount")
-                                +" · "+format(remaining,".2f")+" ₽",
-                                prefix+"F:"+page_text,"success",
-                            )],
-                            [_button(
-                                "50% · "+format(half,".2f")+" ₽",
-                                prefix+"H:"+page_text,
-                            ),_button(
-                                "25% · "+format(quarter,".2f")+" ₽",
-                                prefix+"Q:"+page_text,
-                            )],
-                            [_button(tr("⬅️ Способы оплаты","⬅️ Payment methods"),
-                                     "spm:"+invoice_token+":"+currency
-                                     +":"+page_text)],
-                        ]
-                        await _show_saas_payment_step(
-                            bot, query,
-                            tr("💳 <b>Сумма оплаты</b>\n",
-                               "💳 <b>Payment amount</b>\n")
-                            +tr("Способ: ","Method: ")
-                            +method_label+"\n"
-                            +tr("Валюта: ","Currency: ")
-                            +escape(_saas_currency_label(currency))+"\n"
-                            +tr("Осталось: ","Remaining: ")
-                            +"<b>"+format(remaining,".2f")+" ₽</b>\n\n"
-                            +tr("Выберите сумму перевода:",
-                                "Choose how much to transfer:"),
-                            rows,
+                    # Full invoice payment only. Legacy 25/50% callbacks
+                    # are rejected, never replayed into new bank attempts.
+                    if kind=="spc" and parts[4]!="F":
+                        raise ValueError(tr(
+                            "Частичная оплата отменена.",
+                            "Partial payments are no longer supported.",
+                        ))
+                    attempt=await saas_v3_create_attempt(
+                        factory,actor_id=actor_id,invoice_id=invoice_id,
+                        method_id=method_id,rub=remaining,currency=currency,
+                        project_id=fixed_project_id,
+                    )
+                    # Exactly the existing proof workflow: reply to this
+                    # message with a photo or document. The payment
+                    # remains unconfirmed until operator bank review.
+                    await bot.send_message(
+                        user_id,
+                        "🧾 ViMi Pay · <code>"
+                        +escape(str(attempt["id"]))+"</code>\n\n"
+                        +"💳 <b>"+method_label+"</b>\n"
+                        +tr("💰 Перевести: ","💰 Transfer: ")
+                        +"<b>"+escape(str(attempt["amount"])+" "
+                                      +str(attempt["currency"]))+"</b>"
+                        +(
+                            "\n"+tr("💱 Курс ЦБ: ","💱 CBR quote: ")
+                            +escape(str(attempt["rub_per_unit"]))
+                            if attempt["currency"]!="RUB" else ""
                         )
-                    else:
-                        fraction={"F":100,"H":50,"Q":25}.get(parts[4])
-                        if fraction is None:
-                            raise ValueError("Invalid payment amount")
-                        amount=(remaining*Decimal(fraction)/Decimal(100)
-                               ).quantize(Decimal("0.01"))
-                        if amount<=0:
-                            amount=min(remaining,Decimal("0.01"))
-                        attempt=await saas_v3_create_attempt(
-                            factory,actor_id=actor_id,invoice_id=invoice_id,
-                            method_id=method_id,rub=amount,currency=currency,
-                            project_id=fixed_project_id,
-                        )
-                        # Exactly the existing proof workflow: reply to this
-                        # message with a photo or document. The payment
-                        # remains unconfirmed until operator bank review.
-                        await bot.send_message(
-                            user_id,
-                            "🧾 ViMi Pay · <code>"
-                            +escape(str(attempt["id"]))+"</code>\n\n"
-                            +"💳 <b>"+method_label+"</b>\n"
-                            +tr("💰 Перевести: ","💰 Transfer: ")
-                            +"<b>"+escape(str(attempt["amount"])+" "
-                                          +str(attempt["currency"]))+"</b>"
-                            +(
-                                "\n"+tr("💱 Курс ЦБ: ","💱 CBR quote: ")
-                                +escape(str(attempt["rub_per_unit"]))
-                                if attempt["currency"]!="RUB" else ""
-                            )
-                            +"\n\n<pre>"+escape(str(attempt["instructions"]))
-                            +"</pre>\n\n"
-                            +tr(
-                                "После перевода ответьте <b>на это сообщение</b> "
-                                "фото или документом чека. Подтверждение "
-                                "происходит только после проверки поступления "
-                                "владельцем ViMi Pay.",
-                                "After payment, <b>reply to this message</b> "
-                                "with a receipt photo/document. ViMi Pay "
-                                "confirms only after bank verification.",
-                            ),
-                            parse_mode="HTML",
-                            reply_markup=_markup([[_button(
-                                tr("⬅️ К счёту","⬅️ Invoice"),
-                                "saasinvoices:0",
-                            )]]),
-                        )
+                        +"\n\n<pre>"+escape(str(attempt["instructions"]))
+                        +"</pre>\n\n"
+                        +tr(
+                            "После перевода ответьте <b>на это сообщение</b> "
+                            "фото или документом чека. Подтверждение "
+                            "происходит только после проверки поступления "
+                            "владельцем ViMi Pay.",
+                            "After payment, <b>reply to this message</b> "
+                            "with a receipt photo/document. ViMi Pay "
+                            "confirms only after bank verification.",
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=_markup([[_button(
+                            tr("⬅️ К счёту","⬅️ Invoice"),
+                            "saasinvoices:0",
+                        )]]),
+                    )
                 await query.answer()
                 return
             if action.startswith("saasprice:"):
