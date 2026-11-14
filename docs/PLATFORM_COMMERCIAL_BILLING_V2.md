@@ -19,7 +19,18 @@ The exact day/time is retained with a short-month clamp (31 Jan → 28 Feb →
 31 Mar). When ownership is transferred, the bot's *actually paid*
 `effective_end` (not an expired printed service invoice end) governs the
 recipient's earliest new bill and cross-owner overlap checks, preserving the
-old owner's purchased coverage without transferring the old owner's debt. Source confirmation, ownership at sale, billing activation, creator
+old owner's purchased coverage without transferring the old owner's debt.
+The original owner's unpaid issued service invoice blocks completing the
+ownership transfer; once settled, unused paid coverage follows the bot.
+A bank transfer/proof from a previous owner that arrives after ownership
+has already changed is held for explicit operator refund reconciliation:
+the old owner's original invoice and actual bank evidence remain auditable,
+but cannot silently activate service over a recipient's paid interval.
+Verified original sale refunds may settle historical owner balances without
+creating new service coverage on a bot owned by somebody else.
+Ordinary on-time renewal verification preserves the established anniversary
+anchor (Jan 31 → Feb 28 → Mar 31), while first activation and genuinely
+expired long-frozen restarts use actual verification as the new anchor. Source confirmation, ownership at sale, billing activation, creator
 exemptions, sale-day CBR FX, genuine provider reward valuations and verified
 refund-credit evidence remain authoritative. No provisional month-to-date
 commission is added to an already issued invoice.
