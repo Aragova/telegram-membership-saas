@@ -1,0 +1,296 @@
+"""Bot-scoped anniversary billing and no partial bank payments.
+
+Revision ID: 0084_saas_bot_month_billing
+Revises: 0083_saas_unified_bill_summary
+
+Forward-only. Existing financial receipts, historical invoices and buyer
+entitlements must never be deleted, rebilled, or silently migrated.
+"""
+from collections.abc import Sequence
+
+from alembic import op
+
+revision: str = "0084_saas_bot_month_billing"
+down_revision: str | None = "0083_saas_unified_bill_summary"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    op.execute("""
+      ALTER TABLE public.platform_saas_hold_control
+      ALTER COLUMN grace_days SET DEFAULT 0
+    """)
+    op.execute("""
+      UPDATE public.platform_saas_hold_control SET grace_days=0 WHERE id=1
+    """)
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
+      p_invoice uuid,p_requested_rub numeric,p_currency text,p_method uuid
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      actor uuid;
+      item record;
+      paid numeric;
+      due numeric;
+      rate numeric;
+      fx_day date;
+      day date;
+      bank text;
+      method_label text;
+      converted numeric;
+      snapped_rub numeric;
+      attempt uuid;
+      deadline timestamptz;
+      native_usd numeric;
+      base_service_rub numeric;
+      usd_rate_today numeric;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      IF actor IS NULL OR p_invoice IS NULL
+         OR p_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
+         OR p_requested_rub IS NULL OR p_requested_rub<=0
+         OR p_requested_rub<>round(p_requested_rub,2) THEN
+        RAISE EXCEPTION 'Invalid payment amount/currency'
+          USING ERRCODE='22023';
+      END IF;
+      PERFORM public.platform_saas_reconcile_verified_refunds(actor);
+      SELECT * INTO item FROM public.platform_saas_invoices
+        WHERE id=p_invoice FOR UPDATE;
+      IF item.id IS NULL OR item.status<>'issued'
+         OR item.owner_user_id IS DISTINCT FROM actor THEN
+        RAISE EXCEPTION 'Account invoice is not payable'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT coalesce(sum(amount_rub),0) INTO paid
+      FROM public.platform_saas_receipts WHERE invoice_id=p_invoice;
+      SELECT paid+coalesce(sum(allocated_rub),0) INTO paid
+      FROM public.platform_saas_payment_allocations_v2
+      WHERE invoice_id=p_invoice;
+      due:=public.platform_saas_v2_remaining(item.id);
+      IF p_requested_rub<>due THEN
+        RAISE EXCEPTION 'Only full remaining invoice payment is supported'
+          USING ERRCODE='23514';
+      END IF;
+      -- The chosen method and currency must still be active, and the
+      -- immutable attempt snapshots the exact central method instructions.
+      SELECT m.instructions,m.name INTO bank,method_label
+      FROM public.platform_saas_payment_catalog_methods m
+      JOIN public.platform_saas_payment_catalog_currencies c
+        ON c.method_id=m.id AND c.currency_code=p_currency
+      WHERE m.id=p_method AND m.enabled AND m.removed_at IS NULL
+      FOR SHARE OF m;
+      IF bank IS NULL THEN
+        RAISE EXCEPTION 'Platform bank details not published'
+          USING ERRCODE='42501';
+      END IF;
+      day:=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
+      IF p_currency='RUB' THEN rate:=1;fx_day:=NULL;
+      ELSE
+        SELECT rub_per_unit,source_date INTO rate,fx_day
+        FROM public.platform_saas_daily_fx_rates
+        WHERE rate_date=day AND currency_code=p_currency
+          AND source_name='CBR' AND source_date<=day
+          AND source_date>=day-interval '14 days';
+      END IF;
+      IF rate IS NULL OR rate<=0 THEN
+        RAISE EXCEPTION 'Verified bank currency conversion unavailable'
+          USING ERRCODE='42501';
+      END IF;
+      -- Foreign currency is paid in 2 decimal places. A rounded bank
+      -- transfer can differ slightly from the RUB obligation. Preserve the
+      -- exact RUB amount requested; the platform absorbs that bounded FX
+      -- rounding difference rather than creating an unpayable residual.
+      -- Preserve the original $3 service obligation across FX dates.
+      -- RUB allocations remain at their immutable issue-day book value;
+      -- only the actual bank transfer quote uses the current rate.
+      SELECT l.original_amount,l.charge_rub INTO native_usd,base_service_rub
+      FROM public.platform_saas_invoice_lines l
+      WHERE l.invoice_id=item.id AND l.source_kind='bot_fee'
+        AND l.original_currency='USD'
+      LIMIT 1;
+      IF native_usd IS NULL THEN
+        converted:=round(p_requested_rub/rate,2);
+      ELSIF p_currency='USD' THEN
+        converted:=round(native_usd+(due-base_service_rub)/rate,2);
+      ELSE
+        SELECT rub_per_unit INTO usd_rate_today
+        FROM public.platform_saas_daily_fx_rates
+        WHERE rate_date=day AND currency_code='USD'
+          AND source_name='CBR' AND source_date<=day
+          AND source_date>=day-interval '14 days';
+        IF usd_rate_today IS NULL OR usd_rate_today<=0 THEN
+          RAISE EXCEPTION 'Current USD service quote unavailable'
+            USING ERRCODE='42501';
+        END IF;
+        converted:=round(
+          (native_usd*usd_rate_today+due-base_service_rub)/rate,2
+        );
+      END IF;
+      snapped_rub:=p_requested_rub;
+      IF converted<=0 OR snapped_rub>due
+         OR (native_usd IS NULL AND
+             abs(converted*rate-snapped_rub)>rate*0.005+0.005) THEN
+        RAISE EXCEPTION 'Converted payment amount outside remaining debt'
+          USING ERRCODE='23514';
+      END IF;
+      deadline:=clock_timestamp()+interval '48 hours';
+      attempt:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_attempts_v2(
+        id,invoice_id,owner_user_id,amount_rub,currency_code,
+        rub_per_unit,amount_currency,quote_date,source_date,
+        instructions_snapshot,expires_at,method_id
+      ) VALUES(
+        attempt,item.id,actor,snapped_rub,p_currency,rate,
+        converted,day,fx_day,bank,deadline,p_method
+      );
+      RETURN jsonb_build_object(
+        'id',attempt,'invoice_id',item.id,'amount_rub',snapped_rub::text,
+        'currency',p_currency,'amount',converted::text,
+        'rub_per_unit',rate::text,'quote_date',day,
+        'source_date',fx_day,'expires_at',deadline,
+        'instructions',bank,'method_name',method_label,
+        'method_id',p_method,'remaining_before',due::text
+      );
+    END; $f$
+    """)
+
+    op.execute("""
+CREATE FUNCTION public.platform_saas_release_change(
+      p_action text, p_expected_bots integer,
+      p_expected_other_owners integer
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      actor uuid;
+      before_state jsonb;
+      start_at timestamptz;
+      old_billing boolean;
+      old_holds boolean;
+      enrolled_owner record;
+      trial_merchant uuid;
+    BEGIN
+      actor:=public.platform_saas_require_owner();
+      IF p_action NOT IN ('arm','stop','holdon','holdoff') THEN
+        RAISE EXCEPTION 'Invalid SaaS pilot action' USING ERRCODE='22023';
+      END IF;
+      PERFORM pg_advisory_xact_lock(
+        hashtextextended('vimi:saas:pilot-control',0)
+      );
+      before_state:=public.platform_saas_release_status();
+      IF p_action IN ('arm','holdon') AND (
+           p_expected_bots IS NULL OR p_expected_other_owners IS NULL
+           OR p_expected_bots<>(
+             before_state->>'registered_bots'
+           )::integer
+           OR p_expected_other_owners<>(
+             before_state->>'nonoperator_owners'
+           )::integer
+         ) THEN
+        RAISE EXCEPTION 'Release bot/account inventory changed, review again'
+          USING ERRCODE='23514';
+      END IF;
+      SELECT enabled INTO old_billing
+      FROM public.platform_saas_billing_control WHERE id=1;
+      SELECT enabled INTO old_holds
+      FROM public.platform_saas_hold_control WHERE id=1;
+      IF p_action='arm' THEN
+        IF (before_state->>'operator_exemption_pending')::integer>0 THEN
+          RAISE EXCEPTION 'Verify platform-owned bot exemptions before rollout'
+            USING ERRCODE='42501';
+        END IF;
+        IF old_billing THEN
+          RAISE EXCEPTION 'Commercial pilot already active'
+            USING ERRCODE='23514';
+        END IF;
+        -- No backdated bills, no quota/charge before this DB-clock cutoff.
+        start_at:=clock_timestamp()+interval '5 minutes';
+        -- Existing connected owners receive remaining/free trial credit,
+        -- never retroactive billable sales. Prior claims cannot be reset.
+        FOR enrolled_owner IN
+          SELECT p.owner_user_id,min(greatest(b.created_at,mp.started_at)) AS first_connected
+          FROM public.bot_instances b
+          JOIN public.projects p ON p.id=b.project_id
+          JOIN public.merchant_project_periods mp
+            ON mp.project_id=p.id AND mp.owner_user_id=p.owner_user_id
+           AND mp.ended_at IS NULL
+          JOIN public.telegram_users u ON u.id=p.owner_user_id
+          LEFT JOIN public.platform_operators po
+            ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
+          WHERE b.status='registered' AND po.telegram_user_id IS NULL
+          GROUP BY p.owner_user_id
+        LOOP
+          INSERT INTO public.platform_saas_commercial_enrollments(
+            owner_user_id,effective_from
+          ) VALUES(enrolled_owner.owner_user_id,start_at)
+          ON CONFLICT DO NOTHING;
+          IF NOT EXISTS(
+            SELECT 1 FROM public.merchant_platform_trial_claims t
+            WHERE t.owner_user_id=enrolled_owner.owner_user_id
+              AND t.policy_key='vimi-saas-72h-v1' AND t.scope='owner'
+          ) THEN
+            SELECT m.id INTO trial_merchant
+            FROM public.merchant_identities m
+            WHERE m.initial_owner_user_id=enrolled_owner.owner_user_id
+            ORDER BY m.created_at,m.id LIMIT 1;
+            IF trial_merchant IS NULL THEN
+              trial_merchant:=gen_random_uuid();
+              INSERT INTO public.merchant_identities(
+                id,initial_owner_user_id
+              ) VALUES(trial_merchant,enrolled_owner.owner_user_id);
+            END IF;
+            INSERT INTO public.merchant_platform_trial_claims(
+              id,merchant_id,owner_user_id,policy_key,scope,claimed_at
+            ) VALUES(
+              gen_random_uuid(),trial_merchant,
+              enrolled_owner.owner_user_id,'vimi-saas-72h-v1','owner',
+              greatest(enrolled_owner.first_connected,
+                       start_at-interval '72 hours')
+            ) ON CONFLICT DO NOTHING;
+          END IF;
+        END LOOP;
+        UPDATE public.platform_saas_billing_control
+        SET enabled=true,effective_from=start_at WHERE id=1;
+        UPDATE public.platform_saas_access_policy
+        SET enabled=true,effective_from=start_at WHERE id=1;
+        -- Seven-day grace only for newly issued post-rollout invoices.
+        UPDATE public.platform_saas_hold_control
+        SET enabled=true,effective_from=start_at,grace_days=0 WHERE id=1;
+      ELSIF p_action='holdon' THEN
+        IF old_billing IS DISTINCT FROM true OR old_holds IS TRUE THEN
+          RAISE EXCEPTION 'Activate billing before hold pilot'
+            USING ERRCODE='42501';
+        END IF;
+        start_at:=clock_timestamp()+interval '5 minutes';
+        UPDATE public.platform_saas_hold_control
+        SET enabled=true,effective_from=start_at,grace_days=0 WHERE id=1;
+      ELSIF p_action='holdoff' THEN
+        UPDATE public.platform_saas_hold_control
+        SET enabled=false,effective_from=NULL WHERE id=1;
+      ELSE
+        -- Emergency off: no new service charges, trials or holds.
+        -- Existing invoice evidence and already bought rights survive.
+        UPDATE public.platform_saas_hold_control
+        SET enabled=false,effective_from=NULL WHERE id=1;
+        UPDATE public.platform_saas_access_policy
+        SET enabled=false,effective_from=NULL WHERE id=1;
+        UPDATE public.platform_saas_billing_control
+        SET enabled=false,effective_from=NULL WHERE id=1;
+      END IF;
+      INSERT INTO public.platform_saas_release_audit(
+        id,actor_id,action,registered_bots,nonoperator_owners,effective_from
+      ) VALUES (
+        gen_random_uuid(),actor,p_action,
+        (before_state->>'registered_bots')::integer,
+        (before_state->>'nonoperator_owners')::integer,start_at
+      );
+      RETURN public.platform_saas_release_status();
+    END; $f$
+    """)
+
+
+def downgrade() -> None:
+    raise RuntimeError(
+        "Commercial invoices and verified bank evidence cannot be rolled back"
+    )
