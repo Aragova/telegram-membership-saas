@@ -1,3 +1,39 @@
+## 2026-11-14 — Telegram preflight resilience and fleet restart jitter (#167)
+
+Live customer fleet: @danielpremium_bot recovered after #166 watchdog correction,
+but @BDSMbestbot and @davidsixtwink_bot later experienced network failures
+during getMe; @BDSMbestbot was also falsely labeled "missing admin rights"
+when the resource-check implementation swallowed all Telegram exceptions.
+A controlled HTTPS check showed 10/10 successful requests each to Telegram
+and Cloudflare, proving only that no *constant* egress failure existed
+during that short test.
+
+PR #167 adds one bounded and token-safe read-only preflight retry primitive
+for getMe, getWebhookInfo, and getChatMember. Only transport, Telegram 5xx,
+and 429 are retryable; no retries for invalid token, wrong bot identity,
+active webhook, real missing rights, 403 or other permanent errors.
+Four maximum attempts, bounded full-jitter exponential delay for connection
+failures, and provider retry_after honored up to a short startup budget.
+An exhausted resource network failure produces `resource_network_failed`,
+not `missing_admin_rights`; persistent uncertainty **still fails closed**
+before the customer bot serves new sales or grants access. Real missing
+rights still fails immediately. No unverified access grant or arbitrary
+automatic webhook deletion is introduced.
+
+The same existing CustomerBotSupervisor progressively spaces out repeated
+worker failures (45s, 90s, 180s, capped 300s, with per-project jitter),
+resetting on a stable five-minute run or planned restart. This prevents
+simultaneous repeated getMe waves after a brief provider outage while
+preserving normal planned token-rotation behavior. No extra workers,
+menus, migrations, payment changes, or database permissions.
+
+After operator-approved CI/review/merge/deploy, verify actual Telegram
+/menu responses and the failure code of affected bots over a monitored
+period. An outage that persists beyond retry bounds remains unavailable
+by design: this is a safety-first reliability fix, not network failover.
+
+---
+
 ## 2026-11-14 — Customer Supervisor polling watchdog timing (#166)
 
 Staging #57 diagnosed one real unreachable customer bot with repeated
