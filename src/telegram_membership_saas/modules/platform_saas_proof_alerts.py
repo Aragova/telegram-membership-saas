@@ -34,7 +34,7 @@ async def _claim(
     if item is not None and (
         not isinstance(item, dict)
         or any(k not in item for k in (
-            "id", "generation", "amount", "currency", "pending_count",
+            "id", "kind", "generation", "amount", "currency", "pending_count",
         ))
     ):
         raise RuntimeError("Invalid platform receipt notification claim")
@@ -43,7 +43,8 @@ async def _claim(
 
 async def _finish(
     factory: async_sessionmaker[AsyncSession], *,
-    platform_actor_id: UUID, attempt_id: UUID, generation: int,
+    platform_actor_id: UUID, attempt_id: UUID, kind: str,
+    generation: int,
     sent: bool,
 ) -> None:
     async with tenant_session_scope(
@@ -51,14 +52,23 @@ async def _finish(
     ) as session:
         await session.execute(text(
             "SELECT public.platform_saas_proof_alert_finish("
-            ":id,:generation,:sent)"
-        ), {"id": attempt_id, "generation": generation, "sent": sent})
+            ":id,:kind,:generation,:sent)"
+        ), {"id": attempt_id, "kind": kind,
+           "generation": generation, "sent": sent})
 
 
 def _message(item: dict) -> str:
+    kind = item["kind"]
+    title = {
+        "new": tr("🔔 <b>ViMi Pay · Новый чек на проверку</b>",
+                  "🔔 <b>ViMi Pay · New receipt for review</b>"),
+        "six_hour": tr("⏳ <b>ViMi Pay · Чек ожидает 6 часов</b>",
+                       "⏳ <b>ViMi Pay · Receipt pending for 6h</b>"),
+        "eleven_hour": tr("⚠️ <b>ViMi Pay · Остался 1 час</b>",
+                          "⚠️ <b>ViMi Pay · One hour left</b>"),
+    }[kind]
     return (
-        tr("🔔 <b>ViMi Pay · Новый чек на проверку</b>",
-           "🔔 <b>ViMi Pay · New receipt for review</b>")
+        title
         + "\n\n"
         + tr("Поступил чек об оплате счёта ViMi Pay.",
              "A ViMi Pay invoice receipt was submitted.")
@@ -85,6 +95,7 @@ async def deliver_one_platform_proof_alert(
         return False
     attempt_id = UUID(str(item["id"]))
     generation = int(item["generation"])
+    kind = str(item["kind"])
     sent = False
     try:
         async with recipient_language(factory, owner_telegram_id):
@@ -105,6 +116,7 @@ async def deliver_one_platform_proof_alert(
     finally:
         await _finish(
             factory, platform_actor_id=platform_actor_id,
-            attempt_id=attempt_id, generation=generation, sent=sent,
+            attempt_id=attempt_id, kind=kind,
+            generation=generation, sent=sent,
         )
     return True
