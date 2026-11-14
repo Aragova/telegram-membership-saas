@@ -189,3 +189,31 @@ async def test_denied_resource_access_never_looks_like_network(monkeypatch,error
         await runtime.verify_resource_permissions(None, project_id=uuid4(), bot=bot)
     assert caught.value.code == code
     bot.get_chat_member.assert_awaited_once()
+
+
+async def test_hanging_preflight_has_bounded_attempts_and_safe_network_code():
+    """aiogram's 60s default can never multiply into a 240s startup."""
+    async def hanging():
+        await asyncio.Event().wait()
+
+    sleeps = AsyncMock()
+    with pytest.raises(TimeoutError) as caught:
+        await preflight.retry_telegram_preflight(
+            hanging, sleep=sleeps, timeout_seconds=0.005,
+        )
+    assert sleeps.await_count == preflight.PREFLIGHT_ATTEMPTS - 1
+    assert runtime.telegram_stage_code("identity", caught.value) == "identity_network_failed"
+
+
+async def test_identity_reports_exact_startup_stage_without_token_data(monkeypatch):
+    bot = MagicMock()
+    bot.get_me = AsyncMock(return_value=SimpleNamespace(id=100, is_bot=True))
+    bot.get_webhook_info = AsyncMock(return_value=SimpleNamespace(url=""))
+    phases = []
+
+    await runtime.check_customer_bot_identity(
+        bot, 100, on_startup_stage=phases.append,
+    )
+
+    assert phases == ["identity", "webhook"]
+    assert all(TOKEN not in value for value in phases)
