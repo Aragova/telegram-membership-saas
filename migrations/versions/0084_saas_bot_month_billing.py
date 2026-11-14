@@ -94,6 +94,9 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
       deadline timestamptz;
       native_usd numeric;
       base_service_rub numeric;
+      remaining_service_rub numeric;
+      remaining_other_rub numeric;
+      remaining_native_usd numeric;
       usd_rate_today numeric;
     BEGIN
       actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
@@ -159,10 +162,27 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
       WHERE l.invoice_id=item.id AND l.source_kind='bot_fee'
         AND l.original_currency='USD'
       LIMIT 1;
+      IF native_usd IS NOT NULL THEN
+        -- Historically allocated RUB receipts / refund credits reduce the
+        -- *native* $3 service obligation proportionally at issue-day book
+        -- value. The remaining source commission is converted at pay-day FX.
+        -- Allocation priority is service first, then other invoice lines.
+        IF base_service_rub IS NULL OR base_service_rub<=0
+           OR native_usd<=0 THEN
+          RAISE EXCEPTION 'Invalid original USD service snapshot'
+            USING ERRCODE='23514';
+        END IF;
+        remaining_service_rub:=greatest(0,least(
+          due,base_service_rub,
+          base_service_rub-(item.total_rub-due)
+        ));
+        remaining_other_rub:=greatest(0,due-remaining_service_rub);
+        remaining_native_usd:=native_usd*remaining_service_rub/base_service_rub;
+      END IF;
       IF native_usd IS NULL THEN
         converted:=round(p_requested_rub/rate,2);
       ELSIF p_currency='USD' THEN
-        converted:=round(native_usd+(due-base_service_rub)/rate,2);
+        converted:=round(remaining_native_usd+remaining_other_rub/rate,2);
       ELSE
         SELECT rub_per_unit INTO usd_rate_today
         FROM public.platform_saas_daily_fx_rates
@@ -174,7 +194,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
             USING ERRCODE='42501';
         END IF;
         converted:=round(
-          (native_usd*usd_rate_today+due-base_service_rub)/rate,2
+          (remaining_native_usd*usd_rate_today+remaining_other_rub)/rate,2
         );
       END IF;
       snapped_rub:=p_requested_rub;
@@ -1427,6 +1447,9 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
       deadline timestamptz;
       native_usd numeric;
       base_service_rub numeric;
+      remaining_service_rub numeric;
+      remaining_other_rub numeric;
+      remaining_native_usd numeric;
       usd_rate_today numeric;
     BEGIN
       actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
@@ -1510,10 +1533,27 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
       WHERE l.invoice_id=item.id AND l.source_kind='bot_fee'
         AND l.original_currency='USD'
       LIMIT 1;
+      IF native_usd IS NOT NULL THEN
+        -- Historically allocated RUB receipts / refund credits reduce the
+        -- *native* $3 service obligation proportionally at issue-day book
+        -- value. The remaining source commission is converted at pay-day FX.
+        -- Allocation priority is service first, then other invoice lines.
+        IF base_service_rub IS NULL OR base_service_rub<=0
+           OR native_usd<=0 THEN
+          RAISE EXCEPTION 'Invalid original USD service snapshot'
+            USING ERRCODE='23514';
+        END IF;
+        remaining_service_rub:=greatest(0,least(
+          due,base_service_rub,
+          base_service_rub-(item.total_rub-due)
+        ));
+        remaining_other_rub:=greatest(0,due-remaining_service_rub);
+        remaining_native_usd:=native_usd*remaining_service_rub/base_service_rub;
+      END IF;
       IF native_usd IS NULL THEN
         converted:=round(p_requested_rub/rate,2);
       ELSIF p_currency='USD' THEN
-        converted:=round(native_usd+(due-base_service_rub)/rate,2);
+        converted:=round(remaining_native_usd+remaining_other_rub/rate,2);
       ELSE
         SELECT rub_per_unit INTO usd_rate_today
         FROM public.platform_saas_daily_fx_rates
@@ -1525,7 +1565,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_create_attempt(
             USING ERRCODE='42501';
         END IF;
         converted:=round(
-          (native_usd*usd_rate_today+due-base_service_rub)/rate,2
+          (remaining_native_usd*usd_rate_today+remaining_other_rub)/rate,2
         );
       END IF;
       snapped_rub:=p_requested_rub;
