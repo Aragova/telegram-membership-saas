@@ -31,9 +31,19 @@ def upgrade() -> None:
       IF to_regclass(
         'public.platform_saas_test_invoice_void_audit'
       ) IS NOT NULL THEN
+        -- This table has FORCE ROW LEVEL SECURITY with no read policy.
+        -- Ordinary SELECT would appear empty even if audit rows exist.
+        -- Hold an exclusive lock, let the migration table owner inspect
+        -- all rows, then restore FORCE RLS when preserving audit history.
+        LOCK TABLE public.platform_saas_test_invoice_void_audit
+          IN ACCESS EXCLUSIVE MODE;
+        ALTER TABLE public.platform_saas_test_invoice_void_audit
+          NO FORCE ROW LEVEL SECURITY;
         IF EXISTS(
           SELECT 1 FROM public.platform_saas_test_invoice_void_audit
         ) THEN
+          ALTER TABLE public.platform_saas_test_invoice_void_audit
+            FORCE ROW LEVEL SECURITY;
           RAISE NOTICE 'Retaining existing invoice-void audit history';
         ELSE
           DROP TABLE public.platform_saas_test_invoice_void_audit;
