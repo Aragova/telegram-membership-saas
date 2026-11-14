@@ -3844,7 +3844,7 @@ def create_owner_setup_router(
                         )])
                     rows.append([_button(
                         tr("⬅️ К счёту","⬅️ Invoice"),
-                        "saasbill:"+invoice_token+":"+str(page),
+                        "saasinvoices:0",
                     )])
                     await _show_saas_payment_step(
                         bot, query,
@@ -3954,7 +3954,7 @@ def create_owner_setup_router(
                             parse_mode="HTML",
                             reply_markup=_markup([[_button(
                                 tr("⬅️ К счёту","⬅️ Invoice"),
-                                "saasbill:"+invoice_token+":"+str(page),
+                                "saasinvoices:0",
                             )]]),
                         )
                 await query.answer()
