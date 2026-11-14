@@ -2,7 +2,6 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from aiogram import Bot
 from aiogram.exceptions import (
     TelegramConflictError,
@@ -10,6 +9,7 @@ from aiogram.exceptions import (
     TelegramUnauthorizedError,
 )
 from aiogram.methods import GetUpdates
+import pytest
 
 from telegram_membership_saas.customer_runtime import (
     ObservedCustomerBot,
