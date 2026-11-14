@@ -31,6 +31,9 @@ from telegram_membership_saas.modules.bots.diagnostics import (
     telegram_stage_code,
 )
 from telegram_membership_saas.modules.bots.service import decrypt_token
+from telegram_membership_saas.modules.bots.telegram_preflight_retry import (
+    retry_telegram_preflight,
+)
 from telegram_membership_saas.modules.broadcasts.worker import run_broadcast_loop
 from telegram_membership_saas.modules.crypto_pay.recovery import run_crypto_pay_recovery_loop
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
@@ -134,7 +137,7 @@ async def load_customer_bot(
 async def check_customer_bot_identity(bot: Bot, telegram_bot_id: int) -> None:
     """Fail closed at the EXACT stage while preserving token secrecy."""
     try:
-        actual = await bot.get_me()
+        actual = await retry_telegram_preflight(bot.get_me)
     except Exception as exc:
         raise CustomerBotDiagnosticError(
             telegram_stage_code("identity", exc)
@@ -143,7 +146,7 @@ async def check_customer_bot_identity(bot: Bot, telegram_bot_id: int) -> None:
         raise CustomerBotDiagnosticError("identity_mismatch")
 
     try:
-        webhook = await bot.get_webhook_info()
+        webhook = await retry_telegram_preflight(bot.get_webhook_info)
     except Exception as exc:
         raise CustomerBotDiagnosticError(
             telegram_stage_code("webhook", exc)
@@ -174,22 +177,27 @@ async def verify_resource_permissions(
 
     for resource in resources:
         try:
-            member = await bot.get_chat_member(
-                chat_id=resource.external_id,
-                user_id=bot.id,
+            member = await retry_telegram_preflight(
+                lambda: bot.get_chat_member(
+                    chat_id=resource.external_id,
+                    user_id=bot.id,
+                ),
             )
-            status = getattr(member.status, "value", member.status)
-            if status != "creator" and (
-                status != "administrator"
-                or not member.can_invite_users
-                or not member.can_restrict_members
-            ):
-                raise ValueError("Insufficient Telegram administrator rights")
-        except Exception:
-            # Do not print Telegram transport errors, which may contain secrets.
-            raise RuntimeError(
-                "Customer bot lacks required channel/group administrator rights"
+        except Exception as exc:
+            # A transient getChatMember failure is NEVER evidence that the
+            # administrator rights were revoked. On repeated failure, fail
+            # closed before starting buyer polling or granting new access.
+            # The next supervisor attempt rechecks the original rights.
+            raise CustomerBotDiagnosticError(
+                telegram_stage_code("resource", exc)
             ) from None
+        status = getattr(member.status, "value", member.status)
+        if status != "creator" and (
+            status != "administrator"
+            or not member.can_invite_users
+            or not member.can_restrict_members
+        ):
+            raise CustomerBotDiagnosticError("missing_admin_rights")
 
 
 async def run_customer_bot_instance(
