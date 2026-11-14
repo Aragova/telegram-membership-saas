@@ -24,27 +24,6 @@ merge, no billing activation or invoice void as a side effect.
 
 ---
 
-## 2026-11-14 — PR #162: central incoming proof notifications
-
-The existing customer-bot SaaS receipt router, payment-proof ledger,
-operator-only pending queue, receipt viewer and approve/reject actions stay
-unchanged. On a NEW accepted proof the existing immutable proof INSERT
-atomically enqueues one operator notification. The already-running CENTRAL
-@vimipay_bot monitor task delivers a normal RU/EN private Telegram message
-to the configured platform owner with amount, outstanding count and exactly
-one existing "🧾 Проверка чеков" callback (plat:v2proofs:0).
-A persisted attempt-keyed outbox, five-minute lease fencing and bounded
-retry prevent routine duplicate pushes across 50 customer bots and restarts.
-No historical backlog is replayed upon migration; stale alerts already
-approved/rejected before delivery are discarded. The old source-customer-bot
-best-effort media push is removed: it silently fails for operators who have
-not /started each customer bot, and would duplicate central messages.
-Telegram chat notifications are subject to the owner's phone/app settings.
-No new menus, review queues, supervisors, reminders, payment approvals,
-billing activation or customer-access effects. Deploy migration 0085 before
-the updated central runtime and receipt handlers.
-
----
 
 ## 2026-11-14 — PR #161: BOT-scoped anniversary invoices, full settlement
 
