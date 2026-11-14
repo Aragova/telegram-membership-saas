@@ -10,9 +10,6 @@ import pytest
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
-from telegram_membership_saas.modules.platform_saas_payment_service import (
-    MerchantSaasStatements,
-)
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
 
@@ -44,28 +41,37 @@ def _handler(project):
 
 @pytest.mark.parametrize("lang", ["ru", "en"])
 @pytest.mark.asyncio
-async def test_connected_invoice_menu_has_only_bill_and_main(monkeypatch, lang):
+async def test_unified_bill_displays_all_revenue_types_and_one_pay(monkeypatch, lang):
     invoice_id, project = uuid4(), uuid4()
     monkeypatch.setattr(
         ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
     )
     monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
-    report = MerchantSaasStatements(
-        total=1, unpaid=1, outstanding_rub=150,
-        configured=True, instructions="PRIVATE BANK DETAILS", page=0,
-        invoices=({
-            "id": str(invoice_id), "kind": "prepayment",
-            "status": "unpaid", "amount_rub": "150.00",
-            "due_at": "2026-11-16T00:00:00+00:00",
-        },),
-    )
-    statements = AsyncMock(return_value=report)
-    monkeypatch.setattr(ui, "merchant_saas_statements", statements)
-    unused = AsyncMock(side_effect=AssertionError(
-        "Invoice index must not query trial or commission analytics",
+    summary = AsyncMock(return_value={
+        "month": "2026-11-01", "project_id": str(project),
+        "turnover": [
+            {"kind": "subscription", "currency": "RUB",
+             "sold": 20, "gross": "10000.00"},
+            {"kind": "file", "currency": "USD",
+             "sold": 10, "gross": "100.00"},
+        ],
+        "service_due_rub": "150", "commission_due_rub": "700",
+        "total_due_rub": "850", "unpaid_count": 1,
+        "first_invoice_id": str(invoice_id),
+    })
+    preview = AsyncMock(return_value={
+        "rails": [
+            {"kind": "subscription", "commission_rub": "500"},
+            {"kind": "file_manual", "commission_rub": "200"},
+        ],
+        "unrated_billable": 0, "uncaptured_crypto": 0,
+    })
+    monkeypatch.setattr(ui, "merchant_saas_bill_summary", summary)
+    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", preview)
+    old_list = AsyncMock(side_effect=AssertionError(
+        "Unified bill must not fetch individual invoice buttons",
     ))
-    monkeypatch.setattr(ui, "merchant_saas_trial_status", unused)
-    monkeypatch.setattr(ui, "saas_price_profile", unused)
+    monkeypatch.setattr(ui, "merchant_saas_statements", old_list)
     bot = MagicMock()
     bot.id = 789
     bot.send_message = AsyncMock()
@@ -76,8 +82,10 @@ async def test_connected_invoice_menu_has_only_bill_and_main(monkeypatch, lang):
         query.answer.assert_awaited_once()
     finally:
         _language.reset(token)
-    statements.assert_awaited_once()
-    unused.assert_not_awaited()
+    summary.assert_awaited_once()
+    preview.assert_awaited_once()
+    old_list.assert_not_awaited()
+    assert preview.await_args.kwargs["project_id"] == project
     body = bot.send_message.await_args.args[1]
     buttons = [
         b for row in bot.send_message.await_args.kwargs[
@@ -86,18 +94,19 @@ async def test_connected_invoice_menu_has_only_bill_and_main(monkeypatch, lang):
     ]
     assert len(buttons) == 2
     assert buttons[0].callback_data == (
-        "own:saasbill:" + encode_uuid(invoice_id) + ":0"
+        "own:spm:" + encode_uuid(invoice_id) + ":RUB:0"
     )
     assert buttons[1].callback_data == "own:dashboard"
     assert ("Главное меню" if lang == "ru" else "Main menu") in buttons[1].text
-    assert "150.00 ₽" in buttons[0].text
+    assert "150.00 ₽" in body
+    assert "850.00 ₽" in body
+    assert "10 000" not in body or "10000" in body
+    assert "100 USD" in body
+    assert ("Подписки" if lang == "ru" else "Subscriptions") in body
+    assert ("Файлы" if lang == "ru" else "Files") in body
     assert str(invoice_id) not in body
-    assert str(invoice_id)[:8] not in buttons[0].text
-    assert "PRIVATE BANK DETAILS" not in body
-    assert "Продажи" not in body
     assert "Настройки" not in body
     assert "Обновить" not in str(buttons)
-    assert not any(b.callback_data.startswith("own:spm:") for b in buttons)
 
 
 @pytest.mark.parametrize("lang", ["ru", "en"])
@@ -165,17 +174,23 @@ async def test_payment_selector_edits_one_message_and_preserves_rails(
 
 
 @pytest.mark.asyncio
-async def test_no_invoice_menu_displays_only_main_button(monkeypatch):
+async def test_zero_due_bill_displays_sections_but_no_pay(monkeypatch):
     project = uuid4()
     monkeypatch.setattr(
         ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
     )
     monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
-    monkeypatch.setattr(ui, "merchant_saas_statements", AsyncMock(
-        return_value=MerchantSaasStatements(
-            total=0, unpaid=0, outstanding_rub=0,
-            configured=True, instructions=None, invoices=(), page=0,
-        ),
+    monkeypatch.setattr(ui, "merchant_saas_bill_summary", AsyncMock(
+        return_value={
+            "month": "2026-11-01", "project_id": str(project),
+            "turnover": [], "service_due_rub": "0",
+            "commission_due_rub": "0", "total_due_rub": "0",
+            "unpaid_count": 0, "first_invoice_id": None,
+        },
+    ))
+    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", AsyncMock(
+        return_value={"rails": [], "unrated_billable": 0,
+                      "uncaptured_crypto": 0},
     ))
     bot = MagicMock()
     bot.send_message = AsyncMock()
@@ -185,3 +200,33 @@ async def test_no_invoice_menu_displays_only_main_button(monkeypatch):
     assert len(rows) == 1
     assert len(rows[0]) == 1
     assert rows[0][0].callback_data == "own:dashboard"
+    body = bot.send_message.await_args.args[1]
+    assert "Подписки" in body and "Файлы" in body
+    assert "0.00 ₽" in body
+
+
+@pytest.mark.asyncio
+async def test_several_debts_open_one_internal_payment_choice(monkeypatch):
+    project = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor",
+                        AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+    monkeypatch.setattr(ui, "merchant_saas_bill_summary", AsyncMock(
+        return_value={
+            "month": "2026-11-01", "project_id": str(project),
+            "turnover": [], "service_due_rub": "150",
+            "commission_due_rub": "20", "total_due_rub": "170",
+            "unpaid_count": 2, "first_invoice_id": str(uuid4()),
+        },
+    ))
+    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", AsyncMock(
+        return_value={"rails": [], "unrated_billable": 0,
+                      "uncaptured_crypto": 0},
+    ))
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    await _handler(project)(_callback("saasinvoices:0"), bot)
+    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert len(rows) == 2
+    assert rows[0][0].callback_data == "own:saaspaychoices:0"
+    assert rows[1][0].callback_data == "own:dashboard"
