@@ -135,37 +135,6 @@ async def platform_saas_invoice_report(
     )
 
 
-async def void_saas_test_prepayment(
-    factory: async_sessionmaker[AsyncSession], *,
-    actor_user_id: UUID, actor_telegram_id: int,
-    invoice_id: UUID, expected_owner_id: UUID,
-    expected_amount: Decimal,
-    settings: Settings | None = None,
-) -> dict:
-    """Operator-acknowledged *test* cleanup, no payment/ledger deletion.
-
-    The DB rechecks every ownership, money and outstanding-proof invariant
-    under locks. The GUI confirmation is never sufficient authorization.
-    """
-    _check_actor(actor_telegram_id, settings)
-    if expected_amount != Decimal("150.00"):
-        raise ValueError("Only an exact 150 RUB test prepayment can be voided")
-    async with tenant_session_scope(
-        factory, TenantContext(user_id=actor_user_id),
-    ) as session:
-        result = (await session.execute(text(
-            "SELECT public.platform_saas_void_test_prepayment("
-            ":invoice,:owner,:amount) AS result"
-        ).columns(result=JSONB), {
-            "invoice": invoice_id,
-            "owner": expected_owner_id,
-            "amount": expected_amount,
-        })).scalar_one()
-    if not isinstance(result, dict) or result.get("status") != "void":
-        raise RuntimeError("Test invoice void was not confirmed")
-    return result
-
-
 async def issue_saas_bot_prepayment(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID,
