@@ -18,8 +18,8 @@ from telegram_membership_saas.customer_runtime import (
 )
 from telegram_membership_saas.customer_supervisor import safe_error_code
 from telegram_membership_saas.modules.bots.diagnostics import (
-    CustomerBotDiagnosticError,
     HEALTH_ERROR_CODES,
+    CustomerBotDiagnosticError,
     telegram_stage_code,
 )
 from telegram_membership_saas.modules.platform_dashboard_handlers import _ERROR_TEXT
