@@ -222,6 +222,10 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
+from telegram_membership_saas.modules.platform_saas_bill_ui import (
+    unified_merchant_bill_classic,
+    unified_merchant_bill_rich,
+)
 from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_invoice_classic,
     issued_invoice_rich,
@@ -230,7 +234,9 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     quote_fingerprint,
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
+    merchant_saas_bill_summary,
     merchant_saas_statements,
+    merchant_saas_unified_monthly_preview,
     merchant_saas_trial_status,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
@@ -1041,48 +1047,102 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID | None, *, page: int = 0,
     ) -> None:
-        """Only real platform invoices and a return to the main menu.
+        """One financial Rich bill, not a carousel of service/commission invoices.
 
-        Sales reports, trial analytics and account status belong in their
-        existing dedicated views, not the entry point to Pay.
+        The owner sees the requested bot's current-month sales while the
+        account-wide real outstanding balance stays faithful to the ledger.
+        No future provisional commission is silently made payable.
         """
-        report = await merchant_saas_statements(
-            factory, actor_user_id=actor_id, project_id=project_id,
-            page=page,
+        month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
+        summary = await merchant_saas_bill_summary(
+            factory, actor_user_id=actor_id, month=month,
+            project_id=project_id,
+        )
+        preview = await merchant_saas_unified_monthly_preview(
+            factory, actor_user_id=actor_id, month=month,
+            project_id=project_id,
         )
         rows: list[list[InlineKeyboardButton]] = []
-        for item in report.invoices:
+        due = Decimal(str(summary["total_due_rub"]))
+        if due > 0:
+            invoice_id = summary.get("first_invoice_id")
+            if int(summary["unpaid_count"]) == 1 and invoice_id:
+                target = (
+                    "spm:" + encode_uuid(UUID(str(invoice_id))) + ":RUB:0"
+                )
+            else:
+                # Existing settlement engine binds proofs to a real invoice.
+                # Do not pretend one bank transfer can allocate to several
+                # outstanding invoices until account-wide settlement exists.
+                target = "saaspaychoices:0"
             rows.append([_button(
-                _saas_invoice_button_label(item),
-                "saasbill:" + encode_uuid(UUID(str(item["id"])))
-                + ":" + str(page),
-                "success" if item["status"] != "paid" else "primary",
+                tr("💳 Оплатить", "💳 Pay"), target, "success",
             )])
-        nav: list[InlineKeyboardButton] = []
-        if page:
-            nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
-        if (page + 1) * 6 < report.total:
-            nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
-        if nav:
-            rows.append(nav)
         rows.append([_button(
             tr("🏠 Главное меню", "🏠 Main menu"),
             "dashboard" if project_id is not None else "projects",
         )])
-        body = tr(
-            "🧾 <b>Счета ViMi Pay</b>\n\n"
-            "Выберите выставленный счёт:",
-            "🧾 <b>ViMi Pay invoices</b>\n\n"
-            "Select an issued invoice:",
-        ) if report.invoices else tr(
-            "🧾 <b>Счета ViMi Pay</b>\n\n"
-            "Выставленных счетов пока нет.",
-            "🧾 <b>ViMi Pay invoices</b>\n\n"
-            "No invoices have been issued yet.",
-        )
-        await bot.send_message(
-            user_id, body, parse_mode="HTML",
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=unified_merchant_bill_rich(summary, preview),
+            classic_html=unified_merchant_bill_classic(summary, preview),
             reply_markup=_markup(rows),
+        )
+
+    async def show_saas_payment_choices(
+        bot: Bot, user_id: int, actor_id: UUID,
+        project_id: UUID | None, *, page: int,
+    ) -> None:
+        """Internal allocation chooser only if multiple real debts are open.
+
+        This is not a second bill or separate sales dashboard. Each existing
+        payment attempt still belongs to one immutable invoice.
+        """
+        report = await merchant_saas_statements(
+            factory, actor_user_id=actor_id,
+            project_id=project_id, page=page,
+        )
+        rows: list[list[InlineKeyboardButton]] = []
+        for item in report.invoices:
+            invoice_id = UUID(str(item["id"]))
+            balance = await saas_v2_invoice_balance(
+                factory, actor_id=actor_id, invoice_id=invoice_id,
+                project_id=project_id,
+            )
+            remaining = Decimal(str(balance["remaining_rub"]))
+            if remaining <= 0:
+                continue
+            label = (
+                tr("Обслуживание", "Service")
+                if item["kind"] == "prepayment"
+                else tr("Комиссия", "Commission")
+            )
+            rows.append([_button(
+                "💳 " + label + " · " + format(remaining, ".2f") + " ₽",
+                "spm:" + encode_uuid(invoice_id) + ":RUB:"
+                + _encode_saas_page(page), "success",
+            )])
+        nav: list[InlineKeyboardButton] = []
+        if page:
+            nav.append(_button("⬅️", "saaspaychoices:" + str(page - 1)))
+        if (page + 1) * 6 < report.total:
+            nav.append(_button("➡️", "saaspaychoices:" + str(page + 1)))
+        if nav:
+            rows.append(nav)
+        rows.append([_button(
+            tr("⬅️ К счёту", "⬅️ Bill"), "saasinvoices:0",
+        )])
+        await bot.send_message(
+            user_id,
+            tr(
+                "💳 <b>Оплата ViMi Pay</b>\\n"
+                "Выберите начисление для оплаты. "
+                "Каждое зачисление сохраняет отдельное подтверждение.",
+                "💳 <b>ViMi Pay payment</b>\\n"
+                "Choose the charge to pay. Each payment has its "
+                "own bank-verification record.",
+            ).replace("\\\\n", "\\n"),
+            parse_mode="HTML", reply_markup=_markup(rows),
         )
 
     async def show_saas_issued_invoice(
@@ -3674,7 +3734,7 @@ def create_owner_setup_router(
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
-                "connarchive:", "connarchiveok:", "saasinvoices:",
+                "connarchive:", "connarchiveok:", "saasinvoices:", "saaspaychoices:",
                 "saasprice:", "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
                 "spm:", "spv:", "spc:",
@@ -4143,6 +4203,16 @@ def create_owner_setup_router(
                     currency=chosen_price, project_id=fixed_project_id,
                 )
                 await show_saas_service_profile(bot, user_id, actor_id)
+                await query.answer()
+                return
+            if action.startswith("saaspaychoices:"):
+                page_text = action.split(":", 1)[1]
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Invalid payment selection page")
+                await show_saas_payment_choices(
+                    bot, user_id, actor_id, fixed_project_id,
+                    page=int(page_text),
+                )
                 await query.answer()
                 return
             if action.startswith("saasinvoices:"):
