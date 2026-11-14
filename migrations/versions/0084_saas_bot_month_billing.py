@@ -157,7 +157,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
     """)
 
     op.execute("""
-CREATE FUNCTION public.platform_saas_release_change(
+CREATE OR REPLACE FUNCTION public.platform_saas_release_change(
       p_action text, p_expected_bots integer,
       p_expected_other_owners integer
     ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
