@@ -1126,6 +1126,118 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_due_batch()
     END; $f$
     """)
 
+    op.execute("""
+CREATE FUNCTION public.platform_saas_bot_hold_state(
+  p_bot uuid,p_at timestamptz
+) RETURNS text LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE
+  owner_id uuid;
+  started timestamptz;
+  billing_started timestamptz;
+  enabled boolean;
+  is_unpaid boolean;
+  last_covered timestamptz;
+BEGIN
+  IF p_bot IS NULL OR p_at IS NULL THEN
+    RAISE EXCEPTION 'Invalid bot hold check' USING ERRCODE='22023';
+  END IF;
+  SELECT p.owner_user_id INTO owner_id
+  FROM public.bot_instances b JOIN public.projects p ON p.id=b.project_id
+  WHERE b.id=p_bot AND b.status='registered';
+  IF owner_id IS NULL THEN RETURN 'disabled'; END IF;
+  SELECT h.enabled,h.effective_from INTO enabled,started
+  FROM public.platform_saas_hold_control h WHERE h.id=1;
+  SELECT c.effective_from INTO billing_started
+  FROM public.platform_saas_billing_control c WHERE c.id=1 AND c.enabled;
+  IF NOT coalesce(enabled,false) OR started IS NULL
+     OR billing_started IS NULL
+     OR p_at<greatest(started,billing_started) THEN RETURN 'disabled'; END IF;
+  IF EXISTS(
+    SELECT 1 FROM public.telegram_users u
+    JOIN public.platform_operators o ON o.telegram_user_id=u.telegram_user_id
+    WHERE u.id=owner_id AND o.role='owner'
+  ) THEN RETURN 'clear'; END IF;
+  SELECT EXISTS(
+    SELECT 1 FROM public.platform_saas_invoices i
+    WHERE i.bot_instance_id=p_bot AND i.owner_user_id=owner_id
+      AND i.kind='prepayment' AND i.status='issued'
+      AND i.due_at<=p_at AND public.platform_saas_v2_remaining(i.id)>0
+  ) INTO is_unpaid;
+  IF is_unpaid THEN RETURN 'held'; END IF;
+  SELECT max(i.period_end) INTO last_covered
+  FROM public.platform_saas_invoices i
+  WHERE i.bot_instance_id=p_bot AND i.owner_user_id=owner_id
+    AND i.kind='prepayment' AND i.status='issued'
+    AND public.platform_saas_v2_remaining(i.id)=0;
+  IF last_covered IS NOT NULL THEN
+    IF last_covered<=p_at THEN RETURN 'held'; END IF;
+  ELSIF p_at>=public.platform_saas_billable_after(owner_id) THEN
+    -- Trial is over, but billing worker has not issued or confirmed
+    -- this bot's initial service invoice yet.
+    RETURN 'held';
+  END IF;
+  RETURN 'clear';
+END; $f$
+    """)
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_guard_new_commerce()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE
+  scoped uuid;
+  source_bot uuid;
+  bot_count bigint;
+  owner_id uuid;
+  merchant_id uuid;
+  hold_state text;
+  checked_at timestamptz:=clock_timestamp();
+BEGIN
+  IF TG_OP<>'INSERT' THEN RETURN NEW; END IF;
+  IF TG_TABLE_NAME='resources'
+     AND NEW.resource_type NOT IN (
+       'telegram_channel','telegram_group'
+     ) THEN RETURN NEW; END IF;
+  scoped:=NULLIF(current_setting('app.current_project_id',true),'')::uuid;
+  IF scoped IS DISTINCT FROM NEW.project_id THEN
+    RETURN NEW; -- existing tenant RLS fails closed for foreign projects
+  END IF;
+  -- Another bot's debt can NEVER block connecting an unrelated new bot.
+  IF TG_TABLE_NAME='bot_instances' THEN RETURN NEW; END IF;
+  SELECT p.owner_user_id,p.merchant_id INTO owner_id,merchant_id
+  FROM public.projects p WHERE p.id=NEW.project_id;
+  IF owner_id IS NULL THEN RETURN NEW; END IF;
+  IF TG_TABLE_NAME IN (
+    'file_sale_manual_orders','file_sale_purchases'
+  ) THEN
+    SELECT b.id INTO source_bot FROM public.bot_instances b
+    WHERE b.project_id=NEW.project_id
+      AND b.telegram_bot_id=NEW.telegram_bot_id
+      AND b.status='registered';
+  ELSE
+    SELECT count(*),max(b.id::text)::uuid INTO bot_count,source_bot
+    FROM public.bot_instances b
+    WHERE b.project_id=NEW.project_id AND b.status='registered';
+    IF bot_count<>1 THEN RETURN NEW; END IF;
+  END IF;
+  IF source_bot IS NULL THEN RETURN NEW; END IF;
+  hold_state:=public.platform_saas_bot_hold_state(source_bot,checked_at);
+  IF hold_state<>'held' THEN RETURN NEW; END IF;
+  IF TG_TABLE_NAME IN (
+    'payment_requests','file_sale_manual_orders','file_sale_purchases'
+  ) AND public.platform_saas_exemption_state(
+      NEW.project_id,source_bot,merchant_id,owner_id,checked_at
+  )='exempt' THEN RETURN NEW; END IF;
+  RAISE EXCEPTION 'New ViMi Pay checkout/connection is on payment hold'
+    USING ERRCODE='P6711';
+END; $f$
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+        public.platform_saas_bot_hold_state(uuid,timestamptz)
+      FROM PUBLIC
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
