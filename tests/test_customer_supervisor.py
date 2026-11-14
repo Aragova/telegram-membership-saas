@@ -576,3 +576,51 @@ async def test_supervisor_cancellation_resets_failure_streak(monkeypatch):
             *(x.task for x in supervisor.workers.values()),
             return_exceptions=True,
         )
+
+
+async def test_rotated_credentials_bypass_failed_old_version_cooldown(monkeypatch):
+    """A corrected token must restart immediately even if old task is gone."""
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    pid = uuid4()
+    old = _target(pid)
+    current = [old]
+
+    async def discover(_factory):
+        return tuple(current)
+
+    async def fail(_engine, _factory, _target, *, settings):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(runtime, "discover_targets", discover)
+    monkeypatch.setattr(
+        runtime, "discover_removal_targets", AsyncMock(return_value=()),
+    )
+    monkeypatch.setattr(runtime, "run_target", fail)
+    monkeypatch.setattr(runtime, "uniform", lambda _lo, _hi: 2.0)
+    supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
+    await supervisor.reconcile_once()
+    await asyncio.sleep(0)
+    await supervisor.reconcile_once()
+    assert pid not in supervisor.workers
+    assert pid in supervisor.retry_after
+    assert supervisor.failure_streak[pid] == 1
+    assert supervisor.retry_target[pid] == old
+
+    # No worker remains to cancel. Discovery sees a corrected token now.
+    newer = _target(pid, old.credential_version + timedelta(seconds=1))
+    current[:] = [newer]
+    await supervisor.reconcile_once()
+    assert pid in supervisor.workers
+    assert supervisor.workers[pid].target == newer
+    assert pid not in supervisor.retry_after
+    assert pid not in supervisor.failure_streak
+    assert pid not in supervisor.retry_target
+
+    await asyncio.gather(
+        supervisor.workers[pid].task, return_exceptions=True,
+    )
+    await supervisor.reconcile_once()
+    # Any future failure belongs to the NEW registration, starts from base.
+    assert supervisor.failure_streak[pid] == 1
+    assert supervisor.retry_target[pid] == newer
