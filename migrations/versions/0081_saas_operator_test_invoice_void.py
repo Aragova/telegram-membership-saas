@@ -79,6 +79,12 @@ def upgrade() -> None:
         RAISE EXCEPTION 'Invalid test invoice confirmation'
           USING ERRCODE='22023';
       END IF;
+      -- Serialize with platform_saas_release_change(arm/stop), which
+      -- uses the same pilot-control lock. Keep it until transaction commit,
+      -- so live billing cannot activate between check and cancellation.
+      PERFORM pg_advisory_xact_lock(
+        hashtextextended('vimi:saas:pilot-control',0)
+      );
       -- Do not expose generic invoice cancellations during active billing.
       -- This operation is solely a pre-release test-account cleanup.
       IF EXISTS(
