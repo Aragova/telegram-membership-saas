@@ -50,12 +50,14 @@ immutable bank/FX snapshot and receipt proof, and confirm only after funds
 are actually verified by the platform operator. Historical partially
 allocated funds remain in the immutable ledger; they are not discarded.
 A verified reversal remains an audited credit, never a fictitious bank
-payment. On USD-priced service, **bank payments** reduce the outstanding
-native $3 service fraction at the original booking rate before covering
-commission, while **verified subscription/file refund credits** reduce only
-the charged sales commission. They must never discount the independent
-$3 service tariff. The actual issued RUB ledger total and payment snapshots
-remain immutable.
+payment. On USD-priced service, **confirmed bank payments** reduce the
+outstanding native $3 fraction at the original booking rate before covering
+commission. **Verified subscription/file refund credits** remain separate
+RUB ledger adjustments, never impersonate bank cash, and can be carried
+forward to a later unpaid invoice under the existing audited credit policy.
+The payment quote is capped by the actual remaining RUB debt: credits cannot
+produce a negative amount or cause a second charge. The original $3 price,
+issued RUB ledger total and payment snapshots remain immutable.
 
 **Hold.** No 7-day commission due-date delay and no extra 7-day grace.
 When the trial or prepaid anniversary expires without the bot's full
