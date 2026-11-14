@@ -713,6 +713,236 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
         $f$
     """)
 
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_line_guard()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $guard$
+        DECLARE
+          parent record;
+          sale record;
+          source_bot uuid;
+          bot_count bigint;
+          effective_at timestamptz;
+          exemption_state text;
+          usd_rate numeric;
+          original_usd_unit numeric;
+          bot_fee_usd_fx numeric;
+        BEGIN
+          IF TG_OP <> 'INSERT' THEN
+            RAISE EXCEPTION 'Platform invoice lines are immutable'
+              USING ERRCODE='42501';
+          END IF;
+          SELECT * INTO parent FROM public.platform_saas_invoices
+            WHERE id=NEW.invoice_id FOR UPDATE;
+          IF parent.id IS NULL OR parent.status <> 'draft' THEN
+            RAISE EXCEPTION 'Invoice is not editable' USING ERRCODE='42501';
+          END IF;
+          IF NEW.source_kind = 'bot_fee' THEN
+            SELECT rub_per_unit INTO bot_fee_usd_fx
+            FROM public.platform_saas_daily_fx_rates
+            WHERE currency_code='USD' AND source_name='CBR'
+              AND rate_date=(parent.created_at AT TIME ZONE 'Europe/Moscow')::date;
+            IF parent.kind <> 'prepayment'
+               OR NEW.source_id IS DISTINCT FROM parent.bot_instance_id
+               OR NEW.fee_rate <> 1
+               OR NOT (
+                 (NEW.original_currency='RUB'
+                  AND NEW.original_amount=150
+                  AND NEW.rub_per_unit=1 AND NEW.charge_rub=150)
+                 OR
+                 (NEW.original_currency='USD'
+                  AND NEW.original_amount=3
+                  AND bot_fee_usd_fx IS NOT NULL
+                  AND NEW.rub_per_unit=bot_fee_usd_fx
+                  AND NEW.charge_rub=round(3*bot_fee_usd_fx,2))
+               )
+               OR NOT EXISTS (
+                 SELECT 1 FROM public.bot_instances b
+                 JOIN public.projects p ON p.id=b.project_id
+                 WHERE b.id=NEW.source_id
+                   AND b.project_id=NEW.project_id
+                   AND p.merchant_id=parent.merchant_id
+                   AND p.owner_user_id=parent.owner_user_id
+               ) THEN
+              RAISE EXCEPTION 'Invalid bot prepayment source'
+                USING ERRCODE='23514';
+            END IF;
+            source_bot := NEW.source_id;
+            effective_at := parent.period_start;
+          ELSE
+            IF parent.kind NOT IN ('commission','prepayment')
+               OR NEW.fee_rate <> 0.05 THEN
+              RAISE EXCEPTION 'Invalid commission policy'
+                USING ERRCODE='23514';
+            END IF;
+            IF NEW.source_kind = 'subscription' THEN
+              SELECT project_id,final_amount AS amount,currency_code,
+                     approved_at AS paid_at INTO sale
+                FROM public.payments WHERE id=NEW.source_id;
+            ELSIF NEW.source_kind = 'file_manual' THEN
+              SELECT project_id,amount,currency_code,paid_at
+                INTO sale FROM public.file_sale_manual_orders
+               WHERE id=NEW.source_id AND status='approved';
+            ELSIF NEW.source_kind IN ('file_stars','subscription_stars') THEN
+              SELECT project_id,stars_amount::numeric AS amount,
+                     'XTR'::text AS currency_code,paid_at
+                INTO sale FROM public.platform_saas_star_sales
+               WHERE source_kind=NEW.source_kind AND source_id=NEW.source_id
+                 AND billing_eligible AND merchant_id=parent.merchant_id
+                 AND owner_user_id=parent.owner_user_id;
+            ELSIF NEW.source_kind IN ('file_crypto','subscription_crypto') THEN
+              SELECT project_id,original_amount AS amount,
+                     currency_code,paid_at
+                INTO sale FROM public.platform_saas_crypto_sales
+               WHERE source_kind=NEW.source_kind AND invoice_id=NEW.source_id
+                 AND billing_eligible AND merchant_id=parent.merchant_id
+                 AND owner_user_id=parent.owner_user_id;
+            ELSE
+              RAISE EXCEPTION 'Unknown paid source' USING ERRCODE='23514';
+            END IF;
+            -- Vendor token and paid source were verified at capture.
+            -- Re-check original official USD sale-date FX in the database,
+            -- never trust invoice caller's synthetic RUB quote.
+            IF NEW.source_kind IN ('file_stars','subscription_stars',
+                                   'file_crypto','subscription_crypto') THEN
+              SELECT rub_per_unit INTO usd_rate
+              FROM public.platform_saas_daily_fx_rates
+              WHERE currency_code='USD' AND source_name='CBR'
+                AND rate_date=(sale.paid_at AT TIME ZONE 'Europe/Moscow')::date;
+              IF NEW.source_kind IN ('file_stars','subscription_stars') THEN
+                SELECT usd_per_star INTO original_usd_unit
+                FROM public.platform_saas_star_sales
+                WHERE source_kind=NEW.source_kind AND source_id=NEW.source_id;
+              ELSE
+                SELECT usd_per_unit INTO original_usd_unit
+                FROM public.platform_saas_crypto_sales
+                WHERE source_kind=NEW.source_kind AND invoice_id=NEW.source_id;
+              END IF;
+              IF usd_rate IS NULL OR original_usd_unit IS NULL OR
+                 NEW.rub_per_unit IS DISTINCT FROM
+                   round(original_usd_unit*usd_rate,18) THEN
+                RAISE EXCEPTION 'Unverified Stars/Crypto sale-day conversion'
+                  USING ERRCODE='23514';
+              END IF;
+            END IF;
+            -- Source identity is reconstructed from immutable bot-connected
+            -- and bot-removed events at the approval time, not the bot that
+            -- happens to be connected when month-end billing runs.
+            -- Ambiguous histories are not silently assigned a replacement.
+            SELECT count(*), max(connected.source_id::text)::uuid
+              INTO bot_count,source_bot
+              FROM public.platform_usage_events connected
+             WHERE connected.project_id=NEW.project_id
+               AND connected.event_type='bot_connected'
+               AND connected.occurred_at<=sale.paid_at
+               AND NOT EXISTS(
+                   SELECT 1 FROM public.platform_usage_events removed
+                   WHERE removed.project_id=NEW.project_id
+                     AND removed.source_id=connected.source_id
+                     AND removed.event_type='bot_removed'
+                     AND removed.occurred_at<=sale.paid_at
+               );
+            IF bot_count<>1 THEN
+              RAISE EXCEPTION 'Paid source bot history is ambiguous'
+                USING ERRCODE='23514';
+            END IF;
+            IF NEW.source_kind IN ('file_stars','subscription_stars')
+               AND NOT EXISTS(
+                 SELECT 1 FROM public.platform_saas_star_sales s
+                 JOIN public.bot_instances b ON b.id=source_bot
+                   AND b.project_id=s.project_id
+                   AND b.telegram_bot_id=s.telegram_bot_id
+                 WHERE s.source_kind=NEW.source_kind
+                   AND s.source_id=NEW.source_id
+               ) THEN
+              RAISE EXCEPTION 'Stars source does not belong to original bot'
+                USING ERRCODE='23514';
+            END IF;
+            IF NEW.source_kind IN ('file_crypto','subscription_crypto')
+               AND NOT EXISTS(
+                 SELECT 1 FROM public.platform_saas_crypto_sales s
+                 WHERE s.source_kind=NEW.source_kind
+                   AND s.invoice_id=NEW.source_id
+                   AND s.bot_instance_id=source_bot
+               ) THEN
+              RAISE EXCEPTION 'Crypto source does not belong to original bot'
+                USING ERRCODE='23514';
+            END IF;
+            effective_at := sale.paid_at;
+            IF sale.project_id IS DISTINCT FROM NEW.project_id
+               OR sale.amount IS DISTINCT FROM NEW.original_amount
+               OR sale.currency_code IS DISTINCT FROM NEW.original_currency
+               OR sale.paid_at IS NULL
+               OR NOT EXISTS (
+                  SELECT 1 FROM public.merchant_project_periods mp
+                  WHERE mp.project_id=NEW.project_id
+                    AND mp.merchant_id=parent.merchant_id
+                    AND mp.owner_user_id=parent.owner_user_id
+                    AND mp.started_at<=sale.paid_at
+                    AND (mp.ended_at IS NULL OR mp.ended_at>=sale.paid_at)
+               )
+               OR (
+                 parent.kind='commission' AND
+                 (sale.paid_at<parent.period_start
+                  OR sale.paid_at>=parent.period_end)
+               )
+               OR (
+                 parent.kind='prepayment' AND (
+                   source_bot IS DISTINCT FROM parent.bot_instance_id
+                   OR NOT EXISTS(
+                     SELECT 1 FROM public.platform_saas_invoices prior
+                     WHERE prior.bot_instance_id=parent.bot_instance_id
+                       AND prior.owner_user_id=parent.owner_user_id
+                       AND prior.kind='prepayment' AND prior.status='issued'
+                       AND prior.period_end=parent.period_start
+                       AND sale.paid_at>=prior.period_start
+                       AND sale.paid_at<prior.period_end
+                       AND public.platform_saas_v2_remaining(prior.id)=0
+                   )
+                 )
+               )
+               OR (
+                 NEW.original_currency='RUB'
+                 AND NEW.source_kind NOT IN ('file_crypto','subscription_crypto')
+                 AND NEW.rub_per_unit <> 1
+               )
+               OR (
+                 NEW.source_kind IN (
+                   'file_stars','subscription_stars',
+                   'file_crypto','subscription_crypto'
+                 ) AND NEW.charge_rub IS DISTINCT FROM
+                   round(sale.amount * NEW.rub_per_unit * 0.05, 18)
+               )
+               OR (
+                 NEW.source_kind NOT IN (
+                   'file_stars','subscription_stars',
+                   'file_crypto','subscription_crypto'
+                 ) AND NEW.charge_rub IS DISTINCT FROM
+                   round(sale.amount * NEW.rub_per_unit * 0.05, 2)
+               )
+            THEN
+              RAISE EXCEPTION 'Approved purchase / commission snapshot mismatch'
+                USING ERRCODE='23514';
+            END IF;
+          END IF;
+          IF NEW.bot_instance_id IS DISTINCT FROM source_bot THEN
+            RAISE EXCEPTION 'Historical bot identity mismatch'
+              USING ERRCODE='23514';
+          END IF;
+          SELECT public.platform_saas_exemption_state(
+            NEW.project_id, source_bot, parent.merchant_id,
+            parent.owner_user_id, effective_at
+          ) INTO exemption_state;
+          IF exemption_state <> 'not_exempt' THEN
+            RAISE EXCEPTION 'Verified platform channel exempt or needs review'
+              USING ERRCODE='42501';
+          END IF;
+          RETURN NEW;
+        END;
+        $guard$
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
