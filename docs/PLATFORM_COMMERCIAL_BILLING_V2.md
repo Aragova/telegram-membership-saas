@@ -1,48 +1,59 @@
-## 2026-11-14 — Single merchant Rich bill (post-#160 correction)
+## 2026-11-14 — APPROVED billing contract for PR #161 (supersedes all older proposals)
 
-The existing `🧾 Счёт / 🧾 Bill` admin entry is **one financial overview**,
-not a list of "Service ViMi Pay" and "Commission ViMi Pay" receipts.
-Show, in this order:
+**One connected bot = one real issued monthly ViMi Pay invoice.** No owner-wide
+invoice total, no cross-bot debt, no choice between 'service' and 'commission'
+in an admin's bill. Existing archived/issued historical invoices, payment
+attempts, receipts, verified refund credits and operator audits remain
+immutable for reconciliation. Central bot retains historical finance archive,
+but current invoice is opened in the corresponding connected bot.
 
-1. Service: **actual unsettled account-wide service invoice balance**.
-2. Subscriptions: the current Moscow month's completed purchases grouped by
-   their **native currency**, with count and gross, and provisional 5% fee.
-3. Files: the same native-currency gross/count and provisional 5% breakdown.
-   Include approved manual sales, verified ⭐ Telegram Stars, and verified
-   💎 Crypto Pay on both sides. Never add unlike native currencies together.
-4. Payable account balance: settled invoice obligations remaining **after**
-   verified bank receipts and applied refund credits. Separate outstanding
-   **service** from already **issued** closed-month commission. Show the real
-   aggregate total. Never include unissued current-month commission in payable
-   or present a projected 5% as a bill.
+**Clock and price.** Keep the one-owner / one-bot 72-hour introductory trial.
+At trial end, the bot receives its **first** issued service invoice: 150 RUB
+or independently-priced 3 USD, with **no sales commission**. Its first
+successful paid activation fixes its service-billing anniversary. On each next
+anniversary the one invoice contains (a) prepaid next month's service fee,
+(b) 5% of that same bot's *confirmed subscriptions* and (c) 5% of its
+*confirmed files* for the **immediately previous completed service interval**.
+Service periods run anniversary-to-anniversary, not Moscow's 1st-to-1st.
+The exact day/time is retained with a short-month clamp (31 Jan → 28 Feb →
+31 Mar). Source confirmation, ownership at sale, billing activation, creator
+exemptions, sale-day CBR FX, genuine provider reward valuations and verified
+refund-credit evidence remain authoritative. No provisional month-to-date
+commission is added to an already issued invoice.
 
-The turnover section on a connected admin bot belongs only to its project;
-the **account-wide** service/commission debt is explicitly labeled as such.
-A central owner account without a selected bot sees account-wide turnover.
-A project owner / authenticated user cannot see another merchant's records.
+**Presentation.** In the connected admin bot render exactly one RU/EN Rich
+'🧾 Счёт ViMi Pay' showing service, subscription gross/count/5%, file
+gross/count/5%, total charged, confirmed actual bank payments, optionally
+nonzero verified refund credits, and amount due. Gross is shown by native
+currency, never sum RUB/USD/⭐ Stars into a false mixed amount. The **first
+post-trial invoice displays service only**. The only invoice navigation
+buttons are '💳 Оплатить' (when unpaid) and '🏠 Главное меню'.
 
-The overview has exactly one contextual `💳 Оплатить / Pay` action if real
-debt exists and one `🏠 Главное меню / Main menu` action. With no debt
-there is no Pay action, but service and both sales sections remain readable.
-Native Rich markup has a compact HTML fallback. Do not leak invoice UUIDs,
-raw FX audit rows, zero-value refund columns, unused service profile toggle
-buttons, refresh buttons or unrelated Settings into the overview.
+**Settlement.** No 25%/50% buttons, no partial new platform bank payment
+attempts. A real payment request must cover the whole currently outstanding
+invoice. Choose currency/method from the central operator catalog, use an
+immutable bank/FX snapshot and receipt proof, and confirm only after funds
+are actually verified by the platform operator. Historical partially
+allocated funds remain in the immutable ledger; they are not discarded.
+A verified reversal remains an audited credit, never a fictitious bank
+payment.
 
-**Accounting/checkout safety:** real obligations are still separate immutable
-per-bot prepaid-service and closed-Moscow-month commission invoice rows.
-One-bank-attempt-per-invoice remains the settlement invariant. If exactly one
-unpaid invoice remains, the overview's Pay action goes directly to the
-existing currency/method/amount selector. If multiple are due, Pay opens
-a *payment-allocation choice* after leaving the unified overview. It does
-not invent an unsafe all-invoice bank attempt, silently claim the entire
-account balance settled from a single invoice, or create duplicate invoice
-screens on the main page. A true single-transfer consolidated settlement
-requires a separate atomic cross-invoice allocation design before activation.
-Historical callback links continue to work. No new test buttons or commercial
-activation. Preserve the existing `compose.light100.yaml`.
+**Hold.** No 7-day commission due-date delay and no extra 7-day grace.
+When the trial or prepaid anniversary expires without the bot's full
+settlement, immediately block only that bot's *new* paid checkout/publication
+and unjustified free grants. Do not stop Telegram polling, bot support,
+already paid subscriptions/files, reviews/delivery of already accepted
+orders, access expiry/cleanup or the ability to pay. Do not hold a different
+bot of the same owner. Resume new commerce after real full settlement.
+
+**Historical compatibility.** Old ledger 'commission' invoices remain
+readable and auditable as historical exceptions, but the live reconciler no
+longer creates new merchant-wide calendar-month commission invoices. Do not
+delete or overwrite old migration files. Changes are forward-only in
+0083/0084 on this unmerged PR. Commercial activation, real customer funds
+and staging rollout are **not** implicit in a merge.
 
 ---
-
 ## 2026-11-14 — Merchant billing UI cleanup (PR #160)
 
 Approved merchant navigation is one concise chain:
@@ -363,98 +374,47 @@ No unrelated FX rate tables and no duplicate billing actions in Settings.
 Price/currency selected for the **billing profile**, not for Telegram UI language.
 Changing language must never change contracted service price.
 
-## 2. Commercial lifecycle
+## 2. Current commercial lifecycle (PR #161)
 
-- One 72-hour trial per verified owner (one connected bot), beginning upon first
-  successful bot connection. No resets on reconnect, deletion, new Merchant ID,
-  different language or token rotation. During free trial paid checkout works,
-  with no SaaS base fee or 5% accrued for trial-period sales.
-- At expiration, show **🎁 Trial ended** and **💳 Activate service**.
-  Pause NEW paid checkout/publication, bot/channel additions and complimentary
-  grants until the first prepayment is approved. Never stop bot polling,
-  withdraw existing paid access, block completion of pre-existing orders,
-  disable customer support or access cleanup. Payment remains available.
-- Monthly service fee is **150 RUB or 3 USD per connected bot**, depending
-  on the explicitly assigned **billing price profile**. They are independent
-  catalog prices, NOT equivalent at the CBR rate; UI language is independent.
-  Initially one payment renews one calendar-month service period (from
-  trial end or previous period's corresponding calendar date, clamped for
-  short months, including February). Not a blanket 30-day approximation.
-  Renewal reminder before due date; service prepayment is in advance.
-- Commission is **5% on confirmed paid subscription and file sales** after
-  trial and after a separately approved rollout time. Sales before rollout
-  and free grants are never charged retroactively. One sale = one canonical
-  ID and one fee even after retries, renames, deletion or bot transfer.
-- Sales reporting and commission use **Moscow calendar months**. Merchant
-  sees month-to-date accrued fee; this is a precise **Начислено на сегодня**
-  figure, not an issued invoice. Final month total is sealed at month close;
-  due date 7 days later. Service periods and commission months are distinct.
+- Owner trial: 72 hours, starts on eligible first connection. At expiry,
+  create the bot's first service-only invoice; no 5% for trial sales.
+- Bot service price: 150 ₽ or native $3 according to the assigned profile.
+  Later invoices include this next-period service plus 5% of subscription and
+  file sales from the **preceding bot service month**.
+- Anniversary date/time stays fixed per bot. At short months clamp to the
+  last day; do not drift permanently to the 28th.
+- Each bot has its own collectible invoice and unpaid/paid state, regardless
+  of how many bots one administrator controls.
+- Freeze only the unpaid bot at the due instant. No separate 7-day due delay
+  or additional grace; never revoke purchased customer entitlements.
+- Revenue is attributed to the bot active at actual sale time. Preserve the
+  existing immutable sale IDs, verified Stars/Crypto evidence, daily CBR rates,
+  exemptions and refund credits.
 
-## 3. Merchant 🧾 Счёт state-driven Rich UI
+## 3. Connected bot 🧾 Счёт Rich UI
 
-**Trial:** bilingual lively welcome; expiry at an exact date/time; 150 RUB
-or 3 USD service-price profile and 5% explanation; Activate/Pay button.
+**First period:** service fee, total, confirmed payments, amount due.
+**Second and later:** service fee + subscription sales (gross/native currency,
+count, 5%) + files (gross/native currency, count, 5%), total, confirmed
+payments, optional verified refund credits, amount due. Only one Pay button
+and Main menu. RU/EN Rich with classic fallback, no technical IDs or FX
+audit rows shown.
 
-**Expired / awaiting payment:** show outstanding amount, Pay/Restore, support.
-The connected bot and all buyer obligations stay available.
+During trial or before an issued invoice exists, show a short no-invoice state
+and Main menu, never a fake invoice or payment button.
 
-**Active:** (A) subscriptions grouped by immutable tariff/name, duration,
-native price, native currency, sold count and native gross; (B) files grouped
-by immutable PRICE + native currency, not hundreds of file names; (C) compact
-Telegram Stars subrows; (D) **Расчёт ViMi Pay**: 5% accrued, next service
-fee, confirmed payments, credits, **Остаток к оплате**; (E) history.
-All lists paginated; cap rows and offer **Все продажи** drilldown only if
-needed. Remove separate FX rates display entirely. Never aggregate native
-amounts from different currencies as one number.
+## 4. One full payment, no percentage chooser
 
-**Overdue:** keep same reports, show due date and amount unpaid, Pay/Restore
-button; new commerce temporarily held after published grace. Previously
-paid customers retain service and access.
-
-## 4. Payment flow and partial settlement
-
-1. Merchant presses **💳 Оплатить** in their connected bot. Show exact
-   obligations by bot/service month/closed commission month. User may pay
-   full balance or a chosen positive PART (within validated bounds).
-2. Choose RUB/USD/EUR/UAH/BYN from the central operator's enabled fiat
-   payment methods. Convert the specified RUB/USD obligation components
-   with the verified CBR quote of payment-request date; store ORIGINAL
-   amount, target currency, official source date, rate and final requested
-   amount in an **immutable PAYMENT ATTEMPT**. Rate must not silently
-   change after review; expiry/requote is explicit.
-3. Show only payment methods from CENTRAL operator catalog for selected
-   currency. Store an immutable snapshot of presented bank instructions,
-   owner account and method identity on each payment attempt.
-4. Merchant transfers funds and uploads proof to the connected bot.
-   Forward securely to the central bot with bot-specific file download and
-   re-upload; Bot API file_id values are bot-specific. Persist proof
-   metadata and optional durable media as required. Duplicate attempts
-   and forged proofs never settle money.
-5. Platform operator sees one review card in **👑 Финансы → ⏳ Проверка
-   платежей**, including merchant, source bot, amount/currency, attempt ID,
-   instructions snapshot and uploaded proof. Approve only after checking
-   actual bank receipt; or reject with reason. One idempotent bank receipt
-   per unique external bank reference/transaction. Paid status only from
-   authorized operator action.
-6. Allocate confirmed receipts deterministically to open obligations:
-   oldest overdue commission → due service prepayments → optional current
-   accrued commission advance; no double spending, with a separate audit
-   entry per allocation. Prepaying commission before month close is a
-   **credit/advance**, not mutation of a provisional invoice. Outstanding
-   equals sealed liabilities minus allocated receipts and verified credits.
-   Partial payment does not mark the whole invoice paid. When service
-   prepayment is fully covered, start/continue service. When overdue
-   obligations are cleared, release the commercial hold safely.
-
-A single owner may have multiple bots and one account-wide settlement
-balance, while each connected bot's **🧾 Счёт** scopes sales to its own
-bot. The base fee is assessed PER bot, not per account.
-
-Existing migration 0053 freezes one currency and receipt for a **whole
-issued invoice**. That is incompatible with the approved multi-part payment
-flow; do not reuse 0053's all-or-nothing receipt handler for partial
-settlement. Replace its active payment UI with a separate payment-attempt
-ledger in later reviewed stages, preserving historical immutable records.
+1. Admin presses Pay on *this bot's real issued invoice*.
+2. Show central operator-approved currency and bank-method selector.
+3. Method selection makes a full remaining-balance payment attempt, retaining
+   immutable bank details and official payment-day FX snapshot.
+4. Admin transfers, replies with photo/PDF proof; central operator checks
+   actual receipt and confirms/rejects it in the existing proof queue.
+5. Confirmed whole payment restores this bot's new paid commerce. Historical
+   partial records and refund credits remain immutable, but there are no
+   **new** 25%/50% controls, percentage callbacks or intentionally partial
+   bank attempts. One bot's balance cannot unlock another bot.
 
 ## 5. Foreign exchange and Stars — mandatory
 
