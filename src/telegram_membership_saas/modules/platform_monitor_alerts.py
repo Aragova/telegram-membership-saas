@@ -41,6 +41,9 @@ from telegram_membership_saas.modules.platform_saas_notices import (
 from telegram_membership_saas.modules.platform_saas_proof_alerts import (
     deliver_one_platform_proof_alert,
 )
+from telegram_membership_saas.modules.platform_saas_review_results import (
+    deliver_one_saas_review_result,
+)
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -498,6 +501,17 @@ async def run_central_platform_monitor(
                             break
                 except Exception:
                     log.warning("Central payment-proof notification deferred")
+                # A decision must also reach the paying admin in the
+                # ORIGINAL bot chat, without creating a new supervisor.
+                try:
+                    for _ in range(3):
+                        if not await deliver_one_saas_review_result(
+                            factory, central_bot=bot, settings=settings,
+                            actor_id=actor,
+                        ):
+                            break
+                except Exception:
+                    log.warning("ViMi Pay customer review-result delivery deferred")
                 await scan_platform_monitor(factory, owner_actor_id=actor)
                 # Bounded delivery, never overwhelm the owner's chat on
                 # recovery of a large network.

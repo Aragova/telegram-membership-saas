@@ -1,3 +1,22 @@
+## 2026-11-14 — Bank review completion and customer notification (PR #163)
+
+The central operator receives the real proof push as implemented in #162.
+After approving/rejecting that original proof, show an existing-section
+Rich outcome with functional Review receipts / Invoices navigation; /cancel
+also returns to a navigable Rich result without changing funds.
+
+A new AFTER INSERT financial decision trigger records one durable
+recipient notification per reviewed attempt (migration 0087). The existing
+central monitor claims and sends it from the ORIGINAL customer-facing bot
+to the same verified owner chat that submitted the proof. Reject: include
+actual reason and explain invoice remains unpaid. Approve: report actual
+bank verification. RU/EN. No new menus, duplicate buttons or runtime
+supervisors. Retry transport failures independently of the bank ledger;
+older decisions are deliberately not re-sent on rollout. Account billing
+holds, trial and live switches are unchanged.
+
+---
+
 ## 2026-11-14 — Owner-network debt enforcement and 12h proof review (PR #162)
 
 **This later owner-approved enforcement decision supersedes the PR #161

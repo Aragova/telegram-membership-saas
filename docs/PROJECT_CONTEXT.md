@@ -1,3 +1,25 @@
+## 2026-11-14 — Operator bank-review completion + payer result (PR #163)
+
+The live staging #162 proof push works. However operator payment review
+ended with a plain confirmation/rejection message and no navigation, and
+the payer's receiving bot never learned the result. PR #163 fixes BOTH
+without creating duplicate operator menus: an existing-section Rich outcome
+card links to the current proof queue and Invoices, including on /cancel.
+Bank approval/rejection remains solely operator-controlled; unverified
+proofs are never automatically paid.
+
+Migration 0087 adds an owner-only RLS financial decision outbox triggered
+atomically by original approval/rejection inserts. The existing CENTRAL
+monitor worker delivers the result from the same customer bot that received
+the original proof, with RU/EN status, amount, rejection reason, and
+instructions to reopen the existing Bill menu. A failed Telegram delivery
+retries without changing the immutable bank decision or buyer access.
+Do not include a new test button, duplicate worker, bot-owner menu, or
+global access to tenant tokens. The historic already-rejected staging proof
+is not replayed; new decisions after migration are delivered.
+
+---
+
 ## 2026-11-14 — Unified PR #162, approved six-part commercial enforcement
 
 PR #162 is a single integrated DRAFT for the owner's explicitly approved next

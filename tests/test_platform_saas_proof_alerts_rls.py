@@ -174,6 +174,63 @@ async def test_new_proof_push_once_operator_only_and_cancel_if_reviewed():
                 assert await _call(
                     conn, "platform_saas_proof_alert_claim", {},
                 ) is None
+                # The exact rejected bank decision atomically enqueues one
+                # result for the original bot/chat, not a second UI queue.
+                await _identity(conn, outsider)
+                with pytest.raises(DBAPIError) as private:
+                    async with conn.begin_nested():
+                        await _call(conn, "platform_saas_review_result_claim", {})
+                assert getattr(private.value.orig, "sqlstate", None) == "42501"
+                await _identity(conn, operator)
+                rejected = await _call(
+                    conn, "platform_saas_review_result_claim", {},
+                )
+                assert rejected["id"] == str(second)
+                assert rejected["decision"] == "rejected"
+                assert rejected["source_bot"] == source_bot_id
+                assert rejected["source_chat"] == merchant_tg
+                assert rejected["source_project"] == str(project)
+                assert rejected["reason"] == "TEST BANK FUNDS NOT RECEIVED"
+                assert rejected["generation"] == 1
+                assert await _call(conn, "platform_saas_review_result_claim", {}) is None
+                assert not await _call(
+                    conn, "platform_saas_review_result_finish", {
+                        "attempt": second, "generation": 0, "sent": True,
+                    }, json=False,
+                )
+                assert await _call(
+                    conn, "platform_saas_review_result_finish", {
+                        "attempt": second, "generation": 1, "sent": True,
+                    }, json=False,
+                )
+                assert await _call(conn, "platform_saas_review_result_claim", {}) is None
+
+                await _call(conn, "platform_saas_v2_approve_attempt", {
+                    "attempt": first,
+                    "bank_reference": "TEST_VERIFIED_BANK_REFERENCE_123",
+                }, json=False)
+                approved = await _call(
+                    conn, "platform_saas_review_result_claim", {},
+                )
+                assert approved["id"] == str(first)
+                assert approved["decision"] == "approved"
+                assert approved["source_chat"] == merchant_tg
+                assert approved["reason"] is None
+                assert await _call(
+                    conn, "platform_saas_review_result_finish", {
+                        "attempt": first, "generation": 1, "sent": False,
+                    }, json=False,
+                )
+                # Durable failed-delivery row remains pending; financial
+                # decision is immutable and no extra outbox row is created.
+                await conn.execute(text("SET LOCAL ROLE postgres"))
+                rows = (await conn.execute(text(
+                    "SELECT attempt_id,decision,status FROM "
+                    "platform_saas_review_result_outbox "
+                    "WHERE attempt_id IN (:first,:second)"
+                ), {"first": first, "second": second})).all()
+                assert len(rows) == 2
+                assert {row.decision for row in rows} == {"approved", "rejected"}
             finally:
                 await outer.rollback()
     finally:

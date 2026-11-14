@@ -908,6 +908,68 @@ def create_platform_dashboard_router(
         bank_navigation.pending if bank_navigation is not None else set()
     )
     pending_v2_review: dict[int, tuple[UUID, bool]] = {}
+
+    async def _show_review_result(
+        bot: Bot, *, operator_chat: int, outcome: str,
+        reason: str = "",
+    ) -> None:
+        """One readable Rich result and paths to existing financial screens."""
+        if outcome not in ("approved", "rejected", "cancelled"):
+            raise ValueError("Unknown bank review result")
+        heading = {
+            "approved": tr("✅ ViMi Pay · Оплата подтверждена",
+                           "✅ ViMi Pay · Payment confirmed"),
+            "rejected": tr("❌ ViMi Pay · Чек отклонён",
+                           "❌ ViMi Pay · Receipt rejected"),
+            "cancelled": tr("↩️ ViMi Pay · Проверка отменена",
+                            "↩️ ViMi Pay · Review cancelled"),
+        }[outcome]
+        detail = {
+            "approved": tr(
+                "Банковское поступление подтверждено. "
+                "Уведомление администратору поставлено в отправку.",
+                "Bank funds verified. The merchant notification is queued.",
+            ),
+            "rejected": tr(
+                "Заявка отклонена. Счёт остаётся неоплаченным. "
+                "Уведомление администратору поставлено в отправку.",
+                "Receipt rejected. The invoice remains unpaid. "
+                "The merchant notification is queued.",
+            ),
+            "cancelled": tr(
+                "Решение не принято. Чек остаётся в списке проверки.",
+                "No decision was made. The receipt remains in the review queue.",
+            ),
+        }[outcome]
+        reason_label = tr("Причина", "Reason")
+        safe_reason = escape(reason.strip())
+        reason_row = (
+            "<tr><th>" + reason_label + "</th><td>"
+            + safe_reason + "</td></tr>"
+            if outcome == "rejected" else ""
+        )
+        rich = (
+            "<h3>" + heading + "</h3>"
+            "<table bordered compact>"
+            "<tr><th>" + tr("Результат", "Result") + "</th><td>"
+            + escape(detail) + "</td></tr>"
+            + reason_row + "</table>"
+        )
+        classic = (
+            "<b>" + heading + "</b>\n"
+            + detail
+            + (("\n" + reason_label + ": " + safe_reason)
+               if outcome == "rejected" else "")
+        )
+        await send_owner_rich(
+            bot, chat_id=operator_chat,
+            rich_html=rich, classic_html=classic,
+            reply_markup=_keyboard([
+                [_button(tr("🧾 Проверка чеков", "🧾 Review receipts"),
+                         "v2proofs:0")],
+                [_button(tr("⬅️ Счета", "⬅️ Invoices"), "billing:0")],
+            ]),
+        )
     pending_v2_method: dict[int, str] = {}
     pending_catalog: dict[int, dict] = (
         bank_navigation.catalog_pending if bank_navigation is not None else {}
@@ -1110,9 +1172,9 @@ def create_platform_dashboard_router(
         attempt, approve = pending_v2_review[user.id]
         if _editor_command(message.text) == "/cancel":
             pending_v2_review.pop(user.id, None)
-            await bot.send_message(user.id, tr(
-                "Проверка отменена.", "Review canceled.",
-            ))
+            await _show_review_result(
+                bot, operator_chat=user.id, outcome="cancelled",
+            )
             return
         if _editor_command(message.text):
             await bot.send_message(user.id, tr(
@@ -1164,12 +1226,11 @@ def create_platform_dashboard_router(
             ))
             return
         pending_v2_review.pop(user.id, None)
-        await bot.send_message(user.id, tr(
-            "✅ Банковское поступление подтверждено." if approve
-            else "❌ Заявка отклонена.",
-            "✅ Bank payment confirmed." if approve
-            else "❌ Payment attempt rejected.",
-        ))
+        await _show_review_result(
+            bot, operator_chat=user.id,
+            outcome="approved" if approve else "rejected",
+            reason="" if approve else value,
+        )
 
 
     @router.message(_PlatformSaasMethodEntryFilter(pending_catalog))
