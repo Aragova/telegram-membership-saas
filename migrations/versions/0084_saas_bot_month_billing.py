@@ -1956,6 +1956,47 @@ END; $fn$
       FROM PUBLIC
     """)
 
+
+    # Manual complimentary grants are not payment requests. They need their
+    # own bot-scoped hold gate, otherwise an unpaid merchant could keep
+    # handing out free premium access even while checkout is frozen.
+    # Paid entitlements, historic grants, file deliveries and their cleanup
+    # never pass this INSERT/source='manual' gate.
+    op.execute("""
+CREATE FUNCTION public.platform_saas_guard_held_manual_grant()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $guard$
+DECLARE
+  scoped uuid;
+  source_bot uuid;
+  active_bots integer;
+BEGIN
+  IF TG_OP<>'INSERT' OR NEW.source<>'manual' THEN RETURN NEW; END IF;
+  scoped:=NULLIF(current_setting('app.current_project_id',true),'')::uuid;
+  IF scoped IS DISTINCT FROM NEW.project_id THEN RETURN NEW; END IF;
+  SELECT count(*),max(b.id::text)::uuid INTO active_bots,source_bot
+  FROM public.bot_instances b
+  WHERE b.project_id=NEW.project_id AND b.status='registered';
+  IF active_bots=1 AND public.platform_saas_bot_hold_state(
+    source_bot,clock_timestamp()
+  )='held' THEN
+    RAISE EXCEPTION 'New complimentary access is on ViMi Pay hold'
+      USING ERRCODE='P6711';
+  END IF;
+  RETURN NEW;
+END; $guard$
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_hold_new_manual_grant
+      BEFORE INSERT ON public.entitlement_grants
+      FOR EACH ROW EXECUTE FUNCTION
+      public.platform_saas_guard_held_manual_grant()
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+      public.platform_saas_guard_held_manual_grant() FROM PUBLIC
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
