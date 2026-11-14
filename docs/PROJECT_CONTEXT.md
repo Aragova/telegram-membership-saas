@@ -1,29 +1,23 @@
-## 2026-11-14 — PR #161: one merchant Rich bill (draft, NOT deployed)
+## 2026-11-14 — PR #161: BOT-scoped anniversary invoices, full settlement
 
-Owner rejected the separate issued-invoice list from merged #160. The
-connected admin bot's single `🧾 Счёт` must show a concise Rich bill with
-(1) account-wide unpaid service, (2) this bot's actual completed subscription
-turnover by currency and sales count, with provisional 5% for the current
-Moscow month, (3) files similarly, and (4) the real account-wide amount
-payable across service and **already-issued** commission, after receipts and
-verified refunds. Current-month unissued commission must not inflate the
-payable balance. Keep RU/EN and HTML fallback. Central account billing shows
-all account sales without requiring a still-connected bot.
+Approved binding decision: one bot → one monthly invoice; first bill after
+72h trial has service only; every later bill has next-period service plus
+5% of its own subscriptions/files from the previous completed anniversary
+period. No cross-bot total, no owner-account pay chooser, no 25%/50% payment
+attempts, no 7-day commission due delay and no 7-day hold grace. Freeze only
+the bot whose invoice is due/unpaid, never another owner's bot or another
+bot of the same owner. Buyer entitlements, old orders, support and cleanup
+continue. Central owner sees historical audit; connected admin sees its own
+one RU/EN Rich invoice with service, subscriptions, files, count, gross,
+5%, confirmed payment and total due.
 
-PR #161 uses a new read-only, owner-checked summary RPC, unchanged issuer /
-refund / bank ledgers and a single contextual Pay button. Existing payment
-attempts only settle one canonical invoice: one open obligation goes directly
-to the current central-catalog selector; multiple obligations use one hidden
-pay-only allocation chooser, NOT separate main-menu bills. A true one-bank-
-transfer-to-many-invoices operation is NOT implemented and needs an atomic
-multi-invoice allocation design before offering it. Never claim the summary
-total was paid by a partial individual-invoice receipt. Legacy callbacks
-remain usable; unused service-only preview routines were removed.
-
-This is an **unmerged draft** requiring exact-HEAD PostgreSQL CI, review,
-owner approval and a separate staging deployment. No new test controls, bot
-workers, commercial billing activation, or `compose.light100.yaml` changes.
-See `docs/PLATFORM_COMMERCIAL_BILLING_V2.md`.
+PR #161 updates migration 0083 read-only per-bot invoice and migration 0084
+anniversary issuance, verified sale attribution, full payment and per-bot
+hold functions, and central-catalog checkout. Retain historical separate
+commission invoice rows for audit; new due reconciliation must not create
+more. No commercial activation, new test controls, duplicate supervisor,
+bot worker changes or staging deployment on migration. Exact-head CI/review
+required before merge. See PLATFORM_COMMERCIAL_BILLING_V2.md.
 
 ---
 
