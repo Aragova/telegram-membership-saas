@@ -734,7 +734,7 @@ def _saas_invoice_text(report) -> str:
         tr("Неоплаченных всего: ", "Total unpaid: ") + str(report.unpaid),
         tr("К оплате сейчас: ", "Due now: ")
         + escape(format(getattr(report, "due_now_rub", report.unpaid_rub), ".2f")) + " ₽",
-        tr("Предстоящие счета: ", "Upcoming invoices: ")
+        tr("Выставлены заранее: ", "Issued ahead of due date: ")
         + str(getattr(report, "upcoming_count", 0)) + " · "
         + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽",
         tr("Получено: ", "Received: ")
@@ -745,11 +745,11 @@ def _saas_invoice_text(report) -> str:
             "Commercial holds: <b>active</b>" if report.holds_enabled
             else "Commercial holds: <b>off</b>",
         ),
-        tr("Льготный период: ", "Grace period: ")
-        + str(report.grace_days) + tr(" дн.", " days"),
+        tr("Защита при проверке чека: до 12 ч.",
+           "Pending receipt review protection: up to 12h."),
         tr("Просрочивших владельцев: ", "Owners on hold: ")
         + str(report.held_owners),
-        tr("В льготном периоде: ", "In grace period: ")
+        tr("Ожидают решения по чеку: ", "Awaiting receipt decision: ")
         + str(report.grace_owners),
         "",
     ]
@@ -762,15 +762,15 @@ def _saas_invoice_text(report) -> str:
         due = datetime.fromisoformat(str(item["due_at"]).replace("Z", "+00:00"))
         status = (
             tr("Оплачен", "Paid") if item["status"] == "paid"
-            else tr("Плановый счёт", "Upcoming")
+            else tr("Выставлен · срок не наступил", "Issued · not yet due")
             if due > datetime.now(ZoneInfo("UTC"))
-            else tr("Ожидается оплата", "Awaiting payment")
+            else tr("Просрочен", "Overdue")
         )
         lines.extend([
             "• <b>" + escape(str(item["kind"])) + "</b>: "
             + escape(str(item["total_rub"])) + " ₽",
             "  " + status + " · "
-            + due.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y"),
+            + due.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M МСК"),
         ])
     lines.extend([
         "",
@@ -1613,29 +1613,27 @@ def create_platform_dashboard_router(
                 items = result["items"]
                 if not items:
                     lines.append(tr("Новых заявок нет.", "No new submissions."))
-                for item in items:
+                for index, item in enumerate(items, start=1):
                     attempt_id = UUID(str(item["id"]))
                     token = encode_uuid(attempt_id)
+                    submitted = datetime.fromisoformat(
+                        str(item["submitted_at"]).replace("Z", "+00:00"),
+                    ).astimezone(ZoneInfo(config.platform_timezone))
                     lines.append(
-                        "\n№ <code>" + escape(str(attempt_id)) + "</code>\n"
-                        + tr("Счёт: ", "Invoice: ")
-                        + "<code>" + escape(str(item["invoice_id"])) + "</code>\n"
+                        "\n" + tr("🧾 <b>Чек №", "🧾 <b>Receipt #")
+                        + str(page * 8 + index) + "</b>\n"
                         + tr("Сумма: ", "Amount: ") + "<b>"
                         + escape(str(item["amount"]) + " " + str(item["currency"]))
-                        + "</b> · " + escape(str(item["rub"])) + " ₽\n"
-                        + tr("Источник: бот ", "Source: bot ")
-                        + escape(str(item["source_bot"]))
-                        + tr(", чат ", ", chat ")
-                        + escape(str(item["source_chat"]))
-                        + tr(", сообщение ", ", message ")
-                        + escape(str(item["source_message"]))
+                        + "</b>\n"
+                        + tr("Получен: ", "Received: ")
+                        + escape(submitted.strftime("%d.%m.%Y %H:%M"))
                     )
                     rows.append([
                         _button(tr("📎 Чек", "📎 Receipt"),
                                 "v2proof:" + token + ":" + page_token),
-                        _button("✅ #" + str(attempt_id)[:8],
+                        _button(tr("✅ Подтвердить", "✅ Approve"),
                                 "v2review:ok:" + token + ":" + page_token),
-                        _button("❌ #" + str(attempt_id)[:8],
+                        _button(tr("❌ Отклонить", "❌ Reject"),
                                 "v2review:no:" + token + ":" + page_token),
                     ])
                 nav = []
