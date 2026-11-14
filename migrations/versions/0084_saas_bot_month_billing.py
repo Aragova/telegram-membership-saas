@@ -497,6 +497,12 @@ END; $f$
     """)
     op.execute("""
       REVOKE ALL ON FUNCTION
+      public.platform_saas_bot_previous_sales(
+        uuid,timestamptz,timestamptz,uuid,uuid
+      ) FROM PUBLIC
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
       public.platform_saas_bot_period_end(uuid,timestamptz) FROM PUBLIC
     """)
 
