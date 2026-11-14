@@ -12,7 +12,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from test_platform_saas_invoice_rls import _invoice, _line, _project, _tid
 from test_platform_saas_proof_view_rls import _call, _identity
 
