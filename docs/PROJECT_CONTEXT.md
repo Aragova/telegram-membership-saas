@@ -22,7 +22,7 @@ automatic webhook deletion is introduced.
 
 The same existing CustomerBotSupervisor progressively spaces out repeated
 worker failures (45s, 90s, 180s, capped 300s, with per-project jitter),
-resetting on a stable five-minute run or planned restart. This prevents
+resetting on a stable five-minute run, planned restart, or changed registration/token version even if the previous worker has exited. This prevents
 simultaneous repeated getMe waves after a brief provider outage while
 preserving normal planned token-rotation behavior. No extra workers,
 menus, migrations, payment changes, or database permissions.
