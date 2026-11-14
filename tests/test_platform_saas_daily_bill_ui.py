@@ -6,7 +6,7 @@ import pytest
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup.handlers import (
-    _saas_invoices_rich,
+    _saas_invoice_button_label,
     _saas_preview_classic,
     _saas_preview_rich,
     _saas_stars_rich,
@@ -155,16 +155,15 @@ def test_real_stars_refunds_show_separate_unapplied_credits(lang, expected):
     )
 
 
-def test_saas_invoice_counts_are_separate_from_turnover():
-    report = SimpleNamespace(
-        total=0, unpaid=0, outstanding_rub=Decimal("0"),
-        invoices=[], configured=False, instructions=None,
-    )
+def test_invoice_button_uses_product_label_not_ledger_uuid():
+    identifier = "be097af9-cb55-46b9-91be-101b52050042"
     token = _language.set("ru")
     try:
-        html = _saas_invoices_rich(report)
+        name = _saas_invoice_button_label({
+            "id": identifier, "kind": "prepayment",
+            "status": "unpaid", "amount_rub": "150.00",
+        })
     finally:
         _language.reset(token)
-    assert "<h4>📑 Счета платформы</h4>" in html
-    assert "<table bordered compact>" in html
-    assert "Счетов к оплате пока нет." in html
+    assert name == "🧾 Обслуживание ViMi Pay · 150.00 ₽"
+    assert identifier[:8] not in name
