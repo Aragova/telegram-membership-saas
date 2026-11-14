@@ -319,6 +319,30 @@ _ERROR_TEXT = {
         "Запуск бота не дошёл до первого getUpdates за 120 секунд",
         "Bot startup did not reach its first getUpdates within 120 seconds",
     ),
+    "startup_initializing_stalled": (
+        "Запуск: загрузка настроек и токена не завершилась за 120 секунд",
+        "Startup: settings/credential load exceeded 120 seconds",
+    ),
+    "startup_identity_stalled": (
+        "Запуск: проверка getMe не завершилась за 120 секунд",
+        "Startup: getMe verification exceeded 120 seconds",
+    ),
+    "startup_webhook_stalled": (
+        "Запуск: проверка getWebhookInfo не завершилась за 120 секунд",
+        "Startup: getWebhookInfo verification exceeded 120 seconds",
+    ),
+    "startup_resource_stalled": (
+        "Запуск: проверка прав в канале не завершилась за 120 секунд",
+        "Startup: channel permission verification exceeded 120 seconds",
+    ),
+    "startup_commands_stalled": (
+        "Запуск: настройка команд меню не завершилась за 120 секунд",
+        "Startup: command menu setup exceeded 120 seconds",
+    ),
+    "startup_polling_stalled": (
+        "Запуск: не начался первый запрос getUpdates за 120 секунд",
+        "Startup: first getUpdates was not started within 120 seconds",
+    ),
     "polling_handler_stalled": (
         "Обработчик входящего события блокирует следующий getUpdates более 90 секунд",
         "An update handler has blocked the next getUpdates for over 90 seconds",

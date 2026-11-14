@@ -50,6 +50,7 @@ from telegram_membership_saas.telegram_menus import install_public_commands
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
+CUSTOMER_COMMAND_INSTALL_TIMEOUT_SECONDS = 12.0
 
 
 class ObservedCustomerBot(RichUiBot):
@@ -134,8 +135,13 @@ async def load_customer_bot(
     )
 
 
-async def check_customer_bot_identity(bot: Bot, telegram_bot_id: int) -> None:
+async def check_customer_bot_identity(
+    bot: Bot, telegram_bot_id: int, *,
+    on_startup_stage: Callable[[str], None] | None = None,
+) -> None:
     """Fail closed at the EXACT stage while preserving token secrecy."""
+    if on_startup_stage is not None:
+        on_startup_stage("identity")
     try:
         actual = await retry_telegram_preflight(bot.get_me)
     except Exception as exc:
@@ -145,6 +151,8 @@ async def check_customer_bot_identity(bot: Bot, telegram_bot_id: int) -> None:
     if actual.id != telegram_bot_id or not actual.is_bot:
         raise CustomerBotDiagnosticError("identity_mismatch")
 
+    if on_startup_stage is not None:
+        on_startup_stage("webhook")
     try:
         webhook = await retry_telegram_preflight(bot.get_webhook_info)
     except Exception as exc:
@@ -161,8 +169,11 @@ async def verify_resource_permissions(
     *,
     project_id: UUID,
     bot: Bot,
+    on_startup_stage: Callable[[str], None] | None = None,
 ) -> None:
     """Refuse sales if the customer bot cannot grant and revoke channel access."""
+    if on_startup_stage is not None:
+        on_startup_stage("resource")
     async with system_project_session_scope(session_factory, project_id) as session:
         resources = list((await session.scalars(
             select(Resource).where(
@@ -210,6 +221,7 @@ async def run_customer_bot_instance(
     on_poll_response: Callable[[], None] | None = None,
     on_poll_failure: Callable[[str], None] | None = None,
     on_poll_request: Callable[[], None] | None = None,
+    on_startup_stage: Callable[[str], None] | None = None,
 ) -> None:
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
@@ -220,6 +232,8 @@ async def run_customer_bot_instance(
     polling: asyncio.Task[None] | None = None
     dispatcher = None
     try:
+        if on_startup_stage is not None:
+            on_startup_stage("initializing")
         config = await load_customer_bot(
             session_factory,
             project_id=project_id,
@@ -235,12 +249,24 @@ async def run_customer_bot_instance(
         except Exception:
             raise RuntimeError("Customer bot credential is invalid") from None
 
-        await check_customer_bot_identity(bot, config.telegram_bot_id)
+        await check_customer_bot_identity(
+            bot, config.telegram_bot_id, on_startup_stage=on_startup_stage,
+        )
         await verify_resource_permissions(
-            session_factory, project_id=project_id, bot=bot
+            session_factory, project_id=project_id, bot=bot,
+            on_startup_stage=on_startup_stage,
         )
         dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
-        await install_public_commands(bot, customer=True)
+        if on_startup_stage is not None:
+            on_startup_stage("commands")
+        try:
+            # A best-effort native menu must never block the buyer poller.
+            await asyncio.wait_for(
+                install_public_commands(bot, customer=True),
+                timeout=CUSTOMER_COMMAND_INSTALL_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning("Customer native command menu setup timed out")
         worker = asyncio.create_task(
             run_project_runtime_loop(
                 session_factory,
@@ -269,6 +295,8 @@ async def run_customer_bot_instance(
         if on_started is not None:
             await on_started()
         logger.info("Customer bot ready for project %s", project_id)
+        if on_startup_stage is not None:
+            on_startup_stage("polling")
         # The supervisor can run many independent dispatchers inside one
         # process; only the top-level app should own OS signals.
         polling = asyncio.create_task(

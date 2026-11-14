@@ -232,6 +232,16 @@ async def run_target(
             last_poll_response: float | None = None
             last_poll_failure: str | None = None
             poll_inflight = False
+            startup_stage: str | None = None
+
+            def observed_startup_stage(stage: str) -> None:
+                nonlocal startup_stage
+                # Only fixed internal labels. No Telegram error text or tokens.
+                if stage in {
+                    "initializing", "identity", "webhook", "resource",
+                    "commands", "polling",
+                }:
+                    startup_stage = stage
 
             def observed_poll_request() -> None:
                 nonlocal first_poll_request_at, poll_inflight
@@ -265,7 +275,11 @@ async def run_target(
                         # Do not count getMe, webhook, channel checks or
                         # command installation against the polling deadline.
                         if now_at - booted_at > STARTUP_STALE_SECONDS:
-                            raise CustomerBotDiagnosticError("startup_stalled")
+                            code = (
+                                f"startup_{startup_stage}_stalled"
+                                if startup_stage is not None else "startup_stalled"
+                            )
+                            raise CustomerBotDiagnosticError(code)
                     else:
                         silence = now_at - (
                             last_ok if last_ok is not None else first_request
@@ -291,6 +305,7 @@ async def run_target(
                 settings=settings, on_poll_response=observed_poll_response,
                 on_poll_failure=observed_poll_failure,
                 on_poll_request=observed_poll_request,
+                on_startup_stage=observed_startup_stage,
             ))
             guard = asyncio.create_task(heartbeat())
             try:
