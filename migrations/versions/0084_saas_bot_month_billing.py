@@ -17,6 +17,55 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Operational service coverage is separate from immutable invoice
+    # financial snapshots. A late confirmed payment must never generate
+    # successive catch-up bills for frozen, unused months.
+    op.execute("""
+      CREATE TABLE public.platform_saas_bot_service_activations (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        invoice_id uuid NOT NULL UNIQUE REFERENCES
+          public.platform_saas_invoices(id) ON DELETE RESTRICT,
+        bot_instance_id uuid NOT NULL,
+        owner_user_id uuid NOT NULL REFERENCES
+          public.telegram_users(id) ON DELETE RESTRICT,
+        anniversary_anchor timestamptz NOT NULL,
+        effective_start timestamptz NOT NULL,
+        effective_end timestamptz NOT NULL,
+        activated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+        CONSTRAINT ck_saas_bot_activation_dates CHECK(
+          effective_end>effective_start AND
+          anniversary_anchor<=effective_start
+        )
+      )
+    """)
+    op.execute("""
+      ALTER TABLE public.platform_saas_bot_service_activations
+        ENABLE ROW LEVEL SECURITY
+    """)
+    op.execute("""
+      ALTER TABLE public.platform_saas_bot_service_activations
+        FORCE ROW LEVEL SECURITY
+    """)
+    op.execute("""
+      REVOKE ALL ON TABLE public.platform_saas_bot_service_activations
+        FROM PUBLIC
+    """)
+    op.execute("""
+      DO $rev$
+      BEGIN
+        IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+        THEN REVOKE ALL ON TABLE
+          public.platform_saas_bot_service_activations
+          FROM membership_runtime;
+        END IF;
+      END $rev$
+    """)
+    op.execute("""
+      CREATE TRIGGER trg_saas_bot_activation_immutable
+      BEFORE UPDATE OR DELETE ON public.platform_saas_bot_service_activations
+      FOR EACH ROW
+      EXECUTE FUNCTION public.platform_saas_credit_entry_immutable()
+    """)
     op.execute("""
       ALTER TABLE public.platform_saas_hold_control
       ALTER COLUMN grace_days SET DEFAULT 0
