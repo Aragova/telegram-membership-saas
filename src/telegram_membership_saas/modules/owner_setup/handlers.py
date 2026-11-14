@@ -13,7 +13,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, F, Router
-from aiogram.exceptions import AiogramError
+from aiogram.exceptions import AiogramError, TelegramBadRequest
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
@@ -157,7 +157,6 @@ from telegram_membership_saas.modules.owner_setup.premium_welcome import (
     central_welcome_classic,
     central_welcome_rich,
     trial_status_classic,
-    trial_status_rich,
 )
 from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
     rich_channel_card,
@@ -229,13 +228,10 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
     issued_quote_classic,
     issued_quote_rich,
     quote_fingerprint,
-    unified_monthly_classic,
-    unified_monthly_rich,
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_statements,
     merchant_saas_trial_status,
-    merchant_saas_unified_monthly_preview,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
     lock_saas_invoice_currency_expected,
@@ -246,8 +242,6 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_catalog_for_invoice,
     saas_price_profile,
-    saas_v2_available_methods,
-    saas_v2_create_attempt,
     saas_v2_invoice_balance,
     saas_v3_create_attempt,
 )
@@ -490,94 +484,72 @@ def _decode_saas_page(token: str) -> int:
     return page
 
 
-def _saas_invoice_is_upcoming(item: dict) -> bool:
-    """Only a future UTC due date is 'upcoming'; never infer paid status."""
-    value = item.get("due_at")
-    if not value:
-        return False
-    try:
-        due = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    return due.tzinfo is not None and due > datetime.now(ZoneInfo("UTC"))
+async def _show_saas_payment_step(
+    bot: Bot, query: CallbackQuery, html: str,
+    rows: list[list[InlineKeyboardButton]],
+) -> None:
+    """Edit the current selector instead of stacking payment menu cards.
+
+    A Rich/old Telegram message may not be editable; one fallback send is
+    allowed. Creating the actual immutable payment attempt is separate.
+    """
+    markup = _markup(rows)
+    msg = query.message
+    message_id = getattr(msg, "message_id", None)
+    if message_id is not None:
+        try:
+            await bot.edit_message_text(
+                html, chat_id=query.from_user.id,
+                message_id=message_id, parse_mode="HTML",
+                reply_markup=markup,
+            )
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+        except AiogramError:
+            # Rich or historical message cannot be edited. A fresh selector
+            # is still better than leaving the payer at a dead button.
+            pass
+    await bot.send_message(
+        query.from_user.id, html, parse_mode="HTML", reply_markup=markup,
+    )
 
 
-def _saas_invoices_rich(report) -> str:
-    """Keep platform invoices a separate compact Rich section."""
-    items = [
-        "<h4>" + tr("📑 Счета платформы", "📑 Platform invoices") + "</h4>",
-        "<table bordered compact>",
-        "<tr><td>" + tr("Выставлено", "Issued") + "</td><td>"
-        + str(report.total) + "</td></tr>",
-        "<tr><td>" + tr("Все неоплаченные", "All unpaid") + "</td><td>"
-        + str(report.unpaid) + "</td></tr>",
-        "<tr><td>" + tr("К оплате сейчас", "Due now") + "</td><td>"
-        + escape(format(
-            getattr(report, "due_now_rub", report.outstanding_rub), ".2f",
-        )) + " ₽</td></tr>",
-        "<tr><td>" + tr("Предстоящие счета", "Upcoming invoices") + "</td><td>"
-        + str(getattr(report, "upcoming_count", 0)) + " · "
-        + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽</td></tr>",
-    ]
-    pending_count = getattr(report, "pending_credit_count", 0)
-    if pending_count:
-        items.append(
-            "<tr><td>" + tr("↩️ Возвраты без зачёта",
-                              "↩️ Credits not allocated") + "</td><td>"
-            + escape(format(report.pending_credit_rub, ".2f"))
-            + " ₽ · " + str(pending_count) + "</td></tr>"
-        )
-    items.append("</table>")
-    if not report.invoices:
-        items.append("<p>" + tr(
-            "Счетов к оплате пока нет.", "No platform invoices yet.",
-        ) + "</p>")
-    for inv in report.invoices:
-        title = (
-            tr("Обслуживание", "Service") if inv["kind"] == "prepayment"
-            else tr("Комиссия", "Commission")
-        )
-        state = (
-            tr("Оплачено", "Paid") if inv["status"] == "paid"
-            else tr("Плановый счёт, срок ещё не наступил", "Upcoming, not due yet")
-            if _saas_invoice_is_upcoming(inv)
-            else tr("Ожидает оплаты", "Awaiting payment")
-        )
-        settlement = inv.get("settlement") or {}
+def _saas_currency_label(code: str) -> str:
+    return {
+        "RUB": tr("₽ Рубли", "₽ Rubles"),
+        "USD": tr("$ Доллары", "$ US dollars"),
+        "EUR": tr("€ Евро", "€ Euros"),
+        "UAH": tr("₴ Гривны", "₴ Hryvnias"),
+        "BYN": tr("Br Бел. рубли", "Br Belarusian rubles"),
+    }[code]
+
+
+def _saas_method_label(name: object, currency: str) -> str:
+    label = str(name).strip()
+    if not label or label.upper() == currency:
+        return tr("Оплата по реквизитам", "Payment instructions")
+    return label
+
+
+def _saas_invoice_button_label(item: dict) -> str:
+    """Human-friendly bill names; immutable invoice IDs stay in callbacks."""
+    kind = (
+        tr("Обслуживание ViMi Pay", "ViMi Pay service")
+        if item["kind"] == "prepayment"
+        else tr("Комиссия ViMi Pay", "ViMi Pay commission")
+    )
+    settlement = item.get("settlement") or {}
+    if settlement.get("locked"):
         amount = (
-            str(settlement["amount"]) + " " + str(settlement["currency"])
-            if settlement.get("locked") else str(inv["amount_rub"]) + " ₽"
+            f"{Decimal(str(settlement['amount'])):.2f} "
+            + str(settlement["currency"])
         )
-        items.append(
-            "<p><b>" + escape(title) + ": "
-            + escape(amount) + "</b> · "
-            + escape(state) + "</p>"
-        )
-        if settlement.get("locked") and settlement.get("currency") != "RUB":
-            items.append("<p><i>" + tr("Рублёвая база: ",
-                                    "RUB reference: ")
-                         + escape(str(inv["amount_rub"])) + " ₽</i></p>")
-        items.append(
-            "<p>№ <code>" + escape(str(inv["id"])) + "</code> · "
-            + tr("Срок: ", "Due: ")
-            + escape(str(inv["due_at"])[:10]) + "</p>"
-        )
-    if report.unpaid:
-        items.append("<p>" + tr(
-            "💳 Нажмите «Оплатить» у нужного счёта, чтобы выбрать "
-            "валюту и актуальные способы оплаты ViMi Pay. "
-            "Реквизиты появятся после выбора способа.",
-            "💳 Press Pay on the invoice to choose currency and the "
-            "current ViMi Pay payment methods. Instructions appear "
-            "after selecting a method.",
-        ) + "</p>")
-    items.append("<p><i>" + tr(
-        "Это счета ViMi Pay, не счета ваших покупателей. "
-        "Оплаченный доступ сохраняется.",
-        "ViMi Pay charges, not your customers' invoices. "
-        "Previously paid access is retained.",
-    ) + "</i></p>")
-    return "\n".join(items)
+    else:
+        amount = f"{Decimal(str(item['amount_rub'])):.2f} ₽"
+    icon = "✅" if item["status"] == "paid" else "🧾"
+    return icon + " " + kind + " · " + amount
 
 
 def _saas_preview_classic(preview: dict) -> str:
@@ -1069,140 +1041,49 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID | None, *, page: int = 0,
     ) -> None:
+        """Only real platform invoices and a return to the main menu.
+
+        Sales reports, trial analytics and account status belong in their
+        existing dedicated views, not the entry point to Pay.
+        """
         report = await merchant_saas_statements(
             factory, actor_user_id=actor_id, project_id=project_id,
             page=page,
         )
-        service_price = await saas_price_profile(
-            factory, actor_id=actor_id, project_id=project_id,
-        )
-        trial = await merchant_saas_trial_status(
-            factory, actor_user_id=actor_id, project_id=project_id,
-        )
-        unified = None
-        if project_id is not None:
-            month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
-            unified = await merchant_saas_unified_monthly_preview(
-                factory, actor_user_id=actor_id,
-                project_id=project_id, month=month,
-            )
-        lines = [
-            tr("🧾 <b>ViMi Pay · Счета платформы</b>",
-               "🧾 <b>ViMi Pay · Platform invoices</b>"),
-            trial_status_classic(trial, timezone="Europe/Moscow"),
-            "",
-            tr("Всего: ", "Total: ") + str(report.total),
-            tr("Неоплаченных всего: ", "Total unpaid: ") + str(report.unpaid),
-            tr("К оплате сейчас: ", "Due now: ")
-            + escape(format(getattr(report, "due_now_rub", report.outstanding_rub), ".2f")) + " ₽",
-            tr("Плановые счета: ", "Upcoming: ")
-            + str(getattr(report, "upcoming_count", 0)) + " · "
-            + escape(format(getattr(report, "upcoming_rub", Decimal("0")), ".2f")) + " ₽",
-            tr("Тариф обслуживания: ", "Service price: ")
-            + ("$3 / " if service_price["currency"] == "USD"
-               else "150 ₽ / ")
-            + tr("бот в месяц", "bot per month"),
-            "",
-        ]
-        if getattr(report, "pending_credit_count", 0):
-            lines.append(
-                tr("↩️ Возвраты в ожидании зачёта: ",
-                   "↩️ Refund credits pending allocation: ")
-                + escape(format(report.pending_credit_rub, ".2f"))
-                + " ₽ (" + str(report.pending_credit_count) + ")"
-            )
-        if not report.invoices:
-            lines.append(tr("Счетов пока нет.", "No platform invoices yet."))
-        for item in report.invoices:
-            is_paid = item["status"] == "paid"
-            state = (
-                tr("Оплачен", "Paid") if is_paid
-                else tr("Срок ещё не наступил", "Not due yet")
-                if _saas_invoice_is_upcoming(item)
-                else tr("Ожидает оплаты", "Awaiting payment")
-            )
-            kind = (
-                tr("Обслуживание бота", "Bot service") if item["kind"] == "prepayment"
-                else tr("Комиссия с продаж", "Sales commission")
-            )
-            settlement = item.get("settlement") or {}
-            display_amount = (
-                str(settlement["amount"]) + " " + str(settlement["currency"])
-                if settlement.get("locked")
-                else str(item["amount_rub"]) + " ₽"
-            )
-            lines.extend([
-                ("✅ " if is_paid else "⏳ ") + "<b>"
-                + escape(display_amount) + "</b> · "
-                + escape(kind),
-                "  № <code>" + escape(str(item["id"])) + "</code>",
-                "  " + tr("Срок: ", "Due: ")
-                + escape(str(item["due_at"])[:10]) + " · " + state,
-            ])
-        if report.unpaid:
-            lines.append(tr(
-                "💳 Нажмите «Оплатить» рядом со счётом. Затем выберите "
-                "валюту и способ оплаты из списка ViMi Pay.",
-                "💳 Tap Pay on the invoice, then choose a currency and "
-                "one of ViMi Pay's available methods.",
-            ))
-        lines.append("")
-        lines.append(tr(
-            "<i>Это только счета за обслуживание ViMi Pay, "
-            "не счета ваших покупателей. Оплаченный доступ не отзывается.</i>",
-            "<i>These are platform service invoices, not customer "
-            "invoices. Previously paid access is preserved.</i>",
-        ))
-        # Service price profile is a settings field, NOT a Pay button.
         rows: list[list[InlineKeyboardButton]] = []
-        nav = []
+        for item in report.invoices:
+            rows.append([_button(
+                _saas_invoice_button_label(item),
+                "saasbill:" + encode_uuid(UUID(str(item["id"])))
+                + ":" + str(page),
+                "success" if item["status"] != "paid" else "primary",
+            )])
+        nav: list[InlineKeyboardButton] = []
         if page:
             nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
         if (page + 1) * 6 < report.total:
             nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
         if nav:
             rows.append(nav)
-        for item in report.invoices:
-            invoice_token=encode_uuid(UUID(str(item["id"])))
-            controls=[_button(
-                ("✅ " if item["status"] == "paid" else "🧾 ")
-                + str(item["id"])[:8] + " · "
-                + (
-                    str(item["settlement"]["amount"]) + " "
-                    + str(item["settlement"]["currency"])
-                    if (item.get("settlement") or {}).get("locked")
-                    else str(item["amount_rub"]) + " ₽"
-                ),
-                "saasbill:" + invoice_token + ":" + str(page),
-            )]
-            if item["status"] != "paid":
-                controls.append(_button(
-                    tr("💳 Оплатить", "💳 Pay"),
-                    "spm:" + invoice_token + ":RUB:" + _encode_saas_page(page),
-                    "success",
-                ))
-            rows.append(controls)
-        rows.append([_button(tr("🔄 Обновить", "🔄 Refresh"), "saasinvoices:" + str(page))])
         rows.append([_button(
-            tr("⬅️ Мои боты", "⬅️ My bots") if project_id is None
-            else tr("⬅️ Настройки", "⬅️ Settings"),
-            "projects" if project_id is None else "settings",
+            tr("🏠 Главное меню", "🏠 Main menu"),
+            "dashboard" if project_id is not None else "projects",
         )])
-        if unified is not None:
-            await send_owner_rich(
-                bot, chat_id=user_id,
-                rich_html=trial_status_rich(trial, timezone="Europe/Moscow") + "\n"
-                + unified_monthly_rich(unified) + "\n"
-                + _saas_invoices_rich(report),
-                classic_html=unified_monthly_classic(unified)
-                + "\n\n" + "\n".join(lines),
-                reply_markup=_markup(rows),
-            )
-        else:
-            await bot.send_message(
-                user_id, "\n".join(lines), parse_mode="HTML",
-                reply_markup=_markup(rows),
-            )
+        body = tr(
+            "🧾 <b>Счета ViMi Pay</b>\n\n"
+            "Выберите выставленный счёт:",
+            "🧾 <b>ViMi Pay invoices</b>\n\n"
+            "Select an issued invoice:",
+        ) if report.invoices else tr(
+            "🧾 <b>Счета ViMi Pay</b>\n\n"
+            "Выставленных счетов пока нет.",
+            "🧾 <b>ViMi Pay invoices</b>\n\n"
+            "No invoices have been issued yet.",
+        )
+        await bot.send_message(
+            user_id, body, parse_mode="HTML",
+            reply_markup=_markup(rows),
+        )
 
     async def show_saas_issued_invoice(
         bot: Bot, user_id: int, actor_id: UUID,
@@ -1239,8 +1120,7 @@ def create_owner_setup_router(
         buttons: list[list[InlineKeyboardButton]] = []
         if Decimal(str(balance["remaining_rub"])) > 0:
             buttons.append([_button(
-                tr("💳 Оплатить полностью или частично",
-                   "💳 Pay in full or partially"),
+                tr("💳 Оплатить", "💳 Pay"),
                 "spm:" + encode_uuid(invoice_id) + ":RUB:" + _encode_saas_page(page),
                 "success",
             )])
@@ -4119,8 +3999,10 @@ def create_owner_setup_router(
                         currency=available[0]
                     rows=[]
                     currencies=[_button(
-                        ("🟢 " if c==currency else "")+display_currency(c),
+                        ("✅ " if c==currency else "")
+                        + _saas_currency_label(c),
                         "spm:"+invoice_token+":"+c+":"+page_text,
+                        "success" if c==currency else "primary",
                     ) for c in available]
                     rows.extend(currencies[i:i+3] for i in
                                 range(0,len(currencies),3))
@@ -4128,7 +4010,9 @@ def create_owner_setup_router(
                         if method["currency"]!=currency:
                             continue
                         rows.append([_button(
-                            "💳 "+str(method["name"])[:43],
+                            "💳 "+_saas_method_label(
+                                method["name"],currency,
+                            )[:40],
                             "spv:"+invoice_token+":"+encode_uuid(
                                 UUID(str(method["id"])))+":"+currency
                             +":"+page_text,"success",
@@ -4137,16 +4021,20 @@ def create_owner_setup_router(
                         tr("⬅️ К счёту","⬅️ Invoice"),
                         "saasbill:"+invoice_token+":"+str(page),
                     )])
-                    await bot.send_message(
-                        user_id,
-                        tr("💳 <b>Оплата счёта ViMi Pay</b>\n"
-                           "Выберите валюту и способ оплаты.\n"
-                           "Остаток: ",
-                           "💳 <b>Pay ViMi Pay invoice</b>\n"
-                           "Choose currency and payment method.\n"
-                           "Remaining: ")
-                        +"<b>"+format(remaining,".2f")+" ₽</b>",
-                        parse_mode="HTML",reply_markup=_markup(rows),
+                    await _show_saas_payment_step(
+                        bot, query,
+                        tr(
+                            "💳 <b>Оплата ViMi Pay</b>\n"
+                            "Осталось оплатить: ",
+                            "💳 <b>ViMi Pay payment</b>\n"
+                            "Amount remaining: ",
+                        )
+                        +"<b>"+format(remaining,".2f")+" ₽</b>\n\n"
+                        +tr("Валюта: ","Currency: ")
+                        +escape(_saas_currency_label(currency))+"\n"
+                        +tr("Выберите способ оплаты:",
+                            "Choose a payment method:"),
+                        rows,
                     )
                 else:
                     method_id=decode_uuid(parts[2])
@@ -4159,29 +4047,44 @@ def create_owner_setup_router(
                             "Способ оплаты был выключен. Выберите другой.",
                             "This payment method is no longer active.",
                         ))
-                    method_label=escape(str(chosen["name"]))
+                    method_label=escape(_saas_method_label(
+                        chosen["name"],currency,
+                    ))
                     if kind=="spv":
                         prefix=("spc:"+invoice_token+":"+encode_uuid(method_id)
                                 +":"+currency+":")
+                        half=(remaining*Decimal("0.50")).quantize(Decimal("0.01"))
+                        quarter=(remaining*Decimal("0.25")).quantize(Decimal("0.01"))
                         rows=[
-                            [_button(tr("✅ Оплатить полностью","✅ Pay in full"),
-                                     prefix+"F:"+page_text,"success")],
-                            [_button(tr("50% остатка","50% remaining"),
-                                     prefix+"H:"+page_text),
-                             _button(tr("25% остатка","25% remaining"),
-                                     prefix+"Q:"+page_text)],
+                            [_button(
+                                tr("✅ Вся сумма", "✅ Full amount")
+                                +" · "+format(remaining,".2f")+" ₽",
+                                prefix+"F:"+page_text,"success",
+                            )],
+                            [_button(
+                                "50% · "+format(half,".2f")+" ₽",
+                                prefix+"H:"+page_text,
+                            ),_button(
+                                "25% · "+format(quarter,".2f")+" ₽",
+                                prefix+"Q:"+page_text,
+                            )],
                             [_button(tr("⬅️ Способы оплаты","⬅️ Payment methods"),
                                      "spm:"+invoice_token+":"+currency
                                      +":"+page_text)],
                         ]
-                        await bot.send_message(
-                            user_id,"💳 <b>"+method_label+"</b> · "
-                            +escape(display_currency(currency))+"\n"
-                            +tr("Остаток: ","Remaining: ")
-                            +"<b>"+format(remaining,".2f")+" ₽</b>\n"
-                            +tr("Выберите сумму оплаты:",
-                                "Choose amount to pay:"),
-                            parse_mode="HTML",reply_markup=_markup(rows),
+                        await _show_saas_payment_step(
+                            bot, query,
+                            tr("💳 <b>Сумма оплаты</b>\n",
+                               "💳 <b>Payment amount</b>\n")
+                            +tr("Способ: ","Method: ")
+                            +method_label+"\n"
+                            +tr("Валюта: ","Currency: ")
+                            +escape(_saas_currency_label(currency))+"\n"
+                            +tr("Осталось: ","Remaining: ")
+                            +"<b>"+format(remaining,".2f")+" ₽</b>\n\n"
+                            +tr("Выберите сумму перевода:",
+                                "Choose how much to transfer:"),
+                            rows,
                         )
                     else:
                         fraction={"F":100,"H":50,"Q":25}.get(parts[4])
@@ -4207,8 +4110,11 @@ def create_owner_setup_router(
                             +tr("💰 Перевести: ","💰 Transfer: ")
                             +"<b>"+escape(str(attempt["amount"])+" "
                                           +str(attempt["currency"]))+"</b>"
-                            +"\n"+tr("💱 Курс ЦБ: ","💱 CBR quote: ")
-                            +escape(str(attempt["rub_per_unit"]))
+                            +(
+                                "\n"+tr("💱 Курс ЦБ: ","💱 CBR quote: ")
+                                +escape(str(attempt["rub_per_unit"]))
+                                if attempt["currency"]!="RUB" else ""
+                            )
                             +"\n\n<pre>"+escape(str(attempt["instructions"]))
                             +"</pre>\n\n"
                             +tr(
@@ -4226,138 +4132,6 @@ def create_owner_setup_router(
                                 "saasbill:"+invoice_token+":"+str(page),
                             )]]),
                         )
-                await query.answer()
-                return
-            if action.startswith(("saasv2pay:", "saasv2amount:", "saasv2create:")):
-                # Account owner chooses a part of the issued amount and the
-                # central platform's currently published payment currency.
-                # The original bill stays immutable. Each request gets its
-                # own immutable quote, bank instruction snapshot and proof.
-                parts = action.split(":")
-                if len(parts) < 3 or len(parts) > 5:
-                    raise ValueError("Invalid account payment callback")
-                kind = parts[0]
-                invoice_id = decode_uuid(parts[1])
-                page_token = parts[2]
-                if (
-                    not page_token.isascii()
-                    or not page_token.isdecimal()
-                    or int(page_token) > 100000
-                ):
-                    raise ValueError("Invalid invoice page")
-                page = int(page_token)
-                balance = await saas_v2_invoice_balance(
-                    factory, actor_id=actor_id, invoice_id=invoice_id,
-                    project_id=fixed_project_id,
-                )
-                remaining = Decimal(str(balance["remaining_rub"]))
-                if remaining <= 0:
-                    await bot.send_message(
-                        user_id,
-                        tr("✅ Этот счёт уже оплачен.",
-                           "✅ This invoice is already paid."),
-                    )
-                    await query.answer()
-                    return
-                tail = encode_uuid(invoice_id) + ":" + page_token
-                if kind == "saasv2pay" and len(parts) == 3:
-                    await bot.send_message(
-                        user_id, tr(
-                            "🧾 <b>Оплата ViMi Pay</b>\n"
-                            "Осталось оплатить: ",
-                            "🧾 <b>ViMi Pay payment</b>\n"
-                            "Remaining balance: ",
-                        ) + "<b>" + format(remaining, ".2f")
-                        + " ₽</b>\n" + tr(
-                            "Выберите часть счёта:", "Choose payment amount:",
-                        ), parse_mode="HTML", reply_markup=_markup([
-                            [_button(tr("25% остатка", "25% remaining"),
-                                     "saasv2amount:" + tail + ":25"),
-                             _button(tr("50% остатка", "50% remaining"),
-                                     "saasv2amount:" + tail + ":50")],
-                            [_button(tr("💳 Вся сумма", "💳 Pay in full"),
-                                     "saasv2amount:" + tail + ":100", "success")],
-                            [_button(tr("⬅️ Счёт", "⬅️ Invoice"),
-                                     "saasbill:" + tail)],
-                        ]),
-                    )
-                elif kind == "saasv2amount" and len(parts) == 4:
-                    fraction = parts[3]
-                    if fraction not in ("25", "50", "100"):
-                        raise ValueError("Invalid payment fraction")
-                    currencies = await saas_v2_available_methods(
-                        factory, actor_id=actor_id, invoice_id=invoice_id,
-                        project_id=fixed_project_id,
-                    )
-                    if not currencies:
-                        await bot.send_message(user_id, tr(
-                            "⚠️ Реквизиты ViMi Pay пока не опубликованы.",
-                            "⚠️ ViMi Pay has no published bank methods yet.",
-                        ))
-                        await query.answer()
-                        return
-                    currency_rows = [
-                        _button(
-                            "💳 " + display_currency(currency),
-                            "saasv2create:" + tail + ":" + fraction + ":"
-                            + currency, "success",
-                        ) for currency in currencies
-                    ]
-                    await bot.send_message(
-                        user_id, tr(
-                            "💱 <b>Валюта оплаты ViMi Pay</b>\n"
-                            "Выберите доступный способ:",
-                            "💱 <b>ViMi Pay payment currency</b>\n"
-                            "Choose a published bank method:",
-                        ), parse_mode="HTML", reply_markup=_markup(
-                            [currency_rows[i:i+2]
-                             for i in range(0, len(currency_rows), 2)]
-                            + [[_button(tr("⬅️ Назад", "⬅️ Back"),
-                                        "saasv2pay:" + tail)]],
-                        ),
-                    )
-                elif kind == "saasv2create" and len(parts) == 5:
-                    fraction, currency = parts[3], parts[4]
-                    if fraction not in ("25", "50", "100") or currency not in (
-                        "RUB", "USD", "EUR", "UAH", "BYN",
-                    ):
-                        raise ValueError("Invalid ViMi Pay payment request")
-                    amount = (
-                        remaining * Decimal(fraction) / Decimal(100)
-                    ).quantize(Decimal("0.01"))
-                    if amount <= 0:
-                        amount = min(remaining, Decimal("0.01"))
-                    attempt = await saas_v2_create_attempt(
-                        factory, actor_id=actor_id, invoice_id=invoice_id,
-                        rub=amount, currency=currency,
-                        project_id=fixed_project_id,
-                    )
-                    attempt_hex = UUID(str(attempt["id"])).hex
-                    await bot.send_message(
-                        user_id,
-                        "🧾 ViMi Pay · " + attempt_hex
-                        + "\n\n" + tr("💰 Перевести: ", "💰 Transfer: ")
-                        + "<b>" + escape(str(attempt["amount"]) + " "
-                                         + str(attempt["currency"])) + "</b>"
-                        + "\n" + tr("💱 Курс ЦБ: ", "💱 CBR quote: ")
-                        + escape(str(attempt["rub_per_unit"]))
-                        + "\n\n<pre>" + escape(
-                            str(attempt["instructions"])) + "</pre>"
-                        + "\n\n" + tr(
-                            "После перевода ответьте <b>на это сообщение</b> "
-                            "фотографией или документом чека. Платёж "
-                            "подтвердится после банковской проверки.",
-                            "After transferring, <b>reply to this message</b> "
-                            "with a receipt photo/document. Payment is "
-                            "confirmed only after bank verification.",
-                        ),
-                        parse_mode="HTML",
-                        reply_markup=_markup([[_button(
-                            tr("⬅️ Счёт", "⬅️ Invoice"), "saasbill:" + tail,
-                        )]]),
-                    )
-                else:
-                    raise ValueError("Invalid ViMi Pay payment action")
                 await query.answer()
                 return
             if action.startswith("saasprice:"):

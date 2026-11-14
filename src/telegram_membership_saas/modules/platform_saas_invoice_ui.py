@@ -58,50 +58,64 @@ def _state_label(value: str) -> str:
     )
 
 
-def _audit_rows(
-    invoice: dict, snapshot: dict, credits: dict, balance: dict | None = None,
+def _invoice_due_label(value: object) -> str:
+    """A readable date for the owner, never a raw timestamp."""
+    value = str(value)[:10]
+    try:
+        year, month, day = (int(part) for part in value.split("-"))
+    except (ValueError, TypeError):
+        return _safe(value)
+    return tr(f"{day:02d}.{month:02d}.{year}", value)
+
+
+def _invoice_summary_rows(
+    invoice: dict, snapshot: dict, credits: dict,
+    balance: dict | None,
 ) -> list[tuple[str, str]]:
-    amount_rub = invoice.get("amount_rub", invoice.get("total_rub", "0"))
-    rows = [
-        (tr("Тип", "Type"), _type_label(str(invoice["kind"]))),
-        (tr("Статус", "Status"), _state_label(
-            "paid" if balance and balance.get("paid") else str(invoice["status"])
-        )),
-        (tr("Базовая сумма", "RUB base"), _money(amount_rub) + " ₽"),
-        (tr("Оплатить до", "Due"), _safe(str(invoice["due_at"])[:10])),
-    ]
-    if snapshot.get("locked"):
-        currency = _safe(snapshot["currency"])
-        rows.extend([
-            (tr("Валюта зафиксирована", "Locked currency"), currency),
-            (tr("Историческая сумма фиксации", "Historical locked amount"),
-             _money(snapshot["amount"]) + " " + currency),
-            (tr("Курс", "FX rate"),
-             "1 " + currency + " = " + _safe(snapshot["rub_per_unit"]) + " ₽"),
-            (tr("Дата фиксации", "Quote date"),
-             _safe(snapshot["quote_day"])),
-            (tr("Источник курса", "FX source"),
-             _safe(snapshot.get("source") or "—") + " · "
-             + _safe(snapshot.get("source_day") or snapshot["quote_day"])),
-        ])
+    amount_rub = Decimal(str(invoice.get(
+        "amount_rub", invoice.get("total_rub", 0),
+    )))
+    locked = snapshot.get("locked", False)
+    if locked:
+        amount = _money(snapshot["amount"]) + " " + _safe(snapshot["currency"])
     else:
+        amount = _money(amount_rub) + " ₽"
+    paid = invoice["status"] == "paid" or bool(
+        balance and balance.get("paid"),
+    )
+    rows = [
+        (tr("За что", "For"), _type_label(str(invoice["kind"]))),
+        (tr("Сумма", "Amount"), "<b>" + amount + "</b>"),
+        (tr("Оплатить до", "Pay by"), _invoice_due_label(invoice["due_at"])),
+        (tr("Статус", "Status"), _state_label(
+            "paid" if paid else str(invoice["status"]),
+        )),
+    ]
+    if locked and str(snapshot.get("currency")) != "RUB":
         rows.append((
-            tr("Валюта платежа", "Payment currency"),
-            tr("Не выбрана", "Not selected"),
+            tr("Рублёвый эквивалент", "RUB equivalent"),
+            _money(amount_rub) + " ₽",
         ))
-    if balance is not None:
-        rows.extend([
-            (tr("Зачтённые возвраты Stars/Crypto",
-                "Applied Stars/Crypto refunds"),
-             _money(balance.get("verified_refund_credit_rub", 0)) + " ₽"),
-            (tr("Остаток к оплате", "Remaining due"),
-             "<b>" + _money(balance.get("remaining_rub", 0)) + " ₽</b>"),
-        ])
-    rows.append((
-        tr("Отдельные корректировки (не зачтены)",
-           "Separate manual adjustments (unapplied)"),
-        _money(credits.get("total_credited_rub", 0)) + " ₽",
-    ))
+    if balance is not None and not paid:
+        rows.append((
+            tr("Осталось оплатить", "Amount remaining"),
+            "<b>" + _money(balance.get("remaining_rub", 0)) + " ₽</b>",
+        ))
+        credited = Decimal(str(balance.get(
+            "verified_refund_credit_rub", 0,
+        )))
+        if credited:
+            rows.append((
+                tr("Учтённые возвраты", "Refund credits applied"),
+                _money(credited) + " ₽",
+            ))
+    manual = Decimal(str(credits.get("total_credited_rub", 0)))
+    if manual:
+        rows.append((
+            tr("Отдельные корректировки (не оплачивают счёт)",
+               "Separate adjustments (do not pay this invoice)"),
+            _money(manual) + " ₽",
+        ))
     return rows
 
 
@@ -109,76 +123,24 @@ def issued_invoice_rich(
     invoice: dict, snapshot: dict, credits: dict,
     balance: dict | None = None,
 ) -> str:
-    """Native Rich tables, with all external contents HTML-escaped."""
-    lines = [
-        "<h3>" + tr("🧾 ViMi Pay · Выставленный счёт",
-                     "🧾 ViMi Pay · Issued invoice") + "</h3>",
-        "<p>№ <code>" + _safe(invoice["id"]) + "</code></p>",
-        "<table bordered compact>",
-        "<tr><th>" + tr("Показатель", "Field") + "</th><th>"
-        + tr("Значение", "Value") + "</th></tr>",
-    ]
-    for label, value in _audit_rows(invoice, snapshot, credits, balance):
-        lines.append("<tr><td>" + label + "</td><td>" + value + "</td></tr>")
-    lines.append("</table>")
-    if credits.get("entries"):
-        lines.extend([
-            "<h4>" + tr("↩️ История корректировок",
-                         "↩️ Credit history") + "</h4>",
-            "<table bordered compact>",
-            "<tr><th>" + tr("Основание", "Reason") + "</th><th>"
-            + tr("Сумма, ₽", "RUB credit") + "</th></tr>",
-        ])
-        for credit in credits["entries"]:
-            lines.append(
-                "<tr><td>" + _safe(credit["reason"]) + " · "
-                + _safe(credit["reference"]) + "</td><td>"
-                + _money(credit["credit_rub"]) + "</td></tr>"
-            )
-        lines.append("</table>")
-    lines.append("<p><i>" + tr(
-        "Проверенные возвраты Stars/Crypto уже учтены в остатке. "
-        "Отдельные ручные корректировки сохраняются как история.",
-        "Verified Stars/Crypto refunds reduce the balance. "
-        "Separate manual adjustments remain historical notes.",
-    ) + "</i></p>")
-    if snapshot.get("locked") and snapshot["currency"] != "RUB":
-        lines.append("<p>⚠️ " + tr(
-            "Реквизиты для выбранной валюты пока не подтверждены. "
-            "Не переводите средства по рублёвым реквизитам.",
-            "Payment instructions for this currency are not yet verified. "
-            "Do not use RUB bank details for foreign transfers.",
-        ) + "</p>")
-    return "\n".join(lines)
+    """Customer-facing concise bill; bank audit stays in finance services."""
+    rows = _invoice_summary_rows(invoice, snapshot, credits, balance)
+    return "\n".join([
+        "<h3>" + tr("🧾 Счёт ViMi Pay", "🧾 ViMi Pay invoice") + "</h3>",
+        *("<p>" + label + ": " + value + "</p>" for label, value in rows),
+    ])
 
 
 def issued_invoice_classic(
     invoice: dict, snapshot: dict, credits: dict,
     balance: dict | None = None,
 ) -> str:
-    lines = [
-        tr("<b>🧾 ViMi Pay · Выставленный счёт</b>",
-           "<b>🧾 ViMi Pay · Issued invoice</b>"),
-        "№ <code>" + _safe(invoice["id"]) + "</code>",
-    ]
-    for label, value in _audit_rows(invoice, snapshot, credits, balance):
-        lines.append(label + ": " + value)
-    for credit in credits.get("entries", []):
-        lines.append(
-            "↩️ " + _safe(credit["reason"]) + " · "
-            + _safe(credit["reference"]) + " · "
-            + _money(credit["credit_rub"]) + " ₽"
-        )
-    lines.append("<i>" + tr(
-        "Возвраты Stars/Crypto учитываются в остатке, ручные корректировки отдельно.",
-        "Stars/Crypto refunds reduce the balance; manual adjustments remain separate.",
-    ) + "</i>")
-    if snapshot.get("locked") and snapshot["currency"] != "RUB":
-        lines.append("⚠️ " + tr(
-            "Не используйте рублёвые реквизиты для валютного платежа.",
-            "Do not use RUB bank instructions for this foreign payment.",
-        ))
-    return "\n".join(lines)
+    rows = _invoice_summary_rows(invoice, snapshot, credits, balance)
+    return "\n".join([
+        tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay invoice</b>"),
+        "",
+        *(label + ": " + value for label, value in rows),
+    ])
 
 
 def issued_quote_rich(quote: dict) -> str:

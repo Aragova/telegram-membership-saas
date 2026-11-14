@@ -76,8 +76,12 @@ async def test_issued_bill_card_works_without_selected_project(monkeypatch, lang
     assert get_statements.await_args.kwargs["actor_user_id"] == actor_id
     bot.send_message.assert_awaited_once()
     body = bot.send_message.await_args.args[1]
-    assert str(invoice_id) in body
+    assert str(invoice_id) not in body
     assert "150.00 ₽" in body
+    assert ("Счёт ViMi Pay" if language == "ru"
+            else "ViMi Pay invoice") in body
+    assert "Валюта платежа" not in body
+    assert "<table" not in body
     buttons = [
         b.callback_data
         for row in bot.send_message.await_args.kwargs[
