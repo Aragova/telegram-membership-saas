@@ -1,5 +1,6 @@
 """Real PostgreSQL tests for dual-consent bot transfer and merchant continuity."""
 import os
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from test_owner_subscribers_rls import setup_subscriber, tg_id
+from test_platform_saas_invoice_rls import _invoice, _line, _receipt
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import (
@@ -23,12 +25,22 @@ from telegram_membership_saas.modules.crypto_pay.service import connect_crypto_p
 from telegram_membership_saas.modules.file_sales import service as file_service
 from telegram_membership_saas.modules.file_sales.manual_models import FileManualOrder
 from telegram_membership_saas.modules.owner_setup import transfers as svc
+from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.owner_setup.transfer_models import (
     ProjectOwnershipTransfer,
 )
 from telegram_membership_saas.modules.payments.models import PaymentMethod
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
+
+async def factory_for_transfer_bot_id(factory, actor_id, project_id):
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        return await session.scalar(
+            select(BotInstance.id).where(BotInstance.project_id == project_id)
+        )
+
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL")
@@ -148,6 +160,48 @@ async def test_owner_transfer_requires_both_parties_and_keeps_merchant_history(m
                     "UPDATE projects SET owner_user_id = :target WHERE id = :pid"
                 ), {"target": buyer, "pid": project})
 
+        # One unsettled service bill cannot be dodged through a transfer.
+        # Once its verified bank settlement activates a paid month, the new
+        # owner may accept the bot and must inherit the unused PAID coverage,
+        # not the previous owner's financial obligation.
+        bot_uuid = await factory_for_transfer_bot_id(factory, owner, project)
+        operator_tg = tg_id()
+        operator = await ensure_telegram_actor(
+            factory, telegram_id=operator_tg,
+            username=None, first_name=None,
+        )
+        async with admin_engine.begin() as admin:
+            await admin.execute(text(
+                "INSERT INTO platform_operators(telegram_user_id,role)"
+                " VALUES(:tg,'owner')"
+            ), {"tg": operator_tg})
+            invoice = await _invoice(
+                admin, owner, merchant_id, bot_uuid,
+                period_start=datetime.now(UTC)-timedelta(days=15),
+            )
+            await _line(admin, invoice, project, "bot_fee", bot_uuid)
+            await admin.execute(text(
+                "UPDATE platform_saas_invoices SET status='issued'"
+                " WHERE id=:id"
+            ), {"id": invoice})
+        with pytest.raises(ValueError, match="ViMi Pay"):
+            await svc.finalize_transfer(
+                factory, actor_id=owner, project_id=project,
+                transfer_id=invitation.id,
+            )
+        async with admin_engine.begin() as admin:
+            await admin.execute(text(
+                "SELECT set_config('app.current_user_id',:actor,true)"
+            ), {"actor": str(operator)})
+            await _receipt(admin, invoice, operator)
+        async with admin_engine.connect() as admin:
+            coverage = (await admin.execute(text(
+                "SELECT a.effective_end,i.period_end FROM "
+                "platform_saas_bot_service_activations a "
+                "JOIN platform_saas_invoices i ON i.id=a.invoice_id "
+                "WHERE a.invoice_id=:id"
+            ), {"id": invoice})).one()
+            assert coverage.effective_end > coverage.period_end
         result = await svc.finalize_transfer(
             factory, actor_id=owner, project_id=project, transfer_id=invitation.id,
         )
