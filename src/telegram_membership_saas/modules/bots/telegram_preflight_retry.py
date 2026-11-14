@@ -17,7 +17,6 @@ from aiogram.exceptions import (
     TelegramServerError,
 )
 
-
 PREFLIGHT_ATTEMPTS = 4
 RETRY_BASE_SECONDS = 0.4
 RETRY_CAP_SECONDS = 3.0
