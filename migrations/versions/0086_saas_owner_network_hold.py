@@ -295,6 +295,175 @@ BEGIN
   RETURN NEW;
 END; $guard$
     """)
+    # Expose actual due time, first-proof deadline and upcoming bill dates
+    # through the existing tenant-scoped Rich bill, without a second menu.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_merchant_bill_summary(
+  p_month date,p_project uuid DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE
+  actor uuid;
+  bot_id uuid;
+  bots integer;
+  bill record;
+  turnover jsonb;
+  service_rub numeric:=0;
+  subscriptions_rub numeric:=0;
+  files_rub numeric:=0;
+  remaining numeric:=0;
+  received numeric:=0;
+  service_native numeric:=0;
+  service_currency text:='RUB';
+BEGIN
+  actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+  IF actor IS NULL OR p_project IS NULL THEN
+    RAISE EXCEPTION 'Select one owned ViMi Pay bot'
+      USING ERRCODE='42501';
+  END IF;
+  IF NOT EXISTS(
+    SELECT 1 FROM public.projects p
+    WHERE p.id=p_project AND p.owner_user_id=actor
+  ) THEN RAISE EXCEPTION 'Bot ownership required' USING ERRCODE='42501'; END IF;
+  SELECT count(*),max(b.id::text)::uuid INTO bots,bot_id
+  FROM public.bot_instances b
+  WHERE b.project_id=p_project AND b.status='registered';
+  IF bots<>1 THEN
+    RAISE EXCEPTION 'One active bot per project required'
+      USING ERRCODE='42501';
+  END IF;
+  SELECT i.* INTO bill
+  FROM public.platform_saas_invoices i
+  WHERE i.bot_instance_id=bot_id AND i.owner_user_id=actor
+    AND i.status='issued' AND i.kind='prepayment'
+  ORDER BY i.period_start DESC LIMIT 1;
+  IF bill.id IS NULL THEN
+    RETURN jsonb_build_object('bot_id',bot_id,'project_id',p_project,
+      'invoice_id',NULL,'period_start',NULL,'period_end',NULL,
+      'due_at',NULL,
+      'upcoming_at',CASE
+        WHEN (SELECT c.enabled FROM public.platform_saas_billing_control c
+              WHERE c.id=1) THEN public.platform_saas_billable_after(actor)
+        ELSE NULL END,
+      'hold_state',public.platform_saas_owner_overdue_state(
+        actor,clock_timestamp()
+      ),
+      'turnover','[]'::jsonb,'service_rub','0',
+      'service_native','0','service_currency','RUB',
+      'subscription_rub','0','file_rub','0','total_rub','0',
+      'paid_rub','0','credit_rub','0',
+      'total_due_rub','0','first_period',true);
+  END IF;
+  SELECT
+    coalesce(sum(l.charge_rub) FILTER(
+      WHERE l.source_kind='bot_fee'),0),
+    coalesce(sum(l.charge_rub) FILTER(
+      WHERE l.source_kind IN ('subscription','subscription_stars',
+                              'subscription_crypto')),0),
+    coalesce(sum(l.charge_rub) FILTER(
+      WHERE l.source_kind IN ('file_manual','file_stars','file_crypto')),0)
+  INTO service_rub,subscriptions_rub,files_rub
+  FROM public.platform_saas_invoice_lines l WHERE l.invoice_id=bill.id;
+  SELECT l.original_amount,l.original_currency
+  INTO service_native,service_currency
+  FROM public.platform_saas_invoice_lines l
+  WHERE l.invoice_id=bill.id AND l.source_kind='bot_fee'
+  LIMIT 1;
+  WITH groups AS (
+    SELECT CASE WHEN l.source_kind LIKE 'subscription%' THEN 'subscription'
+                ELSE 'file' END AS kind,
+           l.original_currency AS currency,
+           count(*)::integer AS sold,sum(l.original_amount) AS gross
+    FROM public.platform_saas_invoice_lines l
+    WHERE l.invoice_id=bill.id AND l.source_kind<>'bot_fee'
+    GROUP BY 1,2
+  )
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+    'kind',kind,'currency',currency,'sold',sold,'gross',gross::text
+  ) ORDER BY kind,currency),'[]'::jsonb) INTO turnover FROM groups;
+  remaining:=public.platform_saas_v2_remaining(bill.id);
+  SELECT coalesce(sum(r.amount_rub),0) INTO received
+    FROM public.platform_saas_receipts r WHERE r.invoice_id=bill.id;
+  received:=received+coalesce((
+    SELECT sum(a.allocated_rub)
+    FROM public.platform_saas_payment_allocations_v2 a
+    WHERE a.invoice_id=bill.id
+  ),0);
+  RETURN jsonb_build_object(
+    'bot_id',bot_id,'project_id',p_project,'invoice_id',bill.id,
+    'due_at',bill.due_at,
+    'upcoming_at',CASE WHEN remaining=0 THEN coalesce((
+      SELECT a.effective_end
+      FROM public.platform_saas_bot_service_activations a
+      WHERE a.invoice_id=bill.id
+    ),bill.period_end) ELSE NULL END,
+    'hold_state',public.platform_saas_owner_overdue_state(
+       actor,clock_timestamp()
+    ),
+    'review_until',CASE WHEN remaining>0 THEN (
+      SELECT min(p.submitted_at)+interval '12 hours'
+      FROM public.platform_saas_payment_proofs_v2 p
+      JOIN public.platform_saas_payment_attempts_v2 a
+        ON a.id=p.attempt_id
+      WHERE a.invoice_id=bill.id
+        AND NOT EXISTS (
+          SELECT 1 FROM public.platform_saas_payment_rejections_v2 bad
+          JOIN public.platform_saas_payment_attempts_v2 ra
+            ON ra.id=bad.attempt_id
+          WHERE ra.invoice_id=bill.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM public.platform_saas_payment_allocations_v2 ok
+          JOIN public.platform_saas_payment_attempts_v2 oa
+            ON oa.id=ok.attempt_id
+          WHERE oa.invoice_id=bill.id
+        )
+        AND EXISTS (
+          SELECT 1 FROM public.platform_saas_payment_proofs_v2 pending
+          JOIN public.platform_saas_payment_attempts_v2 aa
+            ON aa.id=pending.attempt_id
+          WHERE aa.invoice_id=bill.id AND
+            NOT EXISTS (
+              SELECT 1 FROM public.platform_saas_payment_allocations_v2 yes
+              WHERE yes.attempt_id=aa.id
+            ) AND NOT EXISTS (
+              SELECT 1 FROM public.platform_saas_payment_rejections_v2 no
+              WHERE no.attempt_id=aa.id
+            )
+        )
+    ) ELSE NULL END,
+    'period_start',coalesce((
+      SELECT a.effective_start
+      FROM public.platform_saas_bot_service_activations a
+      WHERE a.invoice_id=bill.id
+    ),bill.period_start),
+    'period_end',coalesce((
+      SELECT a.effective_end
+      FROM public.platform_saas_bot_service_activations a
+      WHERE a.invoice_id=bill.id
+    ),bill.period_end),
+    'turnover',turnover,'service_rub',service_rub::text,
+    'service_native',service_native::text,
+    'service_currency',service_currency,
+    'subscription_rub',round(subscriptions_rub,2)::text,
+    'file_rub',round(files_rub,2)::text,'total_rub',bill.total_rub::text,
+    'paid_rub',received::text,
+    'credit_rub',(bill.total_rub-remaining-received)::text,
+    'total_due_rub',remaining::text,
+    'first_period',NOT EXISTS(
+      SELECT 1 FROM public.platform_saas_invoices prior
+      WHERE prior.bot_instance_id=bot_id AND prior.owner_user_id=actor
+        AND prior.kind='prepayment' AND prior.status='issued'
+        AND coalesce((
+          SELECT a.effective_end
+          FROM public.platform_saas_bot_service_activations a
+          WHERE a.invoice_id=prior.id
+        ),prior.period_end)=bill.period_start
+    )
+  );
+END; $f$
+    """)
+
     # The legacy central debt report must reflect the NEW account-wide
     # authoritative same-state function; no stale seven-day grace metric.
     op.execute("""
