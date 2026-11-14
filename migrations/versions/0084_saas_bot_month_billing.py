@@ -1195,10 +1195,13 @@ DECLARE
   checked_at timestamptz:=clock_timestamp();
 BEGIN
   IF TG_OP<>'INSERT' THEN RETURN NEW; END IF;
-  IF TG_TABLE_NAME='resources'
-     AND NEW.resource_type NOT IN (
-       'telegram_channel','telegram_group'
-     ) THEN RETURN NEW; END IF;
+  -- NEW is a trigger RECORD: branch before field access. PostgreSQL
+  -- can resolve a missing field even if the other AND term is false.
+  IF TG_TABLE_NAME='resources' THEN
+    IF NEW.resource_type NOT IN (
+      'telegram_channel','telegram_group'
+    ) THEN RETURN NEW; END IF;
+  END IF;
   scoped:=NULLIF(current_setting('app.current_project_id',true),'')::uuid;
   IF scoped IS DISTINCT FROM NEW.project_id THEN
     RETURN NEW; -- existing tenant RLS fails closed for foreign projects
