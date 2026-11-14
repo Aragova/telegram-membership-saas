@@ -38,6 +38,9 @@ from telegram_membership_saas.modules.platform_saas_notices import (
     deliver_one_saas_notice,
     schedule_saas_reminders,
 )
+from telegram_membership_saas.modules.platform_saas_proof_alerts import (
+    deliver_one_platform_proof_alert,
+)
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.tenant_context import TenantContext
 
@@ -483,6 +486,18 @@ async def run_central_platform_monitor(
         try:
             actor = await _platform_actor(factory, owner_tg)
             if actor is not None:
+                # New bank proof notifications belong to the CENTRAL chat.
+                # Process them before other monitoring so a failing health
+                # scan cannot silently hide a payment awaiting review.
+                try:
+                    for _ in range(3):
+                        if not await deliver_one_platform_proof_alert(
+                            factory, bot=bot, platform_actor_id=actor,
+                            owner_telegram_id=owner_tg,
+                        ):
+                            break
+                except Exception:
+                    log.warning("Central payment-proof notification deferred")
                 await scan_platform_monitor(factory, owner_actor_id=actor)
                 # Bounded delivery, never overwhelm the owner's chat on
                 # recovery of a large network.
