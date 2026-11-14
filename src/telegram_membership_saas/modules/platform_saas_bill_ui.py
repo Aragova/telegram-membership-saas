@@ -72,15 +72,13 @@ def _sales_table(snapshot: dict, preview: dict, category: str) -> list[str]:
     if rows:
         html.extend([
             "<table bordered compact>",
-            "<tr><th>" + tr("Валюта", "Currency") + "</th><th>"
-            + tr("Оборот", "Gross sales") + "</th><th>"
+            "<tr><th>" + tr("Оборот", "Gross sales") + "</th><th>"
             + tr("Продано", "Sold") + "</th></tr>",
         ])
         for row in rows:
             currency = str(row["currency"])
             html.append(
-                "<tr><td>" + escape(display_currency(currency))
-                + "</td><td>" + _native_amount(row["gross"], currency)
+                "<tr><td>" + _native_amount(row["gross"], currency)
                 + "</td><td>" + str(int(row["sold"])) + "</td></tr>"
             )
         html.append("</table>")
@@ -120,8 +118,6 @@ def unified_merchant_bill_rich(snapshot: dict, preview: dict) -> str:
         "<h4>" + tr("💰 К оплате по аккаунту", "💰 Account balance due")
         + "</h4>",
         "<table bordered compact>",
-        "<tr><td>" + tr("Обслуживание", "Service") + "</td><td>"
-        + _money(service) + "</td></tr>",
         "<tr><td>" + tr("Выставленная комиссия", "Invoiced commission")
         + "</td><td>" + _money(commission) + "</td></tr>",
         "<tr><td><b>" + tr("Итого к оплате", "Total payable")
@@ -179,7 +175,6 @@ def unified_merchant_bill_classic(snapshot: dict, preview: dict) -> str:
         "",
         tr("💰 <b>К оплате по аккаунту</b>",
            "💰 <b>Account balance due</b>"),
-        tr("Обслуживание: ", "Service: ") + service,
         tr("Выставленная комиссия: ", "Invoiced commission: ") + commission,
         tr("<b>Итого: ", "<b>Total: ") + due + "</b>",
         "",
