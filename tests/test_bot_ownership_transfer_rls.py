@@ -33,6 +33,7 @@ from telegram_membership_saas.modules.payments.models import PaymentMethod
 from telegram_membership_saas.modules.projects.models import Project
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
+
 async def factory_for_transfer_bot_id(factory, actor_id, project_id):
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id),
