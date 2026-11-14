@@ -113,7 +113,7 @@ async def test_webhook_network_error_stays_distinct_from_active_webhook():
 async def test_poll_observer_reports_failure_type_then_success_without_swallowing(
     monkeypatch,
 ):
-    response, error = [], []
+    response, error, started = [], [], []
     request = GetUpdates(timeout=1)
     monkeypatch.setattr(
         Bot, "__call__", AsyncMock(side_effect=[_network(), []]),
@@ -121,14 +121,17 @@ async def test_poll_observer_reports_failure_type_then_success_without_swallowin
     bot = ObservedCustomerBot(
         token=TOKEN, on_poll_response=lambda: response.append(True),
         on_poll_failure=error.append,
+        on_poll_request=lambda: started.append(True),
     )
     try:
         with pytest.raises(TelegramNetworkError):
             await bot(request)
         assert error == ["polling_network_failed"]
         assert response == []
+        assert started == [True]
         assert await bot(request) == []
         assert response == [True]
+        assert started == [True, True]
     finally:
         await bot.session.close()
 
