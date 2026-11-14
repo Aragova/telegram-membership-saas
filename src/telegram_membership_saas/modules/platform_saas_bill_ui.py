@@ -1,194 +1,180 @@
-"""One bilingual Rich ViMi Pay bill, with an HTML fallback.
+"""Single per-bot ViMi Pay invoice, rendered using issued financial evidence.
 
-Only completed sales appear as gross turnover. A provisional 5% charge is
-NOT a payable invoice until the closed-month finance ledger issues it.
+The service fee is prepaid for the new month. Sales are from this bot's
+PREVIOUS completed service month. First activation has no sales commission.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from html import escape
+from zoneinfo import ZoneInfo
 
 from telegram_membership_saas.currency_display import display_currency
 from telegram_membership_saas.localization import tr
 
 
-def _money(value: object) -> str:
-    return escape(format(Decimal(str(value)), ".2f")) + " ₽"
+def _money(amount: object) -> str:
+    return escape(format(Decimal(str(amount)), ".2f")) + " ₽"
 
 
-def _native_amount(value: object, currency: str) -> str:
-    amount = Decimal(str(value))
-    number = format(amount, "f").rstrip("0").rstrip(".")
-    if "." not in format(amount, "f"):
-        number = format(amount, "f")
-    return escape(number + " " + display_currency(currency))
+def _native(amount: object, code: str) -> str:
+    number = format(Decimal(str(amount)), "f")
+    if "." in number:
+        number = number.rstrip("0").rstrip(".")
+    return escape(number + " " + display_currency(code))
 
 
-def _month(value: object) -> str:
-    token = str(value)[:7]
+def _date(value: object) -> str:
+    if not value:
+        return ""
     try:
-        year, month = map(int, token.split("-"))
-        if not 1 <= month <= 12:
-            raise ValueError("month")
-        ru = (
-            "январь", "февраль", "март", "апрель", "май", "июнь",
-            "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
-        )
-        en = (
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December",
-        )
-        return tr(ru[month - 1], en[month - 1]) + " " + str(year)
+        raw = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(ZoneInfo("Europe/Moscow"))
+        return dt.strftime("%d.%m.%Y")
     except (TypeError, ValueError):
-        return escape(token)
+        return escape(str(value)[:10])
 
 
-def _sales(snapshot: dict, preview: dict, *, category: str) -> tuple[list[dict], int, Decimal]:
-    rows = [
-        row for row in snapshot["turnover"] if row["kind"] == category
-    ]
-    count = sum(int(row["sold"]) for row in rows)
-    kinds = (
-        ("subscription", "subscription_stars", "subscription_crypto")
-        if category == "subscription"
-        else ("file_manual", "file_stars", "file_crypto")
+def _sales(bill: dict, *, kind: str) -> tuple[list[dict], int, str]:
+    rows = [r for r in bill["turnover"] if r["kind"] == kind]
+    count = sum(int(r["sold"]) for r in rows)
+    amount = (
+        bill["subscription_rub"]
+        if kind == "subscription" else bill["file_rub"]
     )
-    fee = sum(
-        (Decimal(str(rail["commission_rub"]))
-         for rail in preview["rails"] if rail["kind"] in kinds),
-        Decimal("0"),
-    )
-    return rows, count, fee
+    return rows, count, _money(amount)
 
 
-def _sales_table(snapshot: dict, preview: dict, category: str) -> list[str]:
-    rows, count, fee = _sales(snapshot, preview, category=category)
-    heading = (
-        tr("📣 Подписки", "📣 Subscriptions")
-        if category == "subscription"
-        else tr("📁 Файлы", "📁 Files")
-    )
-    html = ["<h4>" + heading + "</h4>"]
-    if rows:
-        html.extend([
-            "<table bordered compact>",
-            "<tr><th>" + tr("Оборот", "Gross sales") + "</th><th>"
-            + tr("Продано", "Sold") + "</th></tr>",
-        ])
-        for row in rows:
-            currency = str(row["currency"])
-            html.append(
-                "<tr><td>" + _native_amount(row["gross"], currency)
-                + "</td><td>" + str(int(row["sold"])) + "</td></tr>"
-            )
-        html.append("</table>")
-    else:
-        html.append("<p>" + tr(
-            "Продаж пока нет.", "No completed sales yet.",
-        ) + "</p>")
-    html.append(
-        "<p>" + tr("Продано: ", "Sold: ") + "<b>" + str(count)
-        + "</b> · " + tr("5% начислено: ", "5% accrued: ")
-        + "<b>" + _money(fee) + "</b></p>"
-    )
-    return html
-
-
-def unified_merchant_bill_rich(snapshot: dict, preview: dict) -> str:
-    """Compact single view, no separate invoice buttons or ledger IDs."""
-    service = Decimal(str(snapshot["service_due_rub"]))
-    commission = Decimal(str(snapshot["commission_due_rub"]))
-    due = Decimal(str(snapshot["total_due_rub"]))
-    if due != service + commission:
-        raise ValueError("Inconsistent ViMi Pay payable breakdown")
-    lines = [
-        "<h3>" + tr("🧾 Счёт ViMi Pay", "🧾 ViMi Pay bill") + "</h3>",
-        "<p>" + _month(snapshot["month"]) + " · "
-        + (
-            tr("продажи этого бота", "sales for this bot")
-            if snapshot.get("project_id") else
-            tr("продажи аккаунта", "account sales")
-        ) + "</p>",
-        "<h4>" + tr("🤖 Обслуживание", "🤖 Service") + "</h4>",
-        "<p>" + tr("Остаток за обслуживание по аккаунту: ",
-                  "Account service balance: ")
-        + "<b>" + _money(service) + "</b></p>",
-        *_sales_table(snapshot, preview, "subscription"),
-        *_sales_table(snapshot, preview, "file"),
-        "<h4>" + tr("💰 К оплате по аккаунту", "💰 Account balance due")
-        + "</h4>",
-        "<table bordered compact>",
-        "<tr><td>" + tr("Выставленная комиссия", "Invoiced commission")
-        + "</td><td>" + _money(commission) + "</td></tr>",
-        "<tr><td><b>" + tr("Итого к оплате", "Total payable")
-        + "</b></td><td><b>" + _money(due) + "</b></td></tr>",
-        "</table>",
-        "<p><i>" + tr(
-            "Комиссия 5% за текущий месяц показана выше как начисление "
-            "и войдёт в оплату только после закрытия месяца. "
-            "Обслуживание и старые долги уже включены в остаток.",
-            "Current-month 5% is shown above as accrual, not yet payable. "
-            "Service and previously invoiced balances are already due.",
-        ) + "</i></p>",
-    ]
-    if int(preview.get("unrated_billable", 0)) or int(
-        preview.get("uncaptured_crypto", 0)
+def _validate(bill: dict) -> None:
+    if bill.get("invoice_id") is None:
+        return
+    total = Decimal(str(bill["total_rub"]))
+    paid = Decimal(str(bill["paid_rub"]))
+    credit = Decimal(str(bill.get("credit_rub", 0)))
+    due = Decimal(str(bill["total_due_rub"]))
+    if total != paid + credit + due or any(
+        value < 0 for value in (total, paid, credit, due)
     ):
-        lines.append("<p>⚠️ " + tr(
-            "Некоторые продажи ещё проходят сверку валют и Crypto Pay. "
-            "Их комиссия не включена в подтверждённый расчёт.",
-            "Some sale-date FX and Crypto Pay evidence is unresolved; "
-            "the provisional commission is incomplete.",
+        raise ValueError("Inconsistent per-bot ViMi Pay invoice totals")
+
+
+def _section_rich(bill: dict, kind: str) -> list[str]:
+    rows, count, fee = _sales(bill, kind=kind)
+    title = (
+        tr("📣 Продажи подписок", "📣 Subscription sales")
+        if kind == "subscription"
+        else tr("📁 Продажи файлов", "📁 File sales")
+    )
+    lines = ["<h4>" + title + "</h4>", "<table bordered compact>"]
+    for row in rows:
+        lines.append(
+            "<tr><td>" + tr("Оборот", "Turnover") + "</td><td>"
+            + _native(row["gross"], str(row["currency"])) + "</td></tr>"
+        )
+    if not rows:
+        lines.append(
+            "<tr><td>" + tr("Оборот", "Turnover")
+            + "</td><td>0 ₽</td></tr>"
+        )
+    lines.extend([
+        "<tr><td>" + tr("Продано", "Sold") + "</td><td>"
+        + str(count) + "</td></tr>",
+        "<tr><td>" + tr("Комиссия 5%", "Commission 5%")
+        + "</td><td>" + fee + "</td></tr>",
+        "</table>",
+    ])
+    return lines
+
+
+def unified_merchant_bill_rich(bill: dict) -> str:
+    _validate(bill)
+    lines = ["<h3>" + tr("🧾 Счёт ViMi Pay", "🧾 ViMi Pay invoice") + "</h3>"]
+    if bill.get("invoice_id") is None:
+        lines.append("<p>" + tr(
+            "Счёт ещё не выставлен. Во время пробного периода оплаты нет.",
+            "No invoice has been issued yet. The trial requires no payment.",
         ) + "</p>")
+        return "\n".join(lines)
+    lines.extend([
+        "<p>" + tr("Обслуживание: ", "Service period: ")
+        + _date(bill.get("period_start")) + " – "
+        + _date(bill.get("period_end")) + "</p>",
+        "<h4>" + tr("🤖 Обслуживание", "🤖 Service") + "</h4>",
+        "<p>" + tr("Абонплата за бота: ", "Bot subscription fee: ")
+        + "<b>" + _money(bill["service_rub"]) + "</b></p>",
+    ])
+    if not bill.get("first_period", False):
+        lines.extend(_section_rich(bill, "subscription"))
+        lines.extend(_section_rich(bill, "file"))
+    lines.extend([
+        "<h4>" + tr("💰 Итог", "💰 Total") + "</h4>",
+        "<p>" + tr("Всего начислено: ", "Total charged: ")
+        + "<b>" + _money(bill["total_rub"]) + "</b></p>",
+        "<p>" + tr("Подтверждённые оплаты: ", "Confirmed payments: ")
+        + _money(bill["paid_rub"]) + "</p>",
+    ])
+    if Decimal(str(bill.get("credit_rub", 0))) > 0:
+        lines.append(
+            "<p>" + tr("Учтённые возвраты: ", "Applied refund credits: ")
+            + _money(bill["credit_rub"]) + "</p>"
+        )
+    lines.append(
+        "<h4>" + tr("Итого к оплате", "Amount due") + ": "
+        + _money(bill["total_due_rub"]) + "</h4>"
+    )
     return "\n".join(lines)
 
 
-def unified_merchant_bill_classic(snapshot: dict, preview: dict) -> str:
-    """Telegram fallback without Rich-only table tags."""
-    service = _money(snapshot["service_due_rub"])
-    commission = _money(snapshot["commission_due_rub"])
-    due = _money(snapshot["total_due_rub"])
-    lines = [
-        tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay bill</b>"),
-        _month(snapshot["month"]),
+def unified_merchant_bill_classic(bill: dict) -> str:
+    _validate(bill)
+    lines = [tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay invoice</b>")]
+    if bill.get("invoice_id") is None:
+        lines.append(tr(
+            "Счёт ещё не выставлен.",
+            "No invoice has been issued yet.",
+        ))
+        return "\n".join(lines)
+    lines.extend([
+        tr("Период: ", "Service period: ")
+        + _date(bill.get("period_start")) + " – "
+        + _date(bill.get("period_end")),
         "",
         tr("🤖 <b>Обслуживание</b>", "🤖 <b>Service</b>"),
-        tr("По аккаунту: ", "Account due: ") + service,
-    ]
-    for category in ("subscription", "file"):
-        rows, count, fee = _sales(snapshot, preview, category=category)
-        lines.extend([
-            "",
-            (tr("📣 <b>Подписки</b>", "📣 <b>Subscriptions</b>")
-             if category == "subscription"
-             else tr("📁 <b>Файлы</b>", "📁 <b>Files</b>")),
-        ])
-        for row in rows:
-            lines.append(
-                "• " + _native_amount(row["gross"], str(row["currency"]))
-                + " · " + str(int(row["sold"]))
-            )
-        lines.append(
-            tr("Продано: ", "Sold: ") + str(count) + " · 5%: " + _money(fee)
-        )
+        tr("Абонплата за бота: ", "Bot fee: ")
+        + "<b>" + _money(bill["service_rub"]) + "</b>",
+    ])
+    if not bill.get("first_period", False):
+        for kind in ("subscription", "file"):
+            rows, count, fee = _sales(bill, kind=kind)
+            lines.extend([
+                "",
+                (tr("📣 <b>Продажи подписок</b>",
+                    "📣 <b>Subscription sales</b>")
+                 if kind == "subscription"
+                 else tr("📁 <b>Продажи файлов</b>", "📁 <b>File sales</b>")),
+            ])
+            for row in rows:
+                lines.append(tr("Оборот: ", "Turnover: ")
+                             + _native(row["gross"], str(row["currency"])))
+            if not rows:
+                lines.append(tr("Оборот: 0 ₽", "Turnover: 0 ₽"))
+            lines.extend([
+                tr("Продано: ", "Sold: ") + str(count),
+                tr("Комиссия 5%: ", "Commission 5%: ") + fee,
+            ])
     lines.extend([
         "",
-        tr("💰 <b>К оплате по аккаунту</b>",
-           "💰 <b>Account balance due</b>"),
-        tr("Выставленная комиссия: ", "Invoiced commission: ") + commission,
-        tr("<b>Итого: ", "<b>Total: ") + due + "</b>",
-        "",
-        "<i>" + tr(
-            "Комиссия текущего месяца предварительная и пока не входит "
-            "в сумму к оплате.",
-            "Current-month commission is provisional and is not payable yet.",
-        ) + "</i>",
+        tr("Всего начислено: ", "Total charged: ")
+        + "<b>" + _money(bill["total_rub"]) + "</b>",
+        tr("Подтверждённые оплаты: ", "Confirmed payments: ")
+        + _money(bill["paid_rub"]),
     ])
-    if int(preview.get("unrated_billable", 0)) or int(
-        preview.get("uncaptured_crypto", 0)
-    ):
-        lines.append("⚠️ " + tr(
-            "Некоторые продажи ожидают сверки.",
-            "Some sales are awaiting reconciliation.",
-        ))
+    if Decimal(str(bill.get("credit_rub", 0))) > 0:
+        lines.append(tr("Учтённые возвраты: ", "Refund credits: ")
+                     + _money(bill["credit_rub"]))
+    lines.append(tr("<b>Итого к оплате: ", "<b>Amount due: ")
+                 + _money(bill["total_due_rub"]) + "</b>")
     return "\n".join(lines)
