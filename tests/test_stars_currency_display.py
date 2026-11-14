@@ -107,20 +107,21 @@ def test_classic_unified_bill_uses_full_stars_brand(lang):
     )
 
     summary = {
-        "month": "2026-11-01", "project_id": None,
+        "invoice_id": "test-bot-invoice",
+        "period_start": "2026-12-16T00:00:00+03:00",
+        "period_end": "2027-01-16T00:00:00+03:00",
+        "first_period": False,
+        "project_id": "test-bot",
         "turnover": [
             {"kind": "file", "currency": "XTR", "gross": "500", "sold": 1},
         ],
-        "service_due_rub": "0", "commission_due_rub": "0",
-        "total_due_rub": "0",
-    }
-    preview = {
-        "rails": [{"kind": "file_stars", "commission_rub": "0"}],
-        "unrated_billable": 0, "uncaptured_crypto": 0,
+        "service_rub": "150", "subscription_rub": "0", "file_rub": "0",
+        "total_rub": "150", "paid_rub": "0", "credit_rub": "0",
+        "total_due_rub": "150",
     }
     token = _language.set(lang)
     try:
-        text = unified_merchant_bill_classic(summary, preview)
+        text = unified_merchant_bill_classic(summary)
     finally:
         _language.reset(token)
     assert "500 ⭐ Telegram Stars" in text
