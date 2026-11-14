@@ -13,7 +13,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from aiogram import BaseMiddleware, Bot, F, Router
-from aiogram.exceptions import AiogramError
+from aiogram.exceptions import AiogramError, TelegramBadRequest
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
@@ -500,6 +500,55 @@ def _saas_invoice_is_upcoming(item: dict) -> bool:
     except ValueError:
         return False
     return due.tzinfo is not None and due > datetime.now(ZoneInfo("UTC"))
+
+
+async def _show_saas_payment_step(
+    bot: Bot, query: CallbackQuery, html: str,
+    rows: list[list[InlineKeyboardButton]],
+) -> None:
+    """Edit the current selector instead of stacking payment menu cards.
+
+    A Rich/old Telegram message may not be editable; one fallback send is
+    allowed. Creating the actual immutable payment attempt is separate.
+    """
+    markup = _markup(rows)
+    msg = query.message
+    message_id = getattr(msg, "message_id", None)
+    if message_id is not None:
+        try:
+            await bot.edit_message_text(
+                html, chat_id=query.from_user.id,
+                message_id=message_id, parse_mode="HTML",
+                reply_markup=markup,
+            )
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+        except AiogramError:
+            # Rich or historical message cannot be edited. A fresh selector
+            # is still better than leaving the payer at a dead button.
+            pass
+    await bot.send_message(
+        query.from_user.id, html, parse_mode="HTML", reply_markup=markup,
+    )
+
+
+def _saas_currency_label(code: str) -> str:
+    return {
+        "RUB": tr("₽ Рубли", "₽ Rubles"),
+        "USD": tr("$ Доллары", "$ US dollars"),
+        "EUR": tr("€ Евро", "€ Euros"),
+        "UAH": tr("₴ Гривны", "₴ Hryvnias"),
+        "BYN": tr("Br Бел. рубли", "Br Belarusian rubles"),
+    }[code]
+
+
+def _saas_method_label(name: object, currency: str) -> str:
+    label = str(name).strip()
+    if not label or label.upper() == currency:
+        return tr("Оплата по реквизитам", "Payment instructions")
+    return label
 
 
 def _saas_invoice_button_label(item: dict) -> str:
@@ -1089,8 +1138,7 @@ def create_owner_setup_router(
         buttons: list[list[InlineKeyboardButton]] = []
         if Decimal(str(balance["remaining_rub"])) > 0:
             buttons.append([_button(
-                tr("💳 Оплатить полностью или частично",
-                   "💳 Pay in full or partially"),
+                tr("💳 Оплатить", "💳 Pay"),
                 "spm:" + encode_uuid(invoice_id) + ":RUB:" + _encode_saas_page(page),
                 "success",
             )])
