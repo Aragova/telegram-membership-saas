@@ -54,7 +54,7 @@ async def test_disabled_billing_denies_invoice_writes_and_tenant_report():
             factory, telegram_id=operator_tg, username=None, first_name=None,
         )
         merchant, _, _, bot, _ = await _project(factory, _tid())
-        start = datetime.now(UTC) + timedelta(minutes=10)
+        start = datetime.now(UTC) + timedelta(seconds=0)
         async with admin_engine.connect() as admin:
             tx = await admin.begin()
             try:
@@ -131,7 +131,7 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
         )
         merchant, merchant_id, project, bot, _ = await _project(factory, _tid())
         now = datetime.now(UTC)
-        start = now + timedelta(minutes=10)
+        start = now + timedelta(seconds=0)
         end = _month_after(start)
         async with admin_engine.connect() as admin:
             tx = await admin.begin()
