@@ -6,7 +6,7 @@ PostgreSQL transaction. No real payment or Telegram action is performed.
 import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,11 +24,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-async def _call(conn, rpc, **kwargs):
+async def _call(conn, rpc, *, as_json=True, **kwargs):
     statement = text(
         "SELECT public." + rpc + "(" +
         ",".join(":" + key for key in kwargs) + ") AS snapshot"
-    ).columns(snapshot=JSONB)
+    )
+    if as_json:
+        statement = statement.columns(snapshot=JSONB)
     return (await conn.execute(statement, kwargs)).scalar_one()
 
 
@@ -38,9 +40,7 @@ async def _identity(conn, user):
     ), {"actor": str(user)})
 
 
-async def test_paid_half_of_three_dollars_stays_one_dollar_fifty(
-    monkeypatch,
-):
+async def test_paid_half_of_three_dollars_stays_one_dollar_fifty():
     engine = create_async_engine(Settings().migration_database_url)
     try:
         async with engine.connect() as conn:
@@ -120,6 +120,7 @@ async def test_paid_half_of_three_dollars_stays_one_dollar_fifty(
                 await _call(
                     conn, "platform_saas_v2_bank_method",
                     currency="USD", instructions="Approved USD account for CI",
+                    as_json=False,
                 )
                 methods = await _call(conn, "platform_saas_catalog_read")
                 method = next(
@@ -132,7 +133,7 @@ async def test_paid_half_of_three_dollars_stays_one_dollar_fifty(
                             currency="USD")
                 modern = await _call(
                     conn, "platform_saas_v3_create_attempt",
-                    **args, method=method["id"],
+                    **args, method=UUID(str(method["id"])),
                 )
                 historical = await _call(
                     conn, "platform_saas_v2_create_attempt", **args,
