@@ -65,7 +65,6 @@ async def test_connected_invoice_menu_has_only_bill_and_main(monkeypatch, lang):
         "Invoice index must not query trial or commission analytics",
     ))
     monkeypatch.setattr(ui, "merchant_saas_trial_status", unused)
-    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", unused)
     monkeypatch.setattr(ui, "saas_price_profile", unused)
     bot = MagicMock()
     bot.id = 789
