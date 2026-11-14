@@ -290,6 +290,173 @@ CREATE FUNCTION public.platform_saas_release_change(
     """)
 
 
+    op.execute("""
+CREATE FUNCTION public.platform_saas_bot_previous_sales(
+ p_bot uuid,p_start timestamptz,p_end timestamptz,
+ p_owner uuid,p_merchant uuid
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE
+  project uuid;
+  source record;
+  matched_bot uuid;
+  n_bots bigint;
+  exemption text;
+  rate numeric;
+  charged numeric;
+  entries jsonb:='[]'::jsonb;
+BEGIN
+  SELECT b.project_id INTO project FROM public.bot_instances b
+  JOIN public.projects p ON p.id=b.project_id
+  WHERE b.id=p_bot AND p.owner_user_id=p_owner AND p.merchant_id=p_merchant;
+  IF project IS NULL OR p_start IS NULL OR p_end IS NULL OR p_start>=p_end
+  THEN RAISE EXCEPTION 'Invalid bot sales interval' USING ERRCODE='42501'; END IF;
+  -- Include only verified provider sales. Uncaptured paid provider orders
+  -- block issuing an incomplete renewal.
+  IF EXISTS(
+    SELECT 1 FROM (
+      SELECT 'file_stars'::text kind,f.id,f.project_id,f.paid_at
+      FROM public.file_sale_purchases f
+      WHERE f.status='paid' AND f.telegram_charge_id IS NOT NULL
+      UNION ALL
+      SELECT 'subscription_stars',o.id,o.project_id,o.paid_at
+      FROM public.subscription_star_orders o WHERE o.status='paid'
+      UNION ALL
+      SELECT 'crypto',ci.id,ci.project_id,ci.paid_at
+      FROM public.crypto_pay_invoices ci
+      JOIN public.crypto_pay_apps a ON a.id=ci.app_id
+       AND a.project_id=ci.project_id AND a.environment='mainnet'
+      WHERE ci.status='paid'
+    ) raw
+    WHERE raw.project_id=project
+      AND raw.paid_at>=p_start AND raw.paid_at<p_end
+      AND public.platform_saas_sale_active_at(raw.paid_at)
+      AND raw.paid_at>=public.platform_saas_billable_after(p_owner)
+      AND (
+        (raw.kind='crypto' AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_crypto_sales c
+          WHERE c.invoice_id=raw.id AND c.owner_user_id=p_owner
+        ))
+        OR (raw.kind<>'crypto' AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_star_sales s
+          WHERE s.source_kind=raw.kind AND s.source_id=raw.id
+            AND s.owner_user_id=p_owner
+        ))
+      )
+  ) THEN
+    RAISE EXCEPTION 'Uncaptured provider sale prevents billing'
+      USING ERRCODE='23514';
+  END IF;
+  FOR source IN
+    SELECT 'subscription'::text AS kind,p.id,p.project_id,
+           p.final_amount::numeric AS amount,p.currency_code::text AS currency,
+           p.approved_at AS paid_at,NULL::numeric AS provider_fx
+    FROM public.payments p
+    WHERE p.project_id=project AND p.approved_at>=p_start
+      AND p.approved_at<p_end
+    UNION ALL
+    SELECT 'file_manual',f.id,f.project_id,f.amount::numeric,
+           f.currency_code::text,f.paid_at,NULL::numeric
+    FROM public.file_sale_manual_orders f
+    WHERE f.project_id=project AND f.status='approved'
+      AND f.paid_at>=p_start AND f.paid_at<p_end
+    UNION ALL
+    SELECT s.source_kind,s.source_id,s.project_id,
+           s.stars_amount::numeric,'XTR'::text,s.paid_at,
+           round(s.usd_per_star*x.rub_per_unit,18)
+    FROM public.platform_saas_star_sales s
+    LEFT JOIN public.platform_saas_daily_fx_rates x
+      ON x.currency_code='USD' AND x.source_name='CBR'
+     AND x.rate_date=(s.paid_at AT TIME ZONE 'Europe/Moscow')::date
+    WHERE s.billing_eligible AND s.owner_user_id=p_owner
+      AND s.merchant_id=p_merchant AND s.project_id=project
+      AND s.paid_at>=p_start AND s.paid_at<p_end
+    UNION ALL
+    SELECT s.source_kind,s.invoice_id,s.project_id,
+           s.original_amount,s.currency_code,s.paid_at,
+           round(s.usd_per_unit*x.rub_per_unit,18)
+    FROM public.platform_saas_crypto_sales s
+    LEFT JOIN public.platform_saas_daily_fx_rates x
+      ON x.currency_code='USD' AND x.source_name='CBR'
+     AND x.rate_date=s.sale_day
+    WHERE s.billing_eligible AND s.owner_user_id=p_owner
+      AND s.merchant_id=p_merchant AND s.project_id=project
+      AND s.paid_at>=p_start AND s.paid_at<p_end
+  LOOP
+    IF source.paid_at IS NULL
+       OR NOT public.platform_saas_sale_active_at(source.paid_at)
+       OR source.paid_at<public.platform_saas_billable_after(p_owner)
+       OR NOT EXISTS(
+         SELECT 1 FROM public.merchant_project_periods mp
+         WHERE mp.project_id=source.project_id
+           AND mp.merchant_id=p_merchant AND mp.owner_user_id=p_owner
+           AND mp.started_at<=source.paid_at
+           AND (mp.ended_at IS NULL OR mp.ended_at>source.paid_at)
+       ) THEN CONTINUE; END IF;
+    SELECT count(*),max(e.source_id::text)::uuid
+      INTO n_bots,matched_bot
+    FROM public.platform_usage_events e
+    WHERE e.project_id=project AND e.event_type='bot_connected'
+      AND e.occurred_at<=source.paid_at
+      AND NOT EXISTS(
+        SELECT 1 FROM public.platform_usage_events gone
+        WHERE gone.project_id=e.project_id AND gone.source_id=e.source_id
+          AND gone.event_type='bot_removed' AND gone.occurred_at<=source.paid_at
+      );
+    IF n_bots<>1 THEN
+      RAISE EXCEPTION 'Ambiguous bot sale attribution' USING ERRCODE='23514';
+    END IF;
+    IF matched_bot IS DISTINCT FROM p_bot THEN CONTINUE; END IF;
+    exemption:=public.platform_saas_exemption_state(
+      project,p_bot,p_merchant,p_owner,source.paid_at);
+    IF exemption='exempt' THEN CONTINUE; END IF;
+    IF exemption<>'not_exempt' THEN
+      RAISE EXCEPTION 'Sale exemption requires review' USING ERRCODE='42501';
+    END IF;
+    -- Historical commission lines are globally unique: never rebill
+    -- sources charged before this upgrade.
+    IF EXISTS(
+      SELECT 1 FROM public.platform_saas_invoice_lines l
+      WHERE l.source_kind=source.kind AND l.source_id=source.id
+    ) THEN CONTINUE; END IF;
+    IF source.kind IN ('subscription_stars','file_stars',
+                       'subscription_crypto','file_crypto') THEN
+      rate:=source.provider_fx;
+    ELSIF source.currency='RUB' THEN rate:=1;
+    ELSE
+      SELECT x.rub_per_unit INTO rate
+      FROM public.platform_saas_daily_fx_rates x
+      WHERE x.currency_code=source.currency AND x.source_name='CBR'
+        AND x.rate_date=(source.paid_at AT TIME ZONE 'Europe/Moscow')::date
+        AND x.source_date<=x.rate_date
+        AND x.source_date>=x.rate_date-interval '14 days';
+    END IF;
+    IF rate IS NULL OR rate<=0 OR rate>1000000000 THEN
+      RAISE EXCEPTION 'Verified source-date FX unavailable'
+        USING ERRCODE='22023';
+    END IF;
+    charged:=CASE
+      WHEN source.kind IN ('subscription_stars','file_stars',
+                           'subscription_crypto','file_crypto')
+      THEN round(source.amount*rate*0.05,18)
+      ELSE round(source.amount*rate*0.05,2)
+    END;
+    IF charged<=0 THEN CONTINUE; END IF;
+    entries:=entries || jsonb_build_array(jsonb_build_object(
+      'kind',source.kind,'id',source.id,'project',project,
+      'amount',source.amount,'currency',source.currency,
+      'fx',rate,'charge',charged
+    ));
+  END LOOP;
+  RETURN entries;
+END; $f$
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+      public.platform_saas_bot_previous_sales(uuid,timestamptz,timestamptz,uuid,uuid)
+      FROM PUBLIC
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
