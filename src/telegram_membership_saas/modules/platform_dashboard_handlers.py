@@ -347,6 +347,34 @@ _ERROR_TEXT = {
         "Боту не хватает прав администратора в канале",
         "Bot is missing channel administrator rights",
     ),
+    "resource_network_failed": (
+        "Сетевая ошибка Telegram при проверке прав бота в канале",
+        "Telegram network error while verifying bot channel permissions",
+    ),
+    "resource_api_failed": (
+        "Telegram API не завершил проверку прав бота в канале",
+        "Telegram API failed to check bot channel permissions",
+    ),
+    "resource_rate_limited": (
+        "Telegram ограничил частоту проверки прав бота; повторим позже",
+        "Telegram rate-limited bot permission check; retry pending",
+    ),
+    "resource_check_failed": (
+        "Не удалось проверить права бота в канале",
+        "Could not verify bot channel permissions",
+    ),
+    "resource_access_denied": (
+        "Telegram запретил доступ к каналу или ресурс недоступен",
+        "Telegram denied channel access or resource is unavailable",
+    ),
+    "identity_rate_limited": (
+        "Telegram ограничил запросы getMe; повторим позже",
+        "Telegram rate-limited getMe; retry pending",
+    ),
+    "webhook_rate_limited": (
+        "Telegram ограничил проверку webhook; повторим позже",
+        "Telegram rate-limited webhook check; retry pending",
+    ),
     "startup_failed": (
         "Запуск завершился ошибкой; Supervisor повторит попытку",
         "Startup failed; Supervisor will retry",
