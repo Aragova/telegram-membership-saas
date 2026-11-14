@@ -4,6 +4,7 @@ Only getMe, getWebhookInfo, getChatMember callers may use this module.
 Never retry a payment, access-grant, message send or other side effect here.
 Do not log Telegram exception strings: some include token-bearing API URLs.
 """
+
 from __future__ import annotations
 
 import asyncio
