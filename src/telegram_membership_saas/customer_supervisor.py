@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings, get_settings
 from telegram_membership_saas.customer_runtime import run_customer_bot_instance
+from telegram_membership_saas.modules.bots.diagnostics import CustomerBotDiagnosticError
 from telegram_membership_saas.db import (
     build_engine,
     build_lease_engine,
@@ -182,6 +183,8 @@ def safe_error_code(exc: Exception) -> str:
     # they may contain a URL with the bot token.
     if isinstance(exc, ProjectWorkerBusy):
         return "lock_lost"
+    if isinstance(exc, CustomerBotDiagnosticError):
+        return exc.code
     message = str(exc)
     if "credentials" in message or "credential" in message:
         return "invalid_credentials"
@@ -218,10 +221,17 @@ async def run_target(
             # responses, prove real Telegram reachability.
             booted_at = monotonic()
             last_poll_response: float | None = None
+            last_poll_failure: str | None = None
 
             def observed_poll_response() -> None:
-                nonlocal last_poll_response
+                nonlocal last_poll_response, last_poll_failure
                 last_poll_response = monotonic()
+                last_poll_failure = None
+
+            def observed_poll_failure(code: str) -> None:
+                nonlocal last_poll_failure
+                # The observer only produces fixed codes, never raw errors.
+                last_poll_failure = code
 
             async def heartbeat() -> None:
                 while True:
@@ -235,7 +245,9 @@ async def run_target(
                         last_ok if last_ok is not None else booted_at
                     )
                     if silence > POLLING_STALE_SECONDS:
-                        raise RuntimeError("Customer Telegram polling stalled")
+                        raise CustomerBotDiagnosticError(
+                            last_poll_failure or "polling_stalled"
+                        )
                     await write_bot_health(
                         factory, project_id=project_id, bot_id=bot_id,
                         instance_id=instance_id,
@@ -245,6 +257,7 @@ async def run_target(
             customer = asyncio.create_task(run_customer_bot_instance(
                 factory, project_id=project_id, telegram_bot_id=bot_id,
                 settings=settings, on_poll_response=observed_poll_response,
+                on_poll_failure=observed_poll_failure,
             ))
             guard = asyncio.create_task(heartbeat())
             try:
