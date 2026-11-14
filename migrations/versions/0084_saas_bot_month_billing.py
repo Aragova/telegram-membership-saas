@@ -943,6 +943,189 @@ CREATE OR REPLACE FUNCTION public.platform_saas_line_guard()
         $guard$
     """)
 
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_issue_due_batch()
+    RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      started timestamptz;
+      now_at timestamptz:=clock_timestamp();
+      period_start timestamptz;
+      prior record;
+      bot record;
+      accounting record;
+      previous_month date;
+      bot_issued integer:=0;
+      commission_issued integer:=0;
+      deferred integer:=0;
+      invoice uuid;
+      first_trial timestamptz;
+      owner_period_start timestamptz;
+      last_issued_end timestamptz;
+      progress record;
+      cursor_bot_at timestamptz;
+      cursor_bot_id uuid;
+      cursor_month date;
+      cursor_owner_id uuid;
+      cursor_merchant_id uuid;
+      recovery_owner record;
+      recovery_merchant uuid;
+    BEGIN
+      PERFORM public.platform_saas_require_owner();
+      SELECT effective_from INTO started
+      FROM public.platform_saas_billing_control
+      WHERE id=1 AND enabled;
+      IF started IS NULL OR started>now_at THEN
+        RETURN jsonb_build_object(
+          'enabled',false,'bot_invoices',0,
+          'commission_invoices',0,'deferred',0
+        );
+      END IF;
+      IF NOT pg_try_advisory_xact_lock(
+        hashtextextended('vimi:saas:due-reconcile',0)
+      ) THEN
+        RETURN jsonb_build_object('enabled',true,'busy',true);
+      END IF;
+      SELECT * INTO progress FROM public.platform_saas_due_progress
+      WHERE id=1 FOR UPDATE;
+      -- During the activation delay, first-bot trial triggers are inactive.
+      -- Reconcile those accounts without rewriting any historical claim.
+      FOR recovery_owner IN
+        SELECT p.owner_user_id,min(greatest(b.created_at,mp.started_at)) AS first_connected
+        FROM public.bot_instances b
+        JOIN public.projects p ON p.id=b.project_id
+        JOIN public.merchant_project_periods mp
+          ON mp.project_id=p.id AND mp.owner_user_id=p.owner_user_id
+         AND mp.ended_at IS NULL
+        JOIN public.telegram_users u ON u.id=p.owner_user_id
+        LEFT JOIN public.platform_operators po
+          ON po.telegram_user_id=u.telegram_user_id AND po.role='owner'
+        WHERE b.status='registered' AND po.telegram_user_id IS NULL
+        GROUP BY p.owner_user_id
+      LOOP
+        INSERT INTO public.platform_saas_commercial_enrollments(
+          owner_user_id,effective_from
+        ) VALUES(recovery_owner.owner_user_id,started)
+        ON CONFLICT DO NOTHING;
+        IF NOT EXISTS(
+          SELECT 1 FROM public.merchant_platform_trial_claims t
+          WHERE t.owner_user_id=recovery_owner.owner_user_id
+            AND t.policy_key='vimi-saas-72h-v1' AND t.scope='owner'
+        ) THEN
+          SELECT m.id INTO recovery_merchant
+          FROM public.merchant_identities m
+          WHERE m.initial_owner_user_id=recovery_owner.owner_user_id
+          ORDER BY m.created_at,m.id LIMIT 1;
+          IF recovery_merchant IS NULL THEN
+            recovery_merchant:=gen_random_uuid();
+            INSERT INTO public.merchant_identities(
+              id,initial_owner_user_id
+            ) VALUES(recovery_merchant,recovery_owner.owner_user_id);
+          END IF;
+          INSERT INTO public.merchant_platform_trial_claims(
+            id,merchant_id,owner_user_id,policy_key,scope,claimed_at
+          ) VALUES(
+            gen_random_uuid(),recovery_merchant,
+            recovery_owner.owner_user_id,'vimi-saas-72h-v1','owner',
+            greatest(recovery_owner.first_connected,started-interval '72 hours')
+          ) ON CONFLICT DO NOTHING;
+        END IF;
+      END LOOP;
+      -- Connected LIVE accounts only. The operator's own network is
+      -- explicitly excluded. A bot/account can never be invoiced twice
+      -- because the canonical issuer locks the bot and invoice_key.
+      FOR bot IN
+        SELECT b.id,b.created_at,p.owner_user_id,p.id AS project_id
+        FROM public.bot_instances b
+        JOIN public.projects p ON p.id=b.project_id
+        JOIN public.telegram_users u ON u.id=p.owner_user_id
+        LEFT JOIN public.platform_operators o
+          ON o.telegram_user_id=u.telegram_user_id AND o.role='owner'
+        WHERE b.status='registered' AND o.telegram_user_id IS NULL
+        ORDER BY
+          CASE WHEN progress.last_bot_id IS NOT NULL
+            AND (b.created_at,b.id) <=
+                (progress.last_bot_connected_at,progress.last_bot_id)
+               THEN 1 ELSE 0 END,
+          b.created_at,b.id LIMIT 100
+      LOOP
+        cursor_bot_at:=bot.created_at;
+        cursor_bot_id:=bot.id;
+        BEGIN
+          SELECT min(claimed_at) INTO first_trial
+          FROM public.merchant_platform_trial_claims t
+          WHERE t.owner_user_id=bot.owner_user_id AND t.scope='owner'
+            AND t.policy_key='vimi-saas-72h-v1';
+          IF first_trial IS NULL THEN deferred:=deferred+1;CONTINUE;END IF;
+          SELECT mp.started_at INTO owner_period_start
+          FROM public.merchant_project_periods mp
+          WHERE mp.project_id=bot.project_id
+            AND mp.owner_user_id=bot.owner_user_id
+            AND mp.ended_at IS NULL;
+          IF owner_period_start IS NULL THEN
+            deferred:=deferred+1;CONTINUE;
+          END IF;
+          -- A transferred bot must not inherit the previous owner's debt,
+          -- but service periods of both owners must never overlap.
+          SELECT max(i.period_end) INTO last_issued_end
+          FROM public.platform_saas_invoices i
+          WHERE i.bot_instance_id=bot.id AND i.kind='prepayment'
+            AND i.status='issued';
+          SELECT i.id,i.period_end,i.status
+            INTO prior
+          FROM public.platform_saas_invoices i
+          WHERE i.bot_instance_id=bot.id AND i.kind='prepayment'
+            AND i.status='issued'
+            AND i.owner_user_id=bot.owner_user_id
+            AND i.period_start>=owner_period_start
+          ORDER BY i.period_end DESC LIMIT 1;
+          IF prior.id IS NOT NULL THEN
+            -- Do not stack future debts while the prior month's bill
+            -- remains unpaid. Once paid, renew with a real calendar month.
+            IF public.platform_saas_v2_remaining(prior.id)>0 THEN
+              CONTINUE;
+            END IF;
+            period_start:=prior.period_end;
+          ELSE
+            period_start:=greatest(
+              started,public.platform_saas_billable_after(bot.owner_user_id),
+              bot.created_at,owner_period_start,
+              coalesce(last_issued_end,started)
+            );
+          END IF;
+          -- Grandfathered owners may not receive a prepayment before the
+          -- full transitional 72-hour window has finished. New owners keep
+          -- their existing advance invoice due at the end of their trial.
+          IF public.platform_saas_is_transition_owner(bot.owner_user_id)
+             AND period_start>now_at THEN CONTINUE; END IF;
+          IF period_start>now_at THEN CONTINUE; END IF;
+          invoice:=public.platform_saas_issue_bot_invoice(
+            bot.id,period_start,
+            public.platform_saas_bot_period_end(bot.id,period_start)
+          );
+          IF invoice IS NOT NULL THEN bot_issued:=bot_issued+1; END IF;
+        EXCEPTION WHEN OTHERS THEN
+          -- Audit-safe deferred invoice: never issue with uncertain
+          -- owner, FX, source or exemption evidence. Retry later.
+          deferred:=deferred+1;
+        END;
+      END LOOP;
+      IF cursor_bot_id IS NOT NULL THEN
+        UPDATE public.platform_saas_due_progress SET
+          last_bot_connected_at=cursor_bot_at,
+          last_bot_id=cursor_bot_id,updated_at=clock_timestamp()
+        WHERE id=1;
+      END IF;
+      -- Only renewal invoices contain the per-bot, previous-period 5%.
+      -- Do not issue a second calendar-month merchant commission invoice.
+      PERFORM public.platform_saas_reconcile_verified_refunds(NULL);
+      RETURN jsonb_build_object(
+        'enabled',true,'bot_invoices',bot_issued,
+        'commission_invoices',commission_issued,'deferred',deferred
+      );
+    END; $f$
+    """)
+
 def downgrade() -> None:
     raise RuntimeError(
         "Commercial invoices and verified bank evidence cannot be rolled back"
