@@ -202,7 +202,7 @@ async def test_resource_admin_rights_required_before_customer_sales(monkeypatch)
             status="administrator", can_invite_users=True, can_restrict_members=False
         )
     )
-    with pytest.raises(RuntimeError, match="administrator rights"):
+    with pytest.raises(RuntimeError, match="missing_admin_rights"):
         await verify_resource_permissions(None, project_id=uuid4(), bot=bot)
 
 

@@ -161,6 +161,13 @@ def public_health_label(
             "polling_handler_stalled": "🔴 Telegram: обработчик задержал polling",
             "polling_check_failed": "🔴 getUpdates: ошибка опроса",
             "missing_admin_rights": "🔴 Проверьте права бота в канале",
+            "resource_network_failed": "🔴 Проверка прав: ошибка сети Telegram",
+            "resource_api_failed": "🔴 Проверка прав: ошибка Telegram API",
+            "resource_rate_limited": "🟡 Проверка прав: ограничение Telegram",
+            "resource_check_failed": "🔴 Проверка прав не завершена",
+            "resource_access_denied": "🔴 Telegram отклонил доступ к каналу",
+            "identity_rate_limited": "🟡 getMe: ограничение Telegram",
+            "webhook_rate_limited": "🟡 webhook: ограничение Telegram",
             "lock_lost": "🟡 Бот перезапускается",
             "worker_stopped": "🟡 Бот перезапускается",
         }

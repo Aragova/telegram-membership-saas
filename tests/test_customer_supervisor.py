@@ -488,3 +488,139 @@ async def test_slow_preflight_does_not_start_polling_watchdog(monkeypatch):
         task.cancel()
         done.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_supervisor_restarts_failed_projects_with_bounded_independent_jitter(
+    monkeypatch,
+):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    target = _target()
+    calls = []
+
+    async def fail(_engine, _factory, _target, *, settings):
+        calls.append(_target.project_id)
+        raise RuntimeError("simulated transient network failure")
+
+    monkeypatch.setattr(
+        runtime, "discover_targets", AsyncMock(return_value=(target,)),
+    )
+    monkeypatch.setattr(
+        runtime, "discover_removal_targets", AsyncMock(return_value=()),
+    )
+    monkeypatch.setattr(runtime, "run_target", fail)
+    monkeypatch.setattr(runtime, "uniform", lambda _start, _end: 5.0)
+
+    supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
+    await supervisor.reconcile_once()
+    await asyncio.sleep(0)
+    await supervisor.reconcile_once()
+    assert supervisor.failure_streak[target.project_id] == 1
+    first_delay = supervisor.retry_after[target.project_id] - runtime.monotonic()
+    assert 48 <= first_delay <= 51
+
+    # Simulate elapsed cooldown without waiting for a wall clock.
+    supervisor.retry_after[target.project_id] = 0
+    await supervisor.reconcile_once()
+    await asyncio.sleep(0)
+    await supervisor.reconcile_once()
+    assert supervisor.failure_streak[target.project_id] == 2
+    second_delay = supervisor.retry_after[target.project_id] - runtime.monotonic()
+    assert 93 <= second_delay <= 96
+
+    supervisor.retry_after[target.project_id] = 0
+    await supervisor.reconcile_once()
+    await asyncio.sleep(0)
+    # A long-running bot's next failure starts again from a fresh streak.
+    supervisor.workers[target.project_id].started_at -= 301
+    await supervisor.reconcile_once()
+    assert supervisor.failure_streak[target.project_id] == 1
+
+    # Planned removal is never counted as a failure.
+    assert calls == [target.project_id] * 3
+
+
+async def test_supervisor_cancellation_resets_failure_streak(monkeypatch):
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    target = _target()
+    event = asyncio.Event()
+
+    async def run(_engine, _factory, _target, *, settings):
+        await event.wait()
+
+    discover = AsyncMock(return_value=(target,))
+    monkeypatch.setattr(runtime, "discover_targets", discover)
+    monkeypatch.setattr(
+        runtime, "discover_removal_targets", AsyncMock(return_value=()),
+    )
+    monkeypatch.setattr(runtime, "run_target", run)
+    supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
+    try:
+        supervisor.failure_streak[target.project_id] = 3
+        await supervisor.reconcile_once()
+        await asyncio.sleep(0)
+        discover.return_value = ()
+        await supervisor.reconcile_once()
+        await asyncio.gather(
+            supervisor.workers[target.project_id].task, return_exceptions=True,
+        )
+        await supervisor.reconcile_once()
+        assert target.project_id not in supervisor.failure_streak
+        assert target.project_id not in supervisor.retry_after
+    finally:
+        event.set()
+        for item in supervisor.workers.values():
+            item.task.cancel()
+        await asyncio.gather(
+            *(x.task for x in supervisor.workers.values()),
+            return_exceptions=True,
+        )
+
+
+async def test_rotated_credentials_bypass_failed_old_version_cooldown(monkeypatch):
+    """A corrected token must restart immediately even if old task is gone."""
+    from telegram_membership_saas import customer_supervisor as runtime
+
+    pid = uuid4()
+    old = _target(pid)
+    current = [old]
+
+    async def discover(_factory):
+        return tuple(current)
+
+    async def fail(_engine, _factory, _target, *, settings):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(runtime, "discover_targets", discover)
+    monkeypatch.setattr(
+        runtime, "discover_removal_targets", AsyncMock(return_value=()),
+    )
+    monkeypatch.setattr(runtime, "run_target", fail)
+    monkeypatch.setattr(runtime, "uniform", lambda _lo, _hi: 2.0)
+    supervisor = CustomerBotSupervisor(MagicMock(), MagicMock(), _settings())
+    await supervisor.reconcile_once()
+    await asyncio.sleep(0)
+    await supervisor.reconcile_once()
+    assert pid not in supervisor.workers
+    assert pid in supervisor.retry_after
+    assert supervisor.failure_streak[pid] == 1
+    assert supervisor.retry_target[pid] == old
+
+    # No worker remains to cancel. Discovery sees a corrected token now.
+    newer = _target(pid, old.credential_version + timedelta(seconds=1))
+    current[:] = [newer]
+    await supervisor.reconcile_once()
+    assert pid in supervisor.workers
+    assert supervisor.workers[pid].target == newer
+    assert pid not in supervisor.retry_after
+    assert pid not in supervisor.failure_streak
+    assert pid not in supervisor.retry_target
+
+    await asyncio.gather(
+        supervisor.workers[pid].task, return_exceptions=True,
+    )
+    await supervisor.reconcile_once()
+    # Any future failure belongs to the NEW registration, starts from base.
+    assert supervisor.failure_streak[pid] == 1
+    assert supervisor.retry_target[pid] == newer
