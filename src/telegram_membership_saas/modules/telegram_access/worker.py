@@ -38,7 +38,6 @@ from telegram_membership_saas.modules.telegram_access.service import (
     record_grant_result,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
