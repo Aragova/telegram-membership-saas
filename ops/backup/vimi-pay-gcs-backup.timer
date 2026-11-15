@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily encrypted ViMi Pay PostgreSQL backup to GCS (opt-in)
+
+[Timer]
+OnCalendar=*-*-* 03:20:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+Unit=vimi-pay-gcs-backup.service
+
+[Install]
+WantedBy=timers.target
