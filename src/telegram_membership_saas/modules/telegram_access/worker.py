@@ -1,6 +1,6 @@
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
