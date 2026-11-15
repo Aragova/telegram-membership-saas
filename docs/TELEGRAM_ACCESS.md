@@ -42,7 +42,11 @@ The invite name is not authorization. It is only a routing hint. Authorization c
 ticket and current access state.
 
 If the user is already a current chat member, no invite is needed and the action can complete
-immediately.
+immediately. After a successful, current GRANT is committed, the access worker sends a best-effort
+RU/EN message explaining that the buyer is already in the private channel and no second invite is
+needed. It contains no duration or "lifetime" claim and no new buttons. A failed notification does
+not cancel access or retry payment; a stale GRANT or one whose desired access has been revoked must
+not generate a confirmation. Reconciliation and grant idempotency remain unchanged.
 
 ## Revoke flow
 
