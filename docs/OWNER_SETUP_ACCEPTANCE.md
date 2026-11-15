@@ -1,5 +1,11 @@
 # ViMi Pay v1.5 — administrative owner journey acceptance
 
+> **Исторический документ по этапу v1.5.** Указанный ниже «оставшийся»
+> автоматический запуск разработан позже через CustomerBotSupervisor,
+> см. [AUTOMATIC_CUSTOMER_BOT_SUPERVISOR.md](AUTOMATIC_CUSTOMER_BOT_SUPERVISOR.md).
+> Для фактического E2E и коммерческой приёмки использовать
+> [LAUNCH_READINESS_2026_11_15.md](LAUNCH_READINESS_2026_11_15.md).
+>
 The goal is **one complete administrative journey before repeating a buyer E2E**.
 This is not another payment prototype. The backend already supports checkout,
 receipts, manual review and access enforcement; the missing part is owner
