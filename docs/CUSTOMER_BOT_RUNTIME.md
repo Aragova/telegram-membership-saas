@@ -1,5 +1,12 @@
 # Connected owner-bot runtime — administration + buyer storefront
 
+> **Срез 2026-11-15:** приведённые ниже инструкции запуска отдельного
+> `customer-bot` контейнера описывают legacy/test profile.
+> Для текущей многоботной сети применяется `customer-supervisor` +
+> `compose.light100.yaml`; нельзя запускать второй poller на тот же
+> BotInstance. См. [AUTOMATIC_CUSTOMER_BOT_SUPERVISOR.md](AUTOMATIC_CUSTOMER_BOT_SUPERVISOR.md)
+> и [LAUNCH_READINESS_2026_11_15.md](LAUNCH_READINESS_2026_11_15.md).
+>
 Source of truth: [ViMi Pay v2 contract](VIMI_PAY_V2.md).
 Earlier paragraphs about a buyer-only dispatcher and administration in central
 document **legacy implementation**, not the approved target. This migration

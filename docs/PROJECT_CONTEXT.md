@@ -1,3 +1,41 @@
+## 2026-11-15 — Launch-readiness audit, usevimi.ru and Lava
+
+The current verified GitHub main is `12427b17` (#168); CI #1721 passed
+1,190 tests and staging deployment #60 succeeded. Last user-supplied monitoring
+snapshot showed 51/51 connected bots green, not a live SLA. The two bot
+startup incidents recovered after intermittent Telegram API timeouts, but
+the network/provider root cause has not been independently proven.
+
+**Current readiness baseline:** [LAUNCH_READINESS_2026_11_15.md](LAUNCH_READINESS_2026_11_15.md).
+It distinguishes implemented code from CI, real-Telegram E2E, live
+platform finance flags, backups, production environment and launch gates.
+Do not treat merged code, an old doc saying "billing OFF" or healthy Docker
+as proof of the current financial state or production readiness.
+
+Current 72h/150 RUB or $3/5% SaaS model follows #161, overridden by
+#162 for **owner-network holds on overdue debt**, preserving paid access.
+Do not reenable or disable commercial controls during a docs-only PR.
+Never erase historical invoices or write production secrets.
+
+**Existing external assets:** usevimi.ru is the separate ViMi autoposting
+landing, sourced from Aragova/telegram-forwarder-bot `landing/`; add a
+separate RU/EN ViMi Pay coming-soon section, not a false live checkout.
+The user also has https://app.lava.top/146978276, but API keys, active
+merchant status, integration permissions and payment acceptance are
+**not yet verified**. lava.top != lava.ru. Explore only as a future
+owner SaaS invoice payment rail and keep manual bank approval authoritative
+until signed provider evidence is safely integrated.
+
+**DNS boundary:** Keep the existing usevimi.ru root website untouched.
+For future API/webhook propose `pay-api.usevimi.ru`; verify the current fast-vm external IP and promote it to static in Google Cloud
+(if ephemeral) before adding a **new** REG.RU DNS A record and TLS.
+Previous ViMi services may already occupy api.usevimi.ru and staging.usevimi.ru;
+never overwrite their existing records or nginx virtual hosts.
+No IP/DNS/VM/payment changes in this documentation step. Stage 2 is
+read-only live inventory and backup/restore proof, not a bulk bot rewrite.
+
+---
+
 ## 2026-11-14 — Follow-up to #167: two failing startup preflights (draft #168)
 
 Staging deployment #59 applied #167 successfully. Two customer bots

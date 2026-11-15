@@ -1,5 +1,11 @@
 # Telegram MVP commerce flow
 
+> **Исторический срез раннего MVP (до подключённых BotInstance, Stars
+> и Crypto Pay).** Описанные ниже «not included» и single-bot deployment
+> не относятся к текущему main. Текущий состав функций и оставшиеся
+> проверки: [LAUNCH_READINESS_2026_11_15.md](LAUNCH_READINESS_2026_11_15.md),
+> [VIMI_PAY_V2.md](VIMI_PAY_V2.md).
+>
 This slice turns the existing payment/access domain into a usable Telegram MVP.
 
 ## Runtime model
