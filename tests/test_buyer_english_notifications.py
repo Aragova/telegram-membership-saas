@@ -146,3 +146,13 @@ async def test_access_invitation_uses_receivers_language(monkeypatch) -> None:
     assert "Your channel access is ready" in msg["text"]
     assert msg["reply_markup"].inline_keyboard[0][0].text == "Join channel"
     assert msg["reply_markup"].inline_keyboard[0][0].url == invite.invite_link
+
+    bot.send_message.reset_mock()
+    await adapter.deliver(command, TelegramAccessResult(already_member=True))
+    confirmed = bot.send_message.await_args.kwargs
+    assert "Channel access confirmed" in confirmed["text"]
+    assert "already a member" in confirmed["text"]
+    assert "another invitation" in confirmed["text"]
+    assert "lifetime" not in confirmed["text"].lower()
+    assert "forever" not in confirmed["text"].lower()
+    assert "reply_markup" not in confirmed
