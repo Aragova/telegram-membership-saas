@@ -53,6 +53,9 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      - name: Validate opt-in backup shell syntax
+        run: bash -n ops/backup/vimi-pay-gcs-backup.sh
+
       # Real deployment starts each entrypoint in a fresh interpreter.
       # compileall and pytest's preloaded import graph cannot detect cycles.
       - name: Cold-start import smoke tests
