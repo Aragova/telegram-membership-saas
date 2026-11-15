@@ -1,5 +1,12 @@
 # Native Stars subscriptions · ViMi Pay PR #130
 
+> **Текущий код main поддерживает нативные подписки ⭐ Telegram Stars.**
+> Технический код валюты `XTR` допускается только внутри Bot API/ledger,
+> в пользовательских RU/EN экранах используется «⭐ Telegram Stars».
+> Приведённые ниже шаги следует считать контрактом реализации, а не
+> доказательством live-оплат или полной готовности к продаже.
+> См. [LAUNCH_READINESS_2026_11_15.md](LAUNCH_READINESS_2026_11_15.md).
+>
 This is the first fully automatic subscription payment rail. It reuses
 the EXISTING Subscription row and EntitlementGrant + ACCESS_RECALCULATE
 outbox used by manual payments, rather than a second subscriber database.
