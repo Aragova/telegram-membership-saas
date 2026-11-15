@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -13,12 +14,14 @@ from aiogram.exceptions import (
     TelegramServerError,
     TelegramUnauthorizedError,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.access import (
     AccessActionStatus,
     AccessActionType,
+    AccessState,
     claim_next_access_action,
     mark_access_action_failed,
     mark_access_action_succeeded,
@@ -34,6 +37,8 @@ from telegram_membership_saas.modules.telegram_access.service import (
     close_ticket_for_failed_delivery,
     record_grant_result,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +270,7 @@ async def run_one_telegram_access_action(
         )
 
     completed_at = current_time()
+    notify_existing_member = False
     async with system_project_session_scope(session_factory, project_id) as session:
         if command.access.action_type == AccessActionType.REVOKE:
             await close_pending_tickets_for_revoke(
@@ -279,6 +285,31 @@ async def run_one_telegram_access_action(
             claim_attempt=command.access.claim_attempt,
             processed_at=completed_at,
         )
+        if (
+            command.access.action_type == AccessActionType.GRANT
+            and result.already_member
+            and completed.status == AccessActionStatus.SUCCEEDED.value
+            and completed.processed_at == completed_at
+        ):
+            # Only notify if the entitlement remains current after recording access.
+            notify_existing_member = bool(await session.scalar(
+                select(AccessState.desired_access).where(
+                    AccessState.project_id == project_id,
+                    AccessState.customer_id == command.access.customer_id,
+                    AccessState.resource_id == command.access.resource_id,
+                )
+            ))
+
+    if notify_existing_member:
+        # The member already has physical access. An unreachable DM must never
+        # invalidate it, retry the grant, or generate another invite.
+        try:
+            await adapter.deliver(command, result)
+        except Exception as exc:
+            logger.warning(
+                "Existing-member access notice failed for action %s (%s)",
+                command.access.action_id, type(exc).__name__,
+            )
 
     return TelegramAccessExecution(
         action_id=command.access.action_id,

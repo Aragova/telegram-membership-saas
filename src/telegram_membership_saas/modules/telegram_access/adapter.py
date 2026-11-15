@@ -106,9 +106,23 @@ class TelegramAccessAdapter:
         command: TelegramAccessCommand,
         result: TelegramAccessResult,
     ) -> None:
-        if result.invite_link is None:
+        if result.invite_link is None and not result.already_member:
             return
         async with recipient_language(self._session_factory, command.telegram_user_id):
+            if result.already_member:
+                await self._bot.send_message(
+                    chat_id=command.telegram_user_id,
+                    text=tr(
+                        "✅ <b>Доступ к каналу подтверждён!</b>\n\n"
+                        "Вы уже состоите в этом приватном канале, поэтому "
+                        "повторное приглашение не требуется.",
+                        "✅ <b>Channel access confirmed!</b>\n\n"
+                        "You are already a member of this private channel, "
+                        "so you do not need another invitation.",
+                    ),
+                    parse_mode="HTML",
+                )
+                return
             await self._bot.send_message(
                 chat_id=command.telegram_user_id,
                 text=tr(

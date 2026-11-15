@@ -8,6 +8,7 @@ from telegram_membership_saas.modules.access import AccessActionType, AccessComm
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessAdapter,
     TelegramAccessCommand,
+    TelegramAccessResult,
     project_id_from_invite_name,
 )
 
@@ -106,6 +107,38 @@ async def test_grant_does_not_create_invite_for_existing_member() -> None:
     assert result.already_member is True
     assert result.invite_link is None
     assert all(name != "create_chat_invite_link" for name, _ in bot.calls)
+
+
+async def test_existing_member_receives_confirmation_without_invite_or_duration() -> None:
+    bot = FakeBot(status="member")
+    adapter = TelegramAccessAdapter(bot)  # type: ignore[arg-type]
+    command = _command(AccessActionType.GRANT)
+
+    result = await adapter.prepare(command)
+    await adapter.deliver(command, result)
+
+    assert result.already_member is True
+    assert result.invite_link is None
+    assert all(name != "create_chat_invite_link" for name, _ in bot.calls)
+    messages = [kwargs for name, kwargs in bot.calls if name == "send_message"]
+    assert len(messages) == 1
+    message = messages[0]
+    assert message["chat_id"] == command.telegram_user_id
+    assert "Вы уже состоите" in str(message["text"])
+    assert "повторное приглашение не требуется" in str(message["text"])
+    assert "бессроч" not in str(message["text"]).lower()
+    assert "навсегда" not in str(message["text"]).lower()
+    assert "reply_markup" not in message
+
+
+async def test_no_delivery_for_revoke_or_empty_result() -> None:
+    bot = FakeBot()
+    adapter = TelegramAccessAdapter(bot)  # type: ignore[arg-type]
+    await adapter.deliver(
+        _command(AccessActionType.REVOKE),
+        TelegramAccessResult(),
+    )
+    assert all(name != "send_message" for name, _ in bot.calls)
 
 
 async def test_restricted_non_member_still_gets_join_request_invite() -> None:
