@@ -27,8 +27,10 @@ owner SaaS invoice payment rail and keep manual bank approval authoritative
 until signed provider evidence is safely integrated.
 
 **DNS boundary:** Keep the existing usevimi.ru root website untouched.
-For future API/webhook propose `api.usevimi.ru`; obtain/reserve the VM's
-stable public IPv4 from its provider before adding a DNS A record and TLS.
+For future API/webhook propose `pay-api.usevimi.ru`; verify the current fast-vm external IP and promote it to static in Google Cloud
+(if ephemeral) before adding a **new** REG.RU DNS A record and TLS.
+Previous ViMi services may already occupy api.usevimi.ru and staging.usevimi.ru;
+never overwrite their existing records or nginx virtual hosts.
 No IP/DNS/VM/payment changes in this documentation step. Stage 2 is
 read-only live inventory and backup/restore proof, not a bulk bot rewrite.
 
