@@ -1,3 +1,12 @@
+> **2026-11-15 — статус документа:** нижеследующие заголовки «foundation only»
+> описывают исторический PR #133, а не текущее состояние main.
+> В текущем main присутствуют buyer Crypto Pay checkout,
+> подтверждение через `getInvoices`, ledger/recovery/refunds, а
+> `compose.light100.yaml` выставляет buyer-enable по умолчанию в true.
+> Реальная готовность конкретного merchant-приложения, разрешённость
+> checkout и завершённый E2E в Telegram остаются отдельными проверками.
+> См. [реестр релиза](LAUNCH_READINESS_2026_11_15.md).
+>
 # Crypto Pay / @CryptoBot — approved next rail, foundation PR #133
 
 **Current status: backend foundation ONLY. No live Crypto Pay buyer button yet.**
