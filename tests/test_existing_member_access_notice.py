@@ -94,7 +94,8 @@ async def test_existing_member_notice_only_after_current_grant_is_committed(
     assert result.status == AccessActionStatus.SUCCEEDED.value
     assert events.count("notified") == expected_notices
     assert events.count("committed") == 2
-    assert events.index("notified") > events.index("committed", 1) if expected_notices else True
+    if expected_notices:
+        assert events[-1] == "notified"
     mark_succeeded.assert_awaited_once()
     assert session.scalar.await_count == (0 if already_processed else 1)
 
