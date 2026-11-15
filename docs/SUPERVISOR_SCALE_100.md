@@ -1,5 +1,12 @@
 # ViMi Pay — opt-in 100-bot supervisor topology (v1, no checkout rewrite)
 
+> **Альтернативный opt-in профиль, НЕ текущий staging.** Прежний
+> `scale100` требует четыре Supervisor shard и увеличивает лимит соединений
+> PostgreSQL до 240. Действующий staging deploy #60 использовал
+> `compose.light100.yaml`; **не комбинировать** оба профиля и не включать
+> `scale100` по документации ниже без отдельной нагрузочной проверки.
+> См. [SUPERVISOR_LIGHT_100.md](SUPERVISOR_LIGHT_100.md).
+>
 ## Scope and guarantee
 
 This is an **infrastructure capacity profile**, not a product-level ceiling.
