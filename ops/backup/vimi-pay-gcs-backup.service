@@ -1,0 +1,21 @@
+[Unit]
+Description=ViMi Pay encrypted PostgreSQL off-VM backup (opt-in)
+Documentation=https://github.com/Aragova/telegram-membership-saas/blob/main/docs/BACKUP_RECOVERY.md
+Wants=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/vimi-pay/backup.env
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/vimi-pay-gcs-backup
+TimeoutStartSec=40min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+StandardOutput=journal
+StandardError=journal
+# Installed files remain outside Compose; no polling processes are restarted.
