@@ -8,6 +8,7 @@ log() { printf 'BACKUP: %s\n' "$*"; }
 command -v docker >/dev/null || fail "docker unavailable"
 command -v age >/dev/null || fail "age unavailable"
 command -v gcloud >/dev/null || fail "gcloud CLI unavailable"
+command -v curl >/dev/null || fail "curl unavailable"
 command -v flock >/dev/null || fail "flock unavailable"
 command -v sha256sum >/dev/null || fail "sha256sum unavailable"
 
@@ -68,10 +69,30 @@ docker exec "$CONTAINER" pg_dumpall -U membership --globals-only |
   sha256sum membership.dump.age pg-globals.sql.age > manifest.sha256
 )
 log "uploading encrypted database and globals"
-# Object Creator permissions suffice; generation precondition prevents overwrite.
-gcloud storage cp --if-generation-match=0 "$DUMP" "gs://$VIMI_BACKUP_GCS_BUCKET/$KEY/membership.dump.age"
-gcloud storage cp --if-generation-match=0 "$GLOBALS" "gs://$VIMI_BACKUP_GCS_BUCKET/$KEY/pg-globals.sql.age"
-# Commit marker last. A directory without manifest is NOT a completed backup.
-gcloud storage cp --if-generation-match=0 "$MANIFEST" "gs://$VIMI_BACKUP_GCS_BUCKET/$KEY/manifest.sha256"
+# The JSON API uploads to an EXACT object name via objects.insert, avoiding
+# 'storage.objects.list' permission needed by gcloud storage cp object paths.
+# Only create permission is granted to the backup VM identity. The bucket and
+# prefix are validated/constructed here; only '/' needs percent-encoding.
+upload_object() {
+  local local_file="$1" object="$2" encoded token
+  [[ "$object" =~ ^[a-zA-Z0-9_./-]+$ ]] || fail "invalid object name"
+  encoded="${object//\//%2F}"
+  # Fetch short-lived OAuth credentials in memory. Never put a bearer token
+  # on curl argv or in log files; pass the header by an anonymous FD instead.
+  token="$(gcloud auth print-access-token)" || fail "GCE credential unavailable"
+  [[ -n "$token" ]] || fail "empty GCE access token"
+  curl --fail --silent --show-error \
+    --connect-timeout 10 --max-time 1800 \
+    -X POST --data-binary "@$local_file" \
+    -H "Content-Type: application/octet-stream" \
+    -H @<(printf 'Authorization: Bearer %s\n' "$token") \
+    -o /dev/null \
+    "https://storage.googleapis.com/upload/storage/v1/b/$VIMI_BACKUP_GCS_BUCKET/o?uploadType=media&name=$encoded&ifGenerationMatch=0"
+  unset token
+}
+upload_object "$DUMP" "$KEY/membership.dump.age"
+upload_object "$GLOBALS" "$KEY/pg-globals.sql.age"
+# Commit marker last. A prefix without manifest is NOT a completed backup.
+upload_object "$MANIFEST" "$KEY/manifest.sha256"
 
 log "BACKUP_UPLOADED: $STAMP (manifest is complete; test restore separately)"
