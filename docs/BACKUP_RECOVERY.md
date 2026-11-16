@@ -42,6 +42,67 @@
 не объявлять GCS backup рабочим. Локальный архив и изолированный restore
 продолжают оставаться единственной подтверждённой проверкой.
 
+## Проверка безостановочной авторизации и архитектура Cloud Run, 16 ноября 2026
+
+Оператор подтвердил на `fast-vm`: запрос GCE metadata
+`.../service-accounts/default/identity?audience=https://example.com`
+вернул HTTP **200**. Это доказывает, что VM умеет получать Google ID-токен
+для указанной аудитории, но **не** является подтверждением разрешения
+Cloud Run Invoker и **не** даёт доступ к GCS. Во время настройки оператор
+создал приватный EU bucket `vimi-pay-backups-633224371599` с Soft Delete,
+выбрал Lifecycle Delete по age 90 дней и создал сервисный аккаунт
+`vimi-pay-backup-writer` без JSON-ключей. Выдача этому аккаунту роли
+`Storage Object Creator` на bucket инициирована через Cloud Console;
+состояние после сохранения IAM policy и lifecycle необходимо проверить
+перед тестом.
+
+**Выбран вариант без остановки VM:** вместо прямых записей из VM в GCS
+используем **IAM-закрытый Cloud Run session broker** (см.
+`ops/backup/session_broker/`). Обязательно при развёртывании:
+
+- Cloud Run service identity: новый `vimi-pay-backup-writer`, только
+  `roles/storage.objectCreator` на выделенном bucket, без
+  Project Editor/Storage Admin.
+- Выдать существующему прикреплённому Compute Engine default SA
+  `633224371599-compute@developer.gserviceaccount.com` **только
+  `roles/run.invoker` на конкретный Cloud Run service**. Не назначать
+  на проект, не включать `allUsers`, не создавать SA keys.
+- Broker развёртывается в `europe-west4`, требует аутентификацию
+  `--no-allow-unauthenticated`, запущен с
+  `VIMI_BACKUP_GCS_BUCKET=vimi-pay-backups-633224371599`. Проверить
+  отсутствие публичных IAM binding и допустимый входящий HTTPS.
+- VM получает **ID-токен для URL реального Cloud Run service** (не
+  `example.com`), передаёт его в приватный `POST /session`. Broker,
+  использующий отдельную identity с правом записи, создаёт GCS
+  **resumable upload session** для одного из трёх строго разрешённых
+  файлов внутри уникального каталога `vimi-pay/postgres/UTC-UUID/`.
+  Устанавливается `ifGenerationMatch=0`. Broker возвращает session URI.
+- Этот session URI — **bearer-секрет** и никогда не должен попадать в
+  командную строку, журналы, bash trace, browser, чат или GitHub.
+  `ops/backup/session_upload.py` держит URI только в памяти Python и
+  загружает зашифрованные файлы напрямую в GCS через HTTPS. Даже большой
+  архив не проходит через Cloud Run: лимит 32 MiB на HTTP/1 запросы
+  Cloud Run здесь не применяется к содержимому архива.
+- `vimi-pay-gcs-backup.sh` создаёт два зашифрованных файла и в конце
+  контрольный `manifest.sha256`. Если любой из трёх uploads не завершился,
+  маркер завершённой копии не публикуется. Перезапуск по расписанию
+  создаст новый prefix. Существующий uploader **пока не реализует**
+  возобновление после обрыва потоковой передачи в одной сессии;
+  для больших архивов надо добавить контроль сетевых ошибок и
+  возобновление по подтверждённому byte offset. Не утверждать, что
+  механизм испытан на больших объёмах.
+
+**Важно:** `Cloud Run` сервис пока отсутствует, backend и VM-клиент
+не развернуты, код не подвергался живому E2E через GCS. Новый код в
+черновом PR #172 — архитектурная заготовка, **не готовое расписание**.
+Перед запуском необходимы независимое ревью кода, CI, приватный Cloud Run
+и проверка настоящей загрузки и восстановления в изолированную БД.
+
+Документация Google:
+- https://docs.cloud.google.com/run/docs/authenticating/service-to-service
+- https://docs.cloud.google.com/storage/docs/resumable-uploads
+- https://docs.cloud.google.com/storage/docs/performing-resumable-uploads
+
 ## Чего нет в обычном `pg_dump`
 
 - Кластерные роли, grants и настройки PostgreSQL: для них необходим отдельно `pg_dumpall --globals-only`.
@@ -49,31 +110,71 @@
 - Files/media, хранящиеся вне базы, включая внешние Telegram file_id / объектное хранилище: провести инвентаризацию отдельно.
 - Google Compute Engine persistent disk snapshots; GCS-архив **не заменяет** снимки системы и конфигурации.
 
-## Целевое решение: age + GCS
+## Целевое решение: age + закрытый Cloud Run + GCS
 
-Файлы в `ops/backup/` — **отключённая по умолчанию** подготовка автоматической выгрузки:
+Все `ops/backup/` файлы **отключены по умолчанию**.
 
-1. Root-only `/etc/vimi-pay/backup.env`, `chmod 0600`, указывает имя отдельного bucket, **публичный** recipient `age1...`, имя контейнера PostgreSQL; секретной половины age на VM нет.
-2. `vimi-pay-gcs-backup.sh` захватывает `flock`, потоково шифрует `pg_dump -Fc -Z 6` и `pg_dumpall --globals-only`. Незашифрованные дампы **не записываются на диск**.
-3. Сервисный аккаунт VM с `roles/storage.objectCreator` **на отдельном bucket**, без objectAdmin/admin/delete. На VM требуется `gcloud` (для короткоживущего GCE OAuth bearer token), `curl` и корректные OAuth access scopes; изменить прикреплённый сервисный аккаунт без предварительной проверки других ViMi сервисов нельзя.
-4. Каждый запуск создаёт уникальный prefix `gs://BUCKET/vimi-pay/postgres/UTC-UUID/` и грузит два age-архива. Файл `manifest.sha256` выгружается **последним**: только prefix с manifest считается завершённым.
-5. Для сохранения **write-only** IAM вместо `gcloud storage cp` в object path используется прямой JSON API `objects.insert` c точно закодированным именем и `ifGenerationMatch=0`. Это защищает от перезаписи и не требует `storage.objects.list`. Короткоживущий токен не выводится в лог или argv. Bucket-level retention и soft-delete настраиваются отдельно. **Нельзя включать необратимый Bucket Lock** без отдельного осознанного разрешения.
-6. Root-owned `vimi-pay-gcs-backup.timer`: ежедневно 03:20 UTC + случайные 0–20 минут, `Persistent=true`. Юнит не устанавливается, не включается и не запускается при merge PR.
+1. `vimi-pay-gcs-backup.sh` шифрует `pg_dump -Fc -Z 6` и
+   `pg_dumpall --globals-only` публичным age recipient, не записывая
+   plaintext dump на локальный диск. Приватная age identity хранится
+   только в независимом безопасном хранилище.
+2. Root-only конфигурация `/etc/vimi-pay/backup.env` включает
+   `VIMI_BACKUP_SESSION_SERVICE_URL` (HTTPS URL приватного Cloud Run),
+   `VIMI_BACKUP_AGE_RECIPIENT` и имя Docker PostgreSQL контейнера.
+   На VM нужны `age`, `python3`, `docker`, `flock`,
+   `sha256sum`; для загрузки **не нужны GCS write OAuth scope**,
+   `gcloud auth print-access-token` или JSON-ключи.
+3. На Cloud Run `session_broker/server.py` создаёт GCS resumable
+   sessions под отдельным `vimi-pay-backup-writer` с bucket-level
+   `roles/storage.objectCreator`. VM вызывает broker по IAM ID-токену.
+4. Скрипт передаёт в GCS только **зашифрованные** байты. Каждый запуск
+   использует уникальный UTC+UUID prefix; `manifest.sha256`
+   публикуется **последним**.
+5. На bucket обязательно действует lifecycle rule
+   `ops/backup/gcs-lifecycle-90days.json`: root object
+   `{"rule":[{"action":{"type":"Delete"},"condition":{"age":90}}]}`.
+   Она очищает как завершённые, так и незавершённые prefixes.
+   Soft Delete — 7 дней; без Object Versioning; необратимый
+   Bucket Lock не нужен. Проверить фактически **сохранённое** правило.
+6. `vimi-pay-gcs-backup.timer` — ежедневно в 03:20 UTC + до 20 минут
+   случайной задержки. Merge PR **не устанавливает** unit на VM
+   и не запускает таймер.
 
-**Запрещено:** использовать пользовательский Google Cloud credential JSON в репозитории, хранить age private identity на VM с бэкапом, давать скрипту `storage.objectAdmin`, публиковать `pg_dumpall` в логах, использовать GCS bucket без проверенной политики доступа и хранения.
+## Чек-лист выпуска, обязательный перед включением
 
-## Пререквизиты перед включением (только оператор)
+- [ ] Точный HEAD CI и независимое security-review зелёные.
+- [ ] Bucket проверен: регион EU, закрыт от публики, uniform access,
+  lifecycle Delete Age=90 и soft-delete 7 дней действуют.
+- [ ] Проверены permissions нового writer SA (Object Creator только
+  bucket) и `roles/run.invoker` старого default SA только для брокера.
+- [ ] Собрать проверенный образ из
+  `ops/backup/session_broker/Dockerfile`, развернуть в Cloud Run
+  `europe-west4`, запретить unauthenticated invocations,
+  назначить writer SA и bucket env; проверить, что без токена сервис
+  отвечает 401/403, а с ID-токеном проходит только разрешённый вызов.
+- [ ] На VM установить доверенный `age`; сгенерировать age PRIVATE
+  identity **вне VM**, сохранить в двух независимых защищённых местах,
+  передать на VM **только публичный recipient**.
+- [ ] Root-owned: `/usr/local/sbin/vimi-pay-gcs-backup` (0750),
+  `/usr/local/libexec/vimi-pay/session_upload.py` (0640),
+  `/etc/vimi-pay/backup.env` (0600), systemd units. Предварительно
+  `bash -n`, `python3 -m py_compile`, `systemd-analyze verify`.
+- [ ] Запустить **один** ручной тест: `sudo systemctl start
+  vimi-pay-gcs-backup.service`. Убедиться в `BACKUP_UPLOADED`,
+  не публикуя токены, приватные ключи и сессионные URI.
+- [ ] Отдельным recovery-аккаунтом с правом **только чтения** получить
+  все три объекта завершённого prefix, проверить SHA-256, расшифровать
+  и **восстановить БД и roles в изолированной среде**.
+- [ ] Только после подтверждения восстановимости включить
+  `sudo systemctl enable --now vimi-pay-gcs-backup.timer`,
+  alert по отсутствию успешных копий >26 часов, записать RTO/RPO.
+- [ ] Проверить доступность отдельных disk snapshots GCE и
+  восстановление конфигурации VM и ключей.
 
-- [ ] Определить фактический GCP project ID, текущий прикреплённый VM service account, scopes и текущий набор IAM прав. Не менять его до аудита ViMi Autoposting.
-- [ ] Создать отдельный закрытый Cloud Storage bucket в выбранном регионе, выключить публичный доступ, включить uniform bucket-level access; утвердить retention и soft-delete. Для этого сценария **не требуется Object Versioning**: каждый бэкап имеет уникальные имена и не перезаписывается. Рекомендуемый стартовый baseline: защита от удаления 30 дней, Lifecycle Delete через 90 дней, soft delete 7 дней, без versioning. Проверить стоимость и правила хранения данных до включения.
-- [ ] **Обязательная lifecycle-cleanup политика:** на выделенный bucket ввести `ops/backup/gcs-lifecycle-90days.json` (пример, удаляет все объекты после возраста 90 дней, включая незавершённые префиксы без manifest). Консоль GCS → bucket → Lifecycle → Add rule → Delete → Age 90 days; либо администратор отдельно применяет `gcloud storage buckets update gs://BUCKET --lifecycle-file=ops/backup/gcs-lifecycle-90days.json`. Команда **заменяет** текущие правила bucket, поэтому применять её только после проверки, что bucket выделенный и пустой, и после подтверждения владельца. Нельзя включать таймер без этой проверки. Retention не должен превышать период планового удаления; 30-дневная retention совместима с 90-дневной очисткой, а soft-delete может добавить дни фактического хранения.
-- [ ] Выдать сервисному аккаунту **только** `roles/storage.objectCreator` на bucket (с учётом scopes).
-- [ ] Сгенерировать ключи age **на доверенной офлайн-машине** (`age-keygen -o /secure/offline/identity`; `age-keygen -y /secure/offline/identity` выдаёт только публичный recipient). Сохранить private identity отдельно минимум в двух защищённых местах; на VM перенести только `age1...` recipient. Один private identity на десятилетия не следует оставлять без процедуры ротации.
-- [ ] Установить `gcloud`, `age` и `curl` на VM из доверенных источников (проверить версии), убедиться что `docker`, `flock`, `sha256sum` доступны.
-- [ ] Разместить скрипт в `/usr/local/sbin/vimi-pay-gcs-backup` (root:root, 0750), config `/etc/vimi-pay/backup.env` (root:root, 0600) и два unit-файла в `/etc/systemd/system/`. Все shell/units сперва `bash -n` / `systemd-analyze verify`.
-- [ ] **Один ручной тест** `sudo systemctl start vimi-pay-gcs-backup.service`, проверить `journalctl -u ...` на `BACKUP_UPLOADED`. Отдельным restore-аккаунтом (read only) скачать 3 объекта, проверить SHA-256 и расшифровать age в изолированном окружении, выполнить реальное восстановление и проверить содержимое.
-- [ ] Только после успешного восстановления **и проверки действующего lifecycle Delete ≥90 days**: `sudo systemctl enable --now vimi-pay-gcs-backup.timer`, настроить alert если не было `BACKUP_UPLOADED` в последние 26 часов; документировать RPO/RTO.
-- [ ] Подтвердить отдельные snapshots Compute Engine для VM и данных; настроить расписание и тест восстановления системы.
+**Запрещено:** переносить приватный age key или SA JSON key на VM,
+давать `roles/storage.objectAdmin` на bucket, менять OAuth scopes
+`fast-vm`, включать Cloud Run `allUsers` или выкладывать
+resumable upload session URI в логи.
 
 ## Аварийное восстановление: общий порядок
 
