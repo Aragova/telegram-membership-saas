@@ -38,9 +38,15 @@ def _receipt(*, source_bot=123, user=456, content="document",
         ),
         chat=SimpleNamespace(id=user, type="private"),
         reply_to_message=prompt,
-        document=SimpleNamespace(file_id="fake-pdf-id", file_size=1024) if content == "document"
+        document=SimpleNamespace(
+            file_id="fake-pdf-id", file_size=1024,
+            file_unique_id="stable-document-identity-test",
+        ) if content == "document"
                  else None,
-        photo=[SimpleNamespace(file_id="fake-photo-id", file_size=1024)]
+        photo=[SimpleNamespace(
+            file_id="fake-photo-id", file_size=1024,
+            file_unique_id="stable-photo-identity-test",
+        )
               if content == "photo" else None,
         message_id=177,
     ), attempt
@@ -98,6 +104,10 @@ async def test_platform_receipt_from_real_bot_prompt_registers_and_responds(
     assert kwargs["file_type"] == content
     assert kwargs["file_id"] == (
         "fake-pdf-id" if content == "document" else "fake-photo-id"
+    )
+    assert kwargs["file_unique_id"] == (
+        "stable-document-identity-test"
+        if content == "document" else "stable-photo-identity-test"
     )
     bot.send_message.assert_awaited_once()
     assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
@@ -337,3 +347,19 @@ def test_clean_payment_prompt_spoiler_reference_and_legacy_replies():
     assert ingress.receipt_attempt_id(message, 123) is None
     message.reply_to_message.from_user.id = 555
     assert ingress.receipt_attempt_id(message, 123) is None
+
+
+async def test_proof_without_telegram_unique_identity_never_registers(monkeypatch):
+    message, _ = _receipt()
+    message.document.file_unique_id = None
+    actor = AsyncMock()
+    submit = AsyncMock()
+    monkeypatch.setattr(ingress, "ensure_telegram_actor", actor)
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", submit)
+    bot = SimpleNamespace(id=123, send_message=AsyncMock())
+    await ingress.create_saas_receipt_router(
+        object(),
+    ).message.handlers[0].callback(message, bot)
+    actor.assert_not_awaited()
+    submit.assert_not_awaited()
+    assert "не создана" in bot.send_message.await_args.args[1]
