@@ -1904,6 +1904,14 @@ def create_platform_dashboard_router(
                            for item in queue["items"]):
                     raise ValueError("Original payment attempt no longer pending")
                 if decision == "ok":
+                    selected = next(
+                        x for x in queue["items"]
+                        if str(x["id"]) == str(attempt_id)
+                    )
+                    transfer_label = escape(
+                        str(selected["amount"]) + " "
+                        + str(selected["currency"])
+                    )
                     # Two-step confirmation inside THIS SAME review screen.
                     # Telegram native callback alerts can show OK only,
                     # not a meaningful Yes/No choice.
@@ -1912,19 +1920,13 @@ def create_platform_dashboard_router(
                         text=tr(
                             "✅ <b>Подтверждение поступления</b>\n\n"
                             "Деньги в размере "
-                            + escape(str(next(
-                                x["amount"] for x in queue["items"]
-                                if str(x["id"]) == str(attempt_id)
-                            )))
+                            + transfer_label
                             + " действительно поступили в банк?\n"
                             "Подтверждение зачислит платёж и может "
                             "снять ограничения продаж.",
                             "✅ <b>Confirm bank funds</b>\n\n"
                             "Has the payment of "
-                            + escape(str(next(
-                                x["amount"] for x in queue["items"]
-                                if str(x["id"]) == str(attempt_id)
-                            )))
+                            + transfer_label
                             + " actually arrived in your bank?\n"
                             "Confirmation credits the invoice and may "
                             "release sales restrictions.",
