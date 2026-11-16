@@ -352,6 +352,9 @@ async def test_one_original_receipt_cannot_settle_two_distinct_invoices():
                             "attempt": proofs[1][0], "reference": ref,
                         })
                 assert getattr(duplicate.value.orig, "sqlstate", None) == "23505"
+                # Runtime role has intentionally NO raw ledger SELECT rights.
+                # Restore privileged CI test connection for this assertion.
+                await conn.execute(text("RESET ROLE"))
                 uncredited = await conn.scalar(text(
                     "SELECT count(*) FROM platform_saas_payment_allocations_v2"
                     " WHERE invoice_id=:invoice"
