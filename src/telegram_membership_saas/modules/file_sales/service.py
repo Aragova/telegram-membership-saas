@@ -249,7 +249,7 @@ async def create_product(
             "Название товара: от 1 до 120 символов",
             "Product name must contain 1–120 characters",
         ))
-    if stars is not None and not 1 <= stars <= 250000:
+    if stars is not None and stars != 0 and not 1 <= stars <= 250000:
         raise ValueError(tr(
             "Цена должна составлять от 1 до 250000 Stars",
             "Stars price must be between 1 and 250000",
@@ -282,6 +282,7 @@ async def create_product(
         if total >= PRODUCT_LIMIT:
             raise ValueError(tr("Достигнут лимит товаров", "Product limit reached"))
         amount = None
+        free = stars == 0
         if manual_currency is not None:
             if manual_amount is None:
                 raise ValueError(tr(
@@ -294,31 +295,14 @@ async def create_product(
             ))
             if asset is None:
                 raise ValueError(tr("Валюта не активна", "Currency is inactive"))
-            active_method = await session.scalar(
-                select(PaymentMethod.id)
-                .join(PaymentMethodCurrency, and_(
-                    PaymentMethodCurrency.project_id == PaymentMethod.project_id,
-                    PaymentMethodCurrency.payment_method_id == PaymentMethod.id,
-                ))
-                .where(
-                    PaymentMethod.project_id == project_id,
-                    PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
-                    PaymentMethodCurrency.currency_code == manual_currency,
-                ).limit(1)
-            )
-            if active_method is None:
-                raise ValueError(tr(
-                    "Нет активного способа оплаты для валюты",
-                    "No active payment method for this currency",
-                ))
             try:
                 amount = Decimal(manual_amount.strip().replace(",", "."))
             except InvalidOperation as exc:
                 raise ValueError(tr("Неверная сумма файла", "Invalid file price")) from exc
-            if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000000"):
+            if not amount.is_finite() or amount < 0 or amount >= Decimal("1000000000000"):
                 raise ValueError(tr(
-                    "Укажите положительную цену файла",
-                    "Enter a positive file price",
+                    "Цена файла не может быть отрицательной",
+                    "File price cannot be negative",
                 ))
             with localcontext() as context:
                 context.prec = 50
@@ -327,6 +311,28 @@ async def create_product(
                         "Слишком много знаков после запятой",
                         "Too many decimal places",
                     ))
+            if amount == 0:
+                # Free is a catalog state, never a zero-value invoice/order.
+                free = True
+                amount = None
+            else:
+                active_method = await session.scalar(
+                    select(PaymentMethod.id)
+                    .join(PaymentMethodCurrency, and_(
+                        PaymentMethodCurrency.project_id == PaymentMethod.project_id,
+                        PaymentMethodCurrency.payment_method_id == PaymentMethod.id,
+                    ))
+                    .where(
+                        PaymentMethod.project_id == project_id,
+                        PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+                        PaymentMethodCurrency.currency_code == manual_currency,
+                    ).limit(1)
+                )
+                if active_method is None:
+                    raise ValueError(tr(
+                        "Нет активного способа оплаты для валюты",
+                        "No active payment method for this currency",
+                    ))
         elif stars is None:
             raise ValueError(tr(
                 "Нужна цена Stars или ручная цена",
@@ -334,7 +340,8 @@ async def create_product(
             ))
         product = FileProduct(
             project_id=project_id, folder_id=folder_id,
-            telegram_bot_id=bot_id, name=name, stars_price=stars,
+            telegram_bot_id=bot_id, name=name,
+            stars_price=None if stars == 0 else stars, is_free=free,
             description=description, status="draft",
         )
         session.add(product)
@@ -390,7 +397,7 @@ async def update_draft_product(
                 "Цена должна быть целым числом Stars",
                 "Stars price must be a whole number",
             ))
-        if not 1 <= int(value) <= 250000:
+        if int(value) != 0 and not 1 <= int(value) <= 250000:
             raise ValueError(tr(
                 "Цена должна составлять от 1 до 250000 Stars",
                 "Stars price must be between 1 and 250000",
@@ -405,7 +412,12 @@ async def update_draft_product(
         )
         if product.status != "draft":
             raise ValueError(tr("Редактировать можно только черновик", "Only drafts can be edited"))
-        setattr(product, field, int(value) if field == "stars_price" else value)
+        if field == "stars_price":
+            stars = int(value)
+            product.is_free = stars == 0
+            product.stars_price = stars if stars else None
+        else:
+            setattr(product, field, value)
         await session.flush()
         return product
 
@@ -631,7 +643,7 @@ async def change_product_status(
             ))
             if folder is None:
                 raise ValueError(tr("Папка архивирована", "Folder is archived"))
-            if item.stars_price is None:
+            if item.stars_price is None and not item.is_free:
                 manual_prices = await session.scalar(select(func.count(
                     FileManualPrice.product_id,
                 )).where(
@@ -709,6 +721,45 @@ async def view_product(
             FileAsset.product_id == product_id,
         )) or 0
         return product, count
+
+
+async def free_product_assets(
+    factory: async_sessionmaker[AsyncSession], *, project_id: UUID,
+    bot_id: int, buyer_id: int, product_id: UUID,
+) -> tuple[FileProduct, tuple[FileAsset, ...]]:
+    """Send a currently published FREE product, never a payment receipt.
+
+    Every callback revalidates project, original bot, buyer ban, folder,
+    publication, explicit free flag and attachment availability.
+    Old free links stop working when an owner archives or reprices the item.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        await _ready(
+            session, project_id=project_id, bot_id=bot_id, buyer_id=buyer_id,
+        )
+        product = await _product(session, project_id, bot_id, product_id)
+        if product.status != "published" or product.removed_at is not None or not product.is_free:
+            raise PermissionError(tr(
+                "Бесплатный доступ к этому файлу недоступен",
+                "Free access to this file is unavailable",
+            ))
+        folder = await session.scalar(select(FileFolder.id).where(
+            FileFolder.id == product.folder_id,
+            FileFolder.project_id == project_id,
+            FileFolder.status == "active",
+            FileFolder.removed_at.is_(None),
+        ))
+        if folder is None:
+            raise PermissionError(tr("Папка недоступна", "Folder unavailable"))
+        assets = tuple((await session.scalars(select(FileAsset).where(
+            FileAsset.project_id == project_id,
+            FileAsset.product_id == product_id,
+        ).order_by(FileAsset.sort_order).limit(ASSET_LIMIT))).all())
+        if not assets:
+            raise ValueError(tr(
+                "Файлы пока недоступны", "Files are not yet available",
+            ))
+        return product, assets
 
 
 async def _load_paid(
@@ -829,6 +880,8 @@ async def create_stars_order(
         item = await _product(session, project_id, bot_id, product_id, lock=True)
         if item.status != "published":
             raise ValueError(tr("Товар больше не продаётся", "This product is no longer for sale"))
+        if item.is_free:
+            raise ValueError(tr("Файл бесплатный", "This file is free"))
         if item.stars_price is None:
             raise ValueError(tr(
                 "Этот товар не продаётся за Stars",
@@ -1012,7 +1065,7 @@ async def _file_stars_precheckout_decision(
             if disabled is False:
                 return False, False
             item = await _product(session, project_id, bot_id, purchase.product_id)
-            allowed = item.status == "published" and (
+            allowed = item.status == "published" and not item.is_free and (
                 await session.scalar(select(func.count(FileAsset.id)).where(
                     FileAsset.project_id == project_id,
                     FileAsset.product_id == purchase.product_id,

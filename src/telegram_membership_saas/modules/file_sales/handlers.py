@@ -57,6 +57,7 @@ from telegram_membership_saas.modules.file_sales.service import (
     delete_draft_asset,
     delete_empty_folder,
     delete_unsold_product,
+    free_product_assets,
     list_folders,
     list_product_assets,
     list_products,
@@ -147,6 +148,38 @@ async def _deliver(
         reply_markup=_keyboard([[
             _button(tr("📥 Получить повторно", "📥 Download again"),
                     "get:" + encode_uuid(purchase_id)),
+        ]]),
+    )
+
+
+async def _deliver_free(
+    bot: Bot, *, user_id: int, product_id: UUID,
+    title: str, assets: tuple[FileAsset, ...],
+) -> None:
+    """Deliver only currently published free content, with live rechecks."""
+    await bot.send_message(
+        user_id,
+        tr("🆓 Бесплатный файл: ", "🆓 Free file: ") + escape(title),
+        parse_mode="HTML",
+    )
+    for asset in assets:
+        method = {
+            "document": bot.send_document,
+            "photo": bot.send_photo,
+            "video": bot.send_video,
+            "audio": bot.send_audio,
+            "animation": bot.send_animation,
+        }[asset.kind]
+        await method(user_id, asset.file_id)
+    await bot.send_message(
+        user_id,
+        tr("✅ Файл получен бесплатно. Доступен, пока опубликован.",
+           "✅ File received for free. Available while published."),
+        reply_markup=_keyboard([[
+            _button(
+                tr("📥 Получить повторно", "📥 Download again"),
+                "free:" + encode_uuid(product_id),
+            ),
         ]]),
     )
 
@@ -369,6 +402,8 @@ def create_file_sales_router(
                + str(item.stars_price) + "\n"
                if item.stars_price is not None else "")
             + tr("📎 Файлов: ", "📎 Files: ") + str(count)
+            + ("\n" + tr("🆓 Бесплатно", "🆓 Free")
+               if getattr(item, "is_free", False) else "")
         )
         code = encode_uuid(item.id)
         if who:
@@ -870,8 +905,10 @@ def create_file_sales_router(
                 await bot.send_message(
                     uid,
                     tr("💰 Укажите цену файла в ", "💰 Enter file price in ")
-                    + code + tr(" следующим сообщением.",
-                                " in your next message."),
+                    + code + tr(
+                        " следующим сообщением. 0 = бесплатно.",
+                        " in your next message. 0 = free.",
+                    ),
                 )
             elif action.startswith(("ap:", "item:")):
                 admin_view, token = action.split(":", 1)
@@ -948,6 +985,16 @@ def create_file_sales_router(
                     status="published" if verb == "publish" else "archived",
                 )
                 await detail(bot, uid, product, who)
+            elif action.startswith("free:"):
+                product_id = decode_uuid(action.split(":", 1)[1])
+                product, assets = await free_product_assets(
+                    factory, project_id=project_id,
+                    bot_id=bot.id, buyer_id=uid, product_id=product_id,
+                )
+                await _deliver_free(
+                    bot, user_id=uid, product_id=product.id,
+                    title=product.name, assets=assets,
+                )
             elif action.startswith("buy:"):
                 product = decode_uuid(action.split(":", 1)[1])
                 order = await create_stars_order(
@@ -1086,10 +1133,10 @@ def create_file_sales_router(
                             "Enter a whole number of Stars",
                         ))
                     stars = int(text)
-                    if not 1 <= stars <= 250000:
+                    if stars != 0 and not 1 <= stars <= 250000:
                         raise ValueError(tr(
-                            "Цена Stars: от 1 до 250000",
-                            "Stars price must be between 1 and 250000",
+                            "Цена Stars: 0 (бесплатно) или 1–250000",
+                            "Stars price: 0 (free) or 1–250000",
                         ))
                     product = await create_product(
                         factory, project_id=project_id, bot_id=bot.id,
