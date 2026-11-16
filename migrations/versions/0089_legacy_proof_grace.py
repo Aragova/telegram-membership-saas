@@ -219,8 +219,7 @@ END; $fn$
     DECLARE proof uuid; existing record;
     BEGIN
       IF p_unique_id IS NULL OR
-         p_unique_id !~ '^[A-Za-z0-9_-]{8,128}
-        RAISE EXCEPTION 'Canonical Telegram file identity required'
+         p_unique_id !~ '^[A-Za-z0-9_-]{8,128}        RAISE EXCEPTION 'Canonical Telegram file identity required'
           USING ERRCODE='22023';
       END IF;
       proof:=public.platform_saas_v2_submit_proof(
@@ -304,10 +303,6 @@ END; $fn$
     """)
 
 
-def downgrade() -> None:
-    raise RuntimeError(
-        "Forward-only ViMi Pay commercial hold correction; do not downgrade"
-    )
 
       THEN
         RAISE EXCEPTION 'Canonical Telegram file identity required'
@@ -392,6 +387,7 @@ def downgrade() -> None:
       RETURN payload;
     END; $f$
     """)
+
 
 
 def downgrade() -> None:
