@@ -20,6 +20,100 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Invisible, durable mapping: the original Telegram bot message ID is
+    # the payment prompt's identifier. No technical reference in user text.
+    op.create_table(
+        "platform_saas_payment_prompts",
+        sa.Column("source_bot_id", sa.BigInteger(), nullable=False),
+        sa.Column("source_chat_id", sa.BigInteger(), nullable=False),
+        sa.Column("source_message_id", sa.BigInteger(), nullable=False),
+        sa.Column("attempt_id", sa.Uuid(), sa.ForeignKey(
+            "platform_saas_payment_attempts_v2.id", ondelete="RESTRICT",
+        ), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.text("clock_timestamp()")),
+        sa.PrimaryKeyConstraint(
+            "source_bot_id", "source_chat_id", "source_message_id",
+            name="pk_saas_payment_prompt_source",
+        ),
+        sa.UniqueConstraint(
+            "attempt_id", name="uq_saas_payment_prompt_attempt",
+        ),
+    )
+    op.execute("REVOKE ALL ON public.platform_saas_payment_prompts FROM PUBLIC")
+    op.execute(r"""
+CREATE FUNCTION public.platform_saas_bind_payment_prompt(
+    p_attempt uuid,p_bot bigint,p_chat bigint,p_message bigint
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE actor uuid; account bigint;
+BEGIN
+    actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+    SELECT u.telegram_user_id INTO account
+    FROM public.telegram_users u WHERE u.id=actor;
+    IF actor IS NULL OR account IS DISTINCT FROM p_chat
+       OR p_bot IS NULL OR p_bot<=0 OR p_message IS NULL OR p_message<=0
+       OR NOT EXISTS(
+         SELECT 1 FROM public.platform_saas_payment_attempts_v2 a
+         JOIN public.platform_saas_invoices i ON i.id=a.invoice_id
+         WHERE a.id=p_attempt AND a.owner_user_id=actor
+           AND i.owner_user_id=actor AND i.status='issued'
+           AND a.expires_at>clock_timestamp()
+       ) THEN
+       RAISE EXCEPTION 'Payment prompt owner/source invalid'
+         USING ERRCODE='42501';
+    END IF;
+    INSERT INTO public.platform_saas_payment_prompts(
+      source_bot_id,source_chat_id,source_message_id,attempt_id
+    ) VALUES(p_bot,p_chat,p_message,p_attempt);
+    RETURN true;
+END; $f$
+    """)
+    op.execute(r"""
+CREATE FUNCTION public.platform_saas_resolve_payment_prompt(
+    p_bot bigint,p_chat bigint,p_message bigint
+) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE actor uuid; account bigint; result uuid;
+BEGIN
+    actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+    SELECT u.telegram_user_id INTO account
+    FROM public.telegram_users u WHERE u.id=actor;
+    IF actor IS NULL OR p_chat IS DISTINCT FROM account
+       OR p_bot IS NULL OR p_bot<=0 OR p_message IS NULL OR p_message<=0 THEN
+      RAISE EXCEPTION 'Payment prompt owner/source invalid'
+        USING ERRCODE='42501';
+    END IF;
+    SELECT a.id INTO result
+    FROM public.platform_saas_payment_prompts m
+    JOIN public.platform_saas_payment_attempts_v2 a
+      ON a.id=m.attempt_id
+    JOIN public.platform_saas_invoices i ON i.id=a.invoice_id
+    WHERE m.source_bot_id=p_bot AND m.source_chat_id=p_chat
+      AND m.source_message_id=p_message
+      AND a.owner_user_id=actor AND i.owner_user_id=actor
+      AND i.status='issued'
+      AND NOT EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_rejections_v2 r
+        WHERE r.attempt_id=a.id
+      );
+    RETURN result;
+END; $f$
+    """)
+    for function in (
+        "platform_saas_bind_payment_prompt(uuid,bigint,bigint,bigint)",
+        "platform_saas_resolve_payment_prompt(bigint,bigint,bigint)",
+    ):
+        op.execute(f"REVOKE ALL ON FUNCTION public.{function} FROM PUBLIC")
+        op.execute(f"""
+            DO $grant$ BEGIN
+              IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+              THEN GRANT EXECUTE ON FUNCTION public.{function}
+                   TO membership_runtime;
+              END IF;
+            END $grant$
+        """)
+
     # One canonical Telegram media identity for NEW proofs, stable across
     # bot tokens and valid file_id rotations. Existing historical proofs keep
     # NULL and can still be reviewed with the previous evidence fallback.
