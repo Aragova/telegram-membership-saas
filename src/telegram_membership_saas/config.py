@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     default_project_timezone: str = "Europe/Moscow"
     platform_owner_telegram_id: int | None = None
     platform_timezone: str = "Europe/Moscow"
+    # Explicit opt-in, only for central platform owner monitoring.
+    platform_backup_gcs_bucket: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -82,6 +84,19 @@ class Settings(BaseSettings):
     def validate_platform_owner_id(cls, value: int | None) -> int | None:
         if value is not None and value <= 0:
             raise ValueError("Platform owner Telegram ID must be positive")
+        return value
+
+    @field_validator("platform_backup_gcs_bucket", mode="before")
+    @classmethod
+    def validate_backup_bucket(cls, value: object) -> object:
+        import re
+
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[a-z0-9][a-z0-9._-]{2,61}", value
+        ):
+            raise ValueError("Invalid GCS backup bucket")
         return value
 
     @field_validator("platform_timezone")
