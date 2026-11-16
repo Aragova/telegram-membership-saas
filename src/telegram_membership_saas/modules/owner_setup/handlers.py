@@ -245,6 +245,7 @@ from telegram_membership_saas.modules.platform_saas_settlement_service import (
     saas_invoice_currency_snapshot,
 )
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_bind_payment_prompt,
     saas_catalog_for_invoice,
     saas_price_profile,
     saas_v2_invoice_balance,
@@ -3910,7 +3911,7 @@ def create_owner_setup_router(
                     # Exactly the existing proof workflow: reply to this
                     # message with a photo or document. The payment
                     # remains unconfirmed until operator bank review.
-                    await bot.send_message(
+                    issued_prompt = await bot.send_message(
                         user_id,
                         tr(
                             "🧾 <b>ViMi Pay · Оплата счёта</b>\n\n",
@@ -3936,15 +3937,33 @@ def create_owner_setup_router(
                             "with a receipt photo/document. ViMi Pay "
                             "confirms only after bank verification.",
                         )
-                        +"\n\n<tg-spoiler>"
-                        +tr("🔐 Код заявки: ", "🔐 Reference: ")
-                        +escape(str(attempt["id"]))+"</tg-spoiler>",
+                        ,
                         parse_mode="HTML",
                         reply_markup=_markup([[_button(
                             tr("⬅️ К счёту","⬅️ Invoice"),
                             "saasinvoices:0",
                         )]]),
                     )
+                    try:
+                        await saas_bind_payment_prompt(
+                            factory, actor_id=actor_id,
+                            attempt_id=UUID(str(attempt["id"])),
+                            source_bot_id=bot.id, source_chat_id=user_id,
+                            source_message_id=issued_prompt.message_id,
+                            project_id=fixed_project_id,
+                        )
+                    except Exception:
+                        # Do not leave an apparently usable instruction that
+                        # cannot accept a receipt after a process restart.
+                        try:
+                            await bot.delete_message(
+                                user_id, issued_prompt.message_id,
+                            )
+                        except Exception:
+                            logging.getLogger(__name__).warning(
+                                "Unbound ViMi Pay payment prompt cannot be deleted"
+                            )
+                        raise RuntimeError("ViMi Pay payment instruction unavailable")
                 await query.answer()
                 return
             if action.startswith("saasprice:"):
