@@ -7,6 +7,7 @@ No tenant can write platform ledgers, edit a receipt or change customer access.
 from __future__ import annotations
 
 from decimal import Decimal
+from hashlib import sha256
 from uuid import UUID
 
 from sqlalchemy import text
@@ -263,16 +264,21 @@ async def saas_v2_confirm_attempt(
     )))
 
 
-def operator_approval_reference(attempt_id: UUID) -> str:
-    """Stable, globally unique INTERNAL audit reference (not a bank ID).
+def operator_approval_reference(
+    *, original_bot_id: int, source_file_id: str,
+) -> str:
+    """Internal evidence identity, NOT a bank transaction reference.
 
-    The authorized operator's Approve action is their attestation that funds
-    were checked independently. Use the attempt UUID to preserve SQL's
-    global uniqueness and idempotency without another manual text prompt.
+    Re-submitting the identical Telegram document/photo to the SAME bot,
+    including on different attempts/invoices, must keep the same
+    bank_reference unique-key value. Never expose bot-scoped file IDs.
+    A separately edited image of the same bank transfer cannot be reliably
+    detected without an actual bank/payment-provider transaction feed.
     """
-    if not isinstance(attempt_id, UUID):
-        raise ValueError("Original payment attempt required")
-    return "VIMI-OPERATOR-" + attempt_id.hex
+    if original_bot_id <= 0 or not 8 <= len(source_file_id) <= 512:
+        raise ValueError("Original bank proof identity required")
+    proof_key = f"{original_bot_id}\0{source_file_id}".encode("utf-8")
+    return "VIMI-PROOF-" + sha256(proof_key).hexdigest()
 
 
 async def saas_v2_confirm_attempt_one_tap(
@@ -280,19 +286,27 @@ async def saas_v2_confirm_attempt_one_tap(
     actor_id: UUID, actor_telegram_id: int,
     attempt_id: UUID, settings: Settings | None = None,
 ) -> UUID:
-    """One verified operator click; the existing SQL ledger remains the guard.
+    """One owner verification click with independent original-proof dedup.
 
-    This internal reference is NOT evidence of bank funds and MUST NOT be
-    presented as the bank transaction reference. The operator independently
-    verifies the actual incoming bank transfer before pressing Approve.
+    Operator checks the incoming bank payment externally before clicking.
+    SQL still verifies ownership, invoice balance, original pending proof,
+    receipt identity uniqueness, and makes allocations idempotent.
     """
+    # This read is the same owner-scoped SECURITY DEFINER source used by the
+    # operator's 📎 Чек button, but never downloads any receipt bytes.
+    proof = await saas_pending_proof_source(
+        factory, actor_id=actor_id, actor_telegram_id=actor_telegram_id,
+        attempt_id=attempt_id, settings=settings,
+    )
+    reference = operator_approval_reference(
+        original_bot_id=int(proof["source_bot"]),
+        source_file_id=str(proof["source_file"]),
+    )
     return await saas_v2_confirm_attempt(
         factory, actor_id=actor_id, actor_telegram_id=actor_telegram_id,
-        attempt_id=attempt_id,
-        verified_bank_reference=operator_approval_reference(attempt_id),
+        attempt_id=attempt_id, verified_bank_reference=reference,
         settings=settings,
     )
-
 
 async def saas_v2_reject_attempt(
     factory: async_sessionmaker[AsyncSession], *,
