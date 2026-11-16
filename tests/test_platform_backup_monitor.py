@@ -1,9 +1,9 @@
 """Backup monitor: independent GCS manifest, alerts, existing UI and permissions."""
 import os
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import httpx
 import pytest
