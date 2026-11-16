@@ -1,13 +1,25 @@
 """Backup monitor: independent GCS manifest, alerts, existing UI and permissions."""
+import os
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from telegram_membership_saas.config import Settings
+from telegram_membership_saas.db import (
+    build_engine,
+    build_session_factory,
+    tenant_session_scope,
+)
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules import platform_backup_monitor as monitor
+from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.tenant_context import TenantContext
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
 
@@ -156,3 +168,109 @@ async def test_backup_notice_reuses_existing_monitoring_button(monkeypatch):
     assert len(markup.inline_keyboard[0]) == 1
     assert markup.inline_keyboard[0][0].callback_data == "plat:bots:30:0"
     assert finish.await_args.kwargs["delivered"] is True
+
+
+
+DB_AVAILABLE = bool(os.getenv("TMS_DATABASE_URL") and os.getenv("TMS_MIGRATION_DATABASE_URL"))
+
+
+@pytest.mark.skipif(not DB_AVAILABLE, reason="Requires real PostgreSQL and RLS migrations")
+async def test_real_postgres_failure_dedup_recovery_and_owner_only_scope(monkeypatch):
+    """Two successive independent GCS checks: one problem and one recovery."""
+    settings = Settings()
+    engine = build_engine(settings)
+    admin_engine = create_async_engine(settings.migration_database_url)
+    factory = build_session_factory(engine)
+    owner_tg = (uuid4().int % 7_000_000_000_000_000_000) + 1
+    other_tg = (uuid4().int % 7_000_000_000_000_000) + 1
+    latest = NOW - timedelta(minutes=10)
+
+    async def fake_latest(bucket, *, now=None):
+        assert bucket == "vimi-backup-test-bucket"
+        return latest
+
+    monkeypatch.setattr(monitor, "latest_gcs_manifest", fake_latest)
+    try:
+        owner = await ensure_telegram_actor(
+            factory, telegram_id=owner_tg, username=None, first_name="Backup operator",
+        )
+        other = await ensure_telegram_actor(
+            factory, telegram_id=other_tg, username=None, first_name="Not operator",
+        )
+        async with admin_engine.begin() as conn:
+            await conn.execute(
+                text("INSERT INTO public.platform_operators(telegram_user_id,role) "
+                     "VALUES (:tid,'owner')"),
+                {"tid": owner_tg},
+            )
+
+        assert await monitor.scan_platform_backup(
+            factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
+            now=NOW,
+        ) == 0
+        healthy = await monitor.read_platform_backup_watch(
+            factory, owner_actor_id=owner,
+        )
+        assert healthy["state"] == "healthy"
+        assert await monitor.read_platform_backup_watch(
+            factory, owner_actor_id=other,
+        ) is None
+
+        # Local systemd reporter writes only a sanitized outcome as the
+        # postgres owner role; the central bot only reads it.
+        async with admin_engine.begin() as conn:
+            await conn.execute(
+                text("INSERT INTO public.platform_backup_attempt_receipt "
+                     "(id,reported_at,result) VALUES (1,:at,'failed') "
+                     "ON CONFLICT(id) DO UPDATE SET reported_at=EXCLUDED.reported_at,"
+                     "result=EXCLUDED.result"),
+                {"at": NOW + timedelta(minutes=1)},
+            )
+        assert await monitor.scan_platform_backup(
+            factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
+            now=NOW + timedelta(minutes=2),
+        ) == 1
+        assert await monitor.scan_platform_backup(
+            factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
+            now=NOW + timedelta(minutes=3),
+        ) == 0
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner),
+        ) as session:
+            items = (await session.scalars(
+                select(monitor.PlatformBackupAlertOutbox)
+            )).all()
+            assert len(items) == 1 and items[0].kind == "problem"
+        telegram = SimpleNamespace(send_message=AsyncMock())
+        assert await monitor.deliver_one_backup_notice(
+            factory, bot=telegram, actor_id=owner, owner_telegram_id=owner_tg,
+            timezone="Europe/Moscow", now=NOW + timedelta(minutes=4),
+        )
+        assert telegram.send_message.await_count == 1
+
+        latest = NOW + timedelta(minutes=5)
+        await monitor.scan_platform_backup(
+            factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
+            now=NOW + timedelta(minutes=6),
+        )
+        assert await monitor.deliver_one_backup_notice(
+            factory, bot=telegram, actor_id=owner, owner_telegram_id=owner_tg,
+            timezone="Europe/Moscow", now=NOW + timedelta(minutes=7),
+        )
+        assert telegram.send_message.await_count == 2
+        assert "восстанов" in telegram.send_message.await_args.args[1].lower()
+        assert not await monitor.deliver_one_backup_notice(
+            factory, bot=telegram, actor_id=owner, owner_telegram_id=owner_tg,
+            timezone="Europe/Moscow", now=NOW + timedelta(minutes=8),
+        )
+        healthy = await monitor.read_platform_backup_watch(
+            factory, owner_actor_id=owner,
+        )
+        assert healthy["state"] == "healthy"
+    finally:
+        async with admin_engine.begin() as conn:
+            await conn.execute(text(
+                "DELETE FROM public.platform_operators WHERE telegram_user_id=:id"
+            ), {"id": owner_tg})
+        await engine.dispose()
+        await admin_engine.dispose()
