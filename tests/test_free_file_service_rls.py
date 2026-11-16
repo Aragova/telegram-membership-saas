@@ -10,7 +10,7 @@ from telegram_membership_saas.db import build_engine, build_session_factory, ten
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.file_sales import manual_service as manual
 from telegram_membership_saas.modules.file_sales import service as files
-from telegram_membership_saas.tenant_context import TenantContext
+from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL"), reason="Requires PostgreSQL RLS",
@@ -99,7 +99,7 @@ async def test_free_file_price_zero_publishes_and_delivers_without_payment():
         )
         assert product.is_free is True
 
-        with pytest.raises((ValueError, PermissionError)):
+        with pytest.raises((ValueError, PermissionError, TenantAccessDenied)):
             await manual.set_manual_price(
                 factory, project_id=project, bot_id=bot_id,
                 actor_id=outsider, product_id=paid.id,
