@@ -46,8 +46,7 @@ def _receipt(*, source_bot=123, user=456, content="document",
         photo=[SimpleNamespace(
             file_id="fake-photo-id", file_size=1024,
             file_unique_id="stable-photo-identity-test",
-        )
-              if content == "photo" else None,
+        )] if content == "photo" else None,
         message_id=177,
     ), attempt
 
