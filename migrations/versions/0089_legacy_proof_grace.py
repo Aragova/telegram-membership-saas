@@ -42,6 +42,36 @@ def upgrade() -> None:
     )
     op.execute("REVOKE ALL ON public.platform_saas_payment_prompts FROM PUBLIC")
     op.execute("""
+        ALTER TABLE public.platform_saas_payment_prompts
+        ENABLE ROW LEVEL SECURITY
+    """)
+    op.execute("""
+        ALTER TABLE public.platform_saas_payment_prompts
+        FORCE ROW LEVEL SECURITY
+    """)
+    # The SECURITY DEFINER functions run as the trusted table owner.
+    # Even if runtime DML is accidentally granted in the future, the
+    # caller role cannot see or forge another tenant's private binding.
+    op.execute("""
+        CREATE POLICY prompt_trusted_table_owner
+        ON public.platform_saas_payment_prompts
+        FOR ALL TO PUBLIC
+        USING (
+            current_user = (
+                SELECT pg_get_userbyid(c.relowner)
+                FROM pg_catalog.pg_class c
+                WHERE c.oid = 'public.platform_saas_payment_prompts'::regclass
+            )
+        )
+        WITH CHECK (
+            current_user = (
+                SELECT pg_get_userbyid(c.relowner)
+                FROM pg_catalog.pg_class c
+                WHERE c.oid = 'public.platform_saas_payment_prompts'::regclass
+            )
+        )
+    """)
+    op.execute("""
         DO $revoke$ BEGIN
           IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
           THEN
@@ -205,9 +235,13 @@ BEGIN
     -- This is NOT a bank transaction ID. It only prevents reusing the
     -- IDENTICAL Telegram file as proof across multiple invoices.
     -- The operator must check actual funds independently.
+    -- file_unique_id is stable across bots and rotated Telegram file_id
+    -- values. Old proof rows without it fall back to a bot-scoped file_id.
     key_value:='tg-proof:'||md5(
-      evidence.source_bot_id::text||':'||
-      coalesce(evidence.source_file_unique_id,evidence.source_file_id)
+        CASE WHEN evidence.source_file_unique_id IS NOT NULL
+          THEN evidence.source_file_unique_id
+          ELSE evidence.source_bot_id::text||':'||evidence.source_file_id
+        END
     );
     SELECT coalesce(sum(r.amount_rub),0) INTO used
     FROM public.platform_saas_receipts r
