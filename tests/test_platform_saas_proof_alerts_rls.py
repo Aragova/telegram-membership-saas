@@ -54,6 +54,14 @@ async def test_new_proof_push_once_operator_only_and_cancel_if_reviewed():
                 source_bot_id = (await conn.execute(text(
                     "SELECT telegram_bot_id FROM bot_instances WHERE id=:bot"
                 ), {"bot": bot})).scalar_one()
+                # New canonical proof submission MUST share the refund lock
+                # with the old 6-argument proof entrypoint.
+                proof_sql = await conn.scalar(text(
+                    "SELECT pg_get_functiondef("
+                    "'public.platform_saas_v2_submit_proof("
+                    "uuid,bigint,bigint,bigint,text,text,text)'::regprocedure)"
+                ))
+                assert "vimi:saas:verified-refunds" in proof_sql
                 invoice = await _invoice(
                     conn, owner, merchant, bot,
                     period_start=datetime.now(UTC),
