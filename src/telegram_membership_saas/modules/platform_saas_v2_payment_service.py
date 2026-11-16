@@ -28,6 +28,12 @@ async def _rpc(
 ) -> object:
     """Named, closed-set SQL entrypoints, never interpolate a caller's name."""
     names = {
+        "platform_saas_bind_payment_prompt": (
+            "attempt", "bot", "chat", "message",
+        ),
+        "platform_saas_resolve_payment_prompt": (
+            "bot", "chat", "message",
+        ),
         "platform_saas_v2_invoice_balance": ("invoice",),
         "platform_saas_v2_available_methods": ("invoice",),
         "platform_saas_v2_methods_read": (),
@@ -133,6 +139,42 @@ async def saas_v2_invoice_balance(
     if not isinstance(result, dict) or "remaining_rub" not in result:
         raise RuntimeError("Invalid account invoice balance")
     return result
+
+
+async def saas_bind_payment_prompt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, attempt_id: UUID, source_bot_id: int,
+    source_chat_id: int, source_message_id: int,
+    project_id: UUID | None = None,
+) -> None:
+    """Persist original bot prompt identity for no-UUID-on-screen replies."""
+    result = await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name="platform_saas_bind_payment_prompt",
+        arguments={
+            "attempt": attempt_id, "bot": source_bot_id,
+            "chat": source_chat_id, "message": source_message_id,
+        },
+    )
+    if result is not True:
+        raise RuntimeError("Unable to bind original payment prompt")
+
+
+async def saas_resolve_payment_prompt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, source_bot_id: int, source_chat_id: int,
+    source_message_id: int, project_id: UUID | None = None,
+) -> UUID | None:
+    """Only the payer may resolve a prompt sent to their own private chat."""
+    result = await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name="platform_saas_resolve_payment_prompt",
+        arguments={
+            "bot": source_bot_id,
+            "chat": source_chat_id, "message": source_message_id,
+        },
+    )
+    return UUID(str(result)) if result is not None else None
 
 
 async def saas_v2_create_attempt(
