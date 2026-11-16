@@ -216,33 +216,122 @@ END; $fn$
         p_file_id text,p_kind text,p_unique_id text
     ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
     SET search_path=pg_catalog,public AS $f$
-    DECLARE proof uuid; existing record;
+    DECLARE actor uuid; original record; existing record; proof uuid;
     BEGIN
-      IF p_unique_id IS NULL OR
-         p_unique_id !~ '^[A-Za-z0-9_-]{8,128}$'
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      IF p_unique_id IS NULL
+         OR p_unique_id !~ '^[A-Za-z0-9_-]{8,128}
+    """)
+    op.execute("""
+        REVOKE ALL ON FUNCTION
+        public.platform_saas_v2_submit_proof(
+          uuid,bigint,bigint,bigint,text,text,text
+        ) FROM PUBLIC
+    """)
+    op.execute("""
+    DO $grant$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
       THEN
+        GRANT EXECUTE ON FUNCTION public.platform_saas_v2_submit_proof(
+            uuid,bigint,bigint,bigint,text,text,text
+        ) TO membership_runtime;
+      END IF;
+    END $grant$
+    """)
+
+    # Owner-only source reader now returns the stable Telegram evidence ID,
+    # never a decrypted bot token or media contents.
+    op.execute("""
+    CREATE OR REPLACE FUNCTION public.platform_saas_pending_proof_source(
+      p_attempt uuid
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE payload jsonb;
+    BEGIN
+      PERFORM public.platform_saas_require_owner();
+      IF p_attempt IS NULL THEN
+        RAISE EXCEPTION 'Missing payment attempt' USING ERRCODE='22023';
+      END IF;
+      SELECT jsonb_build_object(
+        'id',a.id,'invoice_id',a.invoice_id,
+        'amount',a.amount_currency::text,'currency',a.currency_code,
+        'instructions',a.instructions_snapshot,
+        'source_bot',p.source_bot_id,
+        'source_project',b.project_id,
+        'source_file',p.source_file_id,
+        'source_file_unique_id',p.source_file_unique_id,
+        'file_type',p.file_type
+      ) INTO payload
+      FROM public.platform_saas_payment_attempts_v2 a
+      JOIN public.platform_saas_payment_proofs_v2 p
+        ON p.attempt_id=a.id
+      LEFT JOIN public.bot_instances b
+        ON b.telegram_bot_id=p.source_bot_id AND b.status='registered'
+      WHERE a.id=p_attempt
+        AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_payment_allocations_v2 ok
+          WHERE ok.attempt_id=a.id
+        )
+        AND NOT EXISTS(
+          SELECT 1 FROM public.platform_saas_payment_rejections_v2 no
+          WHERE no.attempt_id=a.id
+        );
+      RETURN payload;
+    END; $f$
+    """)
+
+
+
+def downgrade() -> None:
+    raise RuntimeError(
+        "Forward-only ViMi Pay commercial hold correction; do not downgrade"
+    )
+ THEN
         RAISE EXCEPTION 'Canonical Telegram file identity required'
           USING ERRCODE='22023';
       END IF;
-      proof:=public.platform_saas_v2_submit_proof(
-          p_attempt,p_bot,p_chat,p_message,p_file_id,p_kind
-      );
+      -- Lock original attempt first: parallel Telegram deliveries cannot
+      -- create inconsistent identities for the same financial attempt.
+      SELECT * INTO original
+      FROM public.platform_saas_payment_attempts_v2
+      WHERE id=p_attempt FOR UPDATE;
+      IF original.id IS NULL OR original.owner_user_id IS DISTINCT FROM actor
+         OR p_bot IS NULL OR p_bot<=0 OR p_chat IS NULL OR p_chat<=0
+         OR p_chat IS DISTINCT FROM (
+           SELECT u.telegram_user_id FROM public.telegram_users u
+           WHERE u.id=actor
+         )
+         OR p_message IS NULL OR p_message<=0
+         OR length(coalesce(p_file_id,'')) NOT BETWEEN 8 AND 512
+         OR p_kind NOT IN ('photo','document')
+         OR clock_timestamp()>original.expires_at THEN
+        RAISE EXCEPTION 'Original payer proof is unavailable'
+          USING ERRCODE='42501';
+      END IF;
       SELECT * INTO existing
       FROM public.platform_saas_payment_proofs_v2
-      WHERE id=proof FOR UPDATE;
-      IF existing.id IS NULL
-         OR existing.source_bot_id IS DISTINCT FROM p_bot
-         OR existing.source_chat_id IS DISTINCT FROM p_chat
-         OR existing.source_message_id IS DISTINCT FROM p_message
-         OR existing.source_file_id IS DISTINCT FROM p_file_id
-         OR (existing.source_file_unique_id IS NOT NULL AND
-             existing.source_file_unique_id<>p_unique_id) THEN
-        RAISE EXCEPTION 'Original proof identity conflict'
-          USING ERRCODE='23505';
+      WHERE attempt_id=p_attempt;
+      IF existing.id IS NOT NULL THEN
+        IF existing.source_bot_id IS DISTINCT FROM p_bot
+           OR existing.source_chat_id IS DISTINCT FROM p_chat
+           OR existing.source_message_id IS DISTINCT FROM p_message
+           OR existing.source_file_id IS DISTINCT FROM p_file_id
+           OR existing.file_type IS DISTINCT FROM p_kind
+           OR existing.source_file_unique_id IS DISTINCT FROM p_unique_id THEN
+          RAISE EXCEPTION 'Original proof identity conflict'
+            USING ERRCODE='23505';
+        END IF;
+        RETURN existing.id;
       END IF;
-      UPDATE public.platform_saas_payment_proofs_v2
-        SET source_file_unique_id=p_unique_id
-        WHERE id=proof AND source_file_unique_id IS NULL;
+      proof:=gen_random_uuid();
+      -- Immutable by design. Write the canonical identity in the original
+      -- INSERT, never through a follow-up UPDATE rejected by RLS triggers.
+      INSERT INTO public.platform_saas_payment_proofs_v2(
+        id,attempt_id,source_bot_id,source_chat_id,
+        source_message_id,source_file_id,source_file_unique_id,file_type
+      ) VALUES(
+        proof,p_attempt,p_bot,p_chat,p_message,p_file_id,p_unique_id,p_kind
+      );
       RETURN proof;
     END; $f$
     """)
