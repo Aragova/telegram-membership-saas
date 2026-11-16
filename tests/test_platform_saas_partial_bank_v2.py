@@ -326,21 +326,29 @@ async def test_one_original_receipt_cannot_settle_two_distinct_invoices():
                     await conn.execute(text("""
                         INSERT INTO platform_saas_payment_proofs_v2
                             (id,attempt_id,source_bot_id,source_chat_id,
-                             source_message_id,source_file_id,file_type)
+                             source_message_id,source_file_id,
+                             source_file_unique_id,file_type)
                         VALUES (:id,:attempt,:bot,:chat,:message,
-                                :file,'document')
+                                :file,:unique,'document')
                     """), {
                         "id": uuid4(), "attempt": attempt,
                         "bot": telegram_bot_id, "chat": payer_tg,
                         "message": 1001 + index,
-                        "file": "same-bank-pdf-file-id-xyz",
+                        "file": f"rotated-bank-file-id-{index}",
+                        "unique": "stable-bank-document-unique-id",
                     })
                     proofs.append((attempt, invoice))
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _actor(conn, operator)
                 ref = operator_approval_reference(
                     original_bot_id=telegram_bot_id,
-                    source_file_id="same-bank-pdf-file-id-xyz",
+                    source_file_id="rotated-bank-file-id-0",
+                    file_unique_id="stable-bank-document-unique-id",
+                )
+                assert ref == operator_approval_reference(
+                    original_bot_id=telegram_bot_id,
+                    source_file_id="rotated-bank-file-id-1",
+                    file_unique_id="stable-bank-document-unique-id",
                 )
                 first = await _call(conn, "platform_saas_v2_approve_attempt", {
                     "attempt": proofs[0][0], "reference": ref,
