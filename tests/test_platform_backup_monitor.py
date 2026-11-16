@@ -70,7 +70,7 @@ def test_rich_existing_monitor_copy_and_notification_use_one_original_button(lan
         text = monitor._message(
             "problem", "failed", last=NOW, timezone="Europe/Moscow",
         )
-        assert title in text or "backup" in text.lower()
+        assert "ViMi Pay" in text
         assert "<tg-time" in text
     finally:
         _language.reset(token)
