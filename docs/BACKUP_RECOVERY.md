@@ -42,6 +42,10 @@
 не объявлять GCS backup рабочим. Локальный архив и изолированный restore
 продолжают оставаться единственной подтверждённой проверкой.
 
+## Cloud Run URL diagnostics (16 ноября 2026)
+
+Оператор подтвердил: private Cloud Run `vimi-pay-backup-broker` развернулся со статусом Ready и с корректным writer SA, а default Compute SA VM получил `roles/run.invoker` только на него. Пробы `GET /healthz` (даже с корректным ID-token), возвращали Google frontend HTML `404` без GET request-логов. Это **не доказывает** неисправность маршрутизации: Cloud Run резервирует некоторые пути, оканчивающиеся на `z`. Поэтому endpoint изменён на `GET /health`; для проверки уже развёрнутой ревизии до её обновления допустим только безопасный `POST /session` с `{}`, который должен ответить `400` с JSON `invalid request` и не должен создавать объект или upload-session. Официально: https://docs.cloud.google.com/run/docs/known-issues . Полный E2E пока не выполнен.
+
 ## Проверка безостановочной авторизации и архитектура Cloud Run, 16 ноября 2026
 
 Оператор подтвердил на `fast-vm`: запрос GCE metadata
