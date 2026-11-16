@@ -3914,7 +3914,7 @@ def create_owner_setup_router(
                     # remains unconfirmed until operator bank review.
                     await bot.send_message(
                         user_id,
-                        +tr(
+                        tr(
                             "🧾 <b>ViMi Pay · Оплата счёта</b>\n\n",
                             "🧾 <b>ViMi Pay · Invoice payment</b>\n\n",
                         )
