@@ -166,23 +166,38 @@ async def test_stale_proof_cannot_be_approved_from_old_keyboard(monkeypatch):
     assert query.answer.await_args.kwargs["show_alert"] is True
 
 
-def test_generated_operator_reference_is_not_fake_bank_transaction_number():
-    attempt = uuid4()
-    reference = billing.operator_approval_reference(attempt)
-    assert reference == "VIMI-OPERATOR-" + attempt.hex
-    assert 8 <= len(reference) <= 160
-    assert reference != billing.operator_approval_reference(uuid4())
-    assert reference == billing.operator_approval_reference(attempt)
+def test_proof_identity_deduplicates_replays_across_attempts():
+    ref = billing.operator_approval_reference(
+        original_bot_id=123, source_file_id="telegram-document-file-id-1",
+    )
+    assert ref.startswith("VIMI-PROOF-")
+    assert 8 <= len(ref) <= 160
+    assert ref == billing.operator_approval_reference(
+        original_bot_id=123, source_file_id="telegram-document-file-id-1",
+    )
+    assert ref != billing.operator_approval_reference(
+        original_bot_id=123, source_file_id="telegram-document-file-id-2",
+    )
+    assert ref != billing.operator_approval_reference(
+        original_bot_id=456, source_file_id="telegram-document-file-id-1",
+    )
+    assert "telegram-document-file-id" not in ref
 
 
 @pytest.mark.asyncio
-async def test_one_tap_backend_reuses_existing_sql_approval_with_stable_reference(
+async def test_one_tap_backend_deduplicates_original_media_before_sql_approval(
     monkeypatch,
 ):
     attempt = uuid4()
     actor = uuid4()
     approved = uuid4()
+    original = {
+        "source_bot": 123,
+        "source_file": "telegram-document-file-id-1",
+    }
+    source = AsyncMock(return_value=original)
     confirmed = AsyncMock(return_value=approved)
+    monkeypatch.setattr(billing, "saas_pending_proof_source", source)
     monkeypatch.setattr(billing, "saas_v2_confirm_attempt", confirmed)
     settings = Settings(platform_owner_telegram_id=7777)
     factory = object()
@@ -191,11 +206,18 @@ async def test_one_tap_backend_reuses_existing_sql_approval_with_stable_referenc
         attempt_id=attempt, settings=settings,
     )
     assert result == approved
+    source.assert_awaited_once_with(
+        factory, actor_id=actor, actor_telegram_id=7777,
+        attempt_id=attempt, settings=settings,
+    )
     confirmed.assert_awaited_once_with(
         factory,
         actor_id=actor,
         actor_telegram_id=7777,
         attempt_id=attempt,
-        verified_bank_reference=billing.operator_approval_reference(attempt),
+        verified_bank_reference=billing.operator_approval_reference(
+            original_bot_id=123,
+            source_file_id=original["source_file"],
+        ),
         settings=settings,
     )
