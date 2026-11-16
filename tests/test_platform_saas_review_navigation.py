@@ -83,7 +83,19 @@ async def test_one_tap_approves_without_bank_reference_input(monkeypatch):
     assert "<table bordered compact>" in rich.await_args.kwargs["rich_html"]
     # No leftover editor: a regular text after Approve cannot make another
     # ledger allocation.
-    await entry(SimpleNamespace(from_user=query.from_user, text="BANK123"), bot)
+    filter_obj = next(
+        h.filters[0].callback for h in
+        ui.create_platform_dashboard_router(
+            MagicMock(), settings=Settings(platform_owner_telegram_id=7777),
+        ).message.handlers
+        if h.callback.__name__ == "platform_bank_receipt_rejection_reason"
+    )
+    message = SimpleNamespace(
+        from_user=query.from_user,
+        chat=SimpleNamespace(type="private"),
+        text="BANK123",
+    )
+    assert not await filter_obj(message)
     approve.assert_awaited_once()
 
 
