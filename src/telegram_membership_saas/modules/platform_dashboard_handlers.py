@@ -71,7 +71,6 @@ from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_catalog_update,
     saas_v2_configure_method,
     saas_v2_confirm_checked_attempt,
-    saas_v2_confirm_attempt,
     saas_v2_pending_proofs,
     saas_v2_reject_attempt,
 )
@@ -1292,11 +1291,11 @@ def create_platform_dashboard_router(
             )
 
     @router.message(_PlatformSaasReviewEntryFilter(pending_v2_review))
-    async def platform_bank_receipt_reference(message: Message, bot: Bot) -> None:
+    async def platform_bank_receipt_rejection(message: Message, bot: Bot) -> None:
         user = message.from_user
         if user is None or not is_configured_platform_owner(user.id, config):
             return
-        attempt, approve = pending_v2_review[user.id]
+        attempt, _ = pending_v2_review[user.id]
         if _editor_command(message.text) == "/cancel":
             pending_v2_review.pop(user.id, None)
             await _show_review_result(
@@ -1310,22 +1309,12 @@ def create_platform_dashboard_router(
             ))
             return
         value = message.text.strip()
-        # Validate at the Telegram boundary, before an RPC or any bank
-        # mutation. Rejection and approval have deliberately different
-        # lengths due to their separate database constraints.
-        lower, upper = (8, 160) if approve else (5, 500)
-        if not lower <= len(value) <= upper:
+        if not 5 <= len(value) <= 500:
             await bot.send_message(user.id, tr(
-                "⚠️ Для подтверждения введите банковский референс "
-                "длиной 8–160 символов." if approve else
-                "⚠️ Причина отклонения: от 5 до 500 символов. "
-                "Например: «Тестовый чек». Сам счёт не удаляется. "
-                "/cancel — отмена.",
-                "⚠️ Enter a verified bank reference of 8–160 characters."
-                if approve else
-                "⚠️ Rejection reason must be 5–500 characters, "
-                'for example "Test receipt". The invoice is not deleted. '
-                "/cancel to abort.",
+                "⚠️ Причина отклонения должна содержать 5–500 символов. "
+                "Счёт при этом не удаляется. /cancel — отмена.",
+                "⚠️ Rejection reason must be 5–500 characters. "
+                "The invoice is retained. /cancel to abort.",
             ))
             return
         try:
@@ -1333,30 +1322,20 @@ def create_platform_dashboard_router(
                 factory, telegram_id=user.id, username=user.username,
                 first_name=user.first_name,
             )
-            if approve:
-                await saas_v2_confirm_attempt(
-                    factory, actor_id=actor_id, actor_telegram_id=user.id,
-                    attempt_id=attempt, verified_bank_reference=value,
-                    settings=config,
-                )
-            else:
-                await saas_v2_reject_attempt(
-                    factory, actor_id=actor_id, actor_telegram_id=user.id,
-                    attempt_id=attempt, reason=value, settings=config,
-                )
+            await saas_v2_reject_attempt(
+                factory, actor_id=actor_id, actor_telegram_id=user.id,
+                attempt_id=attempt, reason=value, settings=config,
+            )
         except Exception:
             await bot.send_message(user.id, tr(
-                "⚠️ Не удалось подтвердить операцию. Проверьте реальное "
-                "поступление, референс и статус счёта. /cancel — отмена.",
-                "⚠️ Cannot confirm. Recheck actual bank funds, reference "
-                "and invoice status. /cancel to abort.",
+                "⚠️ Не удалось отклонить чек. Проверьте его статус.",
+                "⚠️ Could not reject receipt. Check its status.",
             ))
             return
         pending_v2_review.pop(user.id, None)
         await _show_review_result(
             bot, operator_chat=user.id,
-            outcome="approved" if approve else "rejected",
-            reason="" if approve else value,
+            outcome="rejected", reason=value,
         )
 
 
