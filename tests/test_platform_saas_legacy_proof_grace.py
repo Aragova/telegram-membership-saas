@@ -106,11 +106,12 @@ async def test_pre_activation_bill_grace_is_bot_only_first_proof_and_not_renewab
                           (id,attempt_id,source_bot_id,source_chat_id,
                            source_message_id,source_file_id,file_type,
                            submitted_at)
-                        VALUES (:id,:attempt,:bot,:chat,123,
+                        VALUES (:id,:attempt,:bot,:chat,:message_id,
                                 'original-test-receipt-file','document',:at)
                     """), {
                         "id": uuid4(), "attempt": attempt, "bot": src_bot,
                         "chat": payer_tg, "at": submitted,
+                        "message_id": 123 if submitted == original else 124,
                     })
                     return attempt
 
