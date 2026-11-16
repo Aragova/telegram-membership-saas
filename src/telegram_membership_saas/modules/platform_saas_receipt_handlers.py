@@ -169,9 +169,29 @@ def create_saas_receipt_router(
         if message.photo:
             file_type, file_id = "photo", message.photo[-1].file_id
             file_size = message.photo[-1].file_size
+            file_unique_id = getattr(message.photo[-1], "file_unique_id", None)
         else:
             file_type, file_id = "document", message.document.file_id
             file_size = message.document.file_size
+            file_unique_id = getattr(message.document, "file_unique_id", None)
+        if (
+            not isinstance(file_unique_id, str)
+            or not 8 <= len(file_unique_id) <= 128
+            or not all(
+                c.isascii() and (c.isalnum() or c in "-_")
+                for c in file_unique_id
+            )
+        ):
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Telegram не передал постоянный идентификатор файла. "
+                    "Отправьте чек повторно. Заявка не создана.",
+                    "⚠️ Telegram did not supply a permanent file identity. "
+                    "Please resend the receipt. No review request was created.",
+                ),
+            )
+            return
         try:
             await validate_platform_proof_size(
                 bot, file_id=file_id, file_type=file_type,
@@ -214,6 +234,7 @@ def create_saas_receipt_router(
                 project_id=project_id, bot_id=bot.id,
                 chat_id=message.chat.id, message_id=message.message_id,
                 file_id=file_id, file_type=file_type,
+                file_unique_id=file_unique_id,
             )
         except (ValueError, PermissionError):
             await bot.send_message(
