@@ -70,7 +70,7 @@ from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_catalog_toggle,
     saas_catalog_update,
     saas_v2_configure_method,
-    saas_v2_confirm_attempt,
+    saas_v2_confirm_attempt_one_tap,
     saas_v2_pending_proofs,
     saas_v2_reject_attempt,
 )
@@ -966,7 +966,7 @@ class _PlatformBankEntryFilter(BaseFilter):
 
 
 class _PlatformSaasReviewEntryFilter(BaseFilter):
-    def __init__(self, pending: dict[int, tuple[UUID, bool]]) -> None:
+    def __init__(self, pending: dict[int, UUID]) -> None:
         self.pending = pending
 
     async def __call__(self, message: Message) -> bool:
@@ -1033,7 +1033,7 @@ def create_platform_dashboard_router(
     pending_bank_entry = (
         bank_navigation.pending if bank_navigation is not None else set()
     )
-    pending_v2_review: dict[int, tuple[UUID, bool]] = {}
+    pending_v2_review: dict[int, UUID] = {}
 
     async def _show_review_result(
         bot: Bot, *, operator_chat: int, outcome: str,
@@ -1291,11 +1291,12 @@ def create_platform_dashboard_router(
             )
 
     @router.message(_PlatformSaasReviewEntryFilter(pending_v2_review))
-    async def platform_bank_receipt_reference(message: Message, bot: Bot) -> None:
+    async def platform_bank_receipt_rejection_reason(message: Message, bot: Bot) -> None:
+        """Only rejection needs a reason; Approve is already a full decision."""
         user = message.from_user
         if user is None or not is_configured_platform_owner(user.id, config):
             return
-        attempt, approve = pending_v2_review[user.id]
+        attempt = pending_v2_review[user.id]
         if _editor_command(message.text) == "/cancel":
             pending_v2_review.pop(user.id, None)
             await _show_review_result(
@@ -1303,59 +1304,47 @@ def create_platform_dashboard_router(
             )
             return
         if _editor_command(message.text):
-            await bot.send_message(user.id, tr(
-                "Введите банковский референс или /cancel.",
-                "Enter a bank reference or /cancel.",
-            ))
+            await bot.send_message(
+                user.id,
+                tr("Введите причину отклонения или /cancel.",
+                   "Enter the rejection reason or /cancel."),
+            )
             return
         value = message.text.strip()
-        # Validate at the Telegram boundary, before an RPC or any bank
-        # mutation. Rejection and approval have deliberately different
-        # lengths due to their separate database constraints.
-        lower, upper = (8, 160) if approve else (5, 500)
-        if not lower <= len(value) <= upper:
-            await bot.send_message(user.id, tr(
-                "⚠️ Для подтверждения введите банковский референс "
-                "длиной 8–160 символов." if approve else
-                "⚠️ Причина отклонения: от 5 до 500 символов. "
-                "Например: «Тестовый чек». Сам счёт не удаляется. "
-                "/cancel — отмена.",
-                "⚠️ Enter a verified bank reference of 8–160 characters."
-                if approve else
-                "⚠️ Rejection reason must be 5–500 characters, "
-                'for example "Test receipt". The invoice is not deleted. '
-                "/cancel to abort.",
-            ))
+        if not 5 <= len(value) <= 500:
+            await bot.send_message(
+                user.id,
+                tr(
+                    "⚠️ Причина отклонения: от 5 до 500 символов. "
+                    "Например: «Деньги не поступили». /cancel — отмена.",
+                    "⚠️ Rejection reason must be 5–500 characters. "
+                    'For example, "Payment not received". /cancel to abort.',
+                ),
+            )
             return
         try:
             actor_id = await ensure_telegram_actor(
                 factory, telegram_id=user.id, username=user.username,
                 first_name=user.first_name,
             )
-            if approve:
-                await saas_v2_confirm_attempt(
-                    factory, actor_id=actor_id, actor_telegram_id=user.id,
-                    attempt_id=attempt, verified_bank_reference=value,
-                    settings=config,
-                )
-            else:
-                await saas_v2_reject_attempt(
-                    factory, actor_id=actor_id, actor_telegram_id=user.id,
-                    attempt_id=attempt, reason=value, settings=config,
-                )
+            await saas_v2_reject_attempt(
+                factory, actor_id=actor_id, actor_telegram_id=user.id,
+                attempt_id=attempt, reason=value, settings=config,
+            )
         except Exception:
-            await bot.send_message(user.id, tr(
-                "⚠️ Не удалось подтвердить операцию. Проверьте реальное "
-                "поступление, референс и статус счёта. /cancel — отмена.",
-                "⚠️ Cannot confirm. Recheck actual bank funds, reference "
-                "and invoice status. /cancel to abort.",
-            ))
+            await bot.send_message(
+                user.id,
+                tr(
+                    "⚠️ Не удалось отклонить чек. Проверьте статус "
+                    "заявки и повторите действие. /cancel — отмена.",
+                    "⚠️ Receipt rejection failed. Check the review status "
+                    "and retry. /cancel to abort.",
+                ),
+            )
             return
         pending_v2_review.pop(user.id, None)
         await _show_review_result(
-            bot, operator_chat=user.id,
-            outcome="approved" if approve else "rejected",
-            reason="" if approve else value,
+            bot, operator_chat=user.id, outcome="rejected", reason=value,
         )
 
 
@@ -1792,10 +1781,12 @@ def create_platform_dashboard_router(
                 lines = [
                     tr("🧾 <b>ViMi Pay · Проверка чеков</b>",
                        "🧾 <b>ViMi Pay · Payment proof review</b>"),
-                    tr("Сверяйте <b>фактическое поступление</b> в банке, "
-                       "сумму и референс. Фото само по себе не оплата.",
-                       "Verify <b>actual received funds</b>, amount and "
-                       "bank reference. A screenshot is not payment."),
+                    tr("Нажимайте ✅ Подтвердить <b>только после проверки "
+                       "поступления денег в банке</b> и суммы. "
+                       "Чек сам по себе не подтверждает оплату.",
+                       "Press ✅ Approve <b>only after verifying actual "
+                       "funds in the bank</b> and the amount. "
+                       "A receipt alone does not prove payment."),
                 ]
                 items = result["items"]
                 if not items:
@@ -1844,7 +1835,7 @@ def create_platform_dashboard_router(
                     ZoneInfo(config.platform_timezone),
                 ).strftime("%H:%M:%S %Z")
                 lines.append(
-                    "\n" + tr("⏱ Проверено: ", "⏱ Checked: ")
+                    "\n" + tr("⏱ Список обновлён: ", "⏱ List refreshed: ")
                     + "<code>" + escape(checked) + "</code>"
                 )
                 rows.append([_button(
@@ -1921,35 +1912,39 @@ def create_platform_dashboard_router(
                 if not any(str(item["id"]) == str(attempt_id)
                            for item in queue["items"]):
                     raise ValueError("Original payment attempt no longer pending")
-                pending_v2_review[query.from_user.id] = (
-                    attempt_id, decision == "ok",
-                )
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text=tr(
-                        "✅ <b>Подтверждение банковского поступления</b>\n"
-                        "Только после независимой проверки банка введите "
-                        "уникальный референс поступившего перевода "
-                        "(8–160 символов). /cancel — отменить.",
-                        "✅ <b>Verify actual bank receipt</b>\n"
-                        "Only after independently checking the bank, "
-                        "enter the unique received transfer reference "
-                        "(8–160 characters). /cancel to abort.",
-                    ) if decision == "ok" else tr(
-                        "❌ <b>Отклонение чека</b>\n"
-                        "Причина: 5–500 символов. Чек будет отклонён, "
-                        "но сам счёт останется неоплаченным. "
-                        "/cancel — отмена.",
-                        "❌ <b>Reject receipt</b>\n"
-                        "Reason: 5–500 characters. The receipt is rejected, "
-                        "but the invoice remains unpaid. "
-                        "/cancel to abort.",
-                    ),
-                    reply_markup=_keyboard([[_button(
-                        tr("⬅️ Назад", "⬅️ Back"),
-                        "v2proofs:" + page_token,
-                    )]]), message_id=message_id,
-                )
+                if decision == "ok":
+                    # The owner's click confirms bank receipt. SQL validates
+                    # this still-pending attempt, enforces invoice balance and
+                    # idempotent allocation with a stable INTERNAL reference.
+                    # Never claim that reference is a bank transaction ID.
+                    await saas_v2_confirm_attempt_one_tap(
+                        factory, actor_id=actor_id,
+                        actor_telegram_id=query.from_user.id,
+                        attempt_id=attempt_id, settings=config,
+                    )
+                    await _show_review_result(
+                        bot, operator_chat=query.from_user.id,
+                        outcome="approved",
+                    )
+                else:
+                    pending_v2_review[query.from_user.id] = attempt_id
+                    await _render_platform_screen(
+                        bot, chat_id=query.from_user.id,
+                        text=tr(
+                            "❌ <b>Отклонение чека</b>\n"
+                            "Укажите причину (5–500 символов). Чек будет "
+                            "отклонён, но счёт останется неоплаченным. "
+                            "/cancel — отмена.",
+                            "❌ <b>Reject receipt</b>\n"
+                            "Enter a reason (5–500 characters). The receipt "
+                            "will be rejected, but the invoice stays unpaid. "
+                            "/cancel to abort.",
+                        ),
+                        reply_markup=_keyboard([[_button(
+                            tr("⬅️ Назад", "⬅️ Back"),
+                            "v2proofs:" + page_token,
+                        )]]), message_id=message_id,
+                    )
             elif tokens[1:] == ["commercial"]:
                 actor_id = await ensure_telegram_actor(
                     factory, telegram_id=query.from_user.id,
