@@ -6,6 +6,7 @@ seeded only in a privileged PostgreSQL transaction that is ALWAYS rolled back.
 import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -23,6 +24,9 @@ from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_saas_notices import _notice_text
+from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    operator_approval_reference,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
@@ -265,3 +269,96 @@ def test_billing_reminder_uses_live_invoice_navigation_not_stale_bank_details():
     assert "RETIRED BANK ACCOUNT" not in message
     assert "50.00" in message
     assert "ViMi Pay" in message
+
+
+async def test_one_original_receipt_cannot_settle_two_distinct_invoices():
+    """Two DIFFERENT invoices on one bot must not reuse one bank-proof file.
+
+    Probes PostgreSQL's global unique confirmation index, not merely a
+    mocked Python duplicate check. Entire test transaction is rolled back.
+    """
+    cfg = Settings()
+    engine = build_engine(cfg)
+    factory = build_session_factory(engine)
+    admin = create_async_engine(cfg.migration_database_url)
+    payer_tg, operator_tg = _tid(), _tid()
+    try:
+        owner, merchant, project, bot, _ = await _project(factory, payer_tg)
+        operator = await ensure_telegram_actor(
+            factory, telegram_id=operator_tg,
+            username=None, first_name=None,
+        )
+        async with admin.connect() as conn:
+            transaction = await conn.begin()
+            try:
+                await conn.execute(text(
+                    "INSERT INTO platform_operators (telegram_user_id,role)"
+                    " VALUES(:tg,'owner')"
+                ), {"tg": operator_tg})
+                telegram_bot_id = await conn.scalar(text(
+                    "SELECT telegram_bot_id FROM bot_instances WHERE id=:id"
+                ), {"id": bot})
+                now = datetime.now(UTC)
+                proofs = []
+                for index in range(2):
+                    invoice = await _invoice(
+                        conn, owner, merchant, bot,
+                        period_start=now - timedelta(days=60 * index),
+                    )
+                    await _line(conn, invoice, project, "bot_fee", bot)
+                    await conn.execute(text(
+                        "UPDATE platform_saas_invoices SET status='issued'"
+                        " WHERE id=:id"
+                    ), {"id": invoice})
+                    attempt = uuid4()
+                    await conn.execute(text("""
+                        INSERT INTO platform_saas_payment_attempts_v2
+                            (id,invoice_id,owner_user_id,amount_rub,
+                             currency_code,rub_per_unit,amount_currency,
+                             quote_date,instructions_snapshot,expires_at)
+                        VALUES (:id,:invoice,:owner,150,'RUB',1,150,:date,
+                                'Bank proof test',:expires)
+                    """), {
+                        "id": attempt, "invoice": invoice, "owner": owner,
+                        "date": now.date(),
+                        "expires": now + timedelta(days=2),
+                    })
+                    await conn.execute(text("""
+                        INSERT INTO platform_saas_payment_proofs_v2
+                            (id,attempt_id,source_bot_id,source_chat_id,
+                             source_message_id,source_file_id,file_type)
+                        VALUES (:id,:attempt,:bot,:chat,:message,
+                                :file,'document')
+                    """), {
+                        "id": uuid4(), "attempt": attempt,
+                        "bot": telegram_bot_id, "chat": payer_tg,
+                        "message": 1001 + index,
+                        "file": "same-bank-pdf-file-id-xyz",
+                    })
+                    proofs.append((attempt, invoice))
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await _actor(conn, operator)
+                ref = operator_approval_reference(
+                    original_bot_id=telegram_bot_id,
+                    source_file_id="same-bank-pdf-file-id-xyz",
+                )
+                first = await _call(conn, "platform_saas_v2_approve_attempt", {
+                    "attempt": proofs[0][0], "reference": ref,
+                })
+                assert first is not None
+                with pytest.raises(DBAPIError) as duplicate:
+                    async with conn.begin_nested():
+                        await _call(conn, "platform_saas_v2_approve_attempt", {
+                            "attempt": proofs[1][0], "reference": ref,
+                        })
+                assert getattr(duplicate.value.orig, "sqlstate", None) == "23505"
+                uncredited = await conn.scalar(text(
+                    "SELECT count(*) FROM platform_saas_payment_allocations_v2"
+                    " WHERE invoice_id=:invoice"
+                ), {"invoice": proofs[1][1]})
+                assert uncredited == 0
+            finally:
+                await transaction.rollback()
+    finally:
+        await engine.dispose()
+        await admin.dispose()
