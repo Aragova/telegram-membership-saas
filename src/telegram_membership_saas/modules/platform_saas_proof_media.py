@@ -26,6 +26,40 @@ from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
 
 _MAX_PHOTO_BYTES = 10 * 1024 * 1024
 _MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+class ProofTooLargeError(Exception):
+    """Reject unreviewable original Telegram proof BEFORE SQL registration."""
+
+
+class ProofSizeUnavailableError(Exception):
+    """Unknown Telegram file size must not create an unreviewable receipt."""
+
+
+async def validate_platform_proof_size(
+    bot: Bot, *, file_id: str, file_type: str,
+    reported_size: int | None,
+) -> None:
+    """No download, no DB mutations. Share limits with operator re-upload."""
+    limit = {
+        "photo": _MAX_PHOTO_BYTES,
+        "document": _MAX_DOCUMENT_BYTES,
+    }.get(file_type)
+    if limit is None:
+        raise ProofSizeUnavailableError("Invalid original proof type")
+    size = reported_size
+    if size is None:
+        try:
+            file = await bot.get_file(file_id)
+            size = file.file_size
+        except Exception as exc:
+            raise ProofSizeUnavailableError(
+                "Telegram file size verification unavailable"
+            ) from exc
+    if not isinstance(size, int) or size <= 0:
+        raise ProofSizeUnavailableError("Missing valid Telegram file size")
+    if size > limit:
+        raise ProofTooLargeError("Original proof exceeds operator transfer limit")
+
+
 _DOCUMENT_SUFFIXES = frozenset({
     ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".heic", ".doc", ".docx",
 })
