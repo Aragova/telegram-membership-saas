@@ -1,5 +1,6 @@
 """Contracts for the opt-in backup deployment artifacts (no cloud credentials)."""
 
+import importlib.util
 import io
 import json
 import urllib.parse
@@ -8,14 +9,25 @@ from pathlib import Path
 
 import pytest
 
-from ops.backup.session_broker.server import object_name, start_gcs_session
-from ops.backup.session_upload import (
-    request_session,
-    validate_service_url,
-    validate_session_url,
-)
-
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_backup_module(relative: str, name: str):
+    """Load opt-in ops script without relying on CI pytest's sys.path."""
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+broker = load_backup_module("ops/backup/session_broker/server.py", "vimi_broker")
+uploader = load_backup_module("ops/backup/session_upload.py", "vimi_uploader")
+object_name = broker.object_name
+start_gcs_session = broker.start_gcs_session
+request_session = uploader.request_session
+validate_service_url = uploader.validate_service_url
+validate_session_url = uploader.validate_session_url
 
 
 def test_gcloud_lifecycle_file_uses_root_rule_shape() -> None:
