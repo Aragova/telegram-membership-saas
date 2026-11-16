@@ -28,6 +28,10 @@ from telegram_membership_saas.localization import current_language, tr
 from telegram_membership_saas.modules.merchant_finances import platform_merchant_finances
 from telegram_membership_saas.modules.owner_setup.rich_admin_ui import send_owner_rich
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.platform_backup_monitor import (
+    backup_monitor_lines,
+    read_platform_backup_watch,
+)
 from telegram_membership_saas.modules.platform_dashboard import (
     PAGE_SIZE,
     PERIOD_LABELS,
@@ -533,7 +537,10 @@ def _bot_list_button_label(bot: dict) -> str:
     return f"{marker} {handle}{metrics}"
 
 
-def _bot_list(snapshot) -> str:
+def _bot_list(
+    snapshot, *, backup_health: dict | None = None,
+    show_backup: bool = False, timezone: str = "Europe/Moscow",
+) -> str:
     """The ONE global monitoring surface. Existing bot cards remain here.
 
     A fresh worker heartbeat is the authoritative liveness signal. Pending
@@ -558,6 +565,9 @@ def _bot_list(snapshot) -> str:
         tr("На странице: ", "On this page: ") + str(len(snapshot.bots)),
         "",
     ]
+    if show_backup:
+        lines.extend(backup_monitor_lines(backup_health, timezone=timezone))
+        lines.append("")
     if snapshot.bots:
         lines.extend([
             tr("🟢 работают · 🟡 запускаются · 🟠 нет сигнала",
@@ -2331,8 +2341,26 @@ def create_platform_dashboard_router(
                 if nav:
                     rows.append(nav)
                 rows.append([_button(tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0")])
+                backup_health = None
+                if config.platform_backup_gcs_bucket:
+                    try:
+                        backup_actor = await ensure_telegram_actor(
+                            factory, telegram_id=query.from_user.id,
+                            username=query.from_user.username,
+                            first_name=query.from_user.first_name,
+                        )
+                        backup_health = await read_platform_backup_watch(
+                            factory, owner_actor_id=backup_actor,
+                        )
+                    except Exception:
+                        log.warning("Backup status on Monitoring screen unavailable")
                 await _render_platform_screen(
-                    bot, chat_id=query.from_user.id, text=_bot_list(report),
+                    bot, chat_id=query.from_user.id,
+                    text=_bot_list(
+                        report, backup_health=backup_health,
+                        show_backup=bool(config.platform_backup_gcs_bucket),
+                        timezone=config.platform_timezone,
+                    ),
                     reply_markup=_keyboard(rows), message_id=message_id,
                 )
             elif len(tokens) == 6 and tokens[1] == "detail":
