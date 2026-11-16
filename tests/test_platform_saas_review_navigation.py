@@ -182,6 +182,18 @@ def test_proof_identity_deduplicates_replays_across_attempts():
         original_bot_id=456, source_file_id="telegram-document-file-id-1",
     )
     assert "telegram-document-file-id" not in ref
+    # The same Telegram media may have multiple valid per-bot file_id values.
+    stable = "fileUniqueStableAcrossBots123456"
+    first = billing.operator_approval_reference(
+        file_unique_id=stable, original_bot_id=123,
+        source_file_id="rotated-file-id-A",
+    )
+    second = billing.operator_approval_reference(
+        file_unique_id=stable, original_bot_id=456,
+        source_file_id="rotated-file-id-B",
+    )
+    assert first == second
+    assert first != ref
 
 
 @pytest.mark.asyncio
