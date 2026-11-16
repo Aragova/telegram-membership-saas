@@ -28,6 +28,12 @@ async def _rpc(
 ) -> object:
     """Named, closed-set SQL entrypoints, never interpolate a caller's name."""
     names = {
+        "platform_saas_bind_payment_prompt": (
+            "attempt", "bot", "chat", "message",
+        ),
+        "platform_saas_resolve_payment_prompt": (
+            "bot", "chat", "message",
+        ),
         "platform_saas_v2_invoice_balance": ("invoice",),
         "platform_saas_v2_available_methods": ("invoice",),
         "platform_saas_v2_methods_read": (),
@@ -36,6 +42,7 @@ async def _rpc(
             ("attempt", "bot_id", "chat_id", "message_id", "file_id", "file_type"),
         "platform_saas_v2_bank_method": ("currency", "instructions"),
         "platform_saas_v2_approve_attempt": ("attempt", "bank_reference"),
+        "platform_saas_v2_approve_checked_attempt": ("attempt",),
         "platform_saas_v2_reject_attempt": ("attempt", "reason"),
         "platform_saas_v2_pending_proofs": ("page",),
         "platform_saas_pending_proof_source": ("attempt",),
@@ -53,6 +60,12 @@ async def _rpc(
         ),
     }
     keys = names.get(name)
+    if (
+        name == "platform_saas_v2_submit_proof"
+        and "file_unique_id" in arguments
+        and keys is not None
+    ):
+        keys = (*keys, "file_unique_id")
     if keys is None or set(arguments) != set(keys):
         raise ValueError("Unknown ViMi Pay billing operation")
     query = text(
@@ -129,6 +142,42 @@ async def saas_v2_invoice_balance(
     return result
 
 
+async def saas_bind_payment_prompt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, attempt_id: UUID, source_bot_id: int,
+    source_chat_id: int, source_message_id: int,
+    project_id: UUID | None = None,
+) -> None:
+    """Persist original bot prompt identity for no-UUID-on-screen replies."""
+    result = await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name="platform_saas_bind_payment_prompt",
+        arguments={
+            "attempt": attempt_id, "bot": source_bot_id,
+            "chat": source_chat_id, "message": source_message_id,
+        },
+    )
+    if result is not True:
+        raise RuntimeError("Unable to bind original payment prompt")
+
+
+async def saas_resolve_payment_prompt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, source_bot_id: int, source_chat_id: int,
+    source_message_id: int, project_id: UUID | None = None,
+) -> UUID | None:
+    """Only the payer may resolve a prompt sent to their own private chat."""
+    result = await _rpc(
+        factory, actor_id=actor_id, project_id=project_id,
+        name="platform_saas_resolve_payment_prompt",
+        arguments={
+            "bot": source_bot_id,
+            "chat": source_chat_id, "message": source_message_id,
+        },
+    )
+    return UUID(str(result)) if result is not None else None
+
+
 async def saas_v2_create_attempt(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, invoice_id: UUID, rub: Decimal, currency: str,
@@ -153,6 +202,7 @@ async def saas_v2_submit_proof(
     actor_id: UUID, attempt_id: UUID, project_id: UUID | None,
     bot_id: int, chat_id: int, message_id: int,
     file_id: str, file_type: str,
+    file_unique_id: str | None = None,
 ) -> UUID:
     # Account invoices also live in the central bot after bot transfer.
     # The SQL RPC verifies the historical liable owner independently.
@@ -160,15 +210,23 @@ async def saas_v2_submit_proof(
         raise PermissionError("Telegram proof source required")
     if file_type not in ("photo", "document") or not file_id:
         raise ValueError("Unsupported payment evidence")
+    if file_unique_id is not None and (
+        not 8 <= len(file_unique_id) <= 128
+        or not all(c.isascii() and (c.isalnum() or c in "-_")
+                   for c in file_unique_id)
+    ):
+        raise ValueError("Invalid Telegram canonical proof identity")
+    arguments = {
+        "attempt": attempt_id, "bot_id": bot_id,
+        "chat_id": chat_id, "message_id": message_id,
+        "file_id": file_id, "file_type": file_type,
+    }
+    if file_unique_id is not None:
+        arguments["file_unique_id"] = file_unique_id
     result = await _rpc(
         factory, actor_id=actor_id, project_id=project_id,
         name="platform_saas_v2_submit_proof",
-        arguments={
-            "attempt": attempt_id, "bot_id": bot_id,
-            "chat_id": chat_id, "message_id": message_id,
-            "file_id": file_id,
-            "file_type": file_type,
-        },
+        arguments=arguments,
     )
     return UUID(str(result))
 
@@ -242,6 +300,25 @@ async def saas_pending_proof_source(
     ):
         raise ValueError("Pending receipt source unavailable")
     return result
+
+
+async def saas_v2_confirm_checked_attempt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int, attempt_id: UUID,
+    settings: Settings | None = None,
+) -> UUID:
+    """One operator click after independent bank check, no text reference.
+
+    The database records operator identity and stable Telegram evidence key;
+    it NEVER represents that key as a bank transaction reference.
+    """
+    _check_actor(actor_telegram_id, settings)
+    result = await _rpc(
+        factory, actor_id=actor_id,
+        name="platform_saas_v2_approve_checked_attempt",
+        arguments={"attempt": attempt_id},
+    )
+    return UUID(str(result))
 
 
 async def saas_v2_confirm_attempt(

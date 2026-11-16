@@ -54,6 +54,14 @@ async def test_new_proof_push_once_operator_only_and_cancel_if_reviewed():
                 source_bot_id = (await conn.execute(text(
                     "SELECT telegram_bot_id FROM bot_instances WHERE id=:bot"
                 ), {"bot": bot})).scalar_one()
+                # New canonical proof submission MUST share the refund lock
+                # with the old 6-argument proof entrypoint.
+                proof_sql = await conn.scalar(text(
+                    "SELECT pg_get_functiondef("
+                    "'public.platform_saas_v2_submit_proof("
+                    "uuid,bigint,bigint,bigint,text,text,text)'::regprocedure)"
+                ))
+                assert "vimi:saas:verified-refunds" in proof_sql
                 invoice = await _invoice(
                     conn, owner, merchant, bot,
                     period_start=datetime.now(UTC),
@@ -86,6 +94,7 @@ async def test_new_proof_push_once_operator_only_and_cancel_if_reviewed():
                         "chat_id": merchant_tg, "message_id": seq,
                         "file_id": "original-test-photo-file-id",
                         "file_type": "photo",
+                        "file_unique_id": f"unique-telegram-photo-{seq}",
                     }, json=False)
                     return attempt, proof
 
@@ -98,8 +107,25 @@ async def test_new_proof_push_once_operator_only_and_cancel_if_reviewed():
                     "chat_id": merchant_tg, "message_id": 8001,
                     "file_id": "original-test-photo-file-id",
                     "file_type": "photo",
+                    "file_unique_id": "unique-telegram-photo-8001",
                 }, json=False)
                 assert same == proof_id
+                # The canonical evidence identity must be present in the
+                # ORIGINAL immutable INSERT, never an UPDATE afterward.
+                await conn.execute(text("SET LOCAL ROLE postgres"))
+                saved = await conn.scalar(text(
+                    "SELECT source_file_unique_id FROM "
+                    "public.platform_saas_payment_proofs_v2 WHERE id=:id"
+                ), {"id": proof_id})
+                assert saved == "unique-telegram-photo-8001"
+                with pytest.raises(DBAPIError) as immutable:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "UPDATE public.platform_saas_payment_proofs_v2 "
+                            "SET source_file_unique_id='forged' WHERE id=:id"
+                        ), {"id": proof_id})
+                assert getattr(immutable.value.orig, "sqlstate", None) == "42501"
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _identity(conn, outsider)
                 with pytest.raises(DBAPIError) as denied:
                     async with conn.begin_nested():

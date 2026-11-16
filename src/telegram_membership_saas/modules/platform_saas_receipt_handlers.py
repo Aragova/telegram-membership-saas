@@ -21,12 +21,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.platform_saas_proof_media import (
+    ProofSizeUnavailableError,
+    ProofTooLargeError,
+    validate_platform_proof_size,
+)
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_resolve_payment_prompt,
     saas_v2_submit_proof,
 )
 
 _LOG = logging.getLogger(__name__)
 _PREFIX = "🧾 ViMi Pay · "
+_NEW_HEADERS = ("🧾 ViMi Pay · Оплата счёта", "🧾 ViMi Pay · Invoice payment")
 
 
 def _rich_text_prefix(value: object, *, max_chars: int = 160, depth: int = 0) -> str | None:
@@ -73,7 +80,23 @@ def _invoice_prompt_text(prompt: Message) -> str | None:
     first = blocks[0]
     if not isinstance(first, (RichBlockParagraph, RichBlockSectionHeading)):
         return None
-    return _rich_text_prefix(first.text)
+    # Older native Rich payment prompts embed the UUID in the first block.
+    # New clean headers keep the private reference in the last paragraph.
+    # Read bounded text nodes across blocks without trusting arbitrary JSON.
+    collected: list[str] = []
+    remaining = 4096
+    for block in blocks[:48]:
+        content = getattr(block, "text", None)
+        if content is None:
+            continue
+        part = _rich_text_prefix(content, max_chars=remaining)
+        if part is None:
+            return None
+        collected.append(part)
+        remaining -= len(part)
+        if remaining <= 0:
+            break
+    return "\n".join(collected) if collected else None
 
 
 def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
@@ -98,19 +121,72 @@ def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
     text = _invoice_prompt_text(prompt) or ""
     if not text.startswith(_PREFIX):
         return None
+    # All previously issued UUID-bearing instructions remain valid.
+    # New clean messages intentionally have NO token in their text.
     remainder = text[len(_PREFIX):].strip()
-    if not remainder:
-        return None
-    token = remainder.split(maxsplit=1)[0]
+    first = remainder.split(maxsplit=1)[0] if remainder else ""
     try:
-        return UUID(token)
+        return UUID(first)
     except (ValueError, AttributeError):
         return None
 
 
+async def resolve_receipt_attempt(
+    message: Message, bot: Bot,
+    factory: async_sessionmaker[AsyncSession],
+    project_id: UUID | None,
+) -> UUID | None:
+    """Verify original private reply; resolve new clean prompts from SQL."""
+    legacy = receipt_attempt_id(message, bot.id)
+    if legacy is not None:
+        return legacy
+    if (
+        message.from_user is None
+        or message.chat.type != "private"
+        or message.chat.id != message.from_user.id
+        or not (message.photo or message.document)
+    ):
+        return None
+    original = message.reply_to_message
+    if (
+        original is None
+        or original.from_user is None
+        or original.from_user.id != bot.id
+        or original.message_id <= 0
+    ):
+        return None
+    text_value = _invoice_prompt_text(original) or ""
+    if not text_value.startswith(_NEW_HEADERS):
+        return None
+    try:
+        actor = await ensure_telegram_actor(
+            factory, telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+        return await saas_resolve_payment_prompt(
+            factory, actor_id=actor,
+            source_bot_id=bot.id,
+            source_chat_id=message.chat.id,
+            source_message_id=original.message_id,
+            project_id=project_id,
+        )
+    except (ValueError, PermissionError):
+        return None
+
+
 class ViMiPlatformProofFilter(BaseFilter):
+    def __init__(
+        self, factory: async_sessionmaker[AsyncSession],
+        project_id: UUID | None,
+    ) -> None:
+        self.factory = factory
+        self.project_id = project_id
+
     async def __call__(self, message: Message, bot: Bot) -> bool:
-        return receipt_attempt_id(message, bot.id) is not None
+        return await resolve_receipt_attempt(
+            message, bot, self.factory, self.project_id,
+        ) is not None
 
 
 def create_saas_receipt_router(
@@ -119,17 +195,72 @@ def create_saas_receipt_router(
 ) -> Router:
     router = Router(name="vimi-saas-proof-ingress")
 
-    @router.message(ViMiPlatformProofFilter())
+    @router.message(ViMiPlatformProofFilter(factory, project_id))
     async def receive_platform_payment_proof(message: Message, bot: Bot) -> None:
         # This router is intentionally ahead of FileEditorFilter and
         # broadcasts; an active file editor must never steal a bank proof.
-        attempt = receipt_attempt_id(message, bot.id)
+        attempt = await resolve_receipt_attempt(
+            message, bot, factory, project_id,
+        )
         if attempt is None:
             return
         if message.photo:
             file_type, file_id = "photo", message.photo[-1].file_id
+            file_size = message.photo[-1].file_size
+            file_unique_id = getattr(message.photo[-1], "file_unique_id", None)
         else:
             file_type, file_id = "document", message.document.file_id
+            file_size = message.document.file_size
+            file_unique_id = getattr(message.document, "file_unique_id", None)
+        if (
+            not isinstance(file_unique_id, str)
+            or not 8 <= len(file_unique_id) <= 128
+            or not all(
+                c.isascii() and (c.isalnum() or c in "-_")
+                for c in file_unique_id
+            )
+        ):
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Telegram не передал постоянный идентификатор файла. "
+                    "Отправьте чек повторно. Заявка не создана.",
+                    "⚠️ Telegram did not supply a permanent file identity. "
+                    "Please resend the receipt. No review request was created.",
+                ),
+            )
+            return
+        try:
+            await validate_platform_proof_size(
+                bot, file_id=file_id, file_type=file_type,
+                reported_size=file_size,
+            )
+        except ProofTooLargeError:
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Документ превышает 20 МиБ или фото превышает "
+                    "10 МиБ. Отправьте меньший файл ответом на инструкцию "
+                    "об оплате. Чек не зарегистрирован.",
+                    "⚠️ Documents must not exceed 20 MiB and photos "
+                    "10 MiB. Reply to the payment instruction with a "
+                    "smaller file. Receipt was not registered.",
+                ),
+            )
+            return
+        except ProofSizeUnavailableError:
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Не удалось проверить размер файла в Telegram. "
+                    "Повторите отправку меньшего чека. "
+                    "Заявка пока не создана.",
+                    "⚠️ Telegram file size cannot be verified. "
+                    "Please retry with a smaller receipt. "
+                    "No review request was created.",
+                ),
+            )
+            return
         try:
             actor = await ensure_telegram_actor(
                 factory, telegram_id=message.from_user.id,
@@ -141,6 +272,7 @@ def create_saas_receipt_router(
                 project_id=project_id, bot_id=bot.id,
                 chat_id=message.chat.id, message_id=message.message_id,
                 file_id=file_id, file_type=file_type,
+                file_unique_id=file_unique_id,
             )
         except (ValueError, PermissionError):
             await bot.send_message(

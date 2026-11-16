@@ -70,7 +70,7 @@ async def test_refresh_reads_new_pending_items_and_updates_same_screen(monkeypat
     await callback(first, bot)
     body0 = bot.edit_message_text.await_args.args[0]
     assert "Новых заявок нет." in body0
-    assert "⏱ Проверено: " in body0
+    assert "⏱ Список обновлён: " in body0
     first.answer.assert_awaited_once_with("✅ Список проверен")
 
     second = _query()
@@ -78,7 +78,7 @@ async def test_refresh_reads_new_pending_items_and_updates_same_screen(monkeypat
     body1 = bot.edit_message_text.await_args.args[0]
     assert "Новых заявок нет." not in body1
     assert "150.00 RUB" in body1
-    assert "⏱ Проверено: " in body1
+    assert "⏱ Список обновлён: " in body1
     assert bot.edit_message_text.await_count == 2
     assert all(
         call.kwargs["message_id"] == 421
@@ -121,7 +121,7 @@ async def test_unchanged_queue_refresh_uses_quiet_toast_not_new_message(monkeypa
         assert bot.edit_message_text.await_count == 2
         assert fresh_read.await_count == 2
         text = bot.edit_message_text.await_args.args[0]
-        assert "⏱ Checked: " in text
+        assert "⏱ List refreshed: " in text
         bot.send_message.assert_not_awaited()
     finally:
         _language.reset(token)

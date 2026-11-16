@@ -38,10 +38,15 @@ def _receipt(*, source_bot=123, user=456, content="document",
         ),
         chat=SimpleNamespace(id=user, type="private"),
         reply_to_message=prompt,
-        document=SimpleNamespace(file_id="fake-pdf-id") if content == "document"
+        document=SimpleNamespace(
+            file_id="fake-pdf-id", file_size=1024,
+            file_unique_id="stable-document-identity-test",
+        ) if content == "document"
                  else None,
-        photo=[SimpleNamespace(file_id="fake-photo-id")]
-              if content == "photo" else None,
+        photo=[SimpleNamespace(
+            file_id="fake-photo-id", file_size=1024,
+            file_unique_id="stable-photo-identity-test",
+        )] if content == "photo" else None,
         message_id=177,
     ), attempt
 
@@ -98,6 +103,10 @@ async def test_platform_receipt_from_real_bot_prompt_registers_and_responds(
     assert kwargs["file_type"] == content
     assert kwargs["file_id"] == (
         "fake-pdf-id" if content == "document" else "fake-photo-id"
+    )
+    assert kwargs["file_unique_id"] == (
+        "stable-document-identity-test"
+        if content == "document" else "stable-photo-identity-test"
     )
     bot.send_message.assert_awaited_once()
     assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
@@ -180,6 +189,31 @@ async def test_old_rich_invoice_receipt_pdf_registers_in_existing_queue(
     assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
 
 
+@pytest.mark.asyncio
+async def test_clean_rich_payment_prompt_without_any_reference(monkeypatch):
+    message, attempt = _receipt()
+    prompt = message.reply_to_message
+    prompt.message_id = 198
+    prompt.text = None
+    prompt.caption = None
+    prompt.rich_message = RichMessage(blocks=[
+        RichBlockParagraph(text="🧾 ViMi Pay · Оплата счёта"),
+        RichBlockParagraph(text="💳 Оплата по реквизитам"),
+        RichBlockParagraph(text="После перевода ответьте чеком."),
+    ])
+    assert ingress.receipt_attempt_id(message, 123) is None
+    actor = uuid4()
+    find = AsyncMock(return_value=attempt)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor",
+                        AsyncMock(return_value=actor))
+    monkeypatch.setattr(ingress, "saas_resolve_payment_prompt", find)
+    assert await ingress.resolve_receipt_attempt(
+        message, SimpleNamespace(id=123), object(), None,
+    ) == attempt
+    assert find.await_args.kwargs["source_message_id"] == 198
+    assert find.await_args.kwargs["source_bot_id"] == 123
+
+
 def test_rich_invoice_reply_parses_from_actual_aiogram_message_payload():
     """Use the Bot API payload shape, not mocked Message.text shortcuts."""
     invoice = uuid4()
@@ -256,3 +290,91 @@ def test_receipt_filter_rejects_foreign_bot_spoofed_or_unrelated_documents():
     assert ingress.receipt_attempt_id(authentic, 123) == uid
     authentic.chat.id = 1000
     assert ingress.receipt_attempt_id(authentic, 123) is None
+
+
+@pytest.mark.parametrize("content,too_large", [
+    ("document", 20 * 1024 * 1024 + 1),
+    ("photo", 10 * 1024 * 1024 + 1),
+])
+async def test_oversized_platform_receipt_rejected_before_registration(
+    monkeypatch, content, too_large,
+):
+    message, _ = _receipt(content=content)
+    target = message.document if content == "document" else message.photo[-1]
+    target.file_size = too_large
+    record = AsyncMock()
+    actor = AsyncMock()
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", record)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor", actor)
+    bot = SimpleNamespace(id=123, send_message=AsyncMock())
+    await ingress.create_saas_receipt_router(
+        object(),
+    ).message.handlers[0].callback(message, bot)
+    record.assert_not_awaited()
+    actor.assert_not_awaited()
+    assert "не зарегистрирован" in bot.send_message.await_args.args[1]
+
+
+@pytest.mark.parametrize("size", [None, 0])
+async def test_unknown_platform_file_size_is_verified_or_rejected(
+    monkeypatch, size,
+):
+    message, _ = _receipt()
+    message.document.file_size = size
+    record = AsyncMock()
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", record)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor", AsyncMock())
+    bot = SimpleNamespace(
+        id=123, send_message=AsyncMock(),
+        get_file=AsyncMock(return_value=SimpleNamespace(file_size=None)),
+    )
+    await ingress.create_saas_receipt_router(
+        object(),
+    ).message.handlers[0].callback(message, bot)
+    record.assert_not_awaited()
+    assert "не создана" in bot.send_message.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_clean_payment_prompt_has_no_reference_and_uses_original_message(
+    monkeypatch,
+):
+    message, attempt = _receipt()
+    assert ingress.receipt_attempt_id(message, 123) == attempt
+    message.reply_to_message.message_id = 211
+    message.reply_to_message.text = (
+        "🧾 ViMi Pay · Оплата счёта\n\n"
+        "💳 СБП\n150.00 RUB\n"
+        "После перевода ответьте на это сообщение чеком."
+    )
+    assert ingress.receipt_attempt_id(message, 123) is None
+    actor = uuid4()
+    bound = AsyncMock(return_value=attempt)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor",
+                        AsyncMock(return_value=actor))
+    monkeypatch.setattr(ingress, "saas_resolve_payment_prompt", bound)
+    assert await ingress.resolve_receipt_attempt(
+        message, SimpleNamespace(id=123), object(), None,
+    ) == attempt
+    assert bound.await_args.kwargs["source_message_id"] == 211
+    # No cross-bot and no forged/private-cross-chat receipt registration.
+    message.reply_to_message.from_user.id = 555
+    assert await ingress.resolve_receipt_attempt(
+        message, SimpleNamespace(id=123), object(), None,
+    ) is None
+
+
+async def test_proof_without_telegram_unique_identity_never_registers(monkeypatch):
+    message, _ = _receipt()
+    message.document.file_unique_id = None
+    actor = AsyncMock()
+    submit = AsyncMock()
+    monkeypatch.setattr(ingress, "ensure_telegram_actor", actor)
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", submit)
+    bot = SimpleNamespace(id=123, send_message=AsyncMock())
+    await ingress.create_saas_receipt_router(
+        object(),
+    ).message.handlers[0].callback(message, bot)
+    actor.assert_not_awaited()
+    submit.assert_not_awaited()
+    assert "не создана" in bot.send_message.await_args.args[1]

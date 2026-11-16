@@ -150,6 +150,10 @@ jobs:
                       "platform_saas_payment_details_read()",
                       "platform_saas_payment_details_set(text)",
                       "platform_saas_owner_invoice_report(integer,integer)",
+                      "platform_saas_project_commerce_state(uuid,uuid)",
+                      "platform_saas_bind_payment_prompt(uuid,bigint,bigint,bigint)",
+                      "platform_saas_resolve_payment_prompt(bigint,bigint,bigint)",
+                      "platform_saas_v2_approve_checked_attempt(uuid)",
                       "platform_saas_notice_schedule()",
                       "platform_saas_notice_claim()",
                       "platform_saas_notice_finish(uuid,integer,boolean)",
@@ -192,6 +196,7 @@ jobs:
                       "platform_saas_v2_methods_read()",
                       "platform_saas_v2_create_attempt(uuid,numeric,text)",
                       "platform_saas_v2_submit_proof(uuid,bigint,bigint,bigint,text,text)",
+                      "platform_saas_v2_submit_proof(uuid,bigint,bigint,bigint,text,text,text)",
                       "platform_saas_v2_approve_attempt(uuid,text)",
                       "platform_saas_v2_reject_attempt(uuid,text)",
                       "platform_saas_v2_pending_proofs(integer)",
@@ -239,6 +244,10 @@ jobs:
                       "public.crypto_pay_paid_usd_rates FROM membership_runtime"
                   )
 
+                  await connection.execute(
+                      "REVOKE ALL ON public.platform_saas_payment_prompts "
+                      "FROM membership_runtime"
+                  )
                   # Match production: migration 0029 explicitly denies
                   # runtime CRUD on platform-only commercial tables.
                   await connection.execute(
