@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
 from urllib.parse import quote
+from uuid import UUID, uuid4
 
 import httpx
 from aiogram import Bot
