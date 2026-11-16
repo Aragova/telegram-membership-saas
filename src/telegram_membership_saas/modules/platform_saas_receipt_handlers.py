@@ -7,7 +7,6 @@ photo or PDF after a supervisor restart without an in-memory receipt wizard.
 from __future__ import annotations
 
 import logging
-import re
 from uuid import UUID
 
 from aiogram import Bot, Router
@@ -28,17 +27,13 @@ from telegram_membership_saas.modules.platform_saas_proof_media import (
     validate_platform_proof_size,
 )
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_resolve_payment_prompt,
     saas_v2_submit_proof,
 )
 
 _LOG = logging.getLogger(__name__)
 _PREFIX = "🧾 ViMi Pay · "
 _NEW_HEADERS = ("🧾 ViMi Pay · Оплата счёта", "🧾 ViMi Pay · Invoice payment")
-_PRIVATE_REF = re.compile(
-    r"(?:^|\n)🔐 (?:Код заявки|Reference): "
-    r"([0-9a-fA-F]{32}|[0-9a-fA-F-]{36})\s*$"
-)
-
 
 
 def _rich_text_prefix(value: object, *, max_chars: int = 160, depth: int = 0) -> str | None:
@@ -126,31 +121,72 @@ def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
     text = _invoice_prompt_text(prompt) or ""
     if not text.startswith(_PREFIX):
         return None
-    # Backward compatible: thousands of already-sent Rich/HTML instructions
-    # carry the complete attempt UUID in their opening line.
+    # All previously issued UUID-bearing instructions remain valid.
+    # New clean messages intentionally have NO token in their text.
     remainder = text[len(_PREFIX):].strip()
     first = remainder.split(maxsplit=1)[0] if remainder else ""
     try:
         return UUID(first)
     except (ValueError, AttributeError):
-        pass
-    # New HTML instructions have a human title; their original attempt ID is
-    # kept in a Telegram spoiler at the very end, not displayed as a heading.
-    # We still require the ORIGINAL reply_to_message from this exact bot.
-    if not text.startswith(_NEW_HEADERS):
         return None
-    matched = _PRIVATE_REF.search(text)
-    if matched is None:
+
+
+async def resolve_receipt_attempt(
+    message: Message, bot: Bot,
+    factory: async_sessionmaker[AsyncSession],
+    project_id: UUID | None,
+) -> UUID | None:
+    """Verify original private reply; resolve new clean prompts from SQL."""
+    legacy = receipt_attempt_id(message, bot.id)
+    if legacy is not None:
+        return legacy
+    if (
+        message.from_user is None
+        or message.chat.type != "private"
+        or message.chat.id != message.from_user.id
+        or not (message.photo or message.document)
+    ):
+        return None
+    original = message.reply_to_message
+    if (
+        original is None
+        or original.from_user is None
+        or original.from_user.id != bot.id
+        or original.message_id <= 0
+    ):
+        return None
+    text_value = _invoice_prompt_text(original) or ""
+    if not text_value.startswith(_NEW_HEADERS):
         return None
     try:
-        return UUID(matched.group(1))
-    except ValueError:
+        actor = await ensure_telegram_actor(
+            factory, telegram_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+        return await saas_resolve_payment_prompt(
+            factory, actor_id=actor,
+            source_bot_id=bot.id,
+            source_chat_id=message.chat.id,
+            source_message_id=original.message_id,
+            project_id=project_id,
+        )
+    except (ValueError, PermissionError):
         return None
 
 
 class ViMiPlatformProofFilter(BaseFilter):
+    def __init__(
+        self, factory: async_sessionmaker[AsyncSession],
+        project_id: UUID | None,
+    ) -> None:
+        self.factory = factory
+        self.project_id = project_id
+
     async def __call__(self, message: Message, bot: Bot) -> bool:
-        return receipt_attempt_id(message, bot.id) is not None
+        return await resolve_receipt_attempt(
+            message, bot, self.factory, self.project_id,
+        ) is not None
 
 
 def create_saas_receipt_router(
@@ -159,11 +195,13 @@ def create_saas_receipt_router(
 ) -> Router:
     router = Router(name="vimi-saas-proof-ingress")
 
-    @router.message(ViMiPlatformProofFilter())
+    @router.message(ViMiPlatformProofFilter(factory, project_id))
     async def receive_platform_payment_proof(message: Message, bot: Bot) -> None:
         # This router is intentionally ahead of FileEditorFilter and
         # broadcasts; an active file editor must never steal a bank proof.
-        attempt = receipt_attempt_id(message, bot.id)
+        attempt = await resolve_receipt_attempt(
+            message, bot, factory, project_id,
+        )
         if attempt is None:
             return
         if message.photo:
