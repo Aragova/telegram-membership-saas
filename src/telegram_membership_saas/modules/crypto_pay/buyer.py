@@ -194,6 +194,7 @@ async def file_crypto_prices(
             FileManualPrice.product_id == product_id,
             FileProduct.telegram_bot_id == bot_id,
             FileProduct.status == "published",
+            FileProduct.is_free.is_(False),
             FileProduct.removed_at.is_(None),
             FileFolder.status == "active",
             FileFolder.removed_at.is_(None),
