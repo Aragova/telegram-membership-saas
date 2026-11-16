@@ -85,7 +85,23 @@ def _invoice_prompt_text(prompt: Message) -> str | None:
     first = blocks[0]
     if not isinstance(first, (RichBlockParagraph, RichBlockSectionHeading)):
         return None
-    return _rich_text_prefix(first.text)
+    # Older native Rich payment prompts embed the UUID in the first block.
+    # New clean headers keep the private reference in the last paragraph.
+    # Read bounded text nodes across blocks without trusting arbitrary JSON.
+    collected: list[str] = []
+    remaining = 4096
+    for block in blocks[:48]:
+        content = getattr(block, "text", None)
+        if content is None:
+            continue
+        part = _rich_text_prefix(content, max_chars=remaining)
+        if part is None:
+            return None
+        collected.append(part)
+        remaining -= len(part)
+        if remaining <= 0:
+            break
+    return "\n".join(collected) if collected else None
 
 
 def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
