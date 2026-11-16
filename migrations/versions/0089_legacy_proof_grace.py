@@ -41,6 +41,15 @@ def upgrade() -> None:
         ),
     )
     op.execute("REVOKE ALL ON public.platform_saas_payment_prompts FROM PUBLIC")
+    op.execute("""
+        DO $revoke$ BEGIN
+          IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+          THEN
+            REVOKE ALL ON public.platform_saas_payment_prompts
+              FROM membership_runtime;
+          END IF;
+        END $revoke$
+    """)
     op.execute(r"""
 CREATE FUNCTION public.platform_saas_bind_payment_prompt(
     p_attempt uuid,p_bot bigint,p_chat bigint,p_message bigint
