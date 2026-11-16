@@ -104,20 +104,25 @@ async def test_private_payment_prompt_binding_and_single_operator_click_ledger()
                             "SELECT public.platform_saas_resolve_payment_prompt("
                             ":bot,:chat,808)"
                         ), {"bot": bot_telegram, "chat": payer_chat})
-                # Restore privileged role to construct an already-submitted
-                # test proof. The approval itself runs as membership_runtime.
+                # Register through the ACTUAL seven-argument runtime RPC.
+                # Proof rows are immutable; the original INSERT must contain
+                # the canonical identity and trigger an owner-only alert.
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:user,true)"
+                ), {"user": str(owner)})
+                recorded = await conn.scalar(text(
+                    "SELECT public.platform_saas_v2_submit_proof("
+                    ":attempt,:bot,:chat,812,'unique-proof-file-test-id',"
+                    "'document','canonical-proof-identity-2026')"
+                ), {"attempt": attempt, "bot": bot_telegram,
+                     "chat": payer_chat})
+                assert recorded is not None
                 await conn.execute(text("RESET ROLE"))
-                await conn.execute(text("""
-                    INSERT INTO platform_saas_payment_proofs_v2(
-                        id,attempt_id,source_bot_id,source_chat_id,
-                        source_message_id,source_file_id,
-                        source_file_unique_id,file_type
-                    ) VALUES(
-                        :id,:attempt,:bot,:chat,812,'unique-proof-file-test-id',
-                        'canonical-proof-identity-2026','document'
-                    )
-                """), {"id": uuid4(), "attempt": attempt,
-                         "bot": bot_telegram, "chat": payer_chat})
+                stored_unique_id = await conn.scalar(text(
+                    "SELECT source_file_unique_id FROM "
+                    "platform_saas_payment_proofs_v2 WHERE id=:id"
+                ), {"id": recorded})
+                assert stored_unique_id == "canonical-proof-identity-2026"
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:user,true)"
