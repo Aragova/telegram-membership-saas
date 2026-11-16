@@ -3963,7 +3963,7 @@ def create_owner_setup_router(
                             logging.getLogger(__name__).warning(
                                 "Unbound ViMi Pay payment prompt cannot be deleted"
                             )
-                        raise RuntimeError("ViMi Pay payment instruction unavailable")
+                        raise RuntimeError("ViMi Pay payment instruction unavailable") from None
                 await query.answer()
                 return
             if action.startswith("saasprice:"):
