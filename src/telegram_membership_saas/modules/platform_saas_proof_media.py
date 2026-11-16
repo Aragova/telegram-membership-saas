@@ -144,9 +144,7 @@ async def show_pending_platform_proof(
         caption = (
             ("🧾 ViMi Pay · Receipt for bank review\n"
              if locale_is_english else "🧾 ViMi Pay · Чек на проверку\n")
-            + f"№ {attempt_id}\n"
-            + ("Invoice: " if locale_is_english else "Счёт: ")
-            + str(proof["invoice_id"]) + "\n"
+
             + ("Transfer: " if locale_is_english else "Перевод: ")
             + str(proof["amount"]) + " " + str(proof["currency"]) + "\n"
             + ("Original instructions: " if locale_is_english
