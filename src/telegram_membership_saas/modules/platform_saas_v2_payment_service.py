@@ -54,6 +54,12 @@ async def _rpc(
         ),
     }
     keys = names.get(name)
+    if (
+        name == "platform_saas_v2_submit_proof"
+        and "file_unique_id" in arguments
+        and keys is not None
+    ):
+        keys = (*keys, "file_unique_id")
     if keys is None or set(arguments) != set(keys):
         raise ValueError("Unknown ViMi Pay billing operation")
     query = text(
@@ -154,6 +160,7 @@ async def saas_v2_submit_proof(
     actor_id: UUID, attempt_id: UUID, project_id: UUID | None,
     bot_id: int, chat_id: int, message_id: int,
     file_id: str, file_type: str,
+    file_unique_id: str | None = None,
 ) -> UUID:
     # Account invoices also live in the central bot after bot transfer.
     # The SQL RPC verifies the historical liable owner independently.
@@ -161,15 +168,23 @@ async def saas_v2_submit_proof(
         raise PermissionError("Telegram proof source required")
     if file_type not in ("photo", "document") or not file_id:
         raise ValueError("Unsupported payment evidence")
+    if file_unique_id is not None and (
+        not 8 <= len(file_unique_id) <= 128
+        or not all(c.isascii() and (c.isalnum() or c in "-_")
+                   for c in file_unique_id)
+    ):
+        raise ValueError("Invalid Telegram canonical proof identity")
+    arguments = {
+        "attempt": attempt_id, "bot_id": bot_id,
+        "chat_id": chat_id, "message_id": message_id,
+        "file_id": file_id, "file_type": file_type,
+    }
+    if file_unique_id is not None:
+        arguments["file_unique_id"] = file_unique_id
     result = await _rpc(
         factory, actor_id=actor_id, project_id=project_id,
         name="platform_saas_v2_submit_proof",
-        arguments={
-            "attempt": attempt_id, "bot_id": bot_id,
-            "chat_id": chat_id, "message_id": message_id,
-            "file_id": file_id,
-            "file_type": file_type,
-        },
+        arguments=arguments,
     )
     return UUID(str(result))
 
@@ -265,21 +280,32 @@ async def saas_v2_confirm_attempt(
 
 
 def operator_approval_reference(
-    *, original_bot_id: int, source_file_id: str,
+    *, file_unique_id: str | None = None,
+    original_bot_id: int | None = None,
+    source_file_id: str | None = None,
 ) -> str:
-    """Internal evidence identity, NOT a bank transaction reference.
+    """Evidence fingerprint, NOT a bank transaction number.
 
-    Re-submitting the identical Telegram document/photo to the SAME bot,
-    including on different attempts/invoices, must keep the same
-    bank_reference unique-key value. Never expose bot-scoped file IDs.
-    A separately edited image of the same bank transfer cannot be reliably
-    detected without an actual bank/payment-provider transaction feed.
+    New proofs use Telegram's cross-bot stable file_unique_id, so rotated
+    file_id values and another bot cannot re-credit the same exact media.
+    Legacy proofs submitted before the migration have no stored unique ID;
+    only for those use a weaker original-bot+file_id fallback.
+    Changed/edited bank receipts still need independent bank verification.
     """
-    if original_bot_id <= 0 or not 8 <= len(source_file_id) <= 512:
-        raise ValueError("Original bank proof identity required")
-    proof_key = f"{original_bot_id}\0{source_file_id}".encode()
+    if file_unique_id:
+        if not 8 <= len(file_unique_id) <= 128 or not all(
+            c.isascii() and (c.isalnum() or c in "-_") for c in file_unique_id
+        ):
+            raise ValueError("Invalid canonical Telegram proof identity")
+        proof_key = ("telegram-unique:" + file_unique_id).encode()
+    else:
+        if (not isinstance(original_bot_id, int)
+                or original_bot_id <= 0
+                or not isinstance(source_file_id, str)
+                or not 8 <= len(source_file_id) <= 512):
+            raise ValueError("Original historical proof identity required")
+        proof_key = f"legacy-bot:{original_bot_id}\0{source_file_id}".encode()
     return "VIMI-PROOF-" + sha256(proof_key).hexdigest()
-
 
 async def saas_v2_confirm_attempt_one_tap(
     factory: async_sessionmaker[AsyncSession], *,
@@ -299,6 +325,7 @@ async def saas_v2_confirm_attempt_one_tap(
         attempt_id=attempt_id, settings=settings,
     )
     reference = operator_approval_reference(
+        file_unique_id=proof.get("source_file_unique_id"),
         original_bot_id=int(proof["source_bot"]),
         source_file_id=str(proof["source_file"]),
     )
