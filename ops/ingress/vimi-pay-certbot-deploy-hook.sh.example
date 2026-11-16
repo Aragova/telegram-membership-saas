@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Certbot deploy hook: reload only after successful renewal of ViMi Pay API TLS.
+# Example only; install root-owned after reviewing existing renewal hooks.
+set -Eeuo pipefail
+
+if [[ "${RENEWED_LINEAGE:-}" != "/etc/letsencrypt/live/pay-api.usevimi.ru" ]]; then
+    exit 0
+fi
+
+# Abort on invalid combined Nginx configuration; never blindly reload.
+/usr/sbin/nginx -t
+/bin/systemctl reload nginx
