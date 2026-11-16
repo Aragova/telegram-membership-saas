@@ -207,91 +207,23 @@ END; $fn$
 
 
 
-    # Preserve the old six-argument proof RPC for already-sent prompts and
-    # legacy worker versions. New ingress provides stable file_unique_id
-    # atomically in a seven-argument overload. No test-only pathways.
+    # Preserve the old 6-argument proof RPC for already-delivered messages.
+    # The new 7-argument function writes file_unique_id in its ORIGINAL
+    # INSERT. Proof rows are immutable and must never be UPDATEd.
     op.execute("""
     CREATE FUNCTION public.platform_saas_v2_submit_proof(
-        p_attempt uuid,p_bot bigint,p_chat bigint,p_message bigint,
-        p_file_id text,p_kind text,p_unique_id text
+      p_attempt uuid,p_bot bigint,p_chat bigint,p_message bigint,
+      p_file_id text,p_kind text,p_unique_id text
     ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
     SET search_path=pg_catalog,public AS $f$
     DECLARE actor uuid; original record; existing record; proof uuid;
     BEGIN
       actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
       IF p_unique_id IS NULL
-         OR p_unique_id !~ '^[A-Za-z0-9_-]{8,128}
-    """)
-    op.execute("""
-        REVOKE ALL ON FUNCTION
-        public.platform_saas_v2_submit_proof(
-          uuid,bigint,bigint,bigint,text,text,text
-        ) FROM PUBLIC
-    """)
-    op.execute("""
-    DO $grant$ BEGIN
-      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
-      THEN
-        GRANT EXECUTE ON FUNCTION public.platform_saas_v2_submit_proof(
-            uuid,bigint,bigint,bigint,text,text,text
-        ) TO membership_runtime;
-      END IF;
-    END $grant$
-    """)
-
-    # Owner-only source reader now returns the stable Telegram evidence ID,
-    # never a decrypted bot token or media contents.
-    op.execute("""
-    CREATE OR REPLACE FUNCTION public.platform_saas_pending_proof_source(
-      p_attempt uuid
-    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path=pg_catalog,public AS $f$
-    DECLARE payload jsonb;
-    BEGIN
-      PERFORM public.platform_saas_require_owner();
-      IF p_attempt IS NULL THEN
-        RAISE EXCEPTION 'Missing payment attempt' USING ERRCODE='22023';
-      END IF;
-      SELECT jsonb_build_object(
-        'id',a.id,'invoice_id',a.invoice_id,
-        'amount',a.amount_currency::text,'currency',a.currency_code,
-        'instructions',a.instructions_snapshot,
-        'source_bot',p.source_bot_id,
-        'source_project',b.project_id,
-        'source_file',p.source_file_id,
-        'source_file_unique_id',p.source_file_unique_id,
-        'file_type',p.file_type
-      ) INTO payload
-      FROM public.platform_saas_payment_attempts_v2 a
-      JOIN public.platform_saas_payment_proofs_v2 p
-        ON p.attempt_id=a.id
-      LEFT JOIN public.bot_instances b
-        ON b.telegram_bot_id=p.source_bot_id AND b.status='registered'
-      WHERE a.id=p_attempt
-        AND NOT EXISTS(
-          SELECT 1 FROM public.platform_saas_payment_allocations_v2 ok
-          WHERE ok.attempt_id=a.id
-        )
-        AND NOT EXISTS(
-          SELECT 1 FROM public.platform_saas_payment_rejections_v2 no
-          WHERE no.attempt_id=a.id
-        );
-      RETURN payload;
-    END; $f$
-    """)
-
-
-
-def downgrade() -> None:
-    raise RuntimeError(
-        "Forward-only ViMi Pay commercial hold correction; do not downgrade"
-    )
- THEN
+         OR p_unique_id !~ '^[A-Za-z0-9_-]{8,128}$' THEN
         RAISE EXCEPTION 'Canonical Telegram file identity required'
           USING ERRCODE='22023';
       END IF;
-      -- Lock original attempt first: parallel Telegram deliveries cannot
-      -- create inconsistent identities for the same financial attempt.
       SELECT * INTO original
       FROM public.platform_saas_payment_attempts_v2
       WHERE id=p_attempt FOR UPDATE;
@@ -324,8 +256,6 @@ def downgrade() -> None:
         RETURN existing.id;
       END IF;
       proof:=gen_random_uuid();
-      -- Immutable by design. Write the canonical identity in the original
-      -- INSERT, never through a follow-up UPDATE rejected by RLS triggers.
       INSERT INTO public.platform_saas_payment_proofs_v2(
         id,attempt_id,source_bot_id,source_chat_id,
         source_message_id,source_file_id,source_file_unique_id,file_type
@@ -337,19 +267,21 @@ def downgrade() -> None:
     """)
     op.execute("""
         REVOKE ALL ON FUNCTION
-        public.platform_saas_v2_submit_proof(
-          uuid,bigint,bigint,bigint,text,text,text
-        ) FROM PUBLIC
+          public.platform_saas_v2_submit_proof(
+            uuid,bigint,bigint,bigint,text,text,text
+          ) FROM PUBLIC
     """)
     op.execute("""
-    DO $grant$ BEGIN
-      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
-      THEN
-        GRANT EXECUTE ON FUNCTION public.platform_saas_v2_submit_proof(
-            uuid,bigint,bigint,bigint,text,text,text
-        ) TO membership_runtime;
-      END IF;
-    END $grant$
+        DO $grant$ BEGIN
+          IF EXISTS(
+            SELECT 1 FROM pg_roles WHERE rolname='membership_runtime'
+          ) THEN
+            GRANT EXECUTE ON FUNCTION
+              public.platform_saas_v2_submit_proof(
+                uuid,bigint,bigint,bigint,text,text,text
+              ) TO membership_runtime;
+          END IF;
+        END $grant$
     """)
 
     # Owner-only source reader now returns the stable Telegram evidence ID,
@@ -392,8 +324,6 @@ def downgrade() -> None:
       RETURN payload;
     END; $f$
     """)
-
-
 
 def downgrade() -> None:
     raise RuntimeError(
