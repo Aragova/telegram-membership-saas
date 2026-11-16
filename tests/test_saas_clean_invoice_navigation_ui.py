@@ -95,9 +95,12 @@ async def test_one_method_creates_only_full_payment_attempt(monkeypatch, lang):
         "rub_per_unit": "1", "instructions": "Pay bank 123",
     })
     monkeypatch.setattr(ui, "saas_v3_create_attempt", attempt)
+    bind = AsyncMock()
+    monkeypatch.setattr(ui, "saas_bind_payment_prompt", bind)
     bot = MagicMock()
     bot.edit_message_text = AsyncMock()
     bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 901
     tok = encode_uuid(invoice)
     mid = encode_uuid(method)
     token = _language.set(lang)
@@ -112,6 +115,10 @@ async def test_one_method_creates_only_full_payment_attempt(monkeypatch, lang):
     attempt.assert_awaited_once()
     assert attempt.await_args.kwargs["rub"] == 850
     assert "Pay bank 123" in bot.send_message.await_args.args[1]
+    assert "Код заявки" not in bot.send_message.await_args.args[1]
+    assert "Reference" not in bot.send_message.await_args.args[1]
+    bind.assert_awaited_once()
+    assert bind.await_args.kwargs["source_message_id"] == 901
     assert "own:saasinvoices:0" in str(
         bot.send_message.await_args.kwargs["reply_markup"]
     )
