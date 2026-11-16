@@ -189,19 +189,29 @@ async def test_old_rich_invoice_receipt_pdf_registers_in_existing_queue(
     assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
 
 
-def test_clean_rich_payment_prompt_with_footer_reference():
+@pytest.mark.asyncio
+async def test_clean_rich_payment_prompt_without_any_reference(monkeypatch):
     message, attempt = _receipt()
     prompt = message.reply_to_message
+    prompt.message_id = 198
     prompt.text = None
     prompt.caption = None
     prompt.rich_message = RichMessage(blocks=[
         RichBlockParagraph(text="🧾 ViMi Pay · Оплата счёта"),
         RichBlockParagraph(text="💳 Оплата по реквизитам"),
-        RichBlockParagraph(text=[
-            "🔐 Код заявки: ", RichTextCode(text=str(attempt)),
-        ]),
+        RichBlockParagraph(text="После перевода ответьте чеком."),
     ])
-    assert ingress.receipt_attempt_id(message, 123) == attempt
+    assert ingress.receipt_attempt_id(message, 123) is None
+    actor = uuid4()
+    find = AsyncMock(return_value=attempt)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor",
+                        AsyncMock(return_value=actor))
+    monkeypatch.setattr(ingress, "saas_resolve_payment_prompt", find)
+    assert await ingress.resolve_receipt_attempt(
+        message, SimpleNamespace(id=123), object(), None,
+    ) == attempt
+    assert find.await_args.kwargs["source_message_id"] == 198
+    assert find.await_args.kwargs["source_bot_id"] == 123
 
 
 def test_rich_invoice_reply_parses_from_actual_aiogram_message_payload():
@@ -325,27 +335,33 @@ async def test_unknown_platform_file_size_is_verified_or_rejected(
     assert "не создана" in bot.send_message.await_args.args[1]
 
 
-def test_clean_payment_prompt_spoiler_reference_and_legacy_replies():
+@pytest.mark.asyncio
+async def test_clean_payment_prompt_has_no_reference_and_uses_original_message(
+    monkeypatch,
+):
     message, attempt = _receipt()
-    # Still accepts already-issued Rich/HTML invoice payment messages.
     assert ingress.receipt_attempt_id(message, 123) == attempt
+    message.reply_to_message.message_id = 211
     message.reply_to_message.text = (
         "🧾 ViMi Pay · Оплата счёта\n\n"
         "💳 СБП\n150.00 RUB\n"
-        "После перевода ответьте на это сообщение чеком.\n\n"
-        "🔐 Код заявки: " + str(attempt)
+        "После перевода ответьте на это сообщение чеком."
     )
-    assert ingress.receipt_attempt_id(message, 123) == attempt
-    message.reply_to_message.text = (
-        "🧾 ViMi Pay · Invoice payment\n\n"
-        "150 RUB\n\n🔐 Reference: " + str(attempt)
-    )
-    assert ingress.receipt_attempt_id(message, 123) == attempt
-    # Malformed / missing tail marker cannot register a guessed attempt.
-    message.reply_to_message.text += " extra"
     assert ingress.receipt_attempt_id(message, 123) is None
+    actor = uuid4()
+    bound = AsyncMock(return_value=attempt)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor",
+                        AsyncMock(return_value=actor))
+    monkeypatch.setattr(ingress, "saas_resolve_payment_prompt", bound)
+    assert await ingress.resolve_receipt_attempt(
+        message, SimpleNamespace(id=123), object(), None,
+    ) == attempt
+    assert bound.await_args.kwargs["source_message_id"] == 211
+    # No cross-bot and no forged/private-cross-chat receipt registration.
     message.reply_to_message.from_user.id = 555
-    assert ingress.receipt_attempt_id(message, 123) is None
+    assert await ingress.resolve_receipt_attempt(
+        message, SimpleNamespace(id=123), object(), None,
+    ) is None
 
 
 async def test_proof_without_telegram_unique_identity_never_registers(monkeypatch):
