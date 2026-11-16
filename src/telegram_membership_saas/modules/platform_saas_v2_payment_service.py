@@ -277,7 +277,7 @@ def operator_approval_reference(
     """
     if original_bot_id <= 0 or not 8 <= len(source_file_id) <= 512:
         raise ValueError("Original bank proof identity required")
-    proof_key = f"{original_bot_id}\0{source_file_id}".encode("utf-8")
+    proof_key = f"{original_bot_id}\0{source_file_id}".encode()
     return "VIMI-PROOF-" + sha256(proof_key).hexdigest()
 
 
