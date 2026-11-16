@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_platform_saas_invoice_rls import _invoice, _line, _project, _tid
 
@@ -82,6 +83,34 @@ async def test_pre_activation_bill_grace_is_bot_only_first_proof_and_not_renewab
                 assert (await states(rollout + timedelta(minutes=3)))[:2] == (
                     "clear", "held",
                 )
+                # The tenant role may read its own bot hold through the new
+                # authorized project-scoped function, not query global holds.
+                scope = await conn.begin_nested()
+                try:
+                    await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                    await conn.execute(text(
+                        "SELECT set_config('app.current_user_id',:actor,true)"
+                    ), {"actor": str(owner)})
+                    await conn.execute(text(
+                        "SELECT set_config('app.current_project_id',:project,true)"
+                    ), {"project": str(project)})
+                    own_hold = await conn.scalar(text(
+                        "SELECT public.platform_saas_project_commerce_state("
+                        ":project,:bot)"
+                    ), {"project": project, "bot": bot})
+                    assert own_hold == "held"
+                    await conn.execute(text(
+                        "SELECT set_config('app.current_user_id',:actor,true)"
+                    ), {"actor": str(foreign_owner)})
+                    with pytest.raises(DBAPIError) as denied:
+                        async with conn.begin_nested():
+                            await conn.scalar(text(
+                                "SELECT public.platform_saas_project_commerce_state("
+                                ":project,:bot)"
+                            ), {"project": project, "bot": bot})
+                    assert getattr(denied.value.orig, "sqlstate", None) == "42501"
+                finally:
+                    await scope.rollback()
                 original = rollout + timedelta(minutes=4)
                 async def proof(submitted):
                     attempt = uuid4()
