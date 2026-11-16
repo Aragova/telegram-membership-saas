@@ -88,6 +88,13 @@ async def test_free_file_price_zero_publishes_and_delivers_without_payment():
             factory, project_id=project, bot_id=bot_id,
             actor_id=owner, product_id=paid.id, status="published",
         )
+        # The price editor remains reachable for a Stars-only published
+        # product without manual payment methods.
+        prices = await manual.price_editor_options(
+            factory, project_id=project, bot_id=bot_id,
+            actor_id=owner, product_id=paid.id,
+        )
+        assert ("RUB", None) in prices
         await manual.set_manual_price(
             factory, project_id=project, bot_id=bot_id,
             actor_id=owner, product_id=paid.id,
