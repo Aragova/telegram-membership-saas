@@ -254,7 +254,9 @@ async def scan_platform_backup(
             watch.suspected_since = None
             return 0
 
-        if previous != result and watch.incident_id is None:
+        # A continuous unhealthy window must not reset merely because
+        # GCS alternates between a stale listing and a read/permission error.
+        if previous == "healthy" or watch.suspected_since is None:
             watch.suspected_since = moment
         watch.state = result
         watch.suspected_since = watch.suspected_since or moment
