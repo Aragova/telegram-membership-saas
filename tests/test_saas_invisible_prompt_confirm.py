@@ -138,6 +138,52 @@ async def test_private_payment_prompt_binding_and_single_operator_click_ledger()
                 assert row.bank_reference is None
                 assert row.operator_evidence_key.startswith("tg-proof:")
                 assert row.confirmed_by == operator
+
+                # Same canonical Telegram file, different file_id and
+                # different source bot MUST NOT settle a second invoice.
+                second_invoice = await _invoice(
+                    conn, owner, merchant, bot,
+                    period_start=now + timedelta(days=35),
+                )
+                await _line(conn, second_invoice, project, "bot_fee", bot)
+                await conn.execute(text(
+                    "UPDATE platform_saas_invoices SET status='issued' "
+                    "WHERE id=:id"
+                ), {"id": second_invoice})
+                second_attempt = uuid4()
+                await conn.execute(text("""
+                    INSERT INTO platform_saas_payment_attempts_v2
+                    (id,invoice_id,owner_user_id,amount_rub,currency_code,
+                     rub_per_unit,amount_currency,quote_date,
+                     instructions_snapshot,expires_at)
+                    VALUES(:attempt,:invoice,:owner,150,'RUB',1,150,:day,
+                           'Second bank payment',:expiry)
+                """), {"attempt": second_attempt, "invoice": second_invoice,
+                       "owner": owner, "day": now.date(),
+                       "expiry": now + timedelta(days=2)})
+                await conn.execute(text("""
+                    INSERT INTO platform_saas_payment_proofs_v2(
+                        id,attempt_id,source_bot_id,source_chat_id,
+                        source_message_id,source_file_id,
+                        source_file_unique_id,file_type
+                    ) VALUES(
+                        :id,:attempt,:bot,:chat,813,'new-rotated-file-id',
+                        'canonical-proof-identity-2026','document'
+                    )
+                """), {
+                    "id": uuid4(), "attempt": second_attempt,
+                    "bot": bot_telegram + 1, "chat": payer_chat,
+                })
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:user,true)"
+                ), {"user": str(operator)})
+                with pytest.raises(DBAPIError) as reused:
+                    async with conn.begin_nested():
+                        await conn.scalar(text(
+                            "SELECT public.platform_saas_v2_approve_checked_attempt(:id)"
+                        ), {"id": second_attempt})
+                assert getattr(reused.value.orig, "sqlstate", None) == "23505"
             finally:
                 await tx.rollback()
     finally:
