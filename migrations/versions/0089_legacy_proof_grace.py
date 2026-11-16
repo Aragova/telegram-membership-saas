@@ -219,6 +219,11 @@ END; $fn$
     DECLARE actor uuid; original record; existing record; proof uuid;
     BEGIN
       actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      -- Serialize against verified-refund allocation. Without the shared
+      -- advisory lock, a proof racing quote expiry could lose its credit.
+      PERFORM pg_advisory_xact_lock(
+        hashtextextended('vimi:saas:verified-refunds',0)
+      );
       IF p_unique_id IS NULL
          OR p_unique_id !~ '^[A-Za-z0-9_-]{8,128}$' THEN
         RAISE EXCEPTION 'Canonical Telegram file identity required'
