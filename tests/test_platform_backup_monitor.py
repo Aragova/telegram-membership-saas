@@ -8,6 +8,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from telegram_membership_saas.config import Settings
@@ -237,6 +238,16 @@ async def test_real_postgres_failure_dedup_recovery_and_owner_only_scope(monkeyp
                      "result=EXCLUDED.result"),
                 {"at": NOW + timedelta(minutes=1)},
             )
+        # An RLS runtime connection cannot forge the host's backup result,
+        # even when CI grants DML on all public tables after Alembic.
+        with pytest.raises(DBAPIError):
+            async with tenant_session_scope(
+                factory, TenantContext(user_id=owner),
+            ) as session:
+                await session.execute(text(
+                    "UPDATE public.platform_backup_attempt_receipt "
+                    "SET result='success' WHERE id=1"
+                ))
         assert await monitor.scan_platform_backup(
             factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
             now=NOW + timedelta(minutes=2),
