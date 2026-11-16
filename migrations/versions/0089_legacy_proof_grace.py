@@ -219,7 +219,9 @@ END; $fn$
     DECLARE proof uuid; existing record;
     BEGIN
       IF p_unique_id IS NULL OR
-         p_unique_id !~ '^[A-Za-z0-9_-]{8,128}        RAISE EXCEPTION 'Canonical Telegram file identity required'
+         p_unique_id !~ '^[A-Za-z0-9_-]{8,128}$'
+      THEN
+        RAISE EXCEPTION 'Canonical Telegram file identity required'
           USING ERRCODE='22023';
       END IF;
       proof:=public.platform_saas_v2_submit_proof(
@@ -387,6 +389,7 @@ END; $fn$
       RETURN payload;
     END; $f$
     """)
+
 
 
 
