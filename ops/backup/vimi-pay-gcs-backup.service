@@ -12,6 +12,9 @@ User=root
 Group=root
 UMask=0077
 ExecStart=/usr/local/sbin/vimi-pay-gcs-backup
+# Root-owned result reporter records success/failure to PostgreSQL for central alerts.
+# Install /usr/local/sbin/vimi-pay-backup-report-result after migration 0088.
+ExecStopPost=/usr/local/sbin/vimi-pay-backup-report-result
 TimeoutStartSec=40min
 Nice=10
 IOSchedulingClass=best-effort
