@@ -42,6 +42,7 @@ async def _rpc(
             ("attempt", "bot_id", "chat_id", "message_id", "file_id", "file_type"),
         "platform_saas_v2_bank_method": ("currency", "instructions"),
         "platform_saas_v2_approve_attempt": ("attempt", "bank_reference"),
+        "platform_saas_v2_approve_checked_attempt": ("attempt",),
         "platform_saas_v2_reject_attempt": ("attempt", "reason"),
         "platform_saas_v2_pending_proofs": ("page",),
         "platform_saas_pending_proof_source": ("attempt",),
@@ -299,6 +300,25 @@ async def saas_pending_proof_source(
     ):
         raise ValueError("Pending receipt source unavailable")
     return result
+
+
+async def saas_v2_confirm_checked_attempt(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int, attempt_id: UUID,
+    settings: Settings | None = None,
+) -> UUID:
+    """One operator click after independent bank check, no text reference.
+
+    The database records operator identity and stable Telegram evidence key;
+    it NEVER represents that key as a bank transaction reference.
+    """
+    _check_actor(actor_telegram_id, settings)
+    result = await _rpc(
+        factory, actor_id=actor_id,
+        name="platform_saas_v2_approve_checked_attempt",
+        arguments={"attempt": attempt_id},
+    )
+    return UUID(str(result))
 
 
 async def saas_v2_confirm_attempt(
