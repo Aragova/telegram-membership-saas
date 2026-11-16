@@ -43,6 +43,11 @@ from telegram_membership_saas.modules.payments import (
     PaymentRequest,
 )
 from telegram_membership_saas.modules.plans import Plan, PlanResource
+from telegram_membership_saas.modules.platform_backup_monitor import (
+    PlatformBackupAlertOutbox,
+    PlatformBackupAttemptReceipt,
+    PlatformBackupWatch,
+)
 from telegram_membership_saas.modules.platform_saas_billing_models import (
     PlatformSaasInvoice,
     PlatformSaasInvoiceLine,
@@ -96,6 +101,9 @@ __all__ = [
     "PaymentMethod",
     "PaymentMethodCurrency",
     "PaymentRequest",
+    "PlatformBackupAlertOutbox",
+    "PlatformBackupAttemptReceipt",
+    "PlatformBackupWatch",
     "PlatformSaasInvoice",
     "PlatformSaasInvoiceLine",
     "PlatformSaasOwnerExemption",

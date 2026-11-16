@@ -35,6 +35,10 @@ from telegram_membership_saas.db_base import Base
 from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
 from telegram_membership_saas.modules.identity.models import TelegramUser
+from telegram_membership_saas.modules.platform_backup_monitor import (
+    deliver_one_backup_notice,
+    scan_platform_backup,
+)
 from telegram_membership_saas.modules.platform_saas_notices import (
     deliver_one_saas_notice,
     schedule_saas_reminders,
@@ -483,6 +487,7 @@ async def run_central_platform_monitor(
     owner_tg = settings.platform_owner_telegram_id
     if owner_tg is None:
         return
+    next_backup_scan: datetime | None = None
     while True:
         try:
             actor = await _platform_actor(factory, owner_tg)
@@ -510,6 +515,30 @@ async def run_central_platform_monitor(
                             break
                 except Exception:
                     log.warning("ViMi Pay customer review-result delivery deferred")
+                # Same central monitoring stream; GCS listing is every 5 min.
+                # This independent block cannot delay proof/decision alerts or
+                # let a GCS outage prevent the existing bot health scan.
+                backup_bucket = getattr(settings, "platform_backup_gcs_bucket", None)
+                if backup_bucket:
+                    moment = datetime.now(UTC)
+                    if next_backup_scan is None or moment >= next_backup_scan:
+                        next_backup_scan = moment + timedelta(minutes=5)
+                        try:
+                            await scan_platform_backup(
+                                factory, owner_actor_id=actor,
+                                bucket=backup_bucket,
+                                now=moment,
+                            )
+                        except Exception:
+                            log.warning("Backup freshness scan deferred")
+                    try:
+                        await deliver_one_backup_notice(
+                            factory, bot=bot, actor_id=actor,
+                            owner_telegram_id=owner_tg,
+                            timezone=settings.platform_timezone,
+                        )
+                    except Exception:
+                        log.warning("Backup incident delivery deferred")
                 await scan_platform_monitor(factory, owner_actor_id=actor)
                 # Bounded delivery, never overwhelm the owner's chat on
                 # recovery of a large network.
