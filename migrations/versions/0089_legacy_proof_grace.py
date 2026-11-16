@@ -139,6 +139,65 @@ BEGIN
   RETURN 'clear';
 END; $f$""")
 
+    # Only a manager of this active project may read its current commerce
+    # state. The underlying bot_hold_state() stays PRIVATE and ungrantable
+    # to tenant runtime to avoid leaking debt/hold data across tenants.
+    op.execute(r"""
+CREATE FUNCTION public.platform_saas_project_commerce_state(
+    p_project uuid,p_bot uuid
+) RETURNS text LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $fn$
+DECLARE
+    actor uuid;
+    scoped uuid;
+    result text;
+BEGIN
+    actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+    scoped:=NULLIF(current_setting('app.current_project_id',true),'')::uuid;
+    IF actor IS NULL OR scoped IS DISTINCT FROM p_project
+       OR p_project IS NULL OR p_bot IS NULL THEN
+        RAISE EXCEPTION 'Not authorized to read project billing state'
+          USING ERRCODE='42501';
+    END IF;
+    IF NOT EXISTS(
+        SELECT 1 FROM public.projects p
+        WHERE p.id=p_project AND p.status='active'
+          AND (
+            p.owner_user_id=actor
+            OR EXISTS(
+              SELECT 1 FROM public.project_members m
+              WHERE m.project_id=p_project
+                AND m.user_id=actor AND m.role='admin'
+            )
+          )
+    ) THEN
+        RAISE EXCEPTION 'Not authorized to read project billing state'
+          USING ERRCODE='42501';
+    END IF;
+    SELECT public.platform_saas_bot_hold_state(b.id,clock_timestamp())
+    INTO result
+    FROM public.bot_instances b
+    WHERE b.id=p_bot AND b.project_id=p_project AND b.status='registered';
+    RETURN result;
+END; $fn$
+    """)
+    op.execute("""
+        REVOKE ALL ON FUNCTION
+          public.platform_saas_project_commerce_state(uuid,uuid) FROM PUBLIC
+    """)
+    op.execute("""
+        DO $grant$ BEGIN
+          IF EXISTS(
+            SELECT 1 FROM pg_roles WHERE rolname='membership_runtime'
+          ) THEN
+            GRANT EXECUTE ON FUNCTION
+              public.platform_saas_project_commerce_state(uuid,uuid)
+              TO membership_runtime;
+          END IF;
+        END $grant$
+    """)
+
+
 
 def downgrade() -> None:
     raise RuntimeError(
