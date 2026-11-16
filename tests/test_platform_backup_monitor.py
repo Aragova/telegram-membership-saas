@@ -9,7 +9,6 @@ import pytest
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules import platform_backup_monitor as monitor
 
-
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
 
 
@@ -23,7 +22,12 @@ def test_completed_manifest_only_and_reject_malformed_gcs_objects():
         2026, 11, 16, 10, 35, 30, tzinfo=UTC,
     )
     assert monitor._manifest_created(
-        {**good, "name": good["name"].replace("manifest.sha256", "membership.dump.age")},
+        {
+                        **good,
+                        "name": good["name"].replace(
+                            "manifest.sha256", "membership.dump.age",
+                        ),
+                    },
         now=NOW,
     ) is None
     assert monitor._manifest_created({**good, "timeCreated": "bad"}, now=NOW) is None
