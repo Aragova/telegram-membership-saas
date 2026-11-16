@@ -114,6 +114,129 @@ END; $f$
             END $grant$
         """)
 
+    # Existing legacy bank-reference approvals continue unchanged. For the
+    # explicit one-click OPERATOR bank verification, distinguish the Telegram
+    # proof identity from an actual bank transaction reference in the ledger.
+    op.alter_column(
+        "platform_saas_payment_allocations_v2", "bank_reference",
+        existing_type=sa.String(160), nullable=True,
+    )
+    op.drop_constraint(
+        "ck_saas_v2_bank_reference",
+        "platform_saas_payment_allocations_v2", type_="check",
+    )
+    op.create_check_constraint(
+        "ck_saas_v2_bank_reference",
+        "platform_saas_payment_allocations_v2",
+        "bank_reference IS NULL OR "
+        "length(btrim(bank_reference)) BETWEEN 8 AND 160",
+    )
+    op.add_column(
+        "platform_saas_payment_allocations_v2",
+        sa.Column("operator_evidence_key", sa.String(80), nullable=True),
+    )
+    op.create_unique_constraint(
+        "uq_saas_v2_operator_evidence",
+        "platform_saas_payment_allocations_v2",
+        ["operator_evidence_key"],
+    )
+    op.create_check_constraint(
+        "ck_saas_v2_allocation_evidence",
+        "platform_saas_payment_allocations_v2",
+        "bank_reference IS NOT NULL OR operator_evidence_key IS NOT NULL",
+    )
+    op.execute(r"""
+CREATE FUNCTION public.platform_saas_v2_approve_checked_attempt(
+    p_attempt uuid
+) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE
+    actor uuid;
+    payment record;
+    invoice record;
+    evidence record;
+    prior record;
+    used numeric;
+    key_value text;
+    allocation_id uuid;
+BEGIN
+    actor:=public.platform_saas_require_owner();
+    IF p_attempt IS NULL THEN
+        RAISE EXCEPTION 'Missing original payment attempt'
+          USING ERRCODE='22023';
+    END IF;
+    SELECT * INTO payment
+    FROM public.platform_saas_payment_attempts_v2
+    WHERE id=p_attempt FOR UPDATE;
+    IF payment.id IS NULL THEN
+        RAISE EXCEPTION 'Unknown payment attempt' USING ERRCODE='42501';
+    END IF;
+    SELECT * INTO invoice FROM public.platform_saas_invoices
+    WHERE id=payment.invoice_id FOR UPDATE;
+    IF invoice.id IS NULL OR invoice.status<>'issued'
+       OR invoice.owner_user_id IS DISTINCT FROM payment.owner_user_id THEN
+        RAISE EXCEPTION 'Bill changed before operator approval'
+          USING ERRCODE='42501';
+    END IF;
+    SELECT * INTO prior
+    FROM public.platform_saas_payment_allocations_v2
+    WHERE attempt_id=p_attempt;
+    IF prior.id IS NOT NULL THEN RETURN prior.id; END IF;
+    IF EXISTS(
+        SELECT 1 FROM public.platform_saas_payment_rejections_v2 r
+        WHERE r.attempt_id=p_attempt
+    ) THEN
+        RAISE EXCEPTION 'Proof already rejected' USING ERRCODE='42501';
+    END IF;
+    SELECT * INTO evidence FROM public.platform_saas_payment_proofs_v2 p
+    WHERE p.attempt_id=p_attempt;
+    IF evidence.id IS NULL THEN
+        RAISE EXCEPTION 'Proof missing' USING ERRCODE='42501';
+    END IF;
+    -- This is NOT a bank transaction ID. It only prevents reusing the
+    -- IDENTICAL Telegram file as proof across multiple invoices.
+    -- The operator must check actual funds independently.
+    key_value:='tg-proof:'||md5(
+      evidence.source_bot_id::text||':'||
+      coalesce(evidence.source_file_unique_id,evidence.source_file_id)
+    );
+    SELECT coalesce(sum(r.amount_rub),0) INTO used
+    FROM public.platform_saas_receipts r
+    WHERE r.invoice_id=invoice.id;
+    SELECT used+coalesce(sum(a.allocated_rub),0) INTO used
+    FROM public.platform_saas_payment_allocations_v2 a
+    WHERE a.invoice_id=invoice.id;
+    IF used+payment.amount_rub>invoice.total_rub THEN
+        RAISE EXCEPTION 'Payment exceeds remaining invoice amount'
+          USING ERRCODE='23514';
+    END IF;
+    allocation_id:=gen_random_uuid();
+    INSERT INTO public.platform_saas_payment_allocations_v2(
+        id,attempt_id,invoice_id,received_currency,received_amount,
+        allocated_rub,bank_reference,operator_evidence_key,confirmed_by
+    ) VALUES(
+        allocation_id,p_attempt,invoice.id,
+        payment.currency_code,payment.amount_currency,payment.amount_rub,
+        NULL,key_value,actor
+    );
+    RETURN allocation_id;
+END; $f$
+    """)
+    op.execute("""
+        REVOKE ALL ON FUNCTION
+          public.platform_saas_v2_approve_checked_attempt(uuid) FROM PUBLIC
+    """)
+    op.execute("""
+        DO $grant$ BEGIN
+          IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+          THEN
+            GRANT EXECUTE ON FUNCTION
+              public.platform_saas_v2_approve_checked_attempt(uuid)
+              TO membership_runtime;
+          END IF;
+        END $grant$
+    """)
+
     # One canonical Telegram media identity for NEW proofs, stable across
     # bot tokens and valid file_id rotations. Existing historical proofs keep
     # NULL and can still be reviewed with the previous evidence fallback.
