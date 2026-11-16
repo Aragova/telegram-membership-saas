@@ -150,6 +150,7 @@ jobs:
                       "platform_saas_payment_details_read()",
                       "platform_saas_payment_details_set(text)",
                       "platform_saas_owner_invoice_report(integer,integer)",
+                      "platform_saas_project_commerce_state(uuid,uuid)",
                       "platform_saas_notice_schedule()",
                       "platform_saas_notice_claim()",
                       "platform_saas_notice_finish(uuid,integer,boolean)",
