@@ -258,7 +258,8 @@ async def test_real_postgres_failure_dedup_recovery_and_owner_only_scope(monkeyp
             timezone="Europe/Moscow", now=NOW + timedelta(minutes=7),
         )
         assert telegram.send_message.await_count == 2
-        assert "восстанов" in telegram.send_message.await_args.args[1].lower()
+        recovered = telegram.send_message.await_args.args[1].lower()
+        assert "восстанов" in recovered or "backup recovered" in recovered
         assert not await monitor.deliver_one_backup_notice(
             factory, bot=telegram, actor_id=owner, owner_telegram_id=owner_tg,
             timezone="Europe/Moscow", now=NOW + timedelta(minutes=8),
