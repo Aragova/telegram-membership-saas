@@ -466,6 +466,43 @@ def _sales_status_text(*, configured: bool, hold_state: str | None) -> str:
     )
 
 
+def _paid_service_status_text(
+    summary: dict, *, timezone: str, now: datetime | None = None,
+) -> str | None:
+    """Render paid service only from a settled, currently active real invoice."""
+    if not isinstance(summary, dict) or summary.get("invoice_id") is None:
+        return None
+    try:
+        charged = Decimal(str(summary["total_rub"]))
+        outstanding = Decimal(str(summary["total_due_rub"]))
+        settled = (
+            Decimal(str(summary.get("paid_rub", 0)))
+            + Decimal(str(summary.get("credit_rub", 0)))
+        )
+        begins = datetime.fromisoformat(
+            str(summary["period_start"]).replace("Z", "+00:00")
+        )
+        ends = datetime.fromisoformat(
+            str(summary["period_end"]).replace("Z", "+00:00")
+        )
+        zone = ZoneInfo(timezone)
+        checked_at = now if now is not None else datetime.now(zone)
+        if (
+            charged <= 0 or outstanding != 0 or settled != charged
+            or begins.tzinfo is None or ends.tzinfo is None
+            or checked_at.tzinfo is None
+            or not begins <= checked_at < ends
+        ):
+            return None
+        through = escape(ends.astimezone(zone).strftime("%d.%m.%Y"))
+        return tr(
+            "✅ Обслуживание оплачено до ",
+            "✅ Service paid until ",
+        ) + through
+    except (KeyError, ValueError, TypeError, OverflowError):
+        return None
+
+
 class StrayBotTokenFilter(BaseFilter):
     """Scrub credentials even when there is no live ForceReply wizard."""
 
@@ -757,15 +794,42 @@ def create_owner_setup_router(
                     logging.getLogger(__name__).warning(
                         "ViMi Pay admin sale restrictions unavailable"
                     )
+            trial_banner = (
+                trial_status_classic(trial, timezone=data.timezone)
+                if trial is not None else ""
+            )
+            if trial is not None and trial.get("state") == "ended":
+                # Trial eligibility never resets on payment. Consult the
+                # existing authenticated invoice report for ACTIVE service.
+                try:
+                    service = await merchant_saas_bill_summary(
+                        factory, actor_user_id=actor_id,
+                        month=datetime.now(
+                            ZoneInfo("Europe/Moscow")
+                        ).date().replace(day=1),
+                        project_id=project_id,
+                    )
+                    trial_banner = (
+                        _paid_service_status_text(
+                            service, timezone=data.timezone,
+                        ) or trial_banner
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ViMi Pay active service status unavailable"
+                    )
+                    trial_banner = tr(
+                        "⚠️ Не удалось проверить статус обслуживания. "
+                        "Откройте 🧾 Счёт.",
+                        "⚠️ Service status could not be checked. "
+                        "Open 🧾 Bill.",
+                    )
             text = (
                 tr("✦ <b>Панель администратора</b>\n",
                    "✦ <b>Admin dashboard</b>\n") +
                 f"<b>{escape(data.project_name)}</b>\n"
                 f"🌍 {escape(data.timezone)}\n\n"
-                + (
-                    trial_status_classic(trial, timezone=data.timezone) + "\n\n"
-                    if trial is not None else ""
-                )
+                + (trial_banner + "\n\n" if trial_banner else "")
                 + "\n".join(_progress(data))
                 + "\n\n"
                 + _sales_status_text(
