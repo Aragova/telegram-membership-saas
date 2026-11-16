@@ -2342,7 +2342,8 @@ def create_platform_dashboard_router(
                     rows.append(nav)
                 rows.append([_button(tr("⬅️ Платформа", "⬅️ Platform"), f"home:{period}:0")])
                 backup_health = None
-                if config.platform_backup_gcs_bucket:
+                backup_bucket = getattr(config, "platform_backup_gcs_bucket", None)
+                if backup_bucket:
                     try:
                         backup_actor = await ensure_telegram_actor(
                             factory, telegram_id=query.from_user.id,
@@ -2358,7 +2359,7 @@ def create_platform_dashboard_router(
                     bot, chat_id=query.from_user.id,
                     text=_bot_list(
                         report, backup_health=backup_health,
-                        show_backup=bool(config.platform_backup_gcs_bucket),
+                        show_backup=bool(backup_bucket),
                         timezone=config.platform_timezone,
                     ),
                     reply_markup=_keyboard(rows), message_id=message_id,
