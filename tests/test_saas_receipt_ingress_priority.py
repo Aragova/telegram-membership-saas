@@ -321,15 +321,15 @@ def test_clean_payment_prompt_spoiler_reference_and_legacy_replies():
     # Still accepts already-issued Rich/HTML invoice payment messages.
     assert ingress.receipt_attempt_id(message, 123) == attempt
     message.reply_to_message.text = (
-        "🧾 ViMi Pay · Оплата счёта\\n\\n"
-        "💳 СБП\\n150.00 RUB\\n"
-        "После перевода ответьте на это сообщение чеком.\\n\\n"
+        "🧾 ViMi Pay · Оплата счёта\n\n"
+        "💳 СБП\n150.00 RUB\n"
+        "После перевода ответьте на это сообщение чеком.\n\n"
         "🔐 Код заявки: " + str(attempt)
     )
     assert ingress.receipt_attempt_id(message, 123) == attempt
     message.reply_to_message.text = (
-        "🧾 ViMi Pay · Invoice payment\\n\\n"
-        "150 RUB\\n\\n🔐 Reference: " + str(attempt)
+        "🧾 ViMi Pay · Invoice payment\n\n"
+        "150 RUB\n\n🔐 Reference: " + str(attempt)
     )
     assert ingress.receipt_attempt_id(message, 123) == attempt
     # Malformed / missing tail marker cannot register a guessed attempt.
