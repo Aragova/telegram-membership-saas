@@ -1,0 +1,21 @@
+# Stage 3A ONLY: HTTP-01 certificate challenge for a NEW, isolated hostname.
+# Copy into a NEW sites-available file after inspecting current Nginx config.
+# No application proxy or TLS is enabled in this template.
+server {
+    listen 80;
+    server_name pay-api.usevimi.ru;
+    server_tokens off;
+
+    access_log /var/log/nginx/vimi-pay-api-access.log;
+    error_log /var/log/nginx/vimi-pay-api-error.log warn;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/vimi-pay-acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 404;
+    }
+}
