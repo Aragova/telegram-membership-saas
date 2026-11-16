@@ -24,9 +24,6 @@ from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_saas_notices import _notice_text
-from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
-    operator_approval_reference,
-)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
@@ -271,8 +268,8 @@ def test_billing_reminder_uses_live_invoice_navigation_not_stale_bank_details():
     assert "ViMi Pay" in message
 
 
-async def test_one_original_receipt_cannot_settle_two_distinct_invoices():
-    """Two DIFFERENT invoices on one bot must not reuse one bank-proof file.
+async def test_same_bank_transfer_reference_cannot_settle_two_distinct_invoices():
+    """Two DIFFERENT invoices cannot reuse one verified bank transfer reference.
 
     Probes PostgreSQL's global unique confirmation index, not merely a
     mocked Python duplicate check. Entire test transaction is rolled back.
@@ -335,21 +332,15 @@ async def test_one_original_receipt_cannot_settle_two_distinct_invoices():
                         "bot": telegram_bot_id, "chat": payer_tg,
                         "message": 1001 + index,
                         "file": f"rotated-bank-file-id-{index}",
-                        "unique": "stable-bank-document-unique-id",
+                        "unique": f"distinct-image-{index}-unique-id",
                     })
                     proofs.append((attempt, invoice))
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await _actor(conn, operator)
-                ref = operator_approval_reference(
-                    original_bot_id=telegram_bot_id,
-                    source_file_id="rotated-bank-file-id-0",
-                    file_unique_id="stable-bank-document-unique-id",
-                )
-                assert ref == operator_approval_reference(
-                    original_bot_id=telegram_bot_id,
-                    source_file_id="rotated-bank-file-id-1",
-                    file_unique_id="stable-bank-document-unique-id",
-                )
+                # Even materially different screenshots of the *same*
+                # banking transfer must carry the identical actual bank ID.
+                # The SQL unique receipt-reference guard catches it.
+                ref = "BANK-TRANSFER-20261116-UNIQUE-8301"
                 first = await _call(conn, "platform_saas_v2_approve_attempt", {
                     "attempt": proofs[0][0], "reference": ref,
                 })
