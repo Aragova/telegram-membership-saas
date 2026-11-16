@@ -25,7 +25,7 @@ def _review_ui():
     )
     entry = next(
         h.callback for h in router.message.handlers
-        if h.callback.__name__ == "platform_bank_receipt_rejection_reason"
+        if h.callback.__name__ == "platform_bank_receipt_rejection"
     )
     return callback, entry
 
@@ -58,7 +58,7 @@ async def test_four_letter_reason_is_explained_before_database_reject(monkeypatc
     message = SimpleNamespace(from_user=_user(), text="тест")
     await entry(message, bot)
     bot.send_message.assert_awaited_once()
-    assert "5 до 500 символов" in bot.send_message.await_args.args[1]
+    assert "5–500 символов" in bot.send_message.await_args.args[1]
     assert "/cancel" in bot.send_message.await_args.args[1]
     reject.assert_not_awaited()
 
