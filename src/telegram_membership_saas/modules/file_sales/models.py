@@ -68,6 +68,9 @@ class FileProduct(Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     stars_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_free: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default="false",
+    )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="draft", server_default="draft",
     )
