@@ -162,3 +162,9 @@ def test_vm_requests_id_token_for_real_broker_audience(monkeypatch) -> None:
     )
     assert got == session
     assert len(called) == 2
+
+
+def test_cloud_run_health_endpoint_avoids_reserved_suffix_z() -> None:
+    source = (ROOT / "ops/backup/session_broker/server.py").read_text()
+    assert 'self.path == "/health"' in source
+    assert 'self.path == "/healthz"' not in source
