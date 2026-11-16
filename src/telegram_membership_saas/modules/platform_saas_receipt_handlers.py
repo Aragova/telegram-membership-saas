@@ -7,6 +7,7 @@ photo or PDF after a supervisor restart without an in-memory receipt wizard.
 from __future__ import annotations
 
 import logging
+import re
 from uuid import UUID
 
 from aiogram import Bot, Router
@@ -21,12 +22,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
+from telegram_membership_saas.modules.platform_saas_proof_media import (
+    ProofSizeUnavailableError,
+    ProofTooLargeError,
+    validate_platform_proof_size,
+)
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_v2_submit_proof,
 )
 
 _LOG = logging.getLogger(__name__)
 _PREFIX = "🧾 ViMi Pay · "
+_NEW_HEADERS = ("🧾 ViMi Pay · Оплата счёта", "🧾 ViMi Pay · Invoice payment")
+_PRIVATE_REF = re.compile(
+    r"(?:^|\\n)🔐 (?:Код заявки|Reference): "
+    r"([0-9a-fA-F]{32}|[0-9a-fA-F-]{36})\\s*$"
+)
+
 
 
 def _rich_text_prefix(value: object, *, max_chars: int = 160, depth: int = 0) -> str | None:
@@ -98,13 +110,25 @@ def receipt_attempt_id(message: Message, bot_id: int) -> UUID | None:
     text = _invoice_prompt_text(prompt) or ""
     if not text.startswith(_PREFIX):
         return None
+    # Backward compatible: thousands of already-sent Rich/HTML instructions
+    # carry the complete attempt UUID in their opening line.
     remainder = text[len(_PREFIX):].strip()
-    if not remainder:
-        return None
-    token = remainder.split(maxsplit=1)[0]
+    first = remainder.split(maxsplit=1)[0] if remainder else ""
     try:
-        return UUID(token)
+        return UUID(first)
     except (ValueError, AttributeError):
+        pass
+    # New HTML instructions have a human title; their original attempt ID is
+    # kept in a Telegram spoiler at the very end, not displayed as a heading.
+    # We still require the ORIGINAL reply_to_message from this exact bot.
+    if not text.startswith(_NEW_HEADERS):
+        return None
+    matched = _PRIVATE_REF.search(text)
+    if matched is None:
+        return None
+    try:
+        return UUID(matched.group(1))
+    except ValueError:
         return None
 
 
@@ -128,8 +152,41 @@ def create_saas_receipt_router(
             return
         if message.photo:
             file_type, file_id = "photo", message.photo[-1].file_id
+            file_size = message.photo[-1].file_size
         else:
             file_type, file_id = "document", message.document.file_id
+            file_size = message.document.file_size
+        try:
+            await validate_platform_proof_size(
+                bot, file_id=file_id, file_type=file_type,
+                reported_size=file_size,
+            )
+        except ProofTooLargeError:
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Документ превышает 20 МиБ или фото превышает "
+                    "10 МиБ. Отправьте меньший файл ответом на инструкцию "
+                    "об оплате. Чек не зарегистрирован.",
+                    "⚠️ Documents must not exceed 20 MiB and photos "
+                    "10 MiB. Reply to the payment instruction with a "
+                    "smaller file. Receipt was not registered.",
+                ),
+            )
+            return
+        except ProofSizeUnavailableError:
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Не удалось проверить размер файла в Telegram. "
+                    "Повторите отправку меньшего чека. "
+                    "Заявка пока не создана.",
+                    "⚠️ Telegram file size cannot be verified. "
+                    "Please retry with a smaller receipt. "
+                    "No review request was created.",
+                ),
+            )
+            return
         try:
             actor = await ensure_telegram_actor(
                 factory, telegram_id=message.from_user.id,
