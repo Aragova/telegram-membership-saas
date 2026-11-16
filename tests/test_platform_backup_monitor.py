@@ -298,6 +298,27 @@ async def test_real_postgres_failure_dedup_recovery_and_owner_only_scope(monkeyp
             factory, owner_actor_id=owner,
         )
         assert healthy["state"] == "healthy"
+
+        # Intermittent GCS API errors must not restart a continuous stale
+        # 26-hour incident confirmation window.
+        late = NOW + timedelta(hours=27)
+        assert await monitor.scan_platform_backup(
+            factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
+            now=late,
+        ) == 0  # first stale observation
+        async def deny_list(bucket, *, now=None):
+            raise monitor.BackupProbeError("temporary GCS error")
+
+        monkeypatch.setattr(monitor, "latest_gcs_manifest", deny_list)
+        assert await monitor.scan_platform_backup(
+            factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
+            now=late + timedelta(minutes=5),
+        ) == 0  # verification error, continuous problem
+        monkeypatch.setattr(monitor, "latest_gcs_manifest", fake_latest)
+        assert await monitor.scan_platform_backup(
+            factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
+            now=late + timedelta(minutes=10),
+        ) == 1  # stale confirmed despite intermittent GCS error
     finally:
         async with admin_engine.begin() as conn:
             await conn.execute(text(
