@@ -5,7 +5,6 @@ This is a static guard, not a claim that Nginx/DNS/TLS is deployed or healthy.
 
 from pathlib import Path
 
-
 INGRESS = Path(__file__).resolve().parents[1] / "ops" / "ingress"
 
 
