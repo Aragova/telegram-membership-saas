@@ -431,10 +431,8 @@ async def _project_saas_hold_state(
     ) as session:
         state = await session.scalar(
             text(
-                "SELECT public.platform_saas_bot_hold_state("
-                " b.id, clock_timestamp()) FROM public.bot_instances b "
-                "WHERE b.id=:bot AND b.project_id=:project "
-                "AND b.status='registered'"
+                "SELECT public.platform_saas_project_commerce_state("
+                ":project,:bot)"
             ),
             {"bot": bot_id, "project": project_id},
         )
