@@ -87,6 +87,19 @@ async def test_pre_activation_bill_grace_is_bot_only_first_proof_and_not_renewab
                 # authorized project-scoped function, not query global holds.
                 scope = await conn.begin_nested()
                 try:
+                    # The project-scoped RPC uses the real wall clock, not
+                    # the simulated future timestamp of the grace test.
+                    # Within this SAVEPOINT only, make the controls active
+                    # already; rolling it back restores the original cutoff.
+                    active = issued - timedelta(minutes=1)
+                    for control in (
+                        "platform_saas_hold_control",
+                        "platform_saas_billing_control",
+                    ):
+                        await conn.execute(text(
+                            "UPDATE public." + control
+                            + " SET effective_from=:at WHERE id=1"
+                        ), {"at": active})
                     await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                     await conn.execute(text(
                         "SELECT set_config('app.current_user_id',:actor,true)"
