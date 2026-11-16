@@ -6,6 +6,7 @@ the GCS writer identity remains objectCreator only. No keys or tokens in logs.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime, timedelta
@@ -201,8 +202,11 @@ async def scan_platform_backup(
     moment = now or datetime.now(UTC)
     verified = True
     try:
-        latest = await latest_gcs_manifest(bucket, now=moment)
-    except BackupProbeError:
+        # GCS must never block payment-proof and bot health notifications.
+        latest = await asyncio.wait_for(
+            latest_gcs_manifest(bucket, now=moment), timeout=15,
+        )
+    except (BackupProbeError, TimeoutError):
         verified, latest = False, None
 
     async with tenant_session_scope(
