@@ -131,8 +131,34 @@ Verify **from outside** the VM:
 curl -I http://pay-api.usevimi.ru/
 curl -i https://pay-api.usevimi.ru/health
 curl -I https://pay-api.usevimi.ru/
-sudo certbot renew --dry-run
+sudo certbot renew --cert-name pay-api.usevimi.ru --dry-run
 ```
+
+**Certificate renewal reload is required for the webroot-only method.**
+Before enabling automated renewals, inspect existing
+`/etc/letsencrypt/renewal-hooks/deploy/` to avoid duplicate hooks.
+If no existing reviewed hook reloads Nginx for this certificate, install
+`ops/ingress/vimi-pay-certbot-deploy-hook.sh.example` as a new,
+root-owned `0755` executable named
+`/etc/letsencrypt/renewal-hooks/deploy/vimi-pay-nginx-reload`.
+The hook checks `RENEWED_LINEAGE` for precisely
+`/etc/letsencrypt/live/pay-api.usevimi.ru`, validates the whole Nginx
+configuration with `nginx -t`, then reloads the service. It ignores
+unrelated certificates. Use `sudo certbot certificates` to verify the
+actual lineage matches; do not assume a suffixed/renamed certificate has
+the default path. Never replace an existing hook indiscriminately.
+
+```bash
+sudo certbot renew --cert-name pay-api.usevimi.ru \
+  --dry-run --run-deploy-hooks
+```
+
+Certbot's plain `--dry-run` does **not** invoke deploy hooks; the explicit
+`--run-deploy-hooks` checks the installed hook after a successful staged
+renewal, using the current live certificate rather than replacing it with
+a test certificate. Separately confirm the enabled Certbot renewal timer
+(or cron) and observe at least one scheduled run. No expiry/renewal SLA is
+claimed from a one-time dry run.
 
 Expected: HTTP redirects to HTTPS, HTTPS cert matches `pay-api.usevimi.ru`,
 `/health` is **503 api_not_deployed** and `/` is 404.
