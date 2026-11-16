@@ -11,7 +11,7 @@ import urllib.parse
 import urllib.request
 
 PREFIX_RE = re.compile(
-    r"^\\d{8}T\\d{6}Z-"
+    r"^\d{8}T\d{6}Z-"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 PARTS = frozenset({"membership.dump.age", "pg-globals.sql.age", "manifest.sha256"})
