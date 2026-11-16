@@ -1,3 +1,24 @@
+## 2026-11-16 — Stage 3 public ingress preflight (draft; not deployed)
+
+The approved next infrastructure phase is a **separate** `pay-api.usevimi.ru`
+hostname with HTTPS, without changing `usevimi.ru`, `api.usevimi.ru`,
+`staging.usevimi.ru`, Telegram polling, SaaS invoices or bot access.
+
+Read [STAGE3_PUBLIC_INGRESS.md](STAGE3_PUBLIC_INGRESS.md) before any
+network changes. The stage-2 historical static address `34.13.188.95`
+requires an authorized live check of attachment/reservation on GCE `fast-vm`.
+DNS zone authority and Nginx listeners are also **unverified**. No DNS,
+GCP or VM change is implied by this PR.
+
+The new Nginx samples provide an isolated ACME challenge on HTTP and an
+intentionally **closed** HTTPS ingress (503 for /health, 404 otherwise)
+until a separately reviewed loopback-only API is ready. Do **not** start
+Compose `app` on public staging as shipped: base `ports: 8000:8000`
+publishes it on host interfaces. The normal staging deploy remains
+manual-only and restarts bot/supervisor; it does not configure Nginx/DNS.
+
+---
+
 ## 2026-11-15 — Launch-readiness audit, usevimi.ru and Lava
 
 The current verified GitHub main is `12427b17` (#168); CI #1721 passed
