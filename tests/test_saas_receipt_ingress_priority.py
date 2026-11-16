@@ -180,6 +180,21 @@ async def test_old_rich_invoice_receipt_pdf_registers_in_existing_queue(
     assert "Чек зарегистрирован" in bot.send_message.await_args.args[1]
 
 
+def test_clean_rich_payment_prompt_with_footer_reference():
+    message, attempt = _receipt()
+    prompt = message.reply_to_message
+    prompt.text = None
+    prompt.caption = None
+    prompt.rich_message = RichMessage(blocks=[
+        RichBlockParagraph(text="🧾 ViMi Pay · Оплата счёта"),
+        RichBlockParagraph(text="💳 Оплата по реквизитам"),
+        RichBlockParagraph(text=[
+            "🔐 Код заявки: ", RichTextCode(text=str(attempt)),
+        ]),
+    ])
+    assert ingress.receipt_attempt_id(message, 123) == attempt
+
+
 def test_rich_invoice_reply_parses_from_actual_aiogram_message_payload():
     """Use the Bot API payload shape, not mocked Message.text shortcuts."""
     invoice = uuid4()
