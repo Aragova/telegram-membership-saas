@@ -32,3 +32,13 @@ def test_closed_ingress_does_not_pretend_api_is_live():
     assert "return 404;" in https
     assert "/.well-known/acme-challenge/" in http
     assert "/.well-known/acme-challenge/" in https
+
+def test_certbot_renew_hook_is_scoped_and_validates_before_reload():
+    hook = (INGRESS / "vimi-pay-certbot-deploy-hook.sh.example").read_text(
+        encoding="utf-8"
+    )
+    assert "RENEWED_LINEAGE" in hook
+    assert "/etc/letsencrypt/live/pay-api.usevimi.ru" in hook
+    assert "/usr/sbin/nginx -t" in hook
+    assert "/bin/systemctl reload nginx" in hook
+    assert hook.index("/usr/sbin/nginx -t") < hook.index("/bin/systemctl reload nginx")
