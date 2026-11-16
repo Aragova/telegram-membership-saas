@@ -1,19 +1,3 @@
-## 2026-11-16 — Free file price zero (draft PR)
-
-Small independent file-sales addition: entering file price `0` in the
-initial Stars/fiat editor or existing currency price editor makes that
-whole product **free**. No bank proof, payment request, Stars or Crypto
-Pay invoice, service commission, fake paid purchase or new Telegram menu.
-Buyer receives all attachments directly from the original bot while
-product/folder remain published/active; old paid entitlements are unaffected.
-An explicit `is_free` flag keeps positive financial price constraints and
-historic price snapshots immutable. See
-[DIGITAL_FILE_SALES.md](DIGITAL_FILE_SALES.md).
-
-This draft is independent of stage-3 infrastructure PR #176. Do not merge
-or deploy without owner approval and exact-head green CI/review.
-
----
 ## 2026-11-15 — Launch-readiness audit, usevimi.ru and Lava
 
 The current verified GitHub main is `12427b17` (#168); CI #1721 passed
