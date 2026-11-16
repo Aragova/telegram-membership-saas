@@ -38,9 +38,9 @@ def _receipt(*, source_bot=123, user=456, content="document",
         ),
         chat=SimpleNamespace(id=user, type="private"),
         reply_to_message=prompt,
-        document=SimpleNamespace(file_id="fake-pdf-id") if content == "document"
+        document=SimpleNamespace(file_id="fake-pdf-id", file_size=1024) if content == "document"
                  else None,
-        photo=[SimpleNamespace(file_id="fake-photo-id")]
+        photo=[SimpleNamespace(file_id="fake-photo-id", file_size=1024)]
               if content == "photo" else None,
         message_id=177,
     ), attempt
@@ -256,3 +256,69 @@ def test_receipt_filter_rejects_foreign_bot_spoofed_or_unrelated_documents():
     assert ingress.receipt_attempt_id(authentic, 123) == uid
     authentic.chat.id = 1000
     assert ingress.receipt_attempt_id(authentic, 123) is None
+
+
+@pytest.mark.parametrize("content,too_large", [
+    ("document", 20 * 1024 * 1024 + 1),
+    ("photo", 10 * 1024 * 1024 + 1),
+])
+async def test_oversized_platform_receipt_rejected_before_registration(
+    monkeypatch, content, too_large,
+):
+    message, _ = _receipt(content=content)
+    target = message.document if content == "document" else message.photo[-1]
+    target.file_size = too_large
+    record = AsyncMock()
+    actor = AsyncMock()
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", record)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor", actor)
+    bot = SimpleNamespace(id=123, send_message=AsyncMock())
+    await ingress.create_saas_receipt_router(
+        object(),
+    ).message.handlers[0].callback(message, bot)
+    record.assert_not_awaited()
+    actor.assert_not_awaited()
+    assert "не зарегистрирован" in bot.send_message.await_args.args[1]
+
+
+@pytest.mark.parametrize("size", [None, 0])
+async def test_unknown_platform_file_size_is_verified_or_rejected(
+    monkeypatch, size,
+):
+    message, _ = _receipt()
+    message.document.file_size = size
+    record = AsyncMock()
+    monkeypatch.setattr(ingress, "saas_v2_submit_proof", record)
+    monkeypatch.setattr(ingress, "ensure_telegram_actor", AsyncMock())
+    bot = SimpleNamespace(
+        id=123, send_message=AsyncMock(),
+        get_file=AsyncMock(return_value=SimpleNamespace(file_size=None)),
+    )
+    await ingress.create_saas_receipt_router(
+        object(),
+    ).message.handlers[0].callback(message, bot)
+    record.assert_not_awaited()
+    assert "не создана" in bot.send_message.await_args.args[1]
+
+
+def test_clean_payment_prompt_spoiler_reference_and_legacy_replies():
+    message, attempt = _receipt()
+    # Still accepts already-issued Rich/HTML invoice payment messages.
+    assert ingress.receipt_attempt_id(message, 123) == attempt
+    message.reply_to_message.text = (
+        "🧾 ViMi Pay · Оплата счёта\\n\\n"
+        "💳 СБП\\n150.00 RUB\\n"
+        "После перевода ответьте на это сообщение чеком.\\n\\n"
+        "🔐 Код заявки: " + str(attempt)
+    )
+    assert ingress.receipt_attempt_id(message, 123) == attempt
+    message.reply_to_message.text = (
+        "🧾 ViMi Pay · Invoice payment\\n\\n"
+        "150 RUB\\n\\n🔐 Reference: " + str(attempt)
+    )
+    assert ingress.receipt_attempt_id(message, 123) == attempt
+    # Malformed / missing tail marker cannot register a guessed attempt.
+    message.reply_to_message.text += " extra"
+    assert ingress.receipt_attempt_id(message, 123) is None
+    message.reply_to_message.from_user.id = 555
+    assert ingress.receipt_attempt_id(message, 123) is None
