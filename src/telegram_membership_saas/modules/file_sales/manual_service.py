@@ -252,34 +252,40 @@ async def set_manual_price(
         ))
         if asset is None:
             raise ValueError(tr("Валюта недоступна", "Currency unavailable"))
-        valid_method = await session.scalar(
-            select(PaymentMethod.id)
-            .join(
-                PaymentMethodCurrency,
-                and_(PaymentMethodCurrency.project_id == PaymentMethod.project_id,
-                     PaymentMethodCurrency.payment_method_id == PaymentMethod.id),
-            )
-            .where(
-                PaymentMethod.project_id == project_id,
-                PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
-                PaymentMethodCurrency.currency_code == currency,
-            ).limit(1)
-        )
-        if (valid_method is None and currency not in (
-            await _editable_file_price_currencies(
-                session, project_id=project_id, bot_id=bot_id,
-            )
-        )):
-            raise ValueError(tr(
-                "Нет активного способа оплаты для этой валюты",
-                "No active payment method for this currency",
-            ))
         try:
             amount = Decimal(value.strip().replace(",", "."))
         except InvalidOperation as exc:
             raise ValueError(tr("Укажите числовую цену", "Enter a numeric price")) from exc
-        if not amount.is_finite() or amount <= 0 or amount >= Decimal("1000000000000"):
-            raise ValueError(tr("Цена должна быть положительной", "Price must be positive"))
+        if not amount.is_finite() or amount < 0 or amount >= Decimal("1000000000000"):
+            raise ValueError(tr(
+                "Цена файла не может быть отрицательной",
+                "File price cannot be negative",
+            ))
+        # Zero is an explicit free-product toggle: no bank/crypto method and
+        # no zero-valued payment row are required.
+        if amount != 0:
+            valid_method = await session.scalar(
+                select(PaymentMethod.id)
+                .join(
+                    PaymentMethodCurrency,
+                    and_(PaymentMethodCurrency.project_id == PaymentMethod.project_id,
+                         PaymentMethodCurrency.payment_method_id == PaymentMethod.id),
+                )
+                .where(
+                    PaymentMethod.project_id == project_id,
+                    PaymentMethod.status == PaymentMethodStatus.ACTIVE.value,
+                    PaymentMethodCurrency.currency_code == currency,
+                ).limit(1)
+            )
+            if (valid_method is None and currency not in (
+                await _editable_file_price_currencies(
+                    session, project_id=project_id, bot_id=bot_id,
+                )
+            )):
+                raise ValueError(tr(
+                    "Нет активного способа оплаты для этой валюты",
+                    "No active payment method for this currency",
+                ))
         quantum = Decimal(1).scaleb(-asset.precision)
         with localcontext() as ctx:
             ctx.prec = 50
@@ -288,6 +294,9 @@ async def set_manual_price(
                     "Слишком много знаков после запятой для этой валюты",
                     "Too many decimal places for this currency",
                 ))
+        if amount == 0:
+            item.is_free = True
+            return amount
         # Fiat Crypto Pay invoices cannot represent fractions of a cent.
         # Reject invalid quotes before an advertised checkout is published.
         if currency in CRYPTO_FILE_PRICE_CURRENCIES:
@@ -314,6 +323,7 @@ async def set_manual_price(
             FileManualPrice.product_id == product_id,
             FileManualPrice.currency_code == currency,
         ).with_for_update())
+        item.is_free = False
         if record:
             record.amount = amount
         else:
@@ -337,6 +347,8 @@ async def create_manual_order(
         product = await _product(session, project_id, bot_id, product_id, lock=True)
         if product.status != "published":
             raise ValueError(tr("Товар не продаётся", "Product is not for sale"))
+        if product.is_free:
+            raise ValueError(tr("Файл бесплатный", "This file is free"))
         folder = await session.scalar(select(FileFolder.id).where(
             FileFolder.id == product.folder_id, FileFolder.project_id == project_id,
             FileFolder.status == "active",
