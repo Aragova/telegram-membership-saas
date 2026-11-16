@@ -35,6 +35,11 @@ PREFIX = "vimi-pay/postgres/"
 MANIFEST_RE = re.compile(
     r"^vimi-pay/postgres/\d{8}T\d{6}Z-[0-9a-f-]{36}/manifest\.sha256$"
 )
+OBJECT_RE = re.compile(
+    r"^vimi-pay/postgres/\d{8}T\d{6}Z-[0-9a-f-]{36}/"
+    r"(membership\.dump\.age|pg-globals\.sql\.age|manifest\.sha256)$"
+)
+REQUIRED_PARTS = {"membership.dump.age", "pg-globals.sql.age", "manifest.sha256"}
 METADATA_TOKEN_URL = (
     "http://metadata.google.internal/computeMetadata/v1/"
     "instance/service-accounts/default/token"
@@ -104,7 +109,8 @@ async def latest_gcs_manifest(bucket: str, *, now: datetime | None = None) -> da
     moment = now or datetime.now(UTC)
     if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,61}", bucket):
         raise BackupProbeError("Invalid configured GCS bucket")
-    latest: datetime | None = None
+    parts: dict[str, set[str]] = {}
+    manifests: dict[str, datetime] = {}
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(10.0, connect=3.0), trust_env=False,
@@ -132,13 +138,28 @@ async def latest_gcs_manifest(bucket: str, *, now: datetime | None = None) -> da
                 data = response.json()
                 if not isinstance(data, dict):
                     raise ValueError("Invalid GCS response")
-                for item in data.get("items", []):
-                    stamp = _manifest_created(item, now=moment)
-                    if stamp is not None and (latest is None or stamp > latest):
-                        latest = stamp
+                items = data.get("items", [])
+                if not isinstance(items, list):
+                    raise ValueError("Invalid GCS item list")
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("name")
+                    if not isinstance(name, str) or not OBJECT_RE.fullmatch(name):
+                        continue
+                    folder, part = name.rsplit("/", 1)
+                    parts.setdefault(folder, set()).add(part)
+                    if part == "manifest.sha256":
+                        stamp = _manifest_created(item, now=moment)
+                        if stamp is not None:
+                            manifests[folder] = stamp
                 next_token = data.get("nextPageToken")
                 if next_token is None:
-                    return latest
+                    complete = [
+                        stamp for folder, stamp in manifests.items()
+                        if REQUIRED_PARTS <= parts[folder]
+                    ]
+                    return max(complete, default=None)
                 if not isinstance(next_token, str) or not next_token:
                     raise ValueError("Invalid GCS pagination")
                 params["pageToken"] = next_token
