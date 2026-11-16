@@ -7,7 +7,6 @@ No tenant can write platform ledgers, edit a receipt or change customer access.
 from __future__ import annotations
 
 from decimal import Decimal
-from hashlib import sha256
 from uuid import UUID
 
 from sqlalchemy import text
@@ -278,62 +277,6 @@ async def saas_v2_confirm_attempt(
         },
     )))
 
-
-def operator_approval_reference(
-    *, file_unique_id: str | None = None,
-    original_bot_id: int | None = None,
-    source_file_id: str | None = None,
-) -> str:
-    """Evidence fingerprint, NOT a bank transaction number.
-
-    New proofs use Telegram's cross-bot stable file_unique_id, so rotated
-    file_id values and another bot cannot re-credit the same exact media.
-    Legacy proofs submitted before the migration have no stored unique ID;
-    only for those use a weaker original-bot+file_id fallback.
-    Changed/edited bank receipts still need independent bank verification.
-    """
-    if file_unique_id:
-        if not 8 <= len(file_unique_id) <= 128 or not all(
-            c.isascii() and (c.isalnum() or c in "-_") for c in file_unique_id
-        ):
-            raise ValueError("Invalid canonical Telegram proof identity")
-        proof_key = ("telegram-unique:" + file_unique_id).encode()
-    else:
-        if (not isinstance(original_bot_id, int)
-                or original_bot_id <= 0
-                or not isinstance(source_file_id, str)
-                or not 8 <= len(source_file_id) <= 512):
-            raise ValueError("Original historical proof identity required")
-        proof_key = f"legacy-bot:{original_bot_id}\0{source_file_id}".encode()
-    return "VIMI-PROOF-" + sha256(proof_key).hexdigest()
-
-async def saas_v2_confirm_attempt_one_tap(
-    factory: async_sessionmaker[AsyncSession], *,
-    actor_id: UUID, actor_telegram_id: int,
-    attempt_id: UUID, settings: Settings | None = None,
-) -> UUID:
-    """One owner verification click with independent original-proof dedup.
-
-    Operator checks the incoming bank payment externally before clicking.
-    SQL still verifies ownership, invoice balance, original pending proof,
-    receipt identity uniqueness, and makes allocations idempotent.
-    """
-    # This read is the same owner-scoped SECURITY DEFINER source used by the
-    # operator's 📎 Чек button, but never downloads any receipt bytes.
-    proof = await saas_pending_proof_source(
-        factory, actor_id=actor_id, actor_telegram_id=actor_telegram_id,
-        attempt_id=attempt_id, settings=settings,
-    )
-    reference = operator_approval_reference(
-        file_unique_id=proof.get("source_file_unique_id"),
-        original_bot_id=int(proof["source_bot"]),
-        source_file_id=str(proof["source_file"]),
-    )
-    return await saas_v2_confirm_attempt(
-        factory, actor_id=actor_id, actor_telegram_id=actor_telegram_id,
-        attempt_id=attempt_id, verified_bank_reference=reference,
-        settings=settings,
-    )
 
 async def saas_v2_reject_attempt(
     factory: async_sessionmaker[AsyncSession], *,
