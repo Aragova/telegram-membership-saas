@@ -263,6 +263,37 @@ async def saas_v2_confirm_attempt(
     )))
 
 
+def operator_approval_reference(attempt_id: UUID) -> str:
+    """Stable, globally unique INTERNAL audit reference (not a bank ID).
+
+    The authorized operator's Approve action is their attestation that funds
+    were checked independently. Use the attempt UUID to preserve SQL's
+    global uniqueness and idempotency without another manual text prompt.
+    """
+    if not isinstance(attempt_id, UUID):
+        raise ValueError("Original payment attempt required")
+    return "VIMI-OPERATOR-" + attempt_id.hex
+
+
+async def saas_v2_confirm_attempt_one_tap(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, actor_telegram_id: int,
+    attempt_id: UUID, settings: Settings | None = None,
+) -> UUID:
+    """One verified operator click; the existing SQL ledger remains the guard.
+
+    This internal reference is NOT evidence of bank funds and MUST NOT be
+    presented as the bank transaction reference. The operator independently
+    verifies the actual incoming bank transfer before pressing Approve.
+    """
+    return await saas_v2_confirm_attempt(
+        factory, actor_id=actor_id, actor_telegram_id=actor_telegram_id,
+        attempt_id=attempt_id,
+        verified_bank_reference=operator_approval_reference(attempt_id),
+        settings=settings,
+    )
+
+
 async def saas_v2_reject_attempt(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, actor_telegram_id: int,
