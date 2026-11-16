@@ -74,7 +74,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
-        if self.path == "/healthz":
+        if self.path == "/health":
             self._send(200, {"ok": True})
         else:
             self._send(404, {"error": "not found"})
