@@ -35,8 +35,8 @@ _LOG = logging.getLogger(__name__)
 _PREFIX = "🧾 ViMi Pay · "
 _NEW_HEADERS = ("🧾 ViMi Pay · Оплата счёта", "🧾 ViMi Pay · Invoice payment")
 _PRIVATE_REF = re.compile(
-    r"(?:^|\\n)🔐 (?:Код заявки|Reference): "
-    r"([0-9a-fA-F]{32}|[0-9a-fA-F-]{36})\\s*$"
+    r"(?:^|\n)🔐 (?:Код заявки|Reference): "
+    r"([0-9a-fA-F]{32}|[0-9a-fA-F-]{36})\s*$"
 )
 
 
