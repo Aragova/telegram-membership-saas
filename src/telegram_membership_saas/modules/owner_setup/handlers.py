@@ -28,7 +28,7 @@ from aiogram.types import (
     User,
 )
 from cryptography.fernet import InvalidToken
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
@@ -416,9 +416,55 @@ def _progress(snapshot) -> tuple[str, ...]:
         (tr("Способ оплаты", "Payment method"),
          any(s == "active" for _, _, s in snapshot.methods)
          or snapshot.sales_configured),
-        (tr("Бот принимает покупателей", "Bot accepts buyers"), bool(snapshot.live_bot_username)),
+        (tr("Бот работает", "Bot is running"), bool(snapshot.live_bot_username)),
     )
     return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
+
+
+async def _project_saas_hold_state(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, bot_id: UUID,
+) -> str | None:
+    """Project-scoped read-only commerce hold from checkout's real SQL."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        state = await session.scalar(
+            text(
+                "SELECT public.platform_saas_bot_hold_state("
+                " b.id, clock_timestamp()) FROM public.bot_instances b "
+                "WHERE b.id=:bot AND b.project_id=:project "
+                "AND b.status='registered'"
+            ),
+            {"bot": bot_id, "project": project_id},
+        )
+    return str(state) if state in {"clear", "held", "disabled"} else None
+
+
+def _sales_status_text(*, configured: bool, hold_state: str | None) -> str:
+    if not configured:
+        return tr(
+            "Настройте продажи по порядку. Уже сохранённые данные "
+            "останутся на месте.",
+            "Complete the setup steps. Saved settings will remain intact.",
+        )
+    if hold_state == "held":
+        return tr(
+            "⛔ Новые продажи приостановлены до погашения долга "
+            "ViMi Pay. Ранее оплаченный доступ сохраняется.",
+            "⛔ New sales are on hold until the ViMi Pay debt is "
+            "settled. Previously paid access remains valid.",
+        )
+    if hold_state not in {"clear", "disabled"}:
+        return tr(
+            "⚠️ Не удалось проверить ограничения продаж. "
+            "Проверьте 🧾 Счёт.",
+            "⚠️ Sales restrictions could not be checked. Open 🧾 Bill.",
+        )
+    return tr(
+        "✅ Продажи доступны. Управляйте тарифами и заявками.",
+        "✅ Sales available. Manage plans and payment requests.",
+    )
 
 
 class StrayBotTokenFilter(BaseFilter):
@@ -696,6 +742,22 @@ def create_owner_setup_router(
                 )
             except PermissionError:
                 trial = None
+            # A configured/live bot may still reject new checkouts due to
+            # ViMi Pay debt. Never claim sales are ready from setup alone.
+            hold_state = None
+            registered_bots = [
+                item for item in data.bot_instances if item[2] == "registered"
+            ]
+            if len(registered_bots) == 1:
+                try:
+                    hold_state = await _project_saas_hold_state(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        bot_id=registered_bots[0][0],
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ViMi Pay admin sale restrictions unavailable"
+                    )
             text = (
                 tr("✦ <b>Панель администратора</b>\n",
                    "✦ <b>Admin dashboard</b>\n") +
@@ -707,13 +769,8 @@ def create_owner_setup_router(
                 )
                 + "\n".join(_progress(data))
                 + "\n\n"
-                + (
-                    tr("✅ Продажи готовы. Управляйте тарифами и заявками.",
-                        "✅ Ready for sales. Manage plans and payment requests.")
-                    if data.sales_configured
-                    else tr("Настройте продажи по порядку. Уже сохранённые "
-                            "данные останутся на месте.",
-                            "Complete the setup steps. Saved settings will remain intact.")
+                + _sales_status_text(
+                    configured=data.sales_configured, hold_state=hold_state,
                 )
             )
             rows = []
@@ -3857,8 +3914,10 @@ def create_owner_setup_router(
                     # remains unconfirmed until operator bank review.
                     await bot.send_message(
                         user_id,
-                        "🧾 ViMi Pay · <code>"
-                        +escape(str(attempt["id"]))+"</code>\n\n"
+                        +tr(
+                            "🧾 <b>ViMi Pay · Оплата счёта</b>\n\n",
+                            "🧾 <b>ViMi Pay · Invoice payment</b>\n\n",
+                        )
                         +"💳 <b>"+method_label+"</b>\n"
                         +tr("💰 Перевести: ","💰 Transfer: ")
                         +"<b>"+escape(str(attempt["amount"])+" "
@@ -3878,7 +3937,10 @@ def create_owner_setup_router(
                             "After payment, <b>reply to this message</b> "
                             "with a receipt photo/document. ViMi Pay "
                             "confirms only after bank verification.",
-                        ),
+                        )
+                        +"\n\n<tg-spoiler>"
+                        +tr("🔐 Код заявки: ", "🔐 Reference: ")
+                        +escape(str(attempt["id"]))+"</tg-spoiler>",
                         parse_mode="HTML",
                         reply_markup=_markup([[_button(
                             tr("⬅️ К счёту","⬅️ Invoice"),
