@@ -15,7 +15,7 @@ from urllib.parse import quote
 import httpx
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import DateTime, Integer, String, Uuid, and_, or_, select, update
+from sqlalchemy import DateTime, Integer, String, Uuid, and_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -142,7 +142,7 @@ async def latest_gcs_manifest(bucket: str, *, now: datetime | None = None) -> da
                 if not isinstance(next_token, str) or not next_token:
                     raise ValueError("Invalid GCS pagination")
                 params["pageToken"] = next_token
-    except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
+    except (httpx.HTTPError, KeyError, ValueError, TypeError):
         # Never log bearer credentials, response bodies, or exception URLs.
         raise BackupProbeError("GCS manifest verification unavailable") from None
     raise BackupProbeError("GCS listing exceeds safe page bound")
@@ -190,7 +190,7 @@ async def scan_platform_backup(
         # Prevent overlapping central bot instances from racing. I/O happens
         # BEFORE this transaction, so the transaction remains short.
         locked = await session.scalar(
-            __import__("sqlalchemy").text("SELECT pg_try_advisory_xact_lock(1891173522)")
+            text("SELECT pg_try_advisory_xact_lock(1891173522)")
         )
         if not locked:
             return 0
