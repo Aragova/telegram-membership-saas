@@ -176,6 +176,35 @@ async def show_file_payment_options(
     )
     if not count:
         raise ValueError(tr("У товара пока нет вложений", "This product has no attachments yet"))
+    if getattr(product, "is_free", False):
+        label = tr("Бесплатно", "Free")
+        await send_file_card(
+            bot, chat_id=buyer_id,
+            rich_html=rich_file_card_html(
+                product_name=product.name,
+                description=getattr(product, "description", None),
+                price=label, file_count=count, free=True,
+            ),
+            legacy_html=(
+                tr("🆓 <b>Бесплатный файл</b>\\n\\n",
+                   "🆓 <b>Free file</b>\\n\\n")
+                + "📦 <b>" + escape(product.name) + "</b>\\n"
+                + tr("📎 Файлов: ", "📎 Files: ") + str(count)
+                + "\\n" + tr("💰 Цена: Бесплатно", "💰 Price: Free")
+            ),
+            reply_markup=_keyboard([
+                [InlineKeyboardButton(
+                    text=tr("📥 Получить бесплатно", "📥 Get for free"),
+                    callback_data="fs:free:" + encode_uuid(product_id),
+                    style="success",
+                )],
+                [InlineKeyboardButton(
+                    text=tr("⬅️ Товары", "⬅️ Products"),
+                    callback_data="fs:folder:" + encode_uuid(product.folder_id),
+                )],
+            ]),
+        )
+        return
     from telegram_membership_saas.config import get_settings
 
     crypto_buyer_live = get_settings().crypto_pay_buyer_enabled
@@ -595,8 +624,12 @@ def create_manual_file_router(
                     }
                     await bot.send_message(
                         uid, tr("💰 Укажите цену в ", "💰 Enter price in ")
-                        + currency + tr(" следующим сообщением. /menu — отмена.",
-                                        " in your next message. /menu cancels."),
+                        + currency + tr(
+                            " следующим сообщением. 0 = бесплатно для всех. "
+                            "/menu — отмена.",
+                            " in your next message. 0 = free for everyone. "
+                            "/menu cancels.",
+                        ),
                     )
             elif action == "reviews" or action.startswith("reviews:"):
                 token = action.split(":", 1)[1] if ":" in action else "0"
@@ -939,7 +972,10 @@ def create_manual_file_router(
             )
             editor.pop(message.from_user.id, None)
             await bot.send_message(
-                message.chat.id, "✅ " + str(amount) + " " + state["currency"],
+                message.chat.id,
+                tr("✅ Файл теперь бесплатный", "✅ File is now free")
+                if amount == 0
+                else "✅ " + str(amount) + " " + state["currency"],
             )
             await show_manual_prices(
                 bot, factory=factory, project_id=project_id,
