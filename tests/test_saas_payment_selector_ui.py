@@ -37,6 +37,8 @@ async def test_central_account_pay_selector_routes_to_approved_method(
     monkeypatch.setattr(ui,"saas_v2_invoice_balance",balance)
     monkeypatch.setattr(ui,"saas_catalog_for_invoice",catalog)
     monkeypatch.setattr(ui,"saas_v3_create_attempt",new_attempt)
+    bind_prompt = AsyncMock()
+    monkeypatch.setattr(ui, "saas_bind_payment_prompt", bind_prompt)
     router=ui.create_owner_setup_router(MagicMock(),fixed_project_id=None)
     callback=next(
         h.callback for h in router.callback_query.handlers
@@ -45,6 +47,7 @@ async def test_central_account_pay_selector_routes_to_approved_method(
     bot=MagicMock()
     bot.id=432
     bot.send_message=AsyncMock()
+    bot.send_message.return_value.message_id=561
     source=SimpleNamespace(
         from_user=SimpleNamespace(
             id=777123,username="owner",first_name="Owner",
@@ -74,6 +77,11 @@ async def test_central_account_pay_selector_routes_to_approved_method(
         assert new_attempt.await_args.kwargs["method_id"]==method
         assert new_attempt.await_args.kwargs["currency"]=="RUB"
         assert "Bank details test 123456" in bot.send_message.await_args.args[1]
+        assert "🔐 Код заявки" not in bot.send_message.await_args.args[1]
+        assert "Reference" not in bot.send_message.await_args.args[1]
+        bind_prompt.assert_awaited_once()
+        assert bind_prompt.await_args.kwargs["source_message_id"] == 561
+        assert bind_prompt.await_args.kwargs["source_bot_id"] == 432
         assert "own:saasinvoices:0" in {
             button.callback_data
             for row in bot.send_message.await_args.kwargs[
