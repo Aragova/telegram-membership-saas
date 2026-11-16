@@ -221,6 +221,11 @@ async def price_editor_options(
         codes = await _editable_file_price_currencies(
             session, project_id=project_id, bot_id=bot_id,
         )
+        if not codes:
+            # A Stars-only owner must be able to type 0 on a PUBLISHED
+            # product without first configuring a bank/Crypto Pay method.
+            # Positive RUB still requires an actual enabled payment method.
+            codes = ("RUB",)
         prices = (await session.scalars(
             select(FileManualPrice).where(
                 FileManualPrice.project_id == project_id,
