@@ -114,7 +114,18 @@ async def test_gcs_uses_read_only_metadata_token_and_complete_markers(monkeypatc
             return httpx.Response(
                 200, request=request, json={"items": [
                     good,
-                    {**good, "name": good["name"].replace("manifest.sha256", "membership.dump.age")},
+                    {
+                        **good,
+                        "name": good["name"].replace(
+                            "manifest.sha256", "membership.dump.age",
+                        ),
+                    },
+                    {
+                        **good,
+                        "name": good["name"].replace(
+                            "manifest.sha256", "pg-globals.sql.age",
+                        ),
+                    },
                 ]},
             )
     monkeypatch.setattr(monitor.httpx, "AsyncClient", FakeClient)
