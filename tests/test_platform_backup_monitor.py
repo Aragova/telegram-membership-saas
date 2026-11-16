@@ -240,14 +240,22 @@ async def test_real_postgres_failure_dedup_recovery_and_owner_only_scope(monkeyp
             )
         # An RLS runtime connection cannot forge the host's backup result,
         # even when CI grants DML on all public tables after Alembic.
-        with pytest.raises(DBAPIError):
+        try:
             async with tenant_session_scope(
                 factory, TenantContext(user_id=owner),
             ) as session:
-                await session.execute(text(
+                result = await session.execute(text(
                     "UPDATE public.platform_backup_attempt_receipt "
                     "SET result='success' WHERE id=1"
                 ))
+                assert result.rowcount == 0
+        except DBAPIError:
+            pass  # RLS may reject or silently filter UPDATE, depending on grants.
+        async with admin_engine.connect() as conn:
+            stored = await conn.scalar(text(
+                "SELECT result FROM public.platform_backup_attempt_receipt WHERE id=1"
+            ))
+            assert stored == "failed"
         assert await monitor.scan_platform_backup(
             factory, owner_actor_id=owner, bucket="vimi-backup-test-bucket",
             now=NOW + timedelta(minutes=2),
