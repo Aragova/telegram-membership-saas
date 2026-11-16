@@ -32,14 +32,17 @@ def rich_file_checkout_enabled(bot_id: int) -> bool:
 
 def rich_file_card_html(
     *, product_name: str, description: str | None, price: str,
-    file_count: int,
+    file_count: int, free: bool = False,
 ) -> str:
     """Rich HTML for supported Telegram clients, never interpolating raw user HTML."""
-    title = tr("💎 Покупка файла", "💎 File purchase")
+    title = (tr("🆓 Бесплатный файл", "🆓 Free file") if free
+             else tr("💎 Покупка файла", "💎 File purchase"))
     label_name = tr("🏷 Название", "🏷 Name")
     label_price = tr("💰 Цена", "💰 Price")
     label_files = tr("📎 Файлов", "📎 Files")
-    prompt = tr("👇 Выберите способ оплаты ниже", "👇 Select a payment method below")
+    prompt = (tr("👇 Получите файл бесплатно", "👇 Get the file for free")
+              if free else tr("👇 Выберите способ оплаты ниже",
+                              "👇 Select a payment method below"))
     parts = [
         "<h3>" + title + "</h3>",
         "<table bordered compact>",
@@ -216,6 +219,11 @@ def rich_admin_product_detail(item, *, file_count: int, prices) -> str:
         lines.append("</table>")
     else:
         lines.append("<p>" + tr("Нет ручных цен", "No manual prices") + "</p>")
+    if getattr(item, "is_free", False):
+        lines.append("<p><b>" + tr(
+            "🆓 Бесплатная выдача · без оплаты и чека",
+            "🆓 Free download · no payment or receipt",
+        ) + "</b></p>")
     if item.description:
         description = "".join(
             "<p>" + escape(line) + "</p>"
