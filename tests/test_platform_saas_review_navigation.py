@@ -10,6 +10,7 @@ import pytest
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.modules import platform_dashboard_handlers as ui
+from telegram_membership_saas.modules import platform_saas_v2_payment_service as billing
 
 
 def _setup():
@@ -163,3 +164,38 @@ async def test_stale_proof_cannot_be_approved_from_old_keyboard(monkeypatch):
     approve.assert_not_awaited()
     query.answer.assert_awaited_once()
     assert query.answer.await_args.kwargs["show_alert"] is True
+
+
+def test_generated_operator_reference_is_not_fake_bank_transaction_number():
+    attempt = uuid4()
+    reference = billing.operator_approval_reference(attempt)
+    assert reference == "VIMI-OPERATOR-" + attempt.hex
+    assert 8 <= len(reference) <= 160
+    assert reference != billing.operator_approval_reference(uuid4())
+    assert reference == billing.operator_approval_reference(attempt)
+
+
+@pytest.mark.asyncio
+async def test_one_tap_backend_reuses_existing_sql_approval_with_stable_reference(
+    monkeypatch,
+):
+    attempt = uuid4()
+    actor = uuid4()
+    approved = uuid4()
+    confirmed = AsyncMock(return_value=approved)
+    monkeypatch.setattr(billing, "saas_v2_confirm_attempt", confirmed)
+    settings = Settings(platform_owner_telegram_id=7777)
+    factory = object()
+    result = await billing.saas_v2_confirm_attempt_one_tap(
+        factory, actor_id=actor, actor_telegram_id=7777,
+        attempt_id=attempt, settings=settings,
+    )
+    assert result == approved
+    confirmed.assert_awaited_once_with(
+        factory,
+        actor_id=actor,
+        actor_telegram_id=7777,
+        attempt_id=attempt,
+        verified_bank_reference=billing.operator_approval_reference(attempt),
+        settings=settings,
+    )
