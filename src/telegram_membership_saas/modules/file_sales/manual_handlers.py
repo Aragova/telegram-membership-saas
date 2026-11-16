@@ -186,11 +186,11 @@ async def show_file_payment_options(
                 price=label, file_count=count, free=True,
             ),
             legacy_html=(
-                tr("🆓 <b>Бесплатный файл</b>\\n\\n",
-                   "🆓 <b>Free file</b>\\n\\n")
-                + "📦 <b>" + escape(product.name) + "</b>\\n"
+                tr("🆓 <b>Бесплатный файл</b>\n\n",
+                   "🆓 <b>Free file</b>\n\n")
+                + "📦 <b>" + escape(product.name) + "</b>\n"
                 + tr("📎 Файлов: ", "📎 Files: ") + str(count)
-                + "\\n" + tr("💰 Цена: Бесплатно", "💰 Price: Free")
+                + "\n" + tr("💰 Цена: Бесплатно", "💰 Price: Free")
             ),
             reply_markup=_keyboard([
                 [InlineKeyboardButton(
