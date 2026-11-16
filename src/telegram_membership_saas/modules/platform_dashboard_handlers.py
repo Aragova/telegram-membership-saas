@@ -2353,7 +2353,7 @@ def create_platform_dashboard_router(
                             factory, owner_actor_id=backup_actor,
                         )
                     except Exception:
-                        log.warning("Backup status on Monitoring screen unavailable")
+                        logging.getLogger(__name__).warning("Backup status on Monitoring screen unavailable")
                 await _render_platform_screen(
                     bot, chat_id=query.from_user.id,
                     text=_bot_list(
