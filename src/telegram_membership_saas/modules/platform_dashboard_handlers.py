@@ -70,6 +70,7 @@ from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_catalog_toggle,
     saas_catalog_update,
     saas_v2_configure_method,
+    saas_v2_confirm_checked_attempt,
     saas_v2_confirm_attempt,
     saas_v2_pending_proofs,
     saas_v2_reject_attempt,
@@ -1304,8 +1305,8 @@ def create_platform_dashboard_router(
             return
         if _editor_command(message.text):
             await bot.send_message(user.id, tr(
-                "Введите банковский референс или /cancel.",
-                "Enter a bank reference or /cancel.",
+                "Укажите причину отклонения или /cancel.",
+                "Enter the rejection reason or /cancel.",
             ))
             return
         value = message.text.strip()
@@ -1792,11 +1793,11 @@ def create_platform_dashboard_router(
                 lines = [
                     tr("🧾 <b>ViMi Pay · Проверка чеков</b>",
                        "🧾 <b>ViMi Pay · Payment proof review</b>"),
-                    tr("Подтверждайте поступление <b>только после сверки "
-                       "банковской операции</b>, суммы и её уникального "
-                       "референса. Сам чек не доказывает оплату.",
-                       "Approve <b>only after reconciling the bank "
-                       "transaction</b>, its amount and unique reference. "
+                    tr("Подтверждайте поступление <b>только после проверки "
+                       "денег в банке</b> и сверки суммы. Сам чек не "
+                       "доказывает оплату.",
+                       "Approve <b>only after checking actual bank "
+                       "funds</b> and matching the amount. "
                        "A receipt alone is not proof of payment."),
                 ]
                 items = result["items"]
@@ -1923,34 +1924,98 @@ def create_platform_dashboard_router(
                 if not any(str(item["id"]) == str(attempt_id)
                            for item in queue["items"]):
                     raise ValueError("Original payment attempt no longer pending")
-                pending_v2_review[query.from_user.id] = (
-                    attempt_id, decision == "ok",
+                if decision == "ok":
+                    # Two-step confirmation inside THIS SAME review screen.
+                    # Telegram native callback alerts can show OK only,
+                    # not a meaningful Yes/No choice.
+                    await _render_platform_screen(
+                        bot, chat_id=query.from_user.id,
+                        text=tr(
+                            "✅ <b>Подтверждение поступления</b>\n\n"
+                            "Деньги в размере "
+                            + escape(str(next(
+                                x["amount"] for x in queue["items"]
+                                if str(x["id"]) == str(attempt_id)
+                            )))
+                            + " действительно поступили в банк?\n"
+                            "Подтверждение зачислит платёж и может "
+                            "снять ограничения продаж.",
+                            "✅ <b>Confirm bank funds</b>\n\n"
+                            "Has the payment of "
+                            + escape(str(next(
+                                x["amount"] for x in queue["items"]
+                                if str(x["id"]) == str(attempt_id)
+                            )))
+                            + " actually arrived in your bank?\n"
+                            "Confirmation credits the invoice and may "
+                            "release sales restrictions.",
+                        ),
+                        reply_markup=_keyboard([[
+                            _button(
+                                tr("✅ Да, поступили", "✅ Yes, received"),
+                                "v2commit:" + attempt_token + ":" + page_token,
+                            ),
+                            _button(tr("Отмена", "Cancel"),
+                                    "v2proofs:" + page_token),
+                        ]]),
+                        message_id=message_id,
+                    )
+                else:
+                    pending_v2_review[query.from_user.id] = (
+                        attempt_id, False,
+                    )
+                    await _render_platform_screen(
+                        bot, chat_id=query.from_user.id,
+                        text=tr(
+                            "❌ <b>Отклонить чек</b>\n"
+                            "Укажите причину (5–500 символов). "
+                            "/cancel — отмена.",
+                            "❌ <b>Reject receipt</b>\n"
+                            "Enter reason (5–500 characters). "
+                            "/cancel to abort.",
+                        ),
+                        reply_markup=_keyboard([[_button(
+                            tr("⬅️ Назад", "⬅️ Back"),
+                            "v2proofs:" + page_token,
+                        )]]), message_id=message_id,
+                    )
+            elif len(tokens) == 4 and tokens[1] == "v2commit":
+                _, _, attempt_token, page_token = tokens
+                if (
+                    not page_token.isascii() or not page_token.isdecimal()
+                    or int(page_token) > 100000
+                ):
+                    raise ValueError("Invalid proof review page")
+                attempt_id = decode_uuid(attempt_token)
+                actor_id = await ensure_telegram_actor(
+                    factory, telegram_id=query.from_user.id,
+                    username=query.from_user.username,
+                    first_name=query.from_user.first_name,
                 )
-                await _render_platform_screen(
-                    bot, chat_id=query.from_user.id,
-                    text=tr(
-                        "✅ <b>Подтверждение банковского поступления</b>\n"
-                        "Только после независимой проверки банка введите "
-                        "уникальный референс поступившего перевода "
-                        "(8–160 символов). /cancel — отменить.",
-                        "✅ <b>Verify actual bank receipt</b>\n"
-                        "Only after independently checking the bank, "
-                        "enter the unique received transfer reference "
-                        "(8–160 characters). /cancel to abort.",
-                    ) if decision == "ok" else tr(
-                        "❌ <b>Отклонение чека</b>\n"
-                        "Причина: 5–500 символов. Чек будет отклонён, "
-                        "но сам счёт останется неоплаченным. "
-                        "/cancel — отмена.",
-                        "❌ <b>Reject receipt</b>\n"
-                        "Reason: 5–500 characters. The receipt is rejected, "
-                        "but the invoice remains unpaid. "
-                        "/cancel to abort.",
-                    ),
-                    reply_markup=_keyboard([[_button(
-                        tr("⬅️ Назад", "⬅️ Back"),
-                        "v2proofs:" + page_token,
-                    )]]), message_id=message_id,
+                # Never approve an old, rejected or already approved request
+                # based solely on a stale Telegram inline keyboard.
+                pending = await saas_v2_pending_proofs(
+                    factory, actor_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    page=int(page_token), settings=config,
+                )
+                if not any(
+                    str(item["id"]) == str(attempt_id)
+                    for item in pending["items"]
+                ):
+                    raise ValueError("Receipt no longer pending")
+                await saas_v2_confirm_checked_attempt(
+                    factory, actor_id=actor_id,
+                    actor_telegram_id=query.from_user.id,
+                    attempt_id=attempt_id, settings=config,
+                )
+                await query.answer(tr(
+                    "✅ Поступление подтверждено",
+                    "✅ Bank funds confirmed",
+                ))
+                await _show_review_result(
+                    bot, operator_chat=query.from_user.id,
+                    outcome="approved",
                 )
             elif tokens[1:] == ["commercial"]:
                 actor_id = await ensure_telegram_actor(
