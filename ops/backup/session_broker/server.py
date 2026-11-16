@@ -10,7 +10,10 @@ import re
 import urllib.parse
 import urllib.request
 
-PREFIX_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+PREFIX_RE = re.compile(
+    r"^\\d{8}T\\d{6}Z-"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 PARTS = frozenset({"membership.dump.age", "pg-globals.sql.age", "manifest.sha256"})
 META_TOKEN = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 
