@@ -28,6 +28,15 @@ def upgrade() -> None:
         ),
     )
     op.execute("REVOKE ALL ON public.platform_backup_attempt_receipt FROM PUBLIC")
+    # Do NOT FORCE RLS here: the trusted membership DB owner writes host
+    # systemd receipts through its local Unix socket. membership_runtime
+    # may inherit broad table GRANTs, but cannot forge receipts through RLS.
+    op.execute("ALTER TABLE public.platform_backup_attempt_receipt ENABLE ROW LEVEL SECURITY")
+    op.execute("""
+        CREATE POLICY backup_receipt_operator_read
+        ON public.platform_backup_attempt_receipt FOR SELECT
+        USING (public.platform_monitor_is_operator())
+    """)
     op.create_table(
         "platform_backup_watch",
         sa.Column("id", sa.Integer(), primary_key=True),
