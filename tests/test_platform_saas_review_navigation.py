@@ -64,6 +64,8 @@ async def test_review_result_navigation_and_rich_card(monkeypatch, reason, decis
     monkeypatch.setattr(ui, "saas_v2_reject_attempt", reject)
     rich = AsyncMock()
     monkeypatch.setattr(ui, "send_owner_rich", rich)
+    render = AsyncMock()
+    monkeypatch.setattr(ui, "_render_platform_screen", render)
 
     bot = MagicMock()
     bot.edit_message_text = AsyncMock()
@@ -74,7 +76,7 @@ async def test_review_result_navigation_and_rich_card(monkeypatch, reason, decis
         # Button 1 must not credit anything. One explicit Yes/Cancel
         # confirmation replaces bank-reference text input.
         approve.assert_not_awaited()
-        assert "Деньги" in bot.edit_message_text.await_args.kwargs["text"]
+        assert "Деньги" in render.await_args.kwargs["text"]
         query.data = f"plat:v2commit:{ui.encode_uuid(attempt)}:0"
         query.answer.reset_mock()
         await callback(query, bot)
