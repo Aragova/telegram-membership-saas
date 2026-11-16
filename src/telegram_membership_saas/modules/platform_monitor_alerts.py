@@ -518,14 +518,15 @@ async def run_central_platform_monitor(
                 # Same central monitoring stream; GCS listing is every 5 min.
                 # This independent block cannot delay proof/decision alerts or
                 # let a GCS outage prevent the existing bot health scan.
-                if settings.platform_backup_gcs_bucket:
+                backup_bucket = getattr(settings, "platform_backup_gcs_bucket", None)
+                if backup_bucket:
                     moment = datetime.now(UTC)
                     if next_backup_scan is None or moment >= next_backup_scan:
                         next_backup_scan = moment + timedelta(minutes=5)
                         try:
                             await scan_platform_backup(
                                 factory, owner_actor_id=actor,
-                                bucket=settings.platform_backup_gcs_bucket,
+                                bucket=backup_bucket,
                                 now=moment,
                             )
                         except Exception:
