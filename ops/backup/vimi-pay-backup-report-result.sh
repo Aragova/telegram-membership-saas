@@ -10,10 +10,16 @@ case "${SERVICE_RESULT:-}" in
 esac
 
 container=telegram-membership-saas-staging-postgres-1
-if [[ -r /etc/vimi-pay/backup.env ]]; then
-  # Root-owned 0600 file is already validated by the backup script.
+config=/etc/vimi-pay/backup.env
+if [[ -e "$config" || -L "$config" ]]; then
+  # ExecStart may have REFUSED this file. Validate again before sourcing
+  # in the privileged ExecStopPost path. Do not follow any symlink.
+  [[ -f "$config" && ! -L "$config" ]] || exit 1
+  [[ "$(stat -c %u "$config")" == "0" ]] || exit 1
+  perms="$(stat -c %a "$config")"
+  (( (8#$perms & 077) == 0 )) || exit 1
   # shellcheck source=/dev/null
-  source /etc/vimi-pay/backup.env
+  source "$config"
   container="${VIMI_BACKUP_POSTGRES_CONTAINER:-$container}"
 fi
 [[ "$container" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,120}$ ]] || exit 1
