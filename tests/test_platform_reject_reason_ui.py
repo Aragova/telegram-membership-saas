@@ -25,7 +25,7 @@ def _review_ui():
     )
     entry = next(
         h.callback for h in router.message.handlers
-        if h.callback.__name__ == "platform_bank_receipt_reference"
+        if h.callback.__name__ == "platform_bank_receipt_rejection_reason"
     )
     return callback, entry
 
@@ -59,17 +59,19 @@ async def test_four_letter_reason_is_explained_before_database_reject(monkeypatc
     await entry(message, bot)
     bot.send_message.assert_awaited_once()
     assert "5 до 500 символов" in bot.send_message.await_args.args[1]
-    assert "Сам счёт не удаляется" in bot.send_message.await_args.args[1]
+    assert "/cancel" in bot.send_message.await_args.args[1]
     reject.assert_not_awaited()
 
+    rich = AsyncMock()
+    monkeypatch.setattr(ui, "send_owner_rich", rich)
     bot.send_message.reset_mock()
     message.text = "Тестовый чек"
     await entry(message, bot)
     reject.assert_awaited_once()
     assert reject.await_args.kwargs["attempt_id"] == attempt
     assert reject.await_args.kwargs["reason"] == "Тестовый чек"
-    bot.send_message.assert_awaited_once()
-    assert "Заявка отклонена" in bot.send_message.await_args.args[1]
+    rich.assert_awaited_once()
+    assert "Чек отклонён" in rich.await_args.kwargs["rich_html"]
 
 
 @pytest.mark.asyncio
