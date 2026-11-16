@@ -361,14 +361,15 @@ async def show_manual_prices(
     await bot.send_message(
         user_id, tr(
             "💱 <b>Цены файла в валютах</b>\n"
-            "Нажмите валюту и укажите цену. Здесь доступны только валюты "
-            "активных способов оплаты. Покупателям показываются только "
-            "валюты с указанной ценой.\n\n"
+            "Нажмите валюту и укажите цену. 0 делает файл бесплатным "
+            "без способа оплаты. Положительные цены доступны только "
+            "для подключённых способов оплаты.\n\n"
             "Старые покупки сохраняют цену на момент оформления.",
             "💱 <b>File prices by currency</b>\n"
-            "Tap a currency to set its price. Only active payment-method "
-            "currencies appear, and only priced currencies are shown "
-            "to customers.\n\nExisting purchase amounts stay frozen.",
+            "Tap a currency to set its price. 0 makes the file free "
+            "without a payment method. Positive prices require an "
+            "enabled payment method.\n\n"
+            "Existing purchase amounts stay frozen.",
         ),
         parse_mode="HTML", reply_markup=_keyboard(rows),
     )
