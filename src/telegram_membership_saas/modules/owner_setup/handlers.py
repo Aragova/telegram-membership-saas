@@ -905,24 +905,24 @@ def create_owner_setup_router(
             user_id,
             tr(
                 "🧾 <b>Тариф обслуживания ViMi Pay</b>\n\n"
-                "Профиль влияет на будущие счета: 150 ₽ или $3 за бот "
+                "Профиль влияет на будущие счета: 150 ₽ или $5 за бот "
                 "в месяц. Это <b>не выбор способа оплаты</b>.\n"
                 "Оплатить существующий счёт можно в разделе 🧾 Счёт "
                 "в одной из валют, разрешённых платформой.\n\n"
                 "Текущий профиль: ",
                 "🧾 <b>ViMi Pay service tariff</b>\n\n"
                 "This selects the service price on future invoices: "
-                "150 RUB or 3 USD per bot per month. "
+                "150 RUB or 5 USD per bot per month. "
                 "It does <b>not</b> choose a payment method.\n"
                 "To pay an existing invoice, open 🧾 Bill and choose "
                 "a currency enabled by the platform.\n\n"
                 "Current profile: ",
-            ) + "<b>" + ("$3" if data["currency"]=="USD" else "150 ₽")
+            ) + "<b>" + ("$5" if data["currency"]=="USD" else "150 ₽")
             + "</b>",
             parse_mode="HTML",
             reply_markup=_markup([
                 [_button("150 ₽","saasprice:RUB"),
-                 _button("$3","saasprice:USD")],
+                 _button("$5","saasprice:USD")],
                 [_button(tr("⬅️ Настройки","⬅️ Settings"),"settings")],
             ]),
         )
