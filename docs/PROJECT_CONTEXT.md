@@ -19,6 +19,13 @@ considered completed from a link or Telegram message.
 **Draft only.** Operator credentials, offer permissions, real acceptance
 and provider-refund reconciliation remain unverified in the live 51-bot
 installation. No merge, VM configuration or bot fleet deploy performed.
+A follow-up review fix ensures: charged (including refunded) old provider
+orders are never reused as replacement quotes; a reopened original invoice
+reserves a new exact-outstanding order and preserves immutable old charge/
+refund evidence. Background recovery notifications resolve the actual payer
+or operator RU/EN preference independently of Telegram update middleware.
+Tests cover full and partial provider refunds and a saved English language.
+
 The stage-4 isolated FastAPI ingress remains strictly /health-only.
 
 ---

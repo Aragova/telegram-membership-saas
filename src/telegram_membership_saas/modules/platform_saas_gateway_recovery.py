@@ -13,7 +13,7 @@ from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings
-from telegram_membership_saas.localization import tr
+from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.platform_saas_gateway_service import (
     list_platform_pending_gateway_orders,
     verify_and_record_platform_gateway_payment,
@@ -66,30 +66,35 @@ async def recover_platform_gateway_once(
         if outcome["applied"]:
             applied += 1
             try:
-                await bot.send_message(
-                    int(order["payer_telegram_id"]),
-                    tr(
-                        "✅ Счёт ViMi Pay оплачен. Платёж проверен, "
-                        "обслуживание бота продлено.",
-                        "✅ ViMi Pay invoice paid. The provider confirmed "
-                        "your payment and service was renewed.",
-                    ),
-                )
+                payer_id = int(order["payer_telegram_id"])
+                async with recipient_language(factory, payer_id):
+                    await bot.send_message(
+                        payer_id,
+                        tr(
+                            "✅ Счёт ViMi Pay оплачен. Платёж проверен, "
+                            "обслуживание бота продлено.",
+                            "✅ ViMi Pay invoice paid. The provider confirmed "
+                            "your payment and service was renewed.",
+                        ),
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.warning("Could not notify platform customer of confirmed payment")
         elif outcome.get("requires_review"):
             try:
-                await bot.send_message(
-                    settings.platform_owner_telegram_id,
-                    tr(
-                        "⚠️ Оплата внешнего провайдера зарегистрирована, "
-                        "но счёт уже изменился. Проверьте финансовый журнал.",
-                        "⚠️ An external provider payment was recorded, "
-                        "but the invoice changed. Review the financial ledger.",
-                    ),
-                )
+                async with recipient_language(
+                    factory, settings.platform_owner_telegram_id,
+                ):
+                    await bot.send_message(
+                        settings.platform_owner_telegram_id,
+                        tr(
+                            "⚠️ Оплата внешнего провайдера зарегистрирована, "
+                            "но счёт уже изменился. Проверьте финансовый журнал.",
+                            "⚠️ An external provider payment was recorded, "
+                            "but the invoice changed. Review the financial ledger.",
+                        ),
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:

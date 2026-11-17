@@ -506,6 +506,12 @@ BEGIN
   SELECT * INTO prior FROM public.platform_saas_gateway_orders o
   WHERE o.invoice_id=i.id AND o.provider=p_provider
     AND o.owner_user_id=actor AND o.expires_at>clock_timestamp()
+    -- A charged order is immutable financial evidence, never a new
+    -- payment link. Full or partial refund reopens the original debt.
+    AND NOT EXISTS(
+      SELECT 1 FROM public.platform_saas_gateway_charges c
+      WHERE c.order_id=o.id
+    )
   ORDER BY o.created_at DESC FOR UPDATE LIMIT 1;
   IF prior.id IS NOT NULL THEN
     IF prior.amount_rub<>due THEN

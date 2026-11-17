@@ -193,3 +193,41 @@ async def test_verified_refund_rejects_non_operator_or_missing_confirmation(
     await callback(no_proof, bot)
     record.assert_not_awaited()
     assert bot.send_message.await_count == 1
+
+
+
+async def test_gateway_scanner_notifies_each_payer_in_saved_english(
+    monkeypatch,
+):
+    from telegram_membership_saas import localization
+
+    order = {
+        "id": str(uuid4()), "provider": "lava",
+        "payer_telegram_id": 1010,
+    }
+    monkeypatch.setattr(
+        recovery, "list_platform_pending_gateway_orders",
+        AsyncMock(return_value=(order,)),
+    )
+    monkeypatch.setattr(
+        recovery, "verify_and_record_platform_gateway_payment",
+        AsyncMock(return_value={"applied": True, "duplicate": False}),
+    )
+    # recipient_language must consult the saved preference rather than the
+    # background worker's default RU context.
+    lang = AsyncMock(return_value="en")
+    monkeypatch.setattr(localization, "read_language", lang)
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    count = await recovery.recover_platform_gateway_once(
+        MagicMock(), bot=bot,
+        settings=_settings(
+            saas_lava_top_api_key="TEST_PLATFORM_API_KEY",
+            saas_lava_top_offer_id=uuid4(),
+        ),
+    )
+    assert count == 1
+    lang.assert_awaited_once()
+    assert lang.await_args.args[1] == 1010
+    msg = bot.send_message.await_args.args[1]
+    assert "invoice paid" in msg and "provider confirmed" in msg

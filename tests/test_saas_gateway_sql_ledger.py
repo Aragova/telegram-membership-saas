@@ -149,11 +149,92 @@ async def test_gateway_receipt_replay_refund_and_bank_race():
                 assert not new_balance["paid"]
                 assert Decimal(new_balance["gateway_rub"]) == 0
                 assert Decimal(new_balance["remaining_rub"]) == 150
+                # A charged old checkout MUST NOT be reissued after refund,
+                # even though its 30-minute order expiry is still active.
+                replacement = await rpc(
+                    conn, "platform_saas_gateway_reserve",
+                    invoice, "crypto", payer_tg, 99887766, json=True,
+                )
+                assert replacement["id"] != order["id"]
+                assert replacement["status"] == "reserved"
+                assert Decimal(replacement["amount_rub"]) == 150
+                replay = await rpc(
+                    conn, "platform_saas_gateway_reserve",
+                    invoice, "crypto", payer_tg, 99887766, json=True,
+                )
+                assert replay["id"] == replacement["id"]
+                await set_actor(conn, operator)
+                pending = await rpc(
+                    conn, "platform_saas_gateway_pending", 100, json=True,
+                )
+                assert not any(str(x["id"]) == str(order["id"]) for x in pending)
             finally:
                 await outer.rollback()
     finally:
         await admin.dispose()
 
+
+
+
+async def test_partial_lava_refund_reserves_new_exact_outstanding_quote():
+    """A partly refunded provider checkout must not pin an obsolete RUB quote."""
+    cfg = Settings()
+    admin = create_async_engine(cfg.migration_database_url)
+    try:
+        async with admin.connect() as conn:
+            outer = await conn.begin()
+            try:
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
+                payer_tg, payer, operator, invoice, _ = await prepare(
+                    factory, conn,
+                )
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, payer)
+                original = await rpc(
+                    conn, "platform_saas_gateway_reserve",
+                    invoice, "lava", payer_tg, 99887766, json=True,
+                )
+                provider_id = str(uuid4())
+                await set_actor(conn, operator)
+                assert await rpc(
+                    conn, "platform_saas_gateway_bind",
+                    original["id"], payer_tg, 99887766, provider_id,
+                    "https://app.lava.top/pay/first",
+                )
+                outcome = await rpc(
+                    conn, "platform_saas_gateway_record_charge",
+                    original["id"], "lava", provider_id, Decimal("150"),
+                    datetime.now(UTC), json=True,
+                )
+                assert outcome["applied"]
+                recorded = await rpc(
+                    conn, "platform_saas_gateway_operator_refund",
+                    "lava", provider_id, "partial-lava-refund",
+                    Decimal("50"), json=True,
+                )
+                assert recorded["recorded"]
+                assert Decimal(recorded["credit_reversed_rub"]) == 50
+                await set_actor(conn, payer)
+                balance = await rpc(
+                    conn, "platform_saas_v2_invoice_balance",
+                    invoice, json=True,
+                )
+                assert Decimal(balance["remaining_rub"]) == 50
+                replacement = await rpc(
+                    conn, "platform_saas_gateway_reserve",
+                    invoice, "lava", payer_tg, 99887766, json=True,
+                )
+                assert replacement["id"] != original["id"]
+                assert replacement["status"] == "reserved"
+                assert Decimal(replacement["amount_rub"]) == 50
+                assert replacement["provider_invoice_id"] is None
+            finally:
+                await outer.rollback()
+    finally:
+        await admin.dispose()
 
 async def test_gateway_credited_exactly_once_after_parallel_bank_payment():
     cfg = Settings()
