@@ -58,11 +58,13 @@ async def test_gateway_receipt_replay_refund_and_bank_race():
                 assert order["status"] == "reserved"
                 assert order["payload"] == "vpc:" + str(order["id"])
                 assert Decimal(order["amount_rub"]) == 150
+                await set_actor(conn, operator)
                 assert await rpc(
                     conn, "platform_saas_gateway_bind",
                     order["id"], payer_tg, 99887766, "4815162342",
                     "https://t.me/CryptoBot?start=IV4815162342",
                 )
+                await set_actor(conn, payer)
                 # Only the platform operator can acknowledge a paid
                 # *provider-authenticated* invoice; the merchant cannot.
                 with pytest.raises(DBAPIError):
@@ -173,6 +175,7 @@ async def test_gateway_credited_exactly_once_after_parallel_bank_payment():
                     conn, "platform_saas_gateway_reserve",
                     invoice, "crypto", payer_tg, 99887766, json=True,
                 )
+                await set_actor(conn, operator)
                 assert await rpc(
                     conn, "platform_saas_gateway_bind",
                     order["id"], payer_tg, 99887766, "4815162333",
