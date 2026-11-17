@@ -89,3 +89,51 @@ def test_trial_has_no_issued_invoice_or_payable_amount():
     text = unified_merchant_bill_rich(bill)
     assert "no invoice" in text.lower() or "Счёт ещё не выставлен" in text
     assert "850.00 ₽" not in text
+
+
+@pytest.mark.parametrize("lang,label", [
+    ("ru", "⏳ Ожидается выставление счёта"),
+    ("en", "⏳ ViMi Pay invoice issuance is pending"),
+])
+def test_new_bot_with_expired_owner_trial_shows_pending_not_past_future_date(
+    lang, label,
+):
+    """An owner trial ended earlier; this new bot is awaiting the batch."""
+    bill = deepcopy(BILL)
+    bill.update(
+        invoice_id=None, upcoming_at="2026-11-16T14:46:00+03:00",
+        total_due_rub="0", turnover=[],
+    )
+    token = _language.set(lang)
+    try:
+        rich = unified_merchant_bill_rich(bill)
+        classic = unified_merchant_bill_classic(bill)
+    finally:
+        _language.reset(token)
+    for rendered in (rich, classic):
+        assert label in rendered
+        assert "16.11.2026" not in rendered
+        assert "150.00 ₽" not in rendered
+
+
+@pytest.mark.parametrize("lang,label", [
+    ("ru", "📅 Предстоящий счёт: "),
+    ("en", "📅 Upcoming invoice: "),
+])
+def test_actual_future_trial_boundary_keeps_date_on_unissued_bill(lang, label):
+    bill = deepcopy(BILL)
+    bill.update(
+        invoice_id=None, upcoming_at="2099-02-16T10:00:00+03:00",
+        total_due_rub="0", turnover=[],
+    )
+    token = _language.set(lang)
+    try:
+        rich = unified_merchant_bill_rich(bill)
+        classic = unified_merchant_bill_classic(bill)
+    finally:
+        _language.reset(token)
+    for rendered in (rich, classic):
+        assert label in rendered
+        assert "16.02.2099 10:00 МСК" in rendered
+        assert "Ожидается выставление" not in rendered
+        assert "issuance is pending" not in rendered
