@@ -746,6 +746,49 @@ BEGIN
   RETURN true;
 END; $f$
     """)
+    # Authenticated operator evidence intake for independently verified
+    # provider-side refunds. Crypto Pay's invoice GET does not reliably
+    # identify outbound/manual provider refunds, so never infer them from
+    # unchanged "paid" status. This records a human-verified transfer
+    # reference; it does NOT initiate a provider refund or invent one.
+    op.execute("""
+CREATE FUNCTION public.platform_saas_gateway_operator_refund(
+  p_provider text,p_provider_invoice_id text,p_refund_id text,
+  p_amount_rub numeric
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE target_order uuid; inserted boolean; verified record;
+BEGIN
+  PERFORM public.platform_saas_require_owner();
+  IF p_provider NOT IN ('crypto','lava')
+     OR p_provider_invoice_id IS NULL
+     OR length(p_provider_invoice_id) NOT BETWEEN 1 AND 128
+     OR p_refund_id IS NULL OR length(p_refund_id) NOT BETWEEN 1 AND 128
+     OR p_amount_rub IS NULL OR p_amount_rub<=0
+     OR p_amount_rub<>round(p_amount_rub,2) THEN
+    RAISE EXCEPTION 'Invalid operator-verified provider refund'
+      USING ERRCODE='22023';
+  END IF;
+  SELECT c.order_id INTO target_order
+  FROM public.platform_saas_gateway_charges c
+  WHERE c.provider=p_provider
+    AND c.provider_invoice_id=p_provider_invoice_id;
+  IF target_order IS NULL THEN
+    RAISE EXCEPTION 'No verified provider payment for refund'
+      USING ERRCODE='42501';
+  END IF;
+  inserted:=public.platform_saas_gateway_record_refund(
+    target_order,p_provider,p_provider_invoice_id,
+    p_refund_id,p_amount_rub,clock_timestamp()
+  );
+  SELECT r.* INTO verified FROM public.platform_saas_gateway_refunds r
+  WHERE r.provider=p_provider AND r.provider_refund_id=p_refund_id;
+  RETURN jsonb_build_object(
+    'recorded',inserted,'amount_rub',verified.amount_rub::text,
+    'credit_reversed_rub',verified.reversed_rub::text
+  );
+END; $f$
+    """)
     op.execute("""
 CREATE FUNCTION public.platform_saas_gateway_block_void()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
@@ -792,6 +835,7 @@ FOR EACH ROW EXECUTE FUNCTION public.platform_saas_gateway_append_only()
         "platform_saas_gateway_pending(integer)",
         "platform_saas_gateway_record_charge(uuid,text,text,numeric,timestamptz)",
         "platform_saas_gateway_record_refund(uuid,text,text,text,numeric,timestamptz)",
+        "platform_saas_gateway_operator_refund(text,text,text,numeric)",
     ):
         op.execute(f"REVOKE ALL ON FUNCTION public.{sig} FROM PUBLIC")
         op.execute(f"""
