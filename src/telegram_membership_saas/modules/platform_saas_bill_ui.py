@@ -71,10 +71,21 @@ def _bill_status(bill: dict) -> list[str]:
     state = str(bill.get("hold_state") or "clear")
     result: list[str] = []
     if bill.get("invoice_id") is None:
-        next_at = _date_time(bill.get("upcoming_at"))
-        if next_at:
-            result.append(tr("📅 Предстоящий счёт: ",
-                             "📅 Upcoming invoice: ") + next_at)
+        # The owner-wide trial deadline is only the earliest eligibility
+        # boundary. A newly connected bot may still await the next bounded
+        # invoice reconciliation. Never display a past trial deadline as a
+        # future invoice date or imply that an invoice already exists.
+        next_at = _instant(bill.get("upcoming_at"))
+        if next_at is not None and next_at > now:
+            result.append(tr(
+                "📅 Предстоящий счёт: ",
+                "📅 Upcoming invoice: ",
+            ) + _date_time(bill["upcoming_at"]))
+        elif next_at is not None:
+            result.append(tr(
+                "⏳ Ожидается выставление счёта ViMi Pay.",
+                "⏳ ViMi Pay invoice issuance is pending.",
+            ))
         return result
     if owed == 0:
         result.append(tr("✅ Статус: оплачено", "✅ Status: paid"))
