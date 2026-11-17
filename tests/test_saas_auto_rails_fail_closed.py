@@ -1,6 +1,6 @@
-"""Unconfigured SaaS gateways cannot create financial payment attempts.
+"""Unconfigured external SaaS gateways cannot create financial payment attempts.
 
-Real provider settlement, central Stars handoff and platform Crypto app must
+Real provider settlement and platform Crypto app must
 be implemented and verified before this draft invoice menu may ship.
 """
 from types import SimpleNamespace
@@ -15,7 +15,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import encode_uu
 
 
 @pytest.mark.parametrize("language", ("ru", "en"))
-@pytest.mark.parametrize("rail", ("L", "S", "C"))
+@pytest.mark.parametrize("rail", ("L", "C"))
 async def test_dormant_gateway_never_creates_invoice_payment(
     monkeypatch, language, rail,
 ):
