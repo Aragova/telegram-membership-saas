@@ -240,6 +240,7 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 # A verified bank payment wins the race during Telegram
                 # authorization/settlement. Do not allocate another 150 RUB.
                 await conn.execute(text("RESET ROLE"))
+                await set_actor(conn, operator)
                 await conn.execute(text(
                     "INSERT INTO platform_saas_receipts "
                     "(id,invoice_id,confirmed_by,amount_rub) "
