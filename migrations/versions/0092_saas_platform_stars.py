@@ -95,7 +95,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_remaining(p_invoice uuid)
 RETURNS numeric LANGUAGE plpgsql STABLE SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
 DECLARE original numeric; received numeric; credited numeric;
-        stars_credit numeric; invoice_status text;
+        stars_credit numeric; verified_credit numeric; invoice_status text;
 BEGIN
   SELECT total_rub,status INTO original,invoice_status
   FROM public.platform_saas_invoices WHERE id=p_invoice;
@@ -115,11 +115,14 @@ BEGIN
   LEFT JOIN public.platform_saas_stars_refunds r
     ON r.order_id=c.order_id AND r.charge_id=c.charge_id
   WHERE c.invoice_id=p_invoice;
-  IF received+credited+stars_credit>original THEN
+  SELECT coalesce(sum(amount_rub),0) INTO verified_credit
+  FROM public.platform_saas_verified_credit_allocations
+  WHERE invoice_id=p_invoice;
+  IF received+credited+stars_credit+verified_credit>original THEN
     RAISE EXCEPTION 'Invoice overpayment violates accounting invariant'
       USING ERRCODE='23514';
   END IF;
-  RETURN original-received-credited-stars_credit;
+  RETURN original-received-credited-stars_credit-verified_credit;
 END; $f$
     """)
     op.execute("""
@@ -128,7 +131,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v2_invoice_balance(
 ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
 DECLARE actor uuid; operator_access boolean; i record;
-        legacy_paid numeric; allocated numeric; stars_credit numeric;
+        legacy_paid numeric; allocated numeric; stars_credit numeric; verified_credit numeric;
         remaining numeric;
 BEGIN
   actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
@@ -151,7 +154,10 @@ BEGIN
   LEFT JOIN public.platform_saas_stars_refunds r
     ON r.order_id=c.order_id AND r.charge_id=c.charge_id
   WHERE c.invoice_id=i.id;
-  remaining:=i.total_rub-legacy_paid-allocated-stars_credit;
+  SELECT coalesce(sum(amount_rub),0) INTO verified_credit
+  FROM public.platform_saas_verified_credit_allocations
+  WHERE invoice_id=i.id;
+  remaining:=i.total_rub-legacy_paid-allocated-stars_credit-verified_credit;
   IF remaining<0 THEN
     RAISE EXCEPTION 'Overpaid bill: accounting inconsistent'
       USING ERRCODE='23514';
@@ -162,7 +168,8 @@ BEGIN
     'settled_rub',(legacy_paid+allocated+stars_credit)::text,
     'remaining_rub',remaining::text,'paid',remaining=0,
     'partial_rub',allocated::text,'legacy_rub',legacy_paid::text,
-    'stars_rub',stars_credit::text
+    'stars_rub',stars_credit::text,
+    'verified_refund_credit_rub',verified_credit::text
   );
 END; $f$
     """)
@@ -456,8 +463,8 @@ FOR EACH ROW EXECUTE FUNCTION
     op.execute("""
 CREATE TRIGGER trg_saas_activation_stars_charge
 AFTER INSERT ON public.platform_saas_stars_charges
-FOR EACH ROW EXECUTE FUNCTION
-  public.platform_saas_record_bot_service_activation()
+FOR EACH ROW WHEN (NEW.applied_rub > 0)
+EXECUTE FUNCTION public.platform_saas_record_bot_service_activation()
     """)
     # Append-only financial evidence; only a narrow precheckout status can
     # change, and that write is restricted to the SECURITY DEFINER RPC above.
