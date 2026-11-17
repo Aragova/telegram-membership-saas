@@ -8,7 +8,7 @@ tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
 fetch_status() {
-  # Enforce trusted TLS and HTTPS. No --insecure/-k fallback.
+  # Enforce verified TLS and HTTPS; never skip certificate checks.
   curl --silent --show-error --proto '=https' --tlsv1.2 \
     --connect-timeout 5 --max-time 10 --output "$tmp" \
     --write-out '%{http_code}' "$base$1"
