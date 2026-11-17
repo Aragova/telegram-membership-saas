@@ -216,6 +216,7 @@ jobs:
                       "platform_saas_stars_precheckout(text,bigint,bigint,integer)",
                       "platform_saas_stars_record_charge(text,bigint,bigint,integer,text,timestamptz)",
                       "platform_saas_stars_record_refund(text,bigint,bigint,integer,text,timestamptz)",
+                      "platform_saas_stars_charge_payload(text,bigint,bigint)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
