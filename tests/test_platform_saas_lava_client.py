@@ -8,8 +8,8 @@ import pytest
 from telegram_membership_saas.modules.platform_saas_lava_client import (
     LavaTopClient,
     LavaTopError,
-    _checkout_link,
     _amount,
+    _checkout_link,
     verify_lava_paid_invoice,
 )
 
