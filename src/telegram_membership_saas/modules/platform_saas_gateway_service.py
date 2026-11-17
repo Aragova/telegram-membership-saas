@@ -8,7 +8,7 @@ amount, immutable provider identifiers and exactly-once application in SQL.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -246,19 +246,16 @@ async def verify_and_record_platform_gateway_payment(
             raise LavaTopError("Missing owner Lava.top credentials")
         async with LavaTopClient(api_key.get_secret_value()) as client:
             snapshot = await client.get_invoice(invoice_id=UUID(provider_id))
-        # The authoritative GET is matched against the ORIGINAL provider
-        # invoice ID, RUB currency and exact immutable local amount.
+        # Published Lava GET returns status=completed and receipt with
+        # original amount/currency. Its datetime is invoice creation time,
+        # NOT a verified paid_at. Record verified observation time only.
+        if snapshot.get("status") != "completed":
+            return None
         verify_lava_paid_invoice(
             snapshot, expected_id=UUID(provider_id),
             expected_currency="RUB", expected_amount=frozen_amount,
         )
-        # A provider-specific paid timestamp is required before accounting.
-        raw_date = snapshot.get("paidAt")
-        if not isinstance(raw_date, str):
-            raise LavaTopError("Missing provider-verified paid timestamp")
-        stamp = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-        if stamp.tzinfo is None:
-            raise LavaTopError("Invalid provider paid timestamp")
+        stamp = datetime.now(UTC)
     else:
         raise ValueError("Invalid platform provider")
     recorded = await _rpc(
