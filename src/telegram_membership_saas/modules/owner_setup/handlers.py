@@ -4055,9 +4055,9 @@ def create_owner_setup_router(
                             )
                             await _show_saas_payment_step(
                                 bot,query,tr(
-                                    "💎 <b>Crypto Pay · ViMi Pay</b>\\n"
+                                    "💎 <b>Crypto Pay · ViMi Pay</b>\n"
                                     "Оплата открывается в центральном боте.",
-                                    "💎 <b>Crypto Pay · ViMi Pay</b>\\n"
+                                    "💎 <b>Crypto Pay · ViMi Pay</b>\n"
                                     "Checkout opens in the central bot.",
                                 ),[
                                     [InlineKeyboardButton(
