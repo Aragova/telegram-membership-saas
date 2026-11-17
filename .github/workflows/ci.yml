@@ -209,6 +209,7 @@ jobs:
                       "platform_saas_catalog_remove(uuid)",
                       "platform_saas_catalog_for_invoice(uuid)",
                       "platform_saas_v3_create_attempt(uuid,numeric,text,uuid)",
+                      "platform_saas_merchant_bill_summary(date,uuid)",
                       "platform_saas_stars_set_rate(numeric)",
                       "platform_saas_stars_rate()",
                       "platform_saas_stars_create_order(uuid,bigint,bigint)",
