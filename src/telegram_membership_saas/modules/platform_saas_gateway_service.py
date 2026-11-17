@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import tenant_session_scope
-from telegram_membership_saas.modules.crypto_pay.client import CryptoPayError
+from telegram_membership_saas.modules.crypto_pay.client import (
+    CryptoPayError,
+    _invoice_link,
+)
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_saas_crypto_client import (
     create_platform_crypto_invoice,
@@ -27,6 +30,7 @@ from telegram_membership_saas.modules.platform_saas_crypto_client import (
 from telegram_membership_saas.modules.platform_saas_lava_client import (
     LavaTopClient,
     LavaTopError,
+    _checkout_link,
     verify_lava_paid_invoice,
 )
 from telegram_membership_saas.tenant_context import TenantContext
@@ -145,9 +149,13 @@ async def issue_platform_crypto_checkout(
     amount = Decimal(str(reservation["amount_rub"]))
     if reservation["status"] == "issued":
         url = reservation.get("url")
-        if not isinstance(url, str) or not url.startswith("https://t.me/"):
+        if not isinstance(url, str):
             raise RuntimeError("Original Crypto Pay invoice link is unavailable")
-        return GatewayLink("crypto", order_id, url, amount)
+        return GatewayLink(
+            "crypto", order_id,
+            _invoice_link(url, testnet=settings.saas_crypto_pay_testnet),
+            amount,
+        )
     provider = await create_platform_crypto_invoice(
         settings, order_id=order_id, rub_amount=amount,
     )
@@ -180,9 +188,9 @@ async def issue_platform_lava_checkout(
     amount = Decimal(str(reservation["amount_rub"]))
     if reservation["status"] == "issued":
         url = reservation.get("url")
-        if not isinstance(url, str) or "lava.top" not in url:
-            raise RuntimeError("Original Lava.top checkout link is unavailable")
-        return GatewayLink("lava", order_id, url, amount)
+        return GatewayLink(
+            "lava", order_id, _checkout_link(url), amount,
+        )
     async with LavaTopClient(api_key.get_secret_value()) as provider:
         created = await provider.create_dynamic_invoice(
             email=customer_email, offer_id=offer,
