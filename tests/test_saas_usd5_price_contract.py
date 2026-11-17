@@ -18,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_forward_only_usd5_migration_keeps_legacy_usd3_valid() -> None:
-    migration = (ROOT / "migrations/versions/0088_saas_usd5.py").read_text(
+    migration = (ROOT / "migrations/versions/0091_saas_usd5.py").read_text(
         encoding="utf-8",
     )
-    assert 'down_revision: str | None = "0087_saas_review_result_notice"' in migration
+    assert 'down_revision: str | None = "0090_free_file_products"' in migration
     assert "amount_native:=5;" in migration
     assert "invoice_rub:=round(5*usd_rate,2);" in migration
     assert "'monthly_amount',CASE WHEN currency='USD' THEN '5.00'" in migration
