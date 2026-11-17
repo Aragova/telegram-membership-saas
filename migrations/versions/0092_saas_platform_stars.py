@@ -700,6 +700,34 @@ CREATE OR REPLACE FUNCTION public.platform_saas_invoice_report(
         END;
         $f$
     """)
+    # Migration 0082 already removed the obsolete operator test-invoice
+    # void RPC. This status guard also fails closed for future maintenance
+    # paths that might attempt to void a bill with genuine provider money.
+    # Invoice-row serialization prevents a charged/void concurrent race.
+    op.execute("""
+CREATE FUNCTION public.platform_saas_stars_block_void()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+BEGIN
+  IF TG_OP='UPDATE' AND NEW.status='void' AND OLD.status<>'void'
+     AND EXISTS(
+       SELECT 1 FROM public.platform_saas_stars_charges c
+       WHERE c.invoice_id=OLD.id
+     ) THEN
+    RAISE EXCEPTION 'Cannot void invoice with Stars financial evidence'
+      USING ERRCODE='P6722';
+  END IF;
+  RETURN NEW;
+END; $f$
+    """)
+    op.execute("""
+CREATE TRIGGER trg_saas_stars_no_paid_void
+BEFORE UPDATE OF status ON public.platform_saas_invoices
+FOR EACH ROW EXECUTE FUNCTION public.platform_saas_stars_block_void()
+    """)
+    op.execute("""
+REVOKE ALL ON FUNCTION public.platform_saas_stars_block_void() FROM PUBLIC
+    """)
     # Prevent a bank confirmation from racing a paid Stars checkout.
     op.execute("""
 CREATE FUNCTION public.platform_saas_stars_cap_guard()
