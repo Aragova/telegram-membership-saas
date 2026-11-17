@@ -210,3 +210,61 @@ async def test_stars_price_is_disabled_until_operator_sets_it_and_owned_bills_on
     finally:
         await runtime.dispose()
         await admin.dispose()
+
+
+async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credited():
+    """A real Stars charge is still journaled after a parallel bank settlement."""
+    cfg = Settings()
+    runtime = build_engine(cfg)
+    factory = build_session_factory(runtime)
+    admin = create_async_engine(cfg.migration_database_url)
+    try:
+        async with admin.connect() as conn:
+            outer = await conn.begin()
+            try:
+                owner_tg, owner, operator, invoice = await prepare(factory, conn)
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, operator)
+                await call(
+                    conn, "platform_saas_stars_set_rate", Decimal("2.50"),
+                )
+                await set_actor(conn, owner)
+                quote = await call(
+                    conn, "platform_saas_stars_create_order",
+                    invoice, owner_tg, 987654321, json=True,
+                )
+                assert await call(
+                    conn, "platform_saas_stars_precheckout",
+                    quote["payload"], owner_tg, 987654321, 60,
+                )
+                # A verified bank payment wins the race during Telegram
+                # authorization/settlement. Do not allocate another 150 RUB.
+                await conn.execute(text("RESET ROLE"))
+                await conn.execute(text(
+                    "INSERT INTO platform_saas_receipts "
+                    "(id,invoice_id,confirmed_by,amount_rub) "
+                    "VALUES(:id,:invoice,:operator,150)"
+                ), {
+                    "id": uuid4(), "invoice": invoice, "operator": operator,
+                })
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, owner)
+                result = await call(
+                    conn, "platform_saas_stars_record_charge",
+                    quote["payload"], owner_tg, 987654321, 60,
+                    "tg-race-" + uuid4().hex, datetime.now(UTC), json=True,
+                )
+                assert not result["applied"]
+                assert result["requires_review"]
+                balance = await call(
+                    conn, "platform_saas_v2_invoice_balance", invoice,
+                    json=True,
+                )
+                assert balance["paid"]
+                assert Decimal(balance["stars_rub"]) == 0
+                assert Decimal(balance["remaining_rub"]) == 0
+            finally:
+                await outer.rollback()
+    finally:
+        await runtime.dispose()
+        await admin.dispose()
