@@ -3,6 +3,11 @@
 # Requires a separate, root-owned /opt/vimi-pay-api/repo checkout with
 # read-only origin access. Never uses or modifies the bot stack checkout.
 set -Eeuo pipefail
+# Never trust inherited SSH-user PATH, Docker endpoint or Git directory overrides.
+umask 077
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_FILE COMPOSE_PROJECT_NAME
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_SSH_COMMAND GIT_CONFIG_COUNT
 [[ "$(id -u)" == 0 ]] || { echo "root required" >&2; exit 2; }
 [[ "$#" == 0 ]] || { echo "no command-line arguments allowed" >&2; exit 2; }
 
