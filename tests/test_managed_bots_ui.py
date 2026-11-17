@@ -168,6 +168,100 @@ async def test_managed_confirm_callback_connects_selected_bot_and_clears_keyboar
 
 
 
+async def test_managed_confirm_acknowledges_before_external_token_lookup(monkeypatch):
+    """A slow Telegram getManagedBotToken must not expire the callback."""
+    owner = uuid4()
+    query = _query("managedconfirm:111222333:generation1")
+    bot = _bot()
+
+    async def failed_connect(*_args, **_kwargs):
+        query.answer.assert_awaited_once()
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "connect_managed_bot_event", failed_connect)
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
+
+    await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
+        query, bot,
+    )
+
+    assert query.answer.await_count == 1
+    assert bot.send_message.await_count == 1
+    assert "Попробуйте" in bot.send_message.await_args.args[1]
+    assert "provider unavailable" not in bot.send_message.await_args.args[1]
+
+
+async def test_managed_confirm_shows_billing_or_registration_rejection(monkeypatch):
+    owner = uuid4()
+    query = _query("managedconfirm:111222333:generation1")
+    bot = _bot()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "connect_managed_bot_event", AsyncMock(
+        side_effect=ValueError("Подключение нового бота временно ограничено"),
+    ))
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
+
+    await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
+        query, bot,
+    )
+
+    query.answer.assert_awaited_once()
+    assert bot.send_message.await_count == 1
+    assert "⚠️" in bot.send_message.await_args.args[1]
+
+
+async def test_managed_confirm_reports_internal_failure_without_leaking_tokens(
+    monkeypatch, caplog,
+):
+    owner = uuid4()
+    query = _query("managedconfirm:111222333:generation1")
+    bot = _bot()
+    secret = "123456789:credential-never-appears"
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "connect_managed_bot_event", AsyncMock(
+        side_effect=OSError(secret),
+    ))
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
+
+    await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
+        query, bot,
+    )
+
+    query.answer.assert_awaited_once()
+    assert bot.send_message.await_count == 1
+    assert "внутренней ошибки" in bot.send_message.await_args.args[1]
+    assert secret not in caplog.text
+    assert secret not in bot.send_message.await_args.args[1]
+
+
+async def test_managed_confirm_expired_or_replayed_request_is_visible(monkeypatch):
+    owner = uuid4()
+    query = _query("managedconfirm:111222333:generation1")
+    bot = _bot()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "connect_managed_bot_event", AsyncMock(
+        return_value=ManagedBotResult(kind="ignored"),
+    ))
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
+
+    await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
+        query, bot,
+    )
+
+    query.answer.assert_awaited_once()
+    assert bot.send_message.await_count == 1
+    assert "Мои подключения" in bot.send_message.await_args.args[1]
+
+
 async def test_managed_confirm_preserves_staged_wizard_through_callback_middleware(
     monkeypatch,
 ):
