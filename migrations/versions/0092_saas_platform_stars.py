@@ -426,6 +426,33 @@ BEGIN
   RETURN true;
 END; $f$
     """)
+    # Refund history may omit invoice_payload. Only retrieve a payload
+    # from a provider charge already tied to this exact original payer/order.
+    # This read-only RPC never accepts a guessed order or alters balances.
+    op.execute("""
+CREATE FUNCTION public.platform_saas_stars_charge_payload(
+  p_charge_id text,p_telegram_id bigint,p_bot_id bigint
+) RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE actor uuid;
+BEGIN
+  actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+  IF actor IS NULL OR p_charge_id IS NULL OR
+     p_telegram_id IS NULL OR p_bot_id IS NULL THEN RETURN NULL; END IF;
+  RETURN (
+    SELECT o.invoice_payload
+    FROM public.platform_saas_stars_orders o
+    JOIN public.platform_saas_stars_charges c ON c.order_id=o.id
+    WHERE c.charge_id=p_charge_id AND o.owner_user_id=actor
+      AND o.payer_telegram_id=p_telegram_id
+      AND o.central_bot_id=p_bot_id
+      AND EXISTS(
+        SELECT 1 FROM public.telegram_users u
+        WHERE u.id=actor AND u.telegram_user_id=p_telegram_id
+      )
+  );
+END; $f$
+    """)
     # Preserve the existing operator/merchant bill JSON shape and verified
     # refund-credit classification when adding Stars paid funds.
     op.execute("""
@@ -799,6 +826,7 @@ FOR EACH ROW EXECUTE FUNCTION public.platform_saas_stars_append_only()
         "platform_saas_stars_precheckout(text,bigint,bigint,integer)",
         "platform_saas_stars_record_charge(text,bigint,bigint,integer,text,timestamptz)",
         "platform_saas_stars_record_refund(text,bigint,bigint,integer,text,timestamptz)",
+        "platform_saas_stars_charge_payload(text,bigint,bigint)",
     ):
         op.execute(f"REVOKE ALL ON FUNCTION public.{sig} FROM PUBLIC")
         op.execute(f"""
