@@ -1,3 +1,25 @@
+## 2026-11-17 — Stage 3 operator evidence and Stage 4 boundary
+
+Operator-supplied output from 16 Nov (not an independently repeated probe)
+showed Nginx active and bound to ports 80/443, `nginx -t` passing, a
+`pay-api.usevimi.ru` certificate expiring 2027-02-14 and a successful
+Certbot simulated renewal. An external `curl -i` returned precisely
+`503 {"status":"api_not_deployed"}` on `/health`: **closed HTTPS ingress**,
+not an active FastAPI backend. The automatic renewal timer was present;
+successful future renewal and actual renewal-hook deployment are not proven.
+Static IP reservation, authoritative DNS control, currently installed vhost
+content and old hostname isolation must be rechecked before cutover.
+See `docs/STAGE3_PUBLIC_INGRESS.md` for history and operator-only gates.
+
+Stage 4 is **independent** `public_api:app` and the separate loopback
+Compose project; PR #178 adds the foundational code but no public deploy.
+Never use the existing staging bot SSH deploy workflow for this API and
+never restart 51 bot/customer-supervisor services as an API side effect.
+Public `/health` stays 503 until an additional explicitly approved ingress
+release. Both PR #176 and #178 remain unmerged until owner approval.
+
+---
+
 ## 2026-11-16 — Stage 3 public ingress preflight (draft; not deployed)
 
 The approved next infrastructure phase is a **separate** `pay-api.usevimi.ru`
