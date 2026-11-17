@@ -12,11 +12,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from test_platform_saas_invoice_rls import _invoice, _line, _project, _tid
 
 from telegram_membership_saas.config import Settings
-from telegram_membership_saas.db import build_engine, build_session_factory
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 
 pytestmark = pytest.mark.skipif(
@@ -65,13 +64,15 @@ async def prepare(factory, conn):
 
 async def test_central_stars_settlement_replay_refund_and_bank_cap():
     cfg = Settings()
-    runtime = build_engine(cfg)
-    factory = build_session_factory(runtime)
     admin = create_async_engine(cfg.migration_database_url)
     try:
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
                 owner_tg, owner, operator, invoice, project = await prepare(factory, conn)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
@@ -180,19 +181,20 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
             finally:
                 await outer.rollback()
     finally:
-        await runtime.dispose()
         await admin.dispose()
 
 
 async def test_stars_price_is_disabled_until_operator_sets_it_and_owned_bills_only():
     cfg = Settings()
-    runtime = build_engine(cfg)
-    factory = build_session_factory(runtime)
     admin = create_async_engine(cfg.migration_database_url)
     try:
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
                 owner_tg, owner, operator, invoice, project = await prepare(factory, conn)
                 stranger_tg = _tid()
                 stranger = await ensure_telegram_actor(
@@ -234,20 +236,21 @@ async def test_stars_price_is_disabled_until_operator_sets_it_and_owned_bills_on
             finally:
                 await outer.rollback()
     finally:
-        await runtime.dispose()
         await admin.dispose()
 
 
 async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credited():
     """A real Stars charge is still journaled after a parallel bank settlement."""
     cfg = Settings()
-    runtime = build_engine(cfg)
-    factory = build_session_factory(runtime)
     admin = create_async_engine(cfg.migration_database_url)
     try:
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
                 owner_tg, owner, operator, invoice, project = await prepare(factory, conn)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
@@ -293,5 +296,4 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
             finally:
                 await outer.rollback()
     finally:
-        await runtime.dispose()
         await admin.dispose()
