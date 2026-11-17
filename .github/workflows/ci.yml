@@ -222,6 +222,7 @@ jobs:
                       "platform_saas_gateway_pending(integer)",
                       "platform_saas_gateway_record_charge(uuid,text,text,numeric,timestamptz)",
                       "platform_saas_gateway_record_refund(uuid,text,text,text,numeric,timestamptz)",
+                      "platform_saas_gateway_operator_refund(text,text,text,numeric)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
