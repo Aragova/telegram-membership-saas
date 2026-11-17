@@ -134,3 +134,62 @@ async def test_missing_platform_credentials_never_selects_orders(monkeypatch):
         MagicMock(), bot=MagicMock(), settings=_settings(),
     ) == 0
     pending.assert_not_awaited()
+
+
+
+async def test_private_operator_can_record_verified_refund_without_new_menu(
+    monkeypatch,
+):
+    record = AsyncMock(return_value={
+        "recorded": True,
+        "amount_rub": "150.00",
+        "credit_reversed_rub": "0.00",
+    })
+    monkeypatch.setattr(ui, "record_operator_verified_gateway_refund", record)
+    monkeypatch.setattr(ui, "get_settings", lambda: _settings())
+    router = ui.create_platform_saas_gateway_router(MagicMock())
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    msg = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=7878),
+        from_user=SimpleNamespace(id=7878),
+        text="/saasrefund crypto 4815162342 refund-confirmed-123 150 VERIFIED",
+    )
+    await _handler(router, "platform_verified_provider_refund")(msg, bot)
+    record.assert_awaited_once()
+    assert record.await_args.kwargs["provider"] == "crypto"
+    assert record.await_args.kwargs["provider_invoice_id"] == "4815162342"
+    assert record.await_args.kwargs["provider_refund_id"] == "refund-confirmed-123"
+    assert record.await_args.kwargs["amount_rub"] == Decimal("150")
+    text = bot.send_message.await_args.args[1]
+    assert "150.00" in text
+    assert "0.00" in text
+
+
+async def test_verified_refund_rejects_non_operator_or_missing_confirmation(
+    monkeypatch,
+):
+    record = AsyncMock()
+    monkeypatch.setattr(ui, "record_operator_verified_gateway_refund", record)
+    monkeypatch.setattr(ui, "get_settings", lambda: _settings())
+    router = ui.create_platform_saas_gateway_router(MagicMock())
+    callback = _handler(router, "platform_verified_provider_refund")
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    cmd = "/saasrefund crypto 4815162342 refund-confirmed-123 150 VERIFIED"
+    forged = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=9009),
+        from_user=SimpleNamespace(id=9009), text=cmd,
+    )
+    await callback(forged, bot)
+    record.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+
+    no_proof = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=7878),
+        from_user=SimpleNamespace(id=7878),
+        text="/saasrefund crypto 4815162342 refund-confirmed-123 150",
+    )
+    await callback(no_proof, bot)
+    record.assert_not_awaited()
+    assert bot.send_message.await_count == 1
