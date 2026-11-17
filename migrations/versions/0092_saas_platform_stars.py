@@ -603,6 +603,19 @@ BEGIN
   );
 END; $f$
     """)
+    # Match the existing owner-scoped, SECURITY DEFINER merchant bill RPC.
+    # CI creates membership_runtime after migrations; its grant is mirrored
+    # in the GitHub Actions role bootstrap.
+    op.execute("""
+DO $grant$ BEGIN
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+  THEN
+    GRANT EXECUTE ON FUNCTION
+      public.platform_saas_merchant_bill_summary(date,uuid)
+    TO membership_runtime;
+  END IF;
+END $grant$
+    """)
     # Prevent a bank confirmation from racing a paid Stars checkout.
     op.execute("""
 CREATE FUNCTION public.platform_saas_stars_cap_guard()
