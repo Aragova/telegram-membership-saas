@@ -217,6 +217,11 @@ jobs:
                       "platform_saas_stars_record_charge(text,bigint,bigint,integer,text,timestamptz)",
                       "platform_saas_stars_record_refund(text,bigint,bigint,integer,text,timestamptz)",
                       "platform_saas_stars_charge_payload(text,bigint,bigint)",
+                      "platform_saas_gateway_reserve(uuid,text,bigint,bigint)",
+                      "platform_saas_gateway_bind(uuid,bigint,bigint,text,text)",
+                      "platform_saas_gateway_pending(integer)",
+                      "platform_saas_gateway_record_charge(uuid,text,text,numeric,timestamptz)",
+                      "platform_saas_gateway_record_refund(uuid,text,text,text,numeric,timestamptz)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
@@ -246,7 +251,10 @@ jobs:
                       "public.platform_saas_stars_pricing, "
                       "public.platform_saas_stars_orders, "
                       "public.platform_saas_stars_charges, "
-                      "public.platform_saas_stars_refunds "
+                      "public.platform_saas_stars_refunds, "
+                      "public.platform_saas_gateway_orders, "
+                      "public.platform_saas_gateway_charges, "
+                      "public.platform_saas_gateway_refunds "
                       "FROM membership_runtime"
                   )
                   # The original provider rate is append-only. Only the
