@@ -38,6 +38,7 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import current_language, recipient_language, tr
+from telegram_membership_saas.modules import platform_saas_stars_handlers as stars_ui
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -57,7 +58,6 @@ from telegram_membership_saas.modules.crypto_pay.service import (
     disconnect_crypto_pay,
     read_crypto_pay_connection,
 )
-from telegram_membership_saas.modules import platform_saas_stars_handlers as stars_ui
 from telegram_membership_saas.modules.owner_notifications import (
     read_owner_settings,
     set_owner_setting,
