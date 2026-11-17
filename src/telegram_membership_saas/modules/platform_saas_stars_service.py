@@ -41,6 +41,7 @@ async def _rpc(
         ),
         "platform_saas_stars_set_rate": ("rate",),
         "platform_saas_stars_rate": (),
+        "platform_saas_stars_charge_payload": ("charge_id", "telegram_id", "bot_id"),
     }
     expected = signatures.get(name)
     if expected is None or set(arguments) != set(expected):
@@ -200,3 +201,27 @@ async def platform_stars_rate(
         name="platform_saas_stars_rate", arguments={},
     )
     return None if result is None else Decimal(str(result))
+
+
+
+async def recover_platform_stars_charge_payload(
+    factory: async_sessionmaker[AsyncSession], *,
+    payer_telegram_id: int, central_bot_id: int, charge_id: str,
+) -> str | None:
+    """Provider refund lookup by original *recorded* charge, never by price."""
+    if not 8 <= len(charge_id) <= 255 or central_bot_id <= 0:
+        raise ValueError("Invalid Telegram charge reference")
+    payload = await _rpc(
+        factory, payer_telegram_id=payer_telegram_id,
+        name="platform_saas_stars_charge_payload",
+        arguments={
+            "charge_id": charge_id,
+            "telegram_id": payer_telegram_id,
+            "bot_id": central_bot_id,
+        },
+    )
+    if payload is not None and (
+        not isinstance(payload, str) or not payload.startswith("vps:")
+    ):
+        raise RuntimeError("Invalid original platform invoice payload")
+    return payload
