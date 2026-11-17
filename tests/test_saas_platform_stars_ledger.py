@@ -114,6 +114,14 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 )
                 assert result["applied"] and not result["duplicate"]
                 assert Decimal(result["allocated_rub"]) == Decimal("150")
+                assert await call(
+                    conn, "platform_saas_stars_charge_payload",
+                    charge, owner_tg, 987654321,
+                ) == payload
+                assert await call(
+                    conn, "platform_saas_stars_charge_payload",
+                    charge, owner_tg, 111111111,
+                ) is None, "Refund lookup must bind to the original central bot"
                 # Even an administrative maintenance write cannot erase
                 # a legitimate charged invoice without refund evidence.
                 await conn.execute(text("RESET ROLE"))
