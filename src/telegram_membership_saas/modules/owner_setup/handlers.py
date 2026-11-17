@@ -3860,15 +3860,20 @@ def create_owner_setup_router(
                     raise ValueError("Invalid legacy invoice page")
                 action=("spm:"+token+":RUB:"
                         +_encode_saas_page(int(page_token)))
-            if action.startswith(("spm:","spv:","spc:")):
-                # Native pay flow for platform invoices. Currency and
-                # methods come from the central operator catalog, not
-                # individual channel payment methods. Legacy callbacks
-                # remain readable for older Telegram messages only.
+            if action.startswith(("spm:","spr:","spb:","spv:","spc:")):
+                # The platform invoice has ONE payment entry point and a
+                # four-rail 2x2 selector. The manual branch reuses the
+                # existing proven bank-catalog/payment-proof flow.
+                # Automatic rails must fail closed until their OWN verified
+                # platform-provider fulfillment is connected. Tenant-owned
+                # Crypto credentials or Stars balances cannot settle SaaS.
                 parts=action.split(":")
                 kind=parts[0]
-                if kind=="spm" and len(parts)!=4:
+                if kind in ("spm", "spb") and len(parts)!=4:
                     raise ValueError("Invalid pay selector")
+                if kind=="spr" and (len(parts)!=4
+                                    or parts[2] not in ("L","S","C","M")):
+                    raise ValueError("Invalid payment rail")
                 if kind=="spv" and len(parts)!=5:
                     raise ValueError("Invalid payment method")
                 if kind=="spc" and len(parts)!=6:
@@ -3887,21 +3892,93 @@ def create_owner_setup_router(
                     ))
                     await query.answer()
                     return
-                methods=await saas_catalog_for_invoice(
-                    factory,actor_id=actor_id,invoice_id=invoice_id,
-                    project_id=fixed_project_id,
-                )
-                if not methods:
-                    await bot.send_message(user_id,tr(
-                        "⚠️ У ViMi Pay пока нет включённых способов оплаты. "
-                        "Обратитесь в поддержку платформы.",
-                        "⚠️ ViMi Pay has no enabled payment methods yet. "
-                        "Contact platform support.",
-                    ))
-                    await query.answer()
-                    return
                 invoice_token=encode_uuid(invoice_id)
                 if kind=="spm":
+                    # One selector with two buttons per row. Do not expose
+                    # provider payment links until verified settlement exists.
+                    rows=[
+                        [
+                            _button("💳 Lava.top",
+                                    "spr:"+invoice_token+":L:"+page_text),
+                            _button("⭐ Telegram Stars",
+                                    "spr:"+invoice_token+":S:"+page_text),
+                        ],
+                        [
+                            _button("💎 Crypto Pay",
+                                    "spr:"+invoice_token+":C:"+page_text),
+                            _button(tr("🏦 Полуавтомат", "🏦 Manual"),
+                                    "spr:"+invoice_token+":M:"+page_text,
+                                    "success"),
+                        ],
+                        [_button(tr("⬅️ К счёту","⬅️ Invoice"),
+                                 "saasinvoices:0")],
+                    ]
+                    await _show_saas_payment_step(
+                        bot,query,
+                        tr("💳 <b>Оплата счёта ViMi Pay</b>\n"
+                           "Выберите способ оплаты:",
+                           "💳 <b>ViMi Pay invoice payment</b>\n"
+                           "Choose how to pay:")
+                        +"\n<b>"+format(remaining,".2f")+" ₽</b>",
+                        rows,
+                    )
+                elif kind=="spr":
+                    if parts[2]=="M":
+                        # Explicitly choose the manual-payment currency only
+                        # after picking the manual rail.
+                        return_action="spb:"+invoice_token+":RUB:"+page_text
+                        methods=await saas_catalog_for_invoice(
+                            factory,actor_id=actor_id,invoice_id=invoice_id,
+                            project_id=fixed_project_id,
+                        )
+                        if not methods:
+                            await _show_saas_payment_step(
+                                bot,query,tr(
+                                    "⚠️ Полуавтоматическая оплата пока "
+                                    "не настроена владельцем ViMi Pay.",
+                                    "⚠️ Manual payment is not configured "
+                                    "by the ViMi Pay operator yet.",
+                                ),[[_button(tr("⬅️ Способы оплаты",
+                                             "⬅️ Payment methods"),
+                                             "spm:"+invoice_token+":RUB:"
+                                             +page_text)]],
+                            )
+                            await query.answer()
+                            return
+                        action=return_action
+                        kind="spb"
+                        parts=action.split(":")
+                    else:
+                        # No fake 'I paid' button, payment instructions or
+                        # balance change while gateway credentials/verified
+                        # provider ledgers have not been deployed.
+                        name={"L":"Lava.top","S":"⭐ Telegram Stars",
+                              "C":"💎 Crypto Pay"}[parts[2]]
+                        await _show_saas_payment_step(
+                            bot,query,
+                            "⚠️ <b>"+escape(name)+"</b>\n"+
+                            tr("Автоматическая оплата пока недоступна. "
+                               "Средства не списаны. Выберите другой способ.",
+                               "Automatic payment is not available yet. "
+                               "No charge was made. Choose another method."),
+                            [[_button(tr("⬅️ Способы оплаты",
+                                         "⬅️ Payment methods"),
+                                      "spm:"+invoice_token+":RUB:"+page_text)]],
+                        )
+                        await query.answer()
+                        return
+                if kind=="spb":
+                    methods=await saas_catalog_for_invoice(
+                        factory,actor_id=actor_id,invoice_id=invoice_id,
+                        project_id=fixed_project_id,
+                    )
+                    if not methods:
+                        await bot.send_message(user_id,tr(
+                            "⚠️ Включённых способов полуавтоматической оплаты нет.",
+                            "⚠️ No manual payment methods are enabled.",
+                        ))
+                        await query.answer()
+                        return
                     currency=parts[2]
                     available=sorted({str(m["currency"]) for m in methods},
                         key=lambda c: ("RUB","USD","EUR","UAH","BYN").index(c))
@@ -3928,8 +4005,8 @@ def create_owner_setup_router(
                             +":"+page_text,"success",
                         )])
                     rows.append([_button(
-                        tr("⬅️ К счёту","⬅️ Invoice"),
-                        "saasinvoices:0",
+                        tr("⬅️ Способы оплаты", "⬅️ Payment methods"),
+                        "spm:"+invoice_token+":RUB:"+page_text,
                     )])
                     await _show_saas_payment_step(
                         bot, query,
@@ -3947,6 +4024,10 @@ def create_owner_setup_router(
                         rows,
                     )
                 else:
+                    methods=await saas_catalog_for_invoice(
+                        factory,actor_id=actor_id,invoice_id=invoice_id,
+                        project_id=fixed_project_id,
+                    )
                     method_id=decode_uuid(parts[2])
                     currency=parts[3]
                     chosen=next((m for m in methods if (
