@@ -38,6 +38,7 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import current_language, recipient_language, tr
+from telegram_membership_saas.modules import platform_saas_gateway_handlers as gateway_ui
 from telegram_membership_saas.modules import platform_saas_stars_handlers as stars_ui
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
@@ -3977,10 +3978,51 @@ def create_owner_setup_router(
                             )
                         await query.answer()
                         return
+                    elif parts[2]=="C":
+                        if fixed_project_id is None:
+                            # Platform-owned Crypto Pay app, never a merchant
+                            # credential or a customer bot's payment address.
+                            try:
+                                await gateway_ui.send_platform_crypto_checkout(
+                                    bot, factory, payer_telegram_id=user_id,
+                                    invoice_id=invoice_id,
+                                )
+                            except Exception:
+                                await bot.send_message(user_id,tr(
+                                    "⚠️ 💎 Crypto Pay пока недоступен. "
+                                    "Счёт не изменён; вернитесь к способам оплаты.",
+                                    "⚠️ 💎 Crypto Pay is unavailable. "
+                                    "The invoice is unchanged; choose another method.",
+                                ))
+                        else:
+                            central=get_settings().saas_central_bot_username
+                            deep_link=(
+                                "https://t.me/"+central+"?start=sc_"+invoice_token
+                            )
+                            await _show_saas_payment_step(
+                                bot,query,tr(
+                                    "💎 <b>Crypto Pay · ViMi Pay</b>\\n"
+                                    "Оплата открывается в центральном боте.",
+                                    "💎 <b>Crypto Pay · ViMi Pay</b>\\n"
+                                    "Checkout opens in the central bot.",
+                                ),[
+                                    [InlineKeyboardButton(
+                                        text=tr("💎 Продолжить в ViMi Pay",
+                                                "💎 Continue in ViMi Pay"),
+                                        url=deep_link,
+                                    )],
+                                    [_button(tr("⬅️ Способы оплаты",
+                                                "⬅️ Payment methods"),
+                                             "spm:"+invoice_token+":RUB:"
+                                             +page_text)],
+                                ],
+                            )
+                        await query.answer()
+                        return
                     else:
-                        # Lava and Crypto must not be displayed as paid until
-                        # independent platform provider reconciliation exists.
-                        name={"L":"Lava.top","C":"💎 Crypto Pay"}[parts[2]]
+                        # Lava.top remains fail-closed until user-supplied
+                        # purchaser email and provider reconciliation exist.
+                        name="Lava.top"
                         await _show_saas_payment_step(
                             bot,query,
                             "⚠️ <b>"+escape(name)+"</b>\n"+
