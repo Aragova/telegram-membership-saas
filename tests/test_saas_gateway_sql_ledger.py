@@ -110,12 +110,14 @@ async def test_gateway_receipt_replay_refund_and_bank_race():
                 )
                 assert Decimal(report["paid_rub"]) == 150
                 assert Decimal(report["credit_rub"]) == 0
+                await conn.execute(text("RESET ROLE"))
                 await set_actor(conn, operator)
                 op = await rpc(
                     conn, "platform_saas_invoice_report", 0, 10,
                     json=True,
                 )
                 assert Decimal(op["received_rub"]) >= 150
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await conn.execute(text("RESET ROLE"))
