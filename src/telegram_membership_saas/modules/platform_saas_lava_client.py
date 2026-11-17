@@ -122,12 +122,15 @@ def verify_lava_paid_invoice(
     found_id = _id_from(data)
     if found_id != expected_id:
         raise LavaTopError("Lava.top invoice ID mismatch")
-    if data.get("status") not in ("paid", "PAID", "success", "SUCCESS"):
-        raise LavaTopError("Lava.top did not confirm successful payment")
-    if data.get("currency") != expected_currency:
+    if data.get("status") != "completed" or data.get("type") != "ONE_TIME":
+        raise LavaTopError("Lava.top did not confirm completed one-time payment")
+    receipt = data.get("receipt")
+    if not isinstance(receipt, dict):
+        raise LavaTopError("Lava.top invoice receipt is missing")
+    if receipt.get("currency") != expected_currency:
         raise LavaTopError("Lava.top invoice currency mismatch")
     if _amount(expected_amount, expected_currency) != _amount(
-        data.get("amount"), expected_currency,
+        receipt.get("amount"), expected_currency,
     ):
         raise LavaTopError("Lava.top invoice amount mismatch")
     return LavaTopPaidInvoice(
@@ -195,6 +198,16 @@ class LavaTopClient:
             "currency": currency,
             "amount": float(total),
         })
+        if data.get("status") not in ("new", "in-progress"):
+            raise LavaTopError("Lava.top invoice is not payable")
+        amount_total = data.get("amountTotal")
+        if not isinstance(amount_total, dict):
+            raise LavaTopError("Lava.top invoice amount snapshot missing")
+        if (
+            amount_total.get("currency") != currency
+            or _amount(amount_total.get("amount"), currency) != total
+        ):
+            raise LavaTopError("Lava.top invoice quote differs from original")
         provider_id = _id_from(data)
         url = _checkout_link(data.get("paymentUrl"))
         return LavaTopCreatedInvoice(
