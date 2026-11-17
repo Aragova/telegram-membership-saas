@@ -67,7 +67,7 @@ async def test_provider_history_recovers_refund_with_optional_payload_missing(
     refund = AsyncMock(return_value=True)
     monkeypatch.setattr(recovery, "recover_platform_stars_charge_payload", lookup)
     monkeypatch.setattr(recovery, "record_platform_stars_refund", refund)
-    item = tx(charge="refund-123456789", amount=-60)
+    item = tx(charge="refund-123456789", amount=60)
     item.source = None
     item.receiver = SimpleNamespace(
         type="user", transaction_type="invoice_payment",
@@ -88,7 +88,7 @@ async def test_refund_without_known_original_charge_never_guesses(monkeypatch):
     refund = AsyncMock()
     monkeypatch.setattr(recovery, "recover_platform_stars_charge_payload", lookup)
     monkeypatch.setattr(recovery, "record_platform_stars_refund", refund)
-    item = tx(amount=-60)
+    item = tx(amount=60)
     item.source = None
     item.receiver = SimpleNamespace(
         type="user", transaction_type="invoice_payment",
@@ -98,6 +98,41 @@ async def test_refund_without_known_original_charge_never_guesses(monkeypatch):
         MagicMock(), bot_id=9876, transaction=item,
     )
     refund.assert_not_awaited()
+
+
+@pytest.mark.parametrize("signed", (0, -60, 250001))
+async def test_provider_rejects_invalid_outgoing_refund_amount(monkeypatch, signed):
+    record = AsyncMock()
+    monkeypatch.setattr(recovery, "record_platform_stars_refund", record)
+    item = tx(amount=signed)
+    item.source = None
+    item.receiver = SimpleNamespace(
+        type="user", transaction_type="invoice_payment",
+        user=SimpleNamespace(id=123), invoice_payload="vps:original",
+    )
+    assert not await recovery.reconcile_provider_stars_transaction(
+        MagicMock(), bot_id=9876, transaction=item,
+    )
+    record.assert_not_awaited()
+
+
+async def test_outgoing_refund_with_payload_uses_positive_provider_amount(monkeypatch):
+    record = AsyncMock(return_value=True)
+    lookup = AsyncMock()
+    monkeypatch.setattr(recovery, "record_platform_stars_refund", record)
+    monkeypatch.setattr(recovery, "recover_platform_stars_charge_payload", lookup)
+    item = tx(charge="refund-positive-123", amount=60)
+    item.source = None
+    item.receiver = SimpleNamespace(
+        type="user", transaction_type="invoice_payment",
+        user=SimpleNamespace(id=123), invoice_payload="vps:original",
+    )
+    assert await recovery.reconcile_provider_stars_transaction(
+        MagicMock(), bot_id=9876, transaction=item,
+    )
+    assert record.await_args.kwargs["stars_amount"] == 60
+    assert record.await_args.kwargs["charge_id"] == "refund-positive-123"
+    lookup.assert_not_awaited()
 
 
 async def test_provider_page_failure_never_advances_pagination(monkeypatch):
