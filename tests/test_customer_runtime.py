@@ -69,8 +69,8 @@ def test_central_can_drop_buyer_routes_for_cutover():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
     assert [r.name for r in dispatcher.sub_routers] == [
         "vimi-language", "vimi-saas-proof-ingress",
-        "secure-owner-transfer", "central-registrar",
-        "central-buyer-redirect"
+        "platform-saas-central-stars", "secure-owner-transfer",
+        "central-registrar", "central-buyer-redirect"
     ]
 
 
