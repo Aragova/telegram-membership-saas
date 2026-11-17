@@ -8,7 +8,6 @@ from telegram_membership_saas.api import create_app
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.public_api import app
 
-
 REPO = Path(__file__).resolve().parents[1]
 
 
