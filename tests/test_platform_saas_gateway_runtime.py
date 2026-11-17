@@ -107,6 +107,13 @@ async def test_gateway_scanner_leaves_unpaid_provider_rows_for_retry(monkeypatch
 
 
 async def test_gateway_scanner_applies_verified_once(monkeypatch):
+    from telegram_membership_saas import localization
+
+    # Existing RU notification test uses the same saved-language lookup
+    # as production rather than a dummy MagicMock database connection.
+    monkeypatch.setattr(
+        localization, "read_language", AsyncMock(return_value="ru"),
+    )
     order = {
         "id": str(uuid4()), "provider": "crypto",
         "payer_telegram_id": 1010,
