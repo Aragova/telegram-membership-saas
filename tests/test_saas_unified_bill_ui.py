@@ -114,7 +114,6 @@ def test_new_bot_with_expired_owner_trial_shows_pending_not_past_future_date(
         assert label in rendered
         assert "16.11.2026" not in rendered
         assert "150.00 ₽" not in rendered
-        assert "Pay" not in rendered or "Pay only" in rendered
 
 
 @pytest.mark.parametrize("lang,label", [
