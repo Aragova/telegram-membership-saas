@@ -4,6 +4,7 @@
 # read-only origin access. Never uses or modifies the bot stack checkout.
 set -Eeuo pipefail
 [[ "$(id -u)" == 0 ]] || { echo "root required" >&2; exit 2; }
+[[ "$#" == 0 ]] || { echo "no command-line arguments allowed" >&2; exit 2; }
 
 IFS= read -r requested || { echo "missing approved SHA" >&2; exit 2; }
 [[ "$requested" =~ ^[a-f0-9]{40}$ ]] || { echo "invalid SHA" >&2; exit 2; }
