@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import logging
 import re
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from aiogram import Bot, F, Router
+from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,6 +21,7 @@ from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.platform_saas_gateway_service import (
     GatewayLink,
     issue_platform_crypto_checkout,
+    record_operator_verified_gateway_refund,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid
 
@@ -93,5 +96,89 @@ def create_platform_saas_gateway_router(
                     "No charge was made. Return to payment methods.",
                 ),
             )
+
+    @router.message(Command("saasrefund"))
+    async def platform_verified_provider_refund(
+        message: Message, bot: Bot,
+    ) -> None:
+        """Operator-only evidence intake, never a provider refund request.
+
+        Actual funds must have been independently refunded in Lava.top or
+        the operator's Crypto Pay app BEFORE this command is used. No new
+        payment menu, duplicate button or unauthenticated webhook.
+        """
+        settings = get_settings()
+        if (
+            message.chat.type != "private"
+            or message.from_user is None
+            or message.from_user.id != message.chat.id
+            or message.from_user.id != settings.platform_owner_telegram_id
+            or settings.telegram_central_access_enabled
+        ):
+            return
+        fields = (message.text or "").split()
+        if len(fields) != 6 or fields[5] != "VERIFIED":
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "↩️ Сначала проверьте фактический возврат в кабинете "
+                    "Lava.top или Crypto Pay. Для записи в финансовый журнал:\n"
+                    "/saasrefund crypto <invoice_id> <refund_id> 150 VERIFIED\n"
+                    "Это НЕ отправляет деньги клиенту.",
+                    "↩️ First verify the actual refund in your Lava.top or "
+                    "Crypto Pay provider account. Then record the evidence:\n"
+                    "/saasrefund crypto <invoice_id> <refund_id> 150 VERIFIED\n"
+                    "This does NOT send money to the customer.",
+                ),
+            )
+            return
+        try:
+            provider, provider_id, refund_id = fields[1:4]
+            amount = Decimal(fields[4])
+            result = await record_operator_verified_gateway_refund(
+                factory, settings=settings, provider=provider,
+                provider_invoice_id=provider_id,
+                provider_refund_id=refund_id, amount_rub=amount,
+            )
+        except (InvalidOperation, ValueError):
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Неверные реквизиты возврата. Проверьте провайдера, "
+                    "ID и точную сумму в ₽.",
+                    "⚠️ Invalid refund evidence. Verify provider, IDs "
+                    "and exact RUB amount.",
+                ),
+            )
+            return
+        except Exception:
+            log.exception("Operator-verified platform provider refund not recorded")
+            await bot.send_message(
+                message.chat.id,
+                tr(
+                    "⚠️ Возврат не записан. Проверьте исходный платёж, "
+                    "сумму и журнал перед повторной попыткой.",
+                    "⚠️ Refund was not recorded. Verify original charge, "
+                    "amount and ledger before retrying.",
+                ),
+            )
+            return
+        await bot.send_message(
+            message.chat.id,
+            tr(
+                "✅ Возврат зарегистрирован в финансовом журнале. "
+                "Подтверждённый возврат: {amount} ₽, "
+                "возврат кредита по счёту: {credit} ₽.",
+                "✅ Verified refund recorded in the financial ledger. "
+                "Actual refunded: {amount} RUB; invoice credit reversed: "
+                "{credit} RUB.",
+            ).format(
+                amount=result["amount_rub"],
+                credit=result["credit_reversed_rub"],
+            ) if result["recorded"] else tr(
+                "↩️ Этот возврат уже был зарегистрирован ранее.",
+                "↩️ This refund was already recorded.",
+            ),
+        )
 
     return router
