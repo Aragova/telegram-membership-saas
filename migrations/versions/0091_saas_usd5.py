@@ -20,7 +20,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # Existing SECURITY DEFINER signatures, permissions and RLS are retained.
-    op.execute("""CREATE FUNCTION public.platform_saas_price_profile_read()
+    op.execute("""CREATE OR REPLACE FUNCTION public.platform_saas_price_profile_read()
     RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path=pg_catalog,public AS $f$
     DECLARE actor uuid; currency text;
