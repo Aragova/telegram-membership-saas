@@ -3928,26 +3928,9 @@ def create_owner_setup_router(
                     if parts[2]=="M":
                         # Explicitly choose the manual-payment currency only
                         # after picking the manual rail.
-                        return_action="spb:"+invoice_token+":RUB:"+page_text
-                        methods=await saas_catalog_for_invoice(
-                            factory,actor_id=actor_id,invoice_id=invoice_id,
-                            project_id=fixed_project_id,
-                        )
-                        if not methods:
-                            await _show_saas_payment_step(
-                                bot,query,tr(
-                                    "⚠️ Полуавтоматическая оплата пока "
-                                    "не настроена владельцем ViMi Pay.",
-                                    "⚠️ Manual payment is not configured "
-                                    "by the ViMi Pay operator yet.",
-                                ),[[_button(tr("⬅️ Способы оплаты",
-                                             "⬅️ Payment methods"),
-                                             "spm:"+invoice_token+":RUB:"
-                                             +page_text)]],
-                            )
-                            await query.answer()
-                            return
-                        action=return_action
+                        # The spb branch below reads the method catalog
+                        # only once, then renders the normal currency chooser.
+                        action="spb:"+invoice_token+":RUB:"+page_text
                         kind="spb"
                         parts=action.split(":")
                     else:
@@ -3975,10 +3958,14 @@ def create_owner_setup_router(
                         project_id=fixed_project_id,
                     )
                     if not methods:
-                        await bot.send_message(user_id,tr(
-                            "⚠️ Включённых способов полуавтоматической оплаты нет.",
-                            "⚠️ No manual payment methods are enabled.",
-                        ))
+                        await _show_saas_payment_step(
+                            bot,query,tr(
+                                "⚠️ Полуавтоматическая оплата не настроена.",
+                                "⚠️ Manual payment is not configured.",
+                            ),[[_button(tr("⬅️ Способы оплаты",
+                                         "⬅️ Payment methods"),
+                                         "spm:"+invoice_token+":RUB:"+page_text)]],
+                        )
                         await query.answer()
                         return
                     currency=parts[2]
