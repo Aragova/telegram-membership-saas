@@ -67,8 +67,12 @@ def test_management_dispatcher_routes_owner_first_buyer_separately():
     assert central.sub_routers[0].name == "vimi-language"
     assert central.sub_routers[1].name == "vimi-saas-proof-ingress"
     assert central.sub_routers[2].name == "platform-saas-central-stars"
-    assert central.sub_routers[3].name == "secure-owner-transfer"
-    assert central.sub_routers[4].name == "central-registrar"
+    assert central.sub_routers[3].name == "platform-saas-central-gateways"
+    assert central.sub_routers[4].name == "secure-owner-transfer"
+    assert central.sub_routers[5].name == "central-registrar"
+    assert "platform-saas-central-gateways" not in [
+        r.name for r in customer.sub_routers
+    ]
     assert "platform-saas-central-stars" not in [r.name for r in customer.sub_routers]
     assert "owner-tenant" in [r.name for r in customer.sub_routers]
     assert "telegram-admin" not in [r.name for r in central.sub_routers]
