@@ -1,0 +1,39 @@
+# Stage 4: a separate opt-in, loopback-only ViMi Pay API.
+# Run *only* with this file and a distinct project name:
+#   docker compose -p vimi-pay-public -f ops/public-api.compose.yaml up -d --build
+# Do NOT combine it with compose.yaml: its default app publishes 8000:8000.
+# Does not start or restart bot/customer-supervisor/postgres.
+services:
+  pay-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - uvicorn
+      - telegram_membership_saas.public_api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-proxy-headers
+    environment:
+      TMS_ENVIRONMENT: staging
+    ports:
+      - "127.0.0.1:18080:8000"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "65534:65534"
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200"]
+      interval: 15s
+      timeout: 4s
+      retries: 3
+      start_period: 10s
