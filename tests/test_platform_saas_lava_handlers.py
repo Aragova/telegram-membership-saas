@@ -8,8 +8,8 @@ import pytest
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.localization import _language
-from telegram_membership_saas.modules import platform_saas_lava_handlers as lava
 from telegram_membership_saas.modules import platform_saas_lava_client as client
+from telegram_membership_saas.modules import platform_saas_lava_handlers as lava
 from telegram_membership_saas.modules.platform_saas_gateway_service import GatewayLink
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
