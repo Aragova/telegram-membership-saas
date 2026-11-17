@@ -153,6 +153,35 @@ def test_verified_settlement_accepts_matching_provider_get():
     assert result.invoice_id == invoice_id
 
 
+async def test_authoritative_lava_get_uses_sdk_v2_receipt_snapshot():
+    """Provider GET /api/v1/invoices/{id} uses nested receipt, not flat amount."""
+    invoice_id = uuid4()
+
+    def provider(request: httpx.Request):
+        assert request.method == "GET"
+        assert request.url.path == f"/api/v1/invoices/{invoice_id}"
+        return httpx.Response(200, json={
+            # These are the Lava SDK InvoiceResponseV2 fields.
+            "id": str(invoice_id),
+            "type": "ONE_TIME",
+            "datetime": "2026-11-17T18:00:00Z",
+            "status": "completed",
+            "receipt": {"amount": 150.0, "currency": "RUB", "fee": 1.5},
+            "buyer": {"email": "payer@example.com"},
+            "product": {"name": "ViMi Pay service", "offer": "offer-id"},
+        })
+    async with LavaTopClient(
+        "TEST_ONLY_API_KEY", transport=httpx.MockTransport(provider),
+    ) as client:
+        received = await client.get_invoice(invoice_id=invoice_id)
+    paid = verify_lava_paid_invoice(
+        received, expected_id=invoice_id,
+        expected_currency="RUB", expected_amount=Decimal("150.00"),
+    )
+    assert paid.invoice_id == invoice_id
+    assert paid.amount == Decimal("150.00")
+
+
 async def test_provider_transport_failure_never_exposes_key():
     def handler(_: httpx.Request):
         raise httpx.ConnectError("unavailable")
