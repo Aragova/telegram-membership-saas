@@ -6,6 +6,34 @@ Stage 4 starts **after** the common `usevimi.ru` website work. This
 release is a closed local API foundation, not Telegram webhook cutover or
 public billing launch.
 
+## Verified versus pending (17 Nov 2026)
+
+The operator's earlier output (16 Nov, not a fresh automated probe)
+shows `pay-api.usevimi.ru/health` responding with **503
+`{"status":"api_not_deployed"}`**, Nginx syntax passing, listener 80/443
+active, a valid certificate, Certbot renewal simulation passing and a
+renewal timer installed. This confirms the intended *closed* edge at that
+time, not a deployed public FastAPI process. Recheck the response and
+localhost port ownership before an approved API deployment.
+
+Two open PRs serve separate purposes:
+- **#176**, Stage-3 infrastructure record, closed Nginx templates, and
+  renewal/rollback checks. The live server was configured separately; this
+  PR must **not** overwrite or automatically reapply those templates.
+- **#178**, this Stage-4 independent FastAPI + loopback Compose foundation.
+  Merging #178 alone does **not** start a container or change the live 503.
+
+**Next action after approval of the foundations:** design and review an
+independent API-only restricted deploy path (distinct SSH forced command,
+host trust, permissions and Compose project from the 51-bot deploy). The
+existing `staging-deploy.yml` forced command accepts only `deploy <SHA>`
+for the **bot stack**, not an API deployment. Do not repurpose or expand
+its privileged command without a separate scoped security review.
+The API release must validate a clean checkout and current approved
+`main`, ensure no public TCP listener on 18080/8000 and start only
+`vimi-pay-public`. Observe local health before any separate Nginx
+proxy change. No shared VM remote write has been performed by either PR.
+
 ## Safety boundaries
 
 - Existing `usevimi.ru`, `api.usevimi.ru` (Autoposting) and
