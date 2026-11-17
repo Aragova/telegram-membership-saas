@@ -210,3 +210,62 @@ async def test_gateway_credited_exactly_once_after_parallel_bank_payment():
                 await outer.rollback()
     finally:
         await admin.dispose()
+
+
+
+async def test_gateway_pending_rotates_beyond_one_hundred_unpaid_invoices():
+    """100 stuck payers cannot permanently hide the 101st paid provider."""
+    cfg = Settings()
+    admin = create_async_engine(cfg.migration_database_url)
+    try:
+        async with admin.connect() as conn:
+            outer = await conn.begin()
+            try:
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
+                payer_tg, payer, operator, invoice, _ = await prepare(
+                    factory, conn,
+                )
+                orders = [uuid4() for _ in range(103)]
+                # Admin-only test fixture inserts are transactional;
+                # the runtime role is never granted direct table writes.
+                await conn.execute(text("""
+                    INSERT INTO public.platform_saas_gateway_orders(
+                      id,invoice_id,owner_user_id,payer_telegram_id,
+                      central_bot_id,provider,invoice_payload,amount_rub,
+                      status,provider_invoice_id,provider_invoice_url,
+                      expires_at
+                    ) VALUES (
+                      :id,:invoice,:owner,:payer,99887766,'crypto',
+                      :payload,150,'issued',:provider_id,
+                      'https://t.me/CryptoBot?start=test',
+                      clock_timestamp()+interval '30 minutes'
+                    )
+                """), [
+                    {
+                        "id": oid, "invoice": invoice, "owner": payer,
+                        "payer": payer_tg, "payload": "vpc:" + str(oid),
+                        "provider_id": str(i + 100_000),
+                    }
+                    for i, oid in enumerate(orders)
+                ])
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, operator)
+                first = await rpc(
+                    conn, "platform_saas_gateway_pending", 100, json=True,
+                )
+                assert len(first) == 100
+                later = await rpc(
+                    conn, "platform_saas_gateway_pending", 100, json=True,
+                )
+                assert len(later) == 100
+                first_ids = {row["id"] for row in first}
+                later_ids = {row["id"] for row in later}
+                assert len(later_ids-first_ids) == 3
+                assert len(first_ids | later_ids) == 103
+            finally:
+                await outer.rollback()
+    finally:
+        await admin.dispose()
