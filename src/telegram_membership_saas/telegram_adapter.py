@@ -33,6 +33,9 @@ from telegram_membership_saas.modules.platform_dashboard_handlers import (
 from telegram_membership_saas.modules.platform_saas_receipt_handlers import (
     create_saas_receipt_router,
 )
+from telegram_membership_saas.modules.platform_saas_stars_handlers import (
+    create_platform_saas_stars_router,
+)
 from telegram_membership_saas.modules.telegram_access import create_telegram_access_router
 from telegram_membership_saas.modules.telegram_admin import create_telegram_admin_router
 from telegram_membership_saas.modules.telegram_admin.redirects import create_central_cutover_router
@@ -63,6 +66,10 @@ def create_dispatcher(
         ))
         # Register durable ViMi Pay receipt replies before generic handlers.
         dispatcher.include_router(create_saas_receipt_router(session_factory))
+        if not enable_access:
+            # Only the central ViMi Pay polling process receives SaaS Stars.
+            # Project-specific merchant bots never host this router.
+            dispatcher.include_router(create_platform_saas_stars_router(session_factory))
         if get_settings().platform_owner_telegram_id is not None:
             # Navigation through ANY central router must cancel the operator
             # bank-entry form before another message can be interpreted as
