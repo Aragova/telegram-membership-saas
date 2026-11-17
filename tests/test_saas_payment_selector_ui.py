@@ -66,12 +66,27 @@ async def test_central_account_pay_selector_routes_to_approved_method(
     locale=_language.set(language)
     try:
         first=await choose("spm:"+token+":RUB:"+compact)
-        buttons={button.callback_data for row in first.inline_keyboard
-                 for button in row}
-        assert "own:saasinvoices:0" in buttons
+        rows=first.inline_keyboard
+        assert len(rows)==3
+        assert [len(row) for row in rows]==[2,2,1]
+        assert [b.text for row in rows[:2] for b in row]==[
+            "💳 Lava.top","⭐ Telegram Stars",
+            "💎 Crypto Pay",("🏦 Полуавтомат" if language=="ru"
+                             else "🏦 Manual"),
+        ]
+        assert "own:saasinvoices:0" == rows[2][0].callback_data
+        # All payment choices preserve the original invoice and page token.
+        for code in ("L","S","C","M"):
+            assert "own:spr:"+token+":"+code+":"+compact in {
+                b.callback_data for row in rows for b in row
+            }
+        # Existing manual transfer still goes through the original
+        # central catalog and the original proof/approval flow.
+        await choose("spr:"+token+":M:"+compact)
+        manual=await choose("spb:"+token+":RUB:"+compact)
         nxt="own:spv:"+token+":"+encode_uuid(method)+":RUB:"+compact
-        assert nxt in buttons
-        # Method selection creates one FULL payment attempt immediately.
+        assert nxt in {b.callback_data for row in manual.inline_keyboard
+                       for b in row}
         await choose(nxt[4:])
         assert new_attempt.await_args.kwargs["invoice_id"]==invoice
         assert new_attempt.await_args.kwargs["method_id"]==method
@@ -91,5 +106,5 @@ async def test_central_account_pay_selector_routes_to_approved_method(
     finally:
         _language.reset(locale)
     selected.assert_not_awaited()
-    assert balance.await_count==2
-    assert catalog.await_count==2
+    assert balance.await_count==4
+    assert catalog.await_count==3

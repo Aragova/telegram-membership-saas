@@ -30,7 +30,7 @@ def central_welcome_rich() -> str:
         + tr("72 часа бесплатно после первого подключения",
              "72 hours free after your first connection") + "</td></tr>",
         "<tr><th>💳 " + tr("Обслуживание", "Service") + "</th><td>"
-        + tr("150 ₽ или $3 за бота в месяц", "RUB 150 or USD 3 per bot/month")
+        + tr("150 ₽ или $5 за бота в месяц", "RUB 150 or USD 5 per bot/month")
         + "</td></tr>",
         "<tr><th>📈 " + tr("Продажи", "Sales") + "</th><td>"
         + tr("5% с подтверждённых покупок после пробного периода",
@@ -53,8 +53,8 @@ def central_welcome_classic() -> str:
         "",
         "🎁 " + tr("72 часа бесплатно", "72 hours free"),
         "💳 " + tr(
-            "Далее 150 ₽ или $3 / бот в месяц",
-            "Then RUB 150 or USD 3 / bot per month",
+            "Далее 150 ₽ или $5 / бот в месяц",
+            "Then RUB 150 or USD 5 / bot per month",
         ),
         "📈 " + tr(
             "5% с подтверждённых продаж после пробного периода",

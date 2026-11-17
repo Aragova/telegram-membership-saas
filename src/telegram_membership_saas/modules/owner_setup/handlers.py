@@ -38,6 +38,9 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.localization import current_language, recipient_language, tr
+from telegram_membership_saas.modules import platform_saas_gateway_handlers as gateway_ui
+from telegram_membership_saas.modules import platform_saas_lava_handlers as lava_ui
+from telegram_membership_saas.modules import platform_saas_stars_handlers as stars_ui
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.deletion_service import (
     request_bot_retirement,
@@ -905,24 +908,24 @@ def create_owner_setup_router(
             user_id,
             tr(
                 "🧾 <b>Тариф обслуживания ViMi Pay</b>\n\n"
-                "Профиль влияет на будущие счета: 150 ₽ или $3 за бот "
+                "Профиль влияет на будущие счета: 150 ₽ или $5 за бот "
                 "в месяц. Это <b>не выбор способа оплаты</b>.\n"
                 "Оплатить существующий счёт можно в разделе 🧾 Счёт "
                 "в одной из валют, разрешённых платформой.\n\n"
                 "Текущий профиль: ",
                 "🧾 <b>ViMi Pay service tariff</b>\n\n"
                 "This selects the service price on future invoices: "
-                "150 RUB or 3 USD per bot per month. "
+                "150 RUB or 5 USD per bot per month. "
                 "It does <b>not</b> choose a payment method.\n"
                 "To pay an existing invoice, open 🧾 Bill and choose "
                 "a currency enabled by the platform.\n\n"
                 "Current profile: ",
-            ) + "<b>" + ("$3" if data["currency"]=="USD" else "150 ₽")
+            ) + "<b>" + ("$5" if data["currency"]=="USD" else "150 ₽")
             + "</b>",
             parse_mode="HTML",
             reply_markup=_markup([
                 [_button("150 ₽","saasprice:RUB"),
-                 _button("$3","saasprice:USD")],
+                 _button("$5","saasprice:USD")],
                 [_button(tr("⬅️ Настройки","⬅️ Settings"),"settings")],
             ]),
         )
@@ -3587,7 +3590,7 @@ def create_owner_setup_router(
                 "connarchive:", "connarchiveok:", "saasinvoices:", "saaspaychoices:",
                 "saasprice:", "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
-                "spm:", "spv:", "spc:",
+                "spm:", "spr:", "spb:", "spv:", "spc:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -3860,15 +3863,20 @@ def create_owner_setup_router(
                     raise ValueError("Invalid legacy invoice page")
                 action=("spm:"+token+":RUB:"
                         +_encode_saas_page(int(page_token)))
-            if action.startswith(("spm:","spv:","spc:")):
-                # Native pay flow for platform invoices. Currency and
-                # methods come from the central operator catalog, not
-                # individual channel payment methods. Legacy callbacks
-                # remain readable for older Telegram messages only.
+            if action.startswith(("spm:","spr:","spb:","spv:","spc:")):
+                # The platform invoice has ONE payment entry point and a
+                # four-rail 2x2 selector. The manual branch reuses the
+                # existing proven bank-catalog/payment-proof flow.
+                # Automatic rails must fail closed until their OWN verified
+                # platform-provider fulfillment is connected. Tenant-owned
+                # Crypto credentials or Stars balances cannot settle SaaS.
                 parts=action.split(":")
                 kind=parts[0]
-                if kind=="spm" and len(parts)!=4:
+                if kind in ("spm", "spb") and len(parts)!=4:
                     raise ValueError("Invalid pay selector")
+                if kind=="spr" and (len(parts)!=4
+                                    or parts[2] not in ("L","S","C","M")):
+                    raise ValueError("Invalid payment rail")
                 if kind=="spv" and len(parts)!=5:
                     raise ValueError("Invalid payment method")
                 if kind=="spc" and len(parts)!=6:
@@ -3887,21 +3895,202 @@ def create_owner_setup_router(
                     ))
                     await query.answer()
                     return
-                methods=await saas_catalog_for_invoice(
-                    factory,actor_id=actor_id,invoice_id=invoice_id,
-                    project_id=fixed_project_id,
-                )
-                if not methods:
-                    await bot.send_message(user_id,tr(
-                        "⚠️ У ViMi Pay пока нет включённых способов оплаты. "
-                        "Обратитесь в поддержку платформы.",
-                        "⚠️ ViMi Pay has no enabled payment methods yet. "
-                        "Contact platform support.",
-                    ))
-                    await query.answer()
-                    return
                 invoice_token=encode_uuid(invoice_id)
                 if kind=="spm":
+                    # One selector with two buttons per row. Do not expose
+                    # provider payment links until verified settlement exists.
+                    rows=[
+                        [
+                            _button("💳 Lava.top",
+                                    "spr:"+invoice_token+":L:"+page_text),
+                            _button("⭐ Telegram Stars",
+                                    "spr:"+invoice_token+":S:"+page_text),
+                        ],
+                        [
+                            _button("💎 Crypto Pay",
+                                    "spr:"+invoice_token+":C:"+page_text),
+                            _button(tr("🏦 Полуавтомат", "🏦 Manual"),
+                                    "spr:"+invoice_token+":M:"+page_text,
+                                    "success"),
+                        ],
+                        [_button(tr("⬅️ К счёту","⬅️ Invoice"),
+                                 "saasinvoices:0")],
+                    ]
+                    await _show_saas_payment_step(
+                        bot,query,
+                        tr("💳 <b>Оплата счёта ViMi Pay</b>\n"
+                           "Выберите способ оплаты:",
+                           "💳 <b>ViMi Pay invoice payment</b>\n"
+                           "Choose how to pay:")
+                        +"\n<b>"+format(remaining,".2f")+" ₽</b>",
+                        rows,
+                    )
+                    await query.answer()
+                    return
+                elif kind=="spr":
+                    if parts[2]=="M":
+                        # Explicitly choose the manual-payment currency only
+                        # after picking the manual rail.
+                        # The spb branch below reads the method catalog
+                        # only once, then renders the normal currency chooser.
+                        action="spb:"+invoice_token+":RUB:"+page_text
+                        kind="spb"
+                        parts=action.split(":")
+                    elif parts[2]=="S":
+                        if fixed_project_id is None:
+                            # Telegram Stars must be received by the actual
+                            # CENTRAL platform bot, never by tenant bots.
+                            try:
+                                await stars_ui.send_platform_stars_invoice(
+                                    bot, factory, payer_telegram_id=user_id,
+                                    invoice_id=invoice_id,
+                                )
+                            except Exception:
+                                await bot.send_message(user_id,tr(
+                                    "⚠️ ⭐ Оплата пока недоступна: "
+                                    "курс выплат или счёт требуют проверки.",
+                                    "⚠️ ⭐ Stars checkout is unavailable: "
+                                    "the payout rate or invoice needs review.",
+                                ))
+                        else:
+                            # Payer-only deep link keeps the same immutable
+                            # invoice ID while opening @vimipay_bot privately.
+                            central=get_settings().saas_central_bot_username
+                            deep_link=(
+                                "https://t.me/"+central+"?start=sa_"+invoice_token
+                            )
+                            await _show_saas_payment_step(
+                                bot,query,tr(
+                                    "⭐ <b>Оплата через Telegram Stars</b>\n"
+                                    "Платёж принимает центральный ViMi Pay.",
+                                    "⭐ <b>Pay with Telegram Stars</b>\n"
+                                    "Payment is received by central ViMi Pay.",
+                                ),[
+                                    [InlineKeyboardButton(
+                                        text=tr("⭐ Продолжить в ViMi Pay",
+                                                "⭐ Continue in ViMi Pay"),
+                                        url=deep_link,
+                                    )],
+                                    [_button(tr("⬅️ Способы оплаты",
+                                                "⬅️ Payment methods"),
+                                             "spm:"+invoice_token+":RUB:"
+                                             +page_text)],
+                                ],
+                            )
+                        await query.answer()
+                        return
+                    elif parts[2]=="C":
+                        if fixed_project_id is None:
+                            # Platform-owned Crypto Pay app, never a merchant
+                            # credential or a customer bot's payment address.
+                            try:
+                                await gateway_ui.send_platform_crypto_checkout(
+                                    bot, factory, payer_telegram_id=user_id,
+                                    invoice_id=invoice_id,
+                                )
+                            except Exception:
+                                await _show_saas_payment_step(
+                                    bot, query,
+                                    tr(
+                                        "⚠️ 💎 Оплата Crypto Pay пока недоступна. "
+                                        "Счёт не изменён; вернитесь к способам оплаты.",
+                                        "⚠️ 💎 Crypto Pay payment is not available. "
+                                        "The invoice is unchanged; choose another method.",
+                                    ),
+                                    [[_button(
+                                        tr("⬅️ Способы оплаты", "⬅️ Payment methods"),
+                                        "spm:"+invoice_token+":RUB:"+page_text,
+                                    )]],
+                                )
+                        else:
+                            central=get_settings().saas_central_bot_username
+                            deep_link=(
+                                "https://t.me/"+central+"?start=sc_"+invoice_token
+                            )
+                            await _show_saas_payment_step(
+                                bot,query,tr(
+                                    "💎 <b>Crypto Pay · ViMi Pay</b>\\n"
+                                    "Оплата открывается в центральном боте.",
+                                    "💎 <b>Crypto Pay · ViMi Pay</b>\\n"
+                                    "Checkout opens in the central bot.",
+                                ),[
+                                    [InlineKeyboardButton(
+                                        text=tr("💎 Продолжить в ViMi Pay",
+                                                "💎 Continue in ViMi Pay"),
+                                        url=deep_link,
+                                    )],
+                                    [_button(tr("⬅️ Способы оплаты",
+                                                "⬅️ Payment methods"),
+                                             "spm:"+invoice_token+":RUB:"
+                                             +page_text)],
+                                ],
+                            )
+                        await query.answer()
+                        return
+                    else:
+                        # Lava.top collects the payer's actual email only in
+                        # central @vimipay_bot; never in a tenant merchant bot.
+                        if fixed_project_id is None:
+                            try:
+                                await lava_ui.send_platform_lava_email_prompt(
+                                    bot, factory, payer_telegram_id=user_id,
+                                    invoice_id=invoice_id,
+                                )
+                            except Exception:
+                                await _show_saas_payment_step(
+                                    bot,query,tr(
+                                        "⚠️ 💳 Lava.top пока недоступна. "
+                                        "Счёт не изменён; выберите другой способ.",
+                                        "⚠️ 💳 Lava.top is not available. "
+                                        "The invoice is unchanged; choose another method.",
+                                    ),[[_button(
+                                        tr("⬅️ Способы оплаты","⬅️ Payment methods"),
+                                        "spm:"+invoice_token+":RUB:"+page_text,
+                                    )]],
+                                )
+                        else:
+                            central=get_settings().saas_central_bot_username
+                            deep_link=(
+                                "https://t.me/"+central+"?start=sl_"+invoice_token
+                            )
+                            await _show_saas_payment_step(
+                                bot,query,tr(
+                                    "💳 <b>Lava.top · ViMi Pay</b>\n"
+                                    "Продолжите в центральном боте: email "
+                                    "нужен только для создания ссылки на оплату.",
+                                    "💳 <b>Lava.top · ViMi Pay</b>\n"
+                                    "Continue in the central bot: your email "
+                                    "is needed only to create a payment link.",
+                                ),[
+                                    [InlineKeyboardButton(
+                                        text=tr("💳 Продолжить в ViMi Pay",
+                                                "💳 Continue in ViMi Pay"),
+                                        url=deep_link,
+                                    )],
+                                    [_button(tr("⬅️ Способы оплаты",
+                                                "⬅️ Payment methods"),
+                                             "spm:"+invoice_token+":RUB:"
+                                             +page_text)],
+                                ],
+                            )
+                        await query.answer()
+                        return
+                if kind=="spb":
+                    methods=await saas_catalog_for_invoice(
+                        factory,actor_id=actor_id,invoice_id=invoice_id,
+                        project_id=fixed_project_id,
+                    )
+                    if not methods:
+                        await _show_saas_payment_step(
+                            bot,query,tr(
+                                "⚠️ Полуавтоматическая оплата не настроена.",
+                                "⚠️ Manual payment is not configured.",
+                            ),[[_button(tr("⬅️ Способы оплаты",
+                                         "⬅️ Payment methods"),
+                                         "spm:"+invoice_token+":RUB:"+page_text)]],
+                        )
+                        await query.answer()
+                        return
                     currency=parts[2]
                     available=sorted({str(m["currency"]) for m in methods},
                         key=lambda c: ("RUB","USD","EUR","UAH","BYN").index(c))
@@ -3911,7 +4100,7 @@ def create_owner_setup_router(
                     currencies=[_button(
                         ("✅ " if c==currency else "")
                         + _saas_currency_label(c),
-                        "spm:"+invoice_token+":"+c+":"+page_text,
+                        "spb:"+invoice_token+":"+c+":"+page_text,
                         "success" if c==currency else "primary",
                     ) for c in available]
                     rows.extend(currencies[i:i+3] for i in
@@ -3928,8 +4117,8 @@ def create_owner_setup_router(
                             +":"+page_text,"success",
                         )])
                     rows.append([_button(
-                        tr("⬅️ К счёту","⬅️ Invoice"),
-                        "saasinvoices:0",
+                        tr("⬅️ Способы оплаты", "⬅️ Payment methods"),
+                        "spm:"+invoice_token+":RUB:"+page_text,
                     )])
                     await _show_saas_payment_step(
                         bot, query,
@@ -3947,6 +4136,10 @@ def create_owner_setup_router(
                         rows,
                     )
                 else:
+                    methods=await saas_catalog_for_invoice(
+                        factory,actor_id=actor_id,invoice_id=invoice_id,
+                        project_id=fixed_project_id,
+                    )
                     method_id=decode_uuid(parts[2])
                     currency=parts[3]
                     chosen=next((m for m in methods if (

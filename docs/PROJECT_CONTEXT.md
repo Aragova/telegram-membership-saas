@@ -1,3 +1,94 @@
+## 2026-11-17 — Draft #181: Lava.top real-payer-email checkout
+
+This PR now routes the platform-owned Lava.top payment through CENTRAL
+@vimipay_bot only, including when the merchant opens the bill from a
+connected bot. A private, 10-minute, one-shot ForceReply collects the
+payer's supplied email for the provider, without logging/storing that
+email in ViMi Pay or putting it in a tenant bot. The email reply is bound
+to the central bot's original prompt message and payer ID. No extra
+payment menu or bot worker is introduced.
+
+Before asking for an email the original issued invoice must be authorized,
+unpaid, and within Lava's RUB dynamic price bounds. The already-existing
+provider POST /api/v3/invoice, immutable invoice/order binding, 60-second
+central provider GET reconciliation, SQL exact-once charge accounting and
+the current refund evidence command are reused. Failed API calls, invalid
+emails, expired replies and unset API key/offer fail closed. No payment is
+considered completed from a link or Telegram message.
+
+**Draft only.** Operator credentials, offer permissions, real acceptance
+and provider-refund reconciliation remain unverified in the live 51-bot
+installation. No merge, VM configuration or bot fleet deploy performed.
+A follow-up review fix ensures: charged (including refunded) old provider
+orders are never reused as replacement quotes; a reopened original invoice
+reserves a new exact-outstanding order and preserves immutable old charge/
+refund evidence. Background recovery notifications resolve the actual payer
+or operator RU/EN preference independently of Telegram update middleware.
+Tests cover full and partial provider refunds and a saved English language.
+
+The stage-4 isolated FastAPI ingress remains strictly /health-only.
+
+---
+
+## 2026-11-17 — Verified Stage 4 API infrastructure and draft Stars invoice rail
+
+**User-observed VM evidence on 17 November, newer than older Stage 3/4
+sections below:** Independent API-only GitHub Actions connection-test #1 and
+deploy #2 succeeded on main `5e4d8f7`. VM `fast-vm` showed independent
+`vimi-pay-public-pay-api-1` **healthy** bound **127.0.0.1:18080**, local
+`/health` = 200 `{"status":"ok"}`. Owner then safely cut over exactly
+the `pay-api.usevimi.ru` Nginx `/health` location to local FastAPI;
+user-provided command output ended `FASTAPI HTTPS SUCCESS`, both local
+and public HTTPS = 200 after Nginx reload, all other tested routes
+`/ /payments /subscriptions /webhooks/telegram /docs /openapi.json /health/`
+stayed **404**. Nginx syntax passed. Existing Telegram bots not restarted.
+This is operator-supplied evidence, not a fresh automated VM probe, and does
+**NOT** expose payment webhooks or customer API routes.
+
+**Draft PR #181 current payment work:** new USD fee $5 for future invoices
+without modifying historic $3 rows; four fixed 2x2 buttons. Native Stars
+payment developed ONLY for central `@vimipay_bot`, with tenant-to-central
+handoff, new PostgreSQL ledger, exact-invoice allocation, charge replay
+deduplication, refund handling and bank/Stars concurrency guard. Stars checkout
+is **OFF** until the platform operator sets a verified `RUB per Star`
+payout quote (not a guessed or hard-coded FX rate) and PR code has been
+reviewed, merged and separately deployed. Lava.top and Crypto Pay buttons
+still fail closed; they are NOT live financial settlement. Payment code is not
+deployed on VM. No web cabinet planned. Explicit approval is required to
+merge or restart the 51-bot fleet.
+
+---
+
+## 2026-11-17 — Next billing decision: $5 and four invoice rails (Draft)
+
+Owner approved a prospective new ViMi Pay USD service fee of **$5 per bot
+per month** (RUB remains 150 ₽ and commission remains 5%) because Lava.top
+dynamic-price checkout requires at least 5 USD / 5 EUR / 50 RUB. Existing $3
+invoices, FX snapshots, allocations, confirmed bank receipts and entitlements
+must not be repriced or deleted.
+
+Target invoice Pay selector has exactly two rows of two choices:
+Lava.top | ⭐ Telegram Stars; 💎 Crypto Pay | Manual bank settlement.
+RU/EN must agree and any page/callback must remain in the same existing bill.
+Manual settlement is already supported and must not be duplicated.
+
+**Critical provider ownership:** a Stars invoice sent by a connected merchant
+bot pays THAT MERCHANT bot, not ViMi Pay. Platform SaaS Stars require a
+secure handoff to the CENTRAL @vimipay_bot and binding to the original
+merchant invoice. Crypto Pay requires the platform operator's own app/key,
+not a tenant app. Lava.top requires approved API product, user email,
+operator API/Webhook keys, amount validation and authoritative paid
+reconciliation. No provider is treated as paid from a click, an arbitrary
+callback, return URL or screenshot. Historical payments remain immutable.
+
+The four-button menu is currently a fail-closed Draft integration: the three
+automatic rails are not live until provider-specific verified settlement is
+implemented and real acceptance tests run. Do not deploy dead provider buttons
+to the 51-bot fleet. Review Telegram rules requiring Stars for digital goods
+and services sold inside Telegram before enabling other rails.
+
+---
+
 ## 2026-11-17 — Stage 4 live GitHub status and next release boundary
 
 GitHub on 17 Nov confirms Stage-3 PR #176 and isolated FastAPI PR #178

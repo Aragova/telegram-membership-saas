@@ -18,6 +18,11 @@ def test_platform_payment_method_selector_callbacks_fit_telegram(page):
     assert _decode_saas_page(compact_page) == page
     for kind, payload in (
         ("spm", f"{invoice}:RUB:{compact_page}"),
+        ("spr", f"{invoice}:L:{compact_page}"),
+        ("spr", f"{invoice}:S:{compact_page}"),
+        ("spr", f"{invoice}:C:{compact_page}"),
+        ("spr", f"{invoice}:M:{compact_page}"),
+        ("spb", f"{invoice}:RUB:{compact_page}"),
         ("spv", f"{invoice}:{method}:RUB:{compact_page}"),
         ("spc", f"{invoice}:{method}:RUB:F:{compact_page}"),
     ):

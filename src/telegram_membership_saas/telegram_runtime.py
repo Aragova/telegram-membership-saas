@@ -35,6 +35,12 @@ from telegram_membership_saas.modules.owner_notifications import (
 from telegram_membership_saas.modules.platform_monitor_alerts import (
     run_central_platform_monitor,
 )
+from telegram_membership_saas.modules.platform_saas_gateway_recovery import (
+    run_platform_gateway_recovery_loop,
+)
+from telegram_membership_saas.modules.platform_saas_stars_recovery import (
+    run_platform_stars_recovery_loop,
+)
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessAdapter,
@@ -275,6 +281,8 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
     polling: asyncio.Task[None] | None = None
     guard: asyncio.Task[None] | None = None
     central_monitor: asyncio.Task[None] | None = None
+    central_stars_recovery: asyncio.Task[None] | None = None
+    central_gateway_recovery: asyncio.Task[None] | None = None
 
     async def stop_dispatcher() -> None:
         if polling is not None:
@@ -301,6 +309,18 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
                     close_bot_session=False,
                 )
             )
+            # Reconcile provider-held Stars history independently of the
+            # one-shot successful_payment/refunded_payment polling updates.
+            # This task shares the existing central Bot and is cancelled
+            # before its HTTP session is closed.
+            central_stars_recovery = asyncio.create_task(
+                run_platform_stars_recovery_loop(factory, bot=bot)
+            )
+            central_gateway_recovery = asyncio.create_task(
+                run_platform_gateway_recovery_loop(
+                    factory, bot=bot, settings=current,
+                )
+            )
             if current.platform_owner_telegram_id is not None:
                 central_monitor = asyncio.create_task(
                     run_central_platform_monitor(
@@ -315,10 +335,15 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
                         await stop_dispatcher()
                     finally:
                         cancel_once(central_monitor)
-                        if central_monitor is not None:
-                            await asyncio.gather(
-                                central_monitor, return_exceptions=True,
-                            )
+                        cancel_once(central_stars_recovery)
+                        cancel_once(central_gateway_recovery)
+                        await asyncio.gather(
+                            *(task for task in (
+                                central_monitor, central_stars_recovery,
+                                central_gateway_recovery,
+                            ) if task is not None),
+                            return_exceptions=True,
+                        )
 
                 await complete_cleanup(stop_central())
         else:

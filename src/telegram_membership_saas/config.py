@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     customer_supervisor_shard_id: int = Field(default=0, ge=0, le=255)
     default_project_timezone: str = "Europe/Moscow"
     platform_owner_telegram_id: int | None = None
+    # Central Stars service settlement must never use a connected tenant bot.
+    saas_central_bot_username: str = "vimipay_bot"
+    # Platform-owned billing credentials; never reuse tenant merchant apps.
+    # Unset by default: no automatic SaaS external checkout without secrets.
+    saas_crypto_pay_api_token: SecretStr | None = None
+    saas_crypto_pay_testnet: bool = False
+    saas_lava_top_api_key: SecretStr | None = None
+    saas_lava_top_offer_id: UUID | None = None
     platform_timezone: str = "Europe/Moscow"
     # Explicit opt-in, only for central platform owner monitoring.
     platform_backup_gcs_bucket: str | None = None
@@ -77,6 +85,14 @@ class Settings(BaseSettings):
     def normalize_empty_platform_owner_id(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("saas_central_bot_username")
+    @classmethod
+    def validate_central_bot_username(cls, value: str) -> str:
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", value):
+            raise ValueError("Invalid central platform bot username")
         return value
 
     @field_validator("platform_owner_telegram_id")
