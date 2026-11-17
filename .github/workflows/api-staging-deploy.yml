@@ -1,0 +1,84 @@
+name: ViMi Pay | API-only staging release
+
+# Opt-in only. API is a separate service and must never use the bot deploy path.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Test API-only SSH first; deploy only when explicitly selected"
+        type: choice
+        required: true
+        default: connection-test
+        options:
+          - connection-test
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vimi-pay-api-manual-release
+  cancel-in-progress: false
+
+jobs:
+  api:
+    name: API-only ${{ inputs.operation }} (main)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: api-staging
+    env:
+      DEPLOY_OPERATION: ${{ inputs.operation }}
+      API_HOST: ${{ vars.PAY_API_STAGING_SSH_HOST }}
+      API_PRIVATE_KEY: ${{ secrets.PAY_API_STAGING_SSH_PRIVATE_KEY }}
+      API_KNOWN_HOSTS: ${{ secrets.PAY_API_STAGING_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Restricted SSH API-only operation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || exit 2
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 2
+          [[ "$DEPLOY_OPERATION" == connection-test || "$DEPLOY_OPERATION" == deploy ]] || exit 2
+          [[ -n "$API_HOST" && -n "$API_PRIVATE_KEY" && -n "$API_KNOWN_HOSTS" ]] || {
+            echo "Missing dedicated api-staging environment credentials" >&2; exit 1;
+          }
+          [[ "$API_HOST" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || {
+            echo "API SSH host must be a pinned IPv4" >&2; exit 2;
+          }
+          ssh_dir="$(mktemp -d)"
+          trap 'rm -rf "$ssh_dir"' EXIT
+          chmod 700 "$ssh_dir"
+          printf '%s\n' "$API_PRIVATE_KEY" > "$ssh_dir/id_ed25519"
+          printf '%s\n' "$API_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/id_ed25519" "$ssh_dir/known_hosts"
+          ssh-keygen -y -f "$ssh_dir/id_ed25519" >/dev/null
+          ssh-keygen -F "$API_HOST" -f "$ssh_dir/known_hosts" >/dev/null || {
+            echo "Pinned API SSH host key missing" >&2; exit 1;
+          }
+          ssh_args=(
+            -F /dev/null
+            -i "$ssh_dir/id_ed25519"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts"
+            -o ConnectTimeout=15
+            -o ConnectionAttempts=1
+            -o ServerAliveInterval=20
+            -o ServerAliveCountMax=6
+            -o ClearAllForwardings=yes
+            -o RequestTTY=no
+            -p 22
+          )
+          if [[ "$DEPLOY_OPERATION" == connection-test ]]; then
+            result="$(ssh "${ssh_args[@]}" "vimi-api-deploy@$API_HOST" preflight)"
+            [[ "$result" == "API_DEPLOY_SSH_OK" ]] || {
+              echo "Unexpected API-only SSH preflight response" >&2; exit 1;
+            }
+            echo "API-ONLY SSH CONNECTION TEST: SUCCESS (no changes)"
+          else
+            ssh "${ssh_args[@]}" "vimi-api-deploy@$API_HOST" "deploy $GITHUB_SHA"
+            echo "API-ONLY DEPLOY COMMAND COMPLETED: $GITHUB_SHA"
+          fi

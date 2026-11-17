@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Install root-owned at /usr/local/sbin/vimi-api-ssh-gate.
+# Dedicated SSH account with authorized_keys: restrict,command="...".
+set -Eeuo pipefail
+cmd="${SSH_ORIGINAL_COMMAND:-}"
+if [[ "$cmd" == "preflight" ]]; then
+  printf '%s\n' "API_DEPLOY_SSH_OK"
+  exit 0
+fi
+if [[ "$cmd" =~ ^deploy\ ([a-f0-9]{40})$ ]]; then
+  sha="${BASH_REMATCH[1]}"
+  # Exact sudoers rule allows this command with NO command-line arguments.
+  # Target root script performs its own independent SHA validation.
+  printf '%s\n' "$sha" | sudo -n /usr/local/sbin/vimi-api-root-deploy
+  exit $?
+fi
+echo "DENIED: API-only preflight or deploy <40-hex-sha> required" >&2
+exit 2
