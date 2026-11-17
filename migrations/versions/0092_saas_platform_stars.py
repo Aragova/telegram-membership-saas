@@ -52,7 +52,7 @@ ON public.platform_saas_stars_orders(invoice_id,created_at DESC)
     op.execute("""
 CREATE TABLE public.platform_saas_stars_charges (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id uuid NOT NULL UNIQUE REFERENCES public.platform_saas_stars_orders(id),
+    order_id uuid NOT NULL REFERENCES public.platform_saas_stars_orders(id),
     invoice_id uuid NOT NULL REFERENCES public.platform_saas_invoices(id),
     charge_id text NOT NULL UNIQUE CHECK (length(charge_id) BETWEEN 8 AND 255),
     stars_amount integer NOT NULL CHECK (stars_amount BETWEEN 1 AND 250000),
@@ -68,7 +68,7 @@ ON public.platform_saas_stars_charges(invoice_id)
     op.execute("""
 CREATE TABLE public.platform_saas_stars_refunds (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id uuid NOT NULL UNIQUE REFERENCES public.platform_saas_stars_orders(id),
+    order_id uuid NOT NULL REFERENCES public.platform_saas_stars_orders(id),
     charge_id text NOT NULL UNIQUE CHECK (length(charge_id) BETWEEN 8 AND 255),
     refunded_at timestamptz NOT NULL,
     recorded_at timestamptz NOT NULL DEFAULT clock_timestamp()
@@ -289,6 +289,7 @@ BEGIN
   IF inv.id IS NULL OR inv.status<>'issued'
      OR inv.owner_user_id IS DISTINCT FROM actor
      OR moment>ord.expires_at
+     OR ord.prechecked_at IS NOT NULL
      OR EXISTS(SELECT 1 FROM public.platform_saas_stars_charges c
        WHERE c.order_id=ord.id)
      OR EXISTS(SELECT 1 FROM public.platform_saas_stars_refunds r
@@ -301,7 +302,7 @@ BEGIN
      ))
      OR EXISTS(SELECT 1 FROM public.platform_saas_stars_orders other
        WHERE other.invoice_id=inv.id AND other.id<>ord.id
-         AND other.prechecked_at>moment-interval '10 minutes'
+         AND other.prechecked_at>moment-interval '24 hours'
          AND NOT EXISTS(SELECT 1 FROM public.platform_saas_stars_charges c
            WHERE c.order_id=other.id))
   THEN RETURN false; END IF;
@@ -317,7 +318,7 @@ CREATE FUNCTION public.platform_saas_stars_record_charge(
 ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
 DECLARE actor uuid; ord record; inv record; old record;
-        rub_allocated numeric:=0; state text;
+        ownership_owner uuid; rub_allocated numeric:=0;
 BEGIN
   actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
   IF actor IS NULL OR p_payload IS NULL OR p_paid_at IS NULL OR
@@ -339,7 +340,7 @@ BEGIN
       USING ERRCODE='42501';
   END IF;
   SELECT * INTO old FROM public.platform_saas_stars_charges
-    WHERE order_id=ord.id OR charge_id=p_charge_id FOR UPDATE;
+    WHERE charge_id=p_charge_id FOR UPDATE;
   IF old.id IS NOT NULL THEN
     IF old.order_id<>ord.id OR old.charge_id<>p_charge_id
        OR old.stars_amount<>p_amount THEN
@@ -357,18 +358,25 @@ BEGIN
     RAISE EXCEPTION 'Missing original Stars invoice'
       USING ERRCODE='42501';
   END IF;
+  -- Pin actual project ownership during allocation and activation.
+  -- A racing bot transfer must not roll back an already debited charge.
+  IF inv.bot_instance_id IS NOT NULL THEN
+    SELECT p.owner_user_id INTO ownership_owner
+    FROM public.bot_instances b
+    JOIN public.projects p ON p.id=b.project_id
+    WHERE b.id=inv.bot_instance_id
+    FOR SHARE OF p;
+  END IF;
   -- A genuinely charged Telegram update is always journaled.
   -- Never allocate twice after a concurrent bank payment or transfer.
   IF inv.status='issued' AND inv.owner_user_id=actor
      AND ord.prechecked_at IS NOT NULL
+     AND NOT EXISTS(SELECT 1 FROM public.platform_saas_stars_charges c
+       WHERE c.order_id=ord.id)
      AND NOT EXISTS(SELECT 1 FROM public.platform_saas_stars_refunds r
        WHERE r.order_id=ord.id)
      AND public.platform_saas_v2_remaining(inv.id)=ord.rub_amount
-     AND (inv.bot_instance_id IS NULL OR EXISTS(
-       SELECT 1 FROM public.bot_instances b
-       JOIN public.projects p ON p.id=b.project_id
-       WHERE b.id=inv.bot_instance_id AND p.owner_user_id=actor
-     ))
+     AND (inv.bot_instance_id IS NULL OR ownership_owner=actor)
   THEN rub_allocated:=ord.rub_amount; END IF;
   INSERT INTO public.platform_saas_stars_charges
     (order_id,invoice_id,charge_id,stars_amount,applied_rub,paid_at)
@@ -401,7 +409,7 @@ BEGIN
     RAISE EXCEPTION 'Stars refund identity mismatch' USING ERRCODE='42501';
   END IF;
   SELECT * INTO old FROM public.platform_saas_stars_refunds
-    WHERE order_id=ord.id OR charge_id=p_charge_id FOR UPDATE;
+    WHERE charge_id=p_charge_id FOR UPDATE;
   IF old.id IS NOT NULL THEN
     IF old.order_id<>ord.id OR old.charge_id<>p_charge_id THEN
       RAISE EXCEPTION 'Conflicting Stars refund replay' USING ERRCODE='23505';
@@ -409,7 +417,7 @@ BEGIN
     RETURN false;
   END IF;
   IF EXISTS(SELECT 1 FROM public.platform_saas_stars_charges c
-     WHERE c.order_id=ord.id AND c.charge_id<>p_charge_id) THEN
+     WHERE c.charge_id=p_charge_id AND c.order_id<>ord.id) THEN
     RAISE EXCEPTION 'Stars refund charge mismatch' USING ERRCODE='23505';
   END IF;
   INSERT INTO public.platform_saas_stars_refunds
