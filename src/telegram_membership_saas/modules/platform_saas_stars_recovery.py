@@ -57,7 +57,7 @@ async def reconcile_provider_stars_transaction(
     if (
         not isinstance(charge, str) or not 8 <= len(charge) <= 255
         or not isinstance(amount, int) or isinstance(amount, bool)
-        or not 1 <= abs(amount) <= STARS_LIMIT
+        or not 1 <= amount <= STARS_LIMIT
         or fractional not in (None, 0)
     ):
         return False
@@ -94,10 +94,9 @@ async def reconcile_provider_stars_transaction(
             charge_id=charge, paid_at=timestamp,
         )
         return not result.get("duplicate", False)
-    if amount >= 0:
-        # Outgoing refunds of bot-held Stars are negative. Fail closed on
-        # unexpected semantics rather than confusing a purchase with a refund.
-        return False
+    # Bot API JSON serializes an outgoing refund as a positive amount,
+    # using receiver (not source) to identify its direction. Rejecting
+    # positive refunds would silently retain paid service after a refund.
     if not isinstance(payload, str) or not payload.startswith("vps:"):
         payload = await recover_platform_stars_charge_payload(
             factory, payer_telegram_id=payer,
@@ -111,7 +110,7 @@ async def reconcile_provider_stars_transaction(
             return False
     return await record_platform_stars_refund(
         factory, payer_telegram_id=payer, central_bot_id=bot_id,
-        payload=payload, currency="XTR", stars_amount=-amount,
+        payload=payload, currency="XTR", stars_amount=amount,
         charge_id=charge, refunded_at=timestamp,
     )
 
