@@ -70,7 +70,7 @@ def test_central_can_drop_buyer_routes_for_cutover():
     assert [r.name for r in dispatcher.sub_routers] == [
         "vimi-language", "vimi-saas-proof-ingress",
         "platform-saas-central-stars", "platform-saas-central-gateways",
-        "secure-owner-transfer",
+        "platform-saas-central-lava", "secure-owner-transfer",
         "central-registrar", "central-buyer-redirect"
     ]
 

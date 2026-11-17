@@ -112,14 +112,16 @@ def test_platform_router_only_in_central_and_only_when_configured(monkeypatch):
     assert central.sub_routers[1].name == "vimi-saas-proof-ingress"
     assert central.sub_routers[2].name == "platform-saas-central-stars"
     assert central.sub_routers[3].name == "platform-saas-central-gateways"
-    assert central.sub_routers[4].name == "platform-dashboard"
-    assert central.sub_routers[5].name == "secure-owner-transfer"
-    assert central.sub_routers[6].name == "central-registrar"
+    assert central.sub_routers[4].name == "platform-saas-central-lava"
+    assert central.sub_routers[5].name == "platform-dashboard"
+    assert central.sub_routers[6].name == "secure-owner-transfer"
+    assert central.sub_routers[7].name == "central-registrar"
     assert "platform-saas-central-gateways" not in [
         r.name for r in tenant.sub_routers
     ]
     assert "platform-dashboard" not in [r.name for r in tenant.sub_routers]
     assert "platform-saas-central-stars" not in [r.name for r in tenant.sub_routers]
+    assert "platform-saas-central-lava" not in [r.name for r in tenant.sub_routers]
 
     monkeypatch.setattr(adapter, "get_settings", lambda: _settings(None))
     central = create_dispatcher(MagicMock(), enable_access=False)
@@ -127,8 +129,9 @@ def test_platform_router_only_in_central_and_only_when_configured(monkeypatch):
     assert central.sub_routers[1].name == "vimi-saas-proof-ingress"
     assert central.sub_routers[2].name == "platform-saas-central-stars"
     assert central.sub_routers[3].name == "platform-saas-central-gateways"
-    assert central.sub_routers[4].name == "secure-owner-transfer"
-    assert central.sub_routers[5].name == "central-registrar"
+    assert central.sub_routers[4].name == "platform-saas-central-lava"
+    assert central.sub_routers[5].name == "secure-owner-transfer"
+    assert central.sub_routers[6].name == "central-registrar"
 
 
 @pytest.mark.parametrize(("id_value", "expected"), [
