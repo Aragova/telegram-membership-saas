@@ -536,8 +536,10 @@ CREATE FUNCTION public.platform_saas_gateway_bind(
 SET search_path=pg_catalog,public AS $f$
 DECLARE actor uuid; o record;
 BEGIN
-  actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
-  IF actor IS NULL OR p_order IS NULL OR p_provider_invoice_id IS NULL
+  -- A merchant may reserve their own bill but only the platform's
+  -- authenticated reconciliation service can bind a provider payment URL.
+  actor:=public.platform_saas_require_owner();
+  IF p_order IS NULL OR p_provider_invoice_id IS NULL
      OR length(p_provider_invoice_id) NOT BETWEEN 1 AND 128
      OR p_provider_url IS NULL OR length(p_provider_url)>2048 THEN
     RAISE EXCEPTION 'Invalid gateway invoice reference'
@@ -545,7 +547,7 @@ BEGIN
   END IF;
   SELECT * INTO o FROM public.platform_saas_gateway_orders
   WHERE id=p_order FOR UPDATE;
-  IF o.id IS NULL OR o.owner_user_id IS DISTINCT FROM actor
+  IF o.id IS NULL
     OR o.payer_telegram_id<>p_telegram_id
     OR o.central_bot_id<>p_bot_id OR o.expires_at<clock_timestamp() THEN
     RAISE EXCEPTION 'Provider checkout owner mismatch'
