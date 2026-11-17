@@ -83,6 +83,7 @@ def test_root_api_deploy_is_locked_to_current_main_and_loopback() -> None:
     assert "cap_drop" in source
     assert "read_only" in source
     assert "up -d --no-deps --build pay-api" in source
+    assert '[[ "$#" == 0 ]]' in source
     assert "restore_on_error" in source
     assert "/health" in source
     assert "/payments" in source
@@ -100,6 +101,7 @@ def test_stage4_runbook_requires_dedicated_credentials_and_public_503() -> None:
     assert "PAY_API_STAGING_SSH_PRIVATE_KEY" in content
     assert "vimi-api-ssh-gate" in content
     assert "vimi-api-root-deploy" in content
+    assert 'NOPASSWD: /usr/local/sbin/vimi-api-root-deploy ""' in content
     assert "no general sudo" in content.lower()
     assert "503" in content
     assert "no automatic deploy" in content.lower()
