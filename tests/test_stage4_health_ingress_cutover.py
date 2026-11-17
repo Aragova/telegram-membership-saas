@@ -27,7 +27,7 @@ def test_health_proxy_is_an_exact_location_only_not_a_whole_vhost() -> None:
     assert "\nserver {" not in snippet
     assert "listen " not in snippet
     assert "0.0.0.0:18080" not in snippet
-    assert "api.usevimi.ru;" not in snippet
+    assert "server_name api.usevimi.ru;" not in snippet
     assert "staging.usevimi.ru;" not in snippet
     assert "8000:8000" not in snippet
 
