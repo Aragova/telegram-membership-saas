@@ -1,3 +1,27 @@
+## 2026-11-17 — Approved future web cabinet + provider webhook architecture (PR #184)
+
+Owner approves the **target** split: within Telegram, buyer digital checkout
+keeps ⭐ Telegram Stars and a neutral account entry; external manual bank/SBP,
+Lava.top and Crypto Pay payment paths, real buyer receipt submission and
+merchant review eventually live in a separately authenticated web cabinet.
+There is a distinct platform-operator invoice/review area; both share the
+**existing** original order, payment evidence, entitlement and bot-delivery
+ledger, not separate web accounting. Telegram Login (prefer OIDC), tenant/
+role RLS, provider-authorized webhooks plus independently verified GET
+recovery, immutable source records and phased opt-in cutover are required.
+
+**Now:** no new public API route, webhook, Nginx change or buyer-payment
+migration. The existing 4-rail **ViMi Pay SaaS** selector remains for active
+operator acceptance until a replacement has actually been tested. Continue
+with Lava, Stars and Crypto Pay readiness/checkout tests; do not merge or
+deploy to the bot fleet without explicit owner approval.
+
+Canonical forward plan: [WEB_CABINET_PAYMENT_ARCHITECTURE.md](WEB_CABINET_PAYMENT_ARCHITECTURE.md).
+Earlier project entries below are historical at their own dates and may
+say “no web cabinet planned”. This decision supersedes that assumption.
+
+---
+
 ## 2026-11-17 — Draft #181: Lava.top real-payer-email checkout
 
 This PR now routes the platform-owned Lava.top payment through CENTRAL
