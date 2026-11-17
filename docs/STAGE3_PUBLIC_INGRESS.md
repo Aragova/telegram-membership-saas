@@ -5,7 +5,34 @@ Stage 3A/B creates ONLY an isolated domain and closed HTTPS boundary.
 **Not a production API launch or webhook cutover.** No existing buyer flows,
 Telegram polling, tenant billing, files, PostgreSQL or Compose are changed.
 
-## Current evidence and unknowns (16 Nov 2026)
+## Operator-observed result (16-17 Nov 2026; evidence, not a new live probe)
+
+After the original Stage-3 preparation, the operator supplied **actual server
+and Windows client output** indicating:
+
+- An isolated `https://pay-api.usevimi.ru/health` replied with HTTP **503**
+  and JSON `{"status":"api_not_deployed"}` on **16 Nov 2026**. This is the
+  deliberately CLOSED ingress, not FastAPI readiness.
+- `nginx -t` passed, Nginx was **active** and listening on **80/443** in
+  the operator's server output. The exact running vhost files were not imported
+  from the VM and need not match these example files byte for byte.
+- Certbot listed a `pay-api.usevimi.ru` certificate expiring
+  **14 Feb 2027**, and the operator's simulated renewal succeeded.
+  Certbot's renewal timer was also listed; that is **not** evidence of a
+  future scheduled renewal or an independently observed Nginx reload.
+
+**Still unverified by this GitHub PR:** the current GCP static-IP reservation,
+the authoritative DNS zone/control, a fresh DNS resolution after the observed
+check, the currently deployed Nginx file content and renewal-hook installation,
+other sites' behavior, and today's external response. Require fresh scoped
+preflight before any further VM or public ingress change. Never replace
+working Nginx/certbot setup with the sample files merely to conform to this
+runbook. This PR is **source-controlled documentation and safe examples only**.
+
+The next heading captures the **earlier, pre-setup assessment**, and must not
+be misread as the latest operator-observed state.
+
+## Earlier preflight evidence and unknowns (before operator setup, 16 Nov 2026)
 
 - The operator previously reserved `34.13.188.95` for GCE `fast-vm`,
   zone `europe-west4-b` (recorded in stage-2/launch-readiness history).
