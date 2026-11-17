@@ -616,6 +616,90 @@ DO $grant$ BEGIN
   END IF;
 END $grant$
     """)
+    # Keep the original operator dashboard report shape and overdue buckets;
+    # its paid total must include non-refunded Stars service payments.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_invoice_report(
+            p_page integer, p_size integer
+        ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $f$
+        DECLARE result jsonb;
+        BEGIN
+          PERFORM public.platform_saas_require_owner();
+          IF p_page IS NULL OR p_page<0 OR p_page>100000
+             OR p_size IS NULL OR p_size<1 OR p_size>10 THEN
+            RAISE EXCEPTION 'Invalid invoice page' USING ERRCODE='22023';
+          END IF;
+          SELECT jsonb_build_object(
+              'enabled', (SELECT enabled FROM public.platform_saas_billing_control
+                          WHERE id=1),
+              'total', (SELECT count(*) FROM public.platform_saas_invoices
+                        WHERE status='issued'),
+              'unpaid', (SELECT count(*) FROM public.platform_saas_invoices i
+                         WHERE i.status='issued' AND public.platform_saas_v2_remaining(i.id)>0),
+              'unpaid_rub', (SELECT coalesce(sum(public.platform_saas_v2_remaining(i.id)),0)::text
+                             FROM public.platform_saas_invoices i
+                             WHERE i.status='issued' AND public.platform_saas_v2_remaining(i.id)>0),
+              'due_now_count',(SELECT count(*)
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at<=clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'due_now_rub',(SELECT coalesce(
+                sum(public.platform_saas_v2_remaining(i.id)),0)::text
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at<=clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'upcoming_count',(SELECT count(*)
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at>clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'upcoming_rub',(SELECT coalesce(
+                sum(public.platform_saas_v2_remaining(i.id)),0)::text
+                FROM public.platform_saas_invoices i
+                WHERE i.status='issued' AND i.due_at>clock_timestamp()
+                  AND public.platform_saas_v2_remaining(i.id)>0),
+              'received_rub', (
+                (SELECT coalesce(sum(r.amount_rub),0)
+                 FROM public.platform_saas_receipts r)
+                +(SELECT coalesce(sum(a.allocated_rub),0)
+                  FROM public.platform_saas_payment_allocations_v2 a)
+                +(SELECT coalesce(sum(c.applied_rub),0)
+                  FROM public.platform_saas_stars_charges c
+                  LEFT JOIN public.platform_saas_stars_refunds r
+                    ON r.order_id=c.order_id AND r.charge_id=c.charge_id
+                  WHERE r.id IS NULL)
+                )::text,
+              'pages', (SELECT CASE WHEN count(*)=0 THEN 1
+                               ELSE ceil(count(*)::numeric/p_size)::int END
+                        FROM public.platform_saas_invoices
+                        WHERE status='issued'),
+              'invoices', coalesce((
+                  SELECT jsonb_agg(jsonb_build_object(
+                    'id',j.id::text, 'owner',j.owner_user_id::text,
+                    'merchant',j.merchant_id::text,
+                    'kind',j.kind, 'total_rub',j.total_rub::text,
+                    'remaining_rub',public.platform_saas_v2_remaining(j.id)::text,
+                    'invoice_key',j.invoice_key,
+                    'bot',j.bot_instance_id::text,
+                    'period_start',j.period_start,'period_end',j.period_end,
+                    'due_at',j.due_at, 'status',
+                    CASE WHEN public.platform_saas_v2_remaining(j.id)=0 THEN 'paid'
+                         ELSE j.status END
+                  ) ORDER BY j.due_at DESC,j.id DESC)
+                  FROM (
+                    SELECT i.*
+                    FROM public.platform_saas_invoices i
+                    WHERE i.status='issued'
+                    ORDER BY i.due_at DESC,i.id DESC
+                    LIMIT p_size OFFSET p_page*p_size
+                  ) j
+              ),'[]'::jsonb)
+          ) INTO result;
+          RETURN result;
+        END;
+        $f$
+    """)
     # Prevent a bank confirmation from racing a paid Stars checkout.
     op.execute("""
 CREATE FUNCTION public.platform_saas_stars_cap_guard()
