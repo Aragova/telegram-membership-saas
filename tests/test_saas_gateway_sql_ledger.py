@@ -206,6 +206,46 @@ async def test_gateway_credited_exactly_once_after_parallel_bank_payment():
                 )
                 assert balance["paid"] and Decimal(balance["gateway_rub"]) == 0
                 assert Decimal(balance["remaining_rub"]) == 0
+                # An authentic refund of a charged-but-unapplied provider
+                # payment is still financial evidence. It must NOT change
+                # the bank-paid invoice's balance.
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await rpc(
+                            conn, "platform_saas_gateway_operator_refund",
+                            "crypto", "4815162333", "refund-bank-race-001",
+                            Decimal("150"), json=True,
+                        )
+                await set_actor(conn, operator)
+                refund = await rpc(
+                    conn, "platform_saas_gateway_operator_refund",
+                    "crypto", "4815162333", "refund-bank-race-001",
+                    Decimal("150"), json=True,
+                )
+                assert refund["recorded"]
+                assert Decimal(refund["amount_rub"]) == 150
+                assert Decimal(refund["credit_reversed_rub"]) == 0
+                again = await rpc(
+                    conn, "platform_saas_gateway_operator_refund",
+                    "crypto", "4815162333", "refund-bank-race-001",
+                    Decimal("150"), json=True,
+                )
+                assert not again["recorded"]
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await rpc(
+                            conn, "platform_saas_gateway_operator_refund",
+                            "crypto", "4815162333", "refund-bank-race-001",
+                            Decimal("149"), json=True,
+                        )
+                await set_actor(conn, payer)
+                balance_after_refund = await rpc(
+                    conn, "platform_saas_v2_invoice_balance",
+                    invoice, json=True,
+                )
+                assert balance_after_refund["paid"]
+                assert Decimal(balance_after_refund["gateway_rub"]) == 0
+                assert Decimal(balance_after_refund["remaining_rub"]) == 0
             finally:
                 await outer.rollback()
     finally:
@@ -265,6 +305,78 @@ async def test_gateway_pending_rotates_beyond_one_hundred_unpaid_invoices():
                 later_ids = {row["id"] for row in later}
                 assert len(later_ids-first_ids) == 3
                 assert len(first_ids | later_ids) == 103
+            finally:
+                await outer.rollback()
+    finally:
+        await admin.dispose()
+
+
+async def test_gateway_partial_refunds_reverse_only_actual_credited_rub():
+    """Multiple provider refunds sum to the real charge, not beyond it."""
+    cfg = Settings()
+    admin = create_async_engine(cfg.migration_database_url)
+    try:
+        async with admin.connect() as conn:
+            outer = await conn.begin()
+            try:
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
+                payer_tg, payer, operator, invoice, _ = await prepare(factory, conn)
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, payer)
+                order = await rpc(
+                    conn, "platform_saas_gateway_reserve",
+                    invoice, "crypto", payer_tg, 99887766, json=True,
+                )
+                await set_actor(conn, operator)
+                assert await rpc(
+                    conn, "platform_saas_gateway_bind",
+                    order["id"], payer_tg, 99887766, "partial-invoice-998",
+                    "https://t.me/CryptoBot?start=IVpartial",
+                )
+                charged = await rpc(
+                    conn, "platform_saas_gateway_record_charge",
+                    order["id"], "crypto", "partial-invoice-998",
+                    Decimal("150"), datetime.now(UTC), json=True,
+                )
+                assert charged["applied"]
+                first = await rpc(
+                    conn, "platform_saas_gateway_operator_refund",
+                    "crypto", "partial-invoice-998", "refund-part-1",
+                    Decimal("50"), json=True,
+                )
+                assert first["recorded"]
+                assert Decimal(first["credit_reversed_rub"]) == 50
+                await set_actor(conn, payer)
+                balance = await rpc(
+                    conn, "platform_saas_v2_invoice_balance",
+                    invoice, json=True,
+                )
+                assert Decimal(balance["remaining_rub"]) == 50
+                await set_actor(conn, operator)
+                second = await rpc(
+                    conn, "platform_saas_gateway_operator_refund",
+                    "crypto", "partial-invoice-998", "refund-part-2",
+                    Decimal("100"), json=True,
+                )
+                assert second["recorded"]
+                assert Decimal(second["credit_reversed_rub"]) == 100
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await rpc(
+                            conn, "platform_saas_gateway_operator_refund",
+                            "crypto", "partial-invoice-998", "refund-part-3",
+                            Decimal("0.01"), json=True,
+                        )
+                await set_actor(conn, payer)
+                balance = await rpc(
+                    conn, "platform_saas_v2_invoice_balance",
+                    invoice, json=True,
+                )
+                assert Decimal(balance["remaining_rub"]) == 150
+                assert Decimal(balance["gateway_rub"]) == 0
             finally:
                 await outer.rollback()
     finally:
