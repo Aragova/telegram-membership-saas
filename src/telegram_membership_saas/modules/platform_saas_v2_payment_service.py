@@ -97,7 +97,7 @@ async def saas_price_profile(
     actor_id: UUID, currency: str | None = None,
     project_id: UUID | None = None,
 ) -> dict:
-    """Owner's real RUB 150 or USD 3 service plan, no simulation."""
+    """Owner's real RUB 150 or USD 5 prospective service plan, no simulation."""
     if currency is not None and currency not in {"RUB", "USD"}:
         raise ValueError("Unknown ViMi Pay monthly service price")
     result = await _rpc(
