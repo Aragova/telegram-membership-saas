@@ -16,23 +16,19 @@ renewal timer installed. This confirms the intended *closed* edge at that
 time, not a deployed public FastAPI process. Recheck the response and
 localhost port ownership before an approved API deployment.
 
-Two open PRs serve separate purposes:
-- **#176**, Stage-3 infrastructure record, closed Nginx templates, and
-  renewal/rollback checks. The live server was configured separately; this
-  PR must **not** overwrite or automatically reapply those templates.
-- **#178**, this Stage-4 independent FastAPI + loopback Compose foundation.
-  Merging #178 alone does **not** start a container or change the live 503.
+**Current GitHub stage status (17 Nov 2026):** PR #176 (Stage-3
+ingress documentation) and PR #178 (independent FastAPI foundation)
+have both been merged into main. Neither merge started an API process,
+changed Nginx or updated the 51-bot fleet. The separate restricted
+API-only deployment workflow was merged as PR #179; an operator still
+needs to provision its dedicated VM credentials and runtime under a
+separately approved release. Never use the existing bot `staging-deploy.yml` for the API.
 
-**Next action after approval of the foundations:** design and review an
-independent API-only restricted deploy path (distinct SSH forced command,
-host trust, permissions and Compose project from the 51-bot deploy). The
-existing `staging-deploy.yml` forced command accepts only `deploy <SHA>`
-for the **bot stack**, not an API deployment. Do not repurpose or expand
-its privileged command without a separate scoped security review.
-The API release must validate a clean checkout and current approved
-`main`, ensure no public TCP listener on 18080/8000 and start only
-`vimi-pay-public`. Observe local health before any separate Nginx
-proxy change. No shared VM remote write has been performed by either PR.
+The next independent Stage-4C preparation is documented in
+[STAGE4_INGRESS_CUTOVER.md](STAGE4_INGRESS_CUTOVER.md): one exact-match
+Nginx `/health` location proxy, and only after the API is demonstrably
+healthy on loopback. The other public routes stay 404. No shared VM
+write, Nginx cutover or automatic deploy is implied by this source code.
 
 ## Safety boundaries
 
@@ -59,12 +55,10 @@ proxy change. No shared VM remote write has been performed by either PR.
 ## Independent release gates
 
 1. Confirm Stage 3 live state: isolated DNS and TLS, certbot renewal,
-   active Nginx and expected external 503 on `/health`. The Stage 3
-   documentation/templates PR #176 is separate and may not be merged.
-2. Review and merge this code only with owner's explicit approval,
-   CI green on exact head and clean Codex review. A GitHub merge does
-   **not** deploy the API: the existing staging SSH workflow restarts
-   only bot/supervisor services and must not be repurposed silently.
+   active Nginx and expected external 503 on `/health`. Stage-3 PR #176 is already merged; its templates were not installed by merging.
+2. The FastAPI foundation #178 has been reviewed and merged. Its GitHub
+   merge did **not** deploy it: staging SSH workflow restarts only
+   bot/supervisor services and must not be repurposed silently.
 3. For a later explicitly approved deployment, use the separate project:
    `docker compose -p vimi-pay-public -f ops/public-api.compose.yaml
    config` then `docker compose ... up -d --build` through a
