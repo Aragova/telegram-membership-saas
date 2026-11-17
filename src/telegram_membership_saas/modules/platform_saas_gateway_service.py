@@ -57,6 +57,8 @@ async def _rpc(
         "platform_saas_gateway_pending": ("limit",),
         "platform_saas_gateway_record_charge":
             ("order", "provider", "provider_id", "amount", "paid_at"),
+        "platform_saas_gateway_operator_refund":
+            ("provider", "provider_id", "refund_id", "amount"),
     }
     sig = signatures.get(name)
     if sig is None or set(values) != set(sig) or telegram_id <= 0:
@@ -270,3 +272,48 @@ async def verify_and_record_platform_gateway_payment(
     if not isinstance(recorded, dict) or not isinstance(recorded.get("applied"), bool):
         raise RuntimeError("Invalid platform gateway settlement")
     return recorded
+
+
+
+async def record_operator_verified_gateway_refund(
+    factory: async_sessionmaker[AsyncSession], *,
+    settings: Settings, provider: str, provider_invoice_id: str,
+    provider_refund_id: str, amount_rub: Decimal,
+) -> dict:
+    """Log a verified outbound refund using the central OWNER identity.
+
+    The operator must first verify the actual provider transaction in their
+    own Lava/Crypto Pay control panel. This is NOT provider-side refund API
+    issuance, payment discovery or an unsourced claim that money was returned.
+    Both Python and SECURITY DEFINER SQL require the platform owner.
+    """
+    if provider not in ("lava", "crypto"):
+        raise ValueError("Unsupported provider for verified refund")
+    if (
+        not isinstance(provider_invoice_id, str)
+        or not 1 <= len(provider_invoice_id) <= 128
+        or not isinstance(provider_refund_id, str)
+        or not 1 <= len(provider_refund_id) <= 128
+        or any(ch.isspace() for ch in provider_invoice_id + provider_refund_id)
+        or not isinstance(amount_rub, Decimal)
+        or not amount_rub.is_finite()
+        or amount_rub <= 0
+        or amount_rub != amount_rub.quantize(Decimal("0.01"))
+    ):
+        raise ValueError("Invalid externally verified refund evidence")
+    result = await _rpc(
+        factory, telegram_id=_platform_operator(settings),
+        name="platform_saas_gateway_operator_refund",
+        values={
+            "provider": provider, "provider_id": provider_invoice_id,
+            "refund_id": provider_refund_id, "amount": amount_rub,
+        }, as_json=True,
+    )
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("recorded"), bool)
+        or not isinstance(result.get("amount_rub"), str)
+        or not isinstance(result.get("credit_reversed_rub"), str)
+    ):
+        raise RuntimeError("Provider refund ledger acknowledgement invalid")
+    return result
