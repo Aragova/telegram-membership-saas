@@ -131,7 +131,8 @@ VM users, access keys, sudo privileges, containers or public endpoints.
    vimi-api-deploy ALL=(root) NOPASSWD: /usr/local/sbin/vimi-api-root-deploy ""
    ```
 
-   The sudoers `""` explicitly disallows command-line arguments. Validate the\n   sudoers file with `visudo -c`. The gate accepts only
+   The sudoers `""` explicitly disallows command-line arguments. Validate the
+   sudoers file with `visudo -c`. The gate accepts only
    literal `preflight` or `deploy <exact-current-main-40hex-SHA>`.
    It passes the SHA to the root script over stdin. There is no interactive
    shell, general `sudo`, Docker group, password auth, SSH forwarding,
