@@ -1,3 +1,32 @@
+## 2026-11-17 — Verified Stage 4 API infrastructure and draft Stars invoice rail
+
+**User-observed VM evidence on 17 November, newer than older Stage 3/4
+sections below:** Independent API-only GitHub Actions connection-test #1 and
+deploy #2 succeeded on main `5e4d8f7`. VM `fast-vm` showed independent
+`vimi-pay-public-pay-api-1` **healthy** bound **127.0.0.1:18080**, local
+`/health` = 200 `{"status":"ok"}`. Owner then safely cut over exactly
+the `pay-api.usevimi.ru` Nginx `/health` location to local FastAPI;
+user-provided command output ended `FASTAPI HTTPS SUCCESS`, both local
+and public HTTPS = 200 after Nginx reload, all other tested routes
+`/ /payments /subscriptions /webhooks/telegram /docs /openapi.json /health/`
+stayed **404**. Nginx syntax passed. Existing Telegram bots not restarted.
+This is operator-supplied evidence, not a fresh automated VM probe, and does
+**NOT** expose payment webhooks or customer API routes.
+
+**Draft PR #181 current payment work:** new USD fee $5 for future invoices
+without modifying historic $3 rows; four fixed 2x2 buttons. Native Stars
+payment developed ONLY for central `@vimipay_bot`, with tenant-to-central
+handoff, new PostgreSQL ledger, exact-invoice allocation, charge replay
+deduplication, refund handling and bank/Stars concurrency guard. Stars checkout
+is **OFF** until the platform operator sets a verified `RUB per Star`
+payout quote (not a guessed or hard-coded FX rate) and PR code has been
+reviewed, merged and separately deployed. Lava.top and Crypto Pay buttons
+still fail closed; they are NOT live financial settlement. Payment code is not
+deployed on VM. No web cabinet planned. Explicit approval is required to
+merge or restart the 51-bot fleet.
+
+---
+
 ## 2026-11-17 — Next billing decision: $5 and four invoice rails (Draft)
 
 Owner approved a prospective new ViMi Pay USD service fee of **$5 per bot
