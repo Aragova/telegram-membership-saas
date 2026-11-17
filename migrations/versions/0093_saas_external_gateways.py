@@ -33,6 +33,7 @@ CREATE TABLE public.platform_saas_gateway_orders (
     CHECK (status IN ('reserved','issued')),
   provider_invoice_id text,
   provider_invoice_url text,
+  last_rechecked_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   expires_at timestamptz NOT NULL,
   CHECK (expires_at>created_at),
@@ -48,6 +49,11 @@ CREATE TABLE public.platform_saas_gateway_orders (
     op.execute("""
 CREATE INDEX ix_saas_gateway_invoice
 ON public.platform_saas_gateway_orders(invoice_id,created_at DESC)
+    """)
+    op.execute("""
+CREATE INDEX ix_saas_gateway_recheck
+ON public.platform_saas_gateway_orders(last_rechecked_at NULLS FIRST,created_at)
+WHERE status='issued'
     """)
     op.execute("""
 CREATE TABLE public.platform_saas_gateway_charges (
@@ -570,24 +576,37 @@ END; $f$
 CREATE FUNCTION public.platform_saas_gateway_pending(p_limit integer)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
+DECLARE selected jsonb;
 BEGIN
   PERFORM public.platform_saas_require_owner();
   IF p_limit IS NULL OR p_limit<1 OR p_limit>100 THEN
     RAISE EXCEPTION 'Invalid gateway page size' USING ERRCODE='22023';
   END IF;
-  RETURN coalesce((
-    SELECT jsonb_agg(to_jsonb(q)) FROM (
-      SELECT o.id,o.invoice_id,o.owner_user_id,
-         o.payer_telegram_id,o.central_bot_id,o.provider,
-         o.invoice_payload,o.amount_rub::text AS amount_rub,
-         o.provider_invoice_id,o.created_at
-      FROM public.platform_saas_gateway_orders o
-      WHERE o.status='issued'
-        AND NOT EXISTS(SELECT 1 FROM public.platform_saas_gateway_charges c
-                       WHERE c.order_id=o.id)
-      ORDER BY o.created_at ASC LIMIT p_limit
-    ) q
-  ),'[]'::jsonb);
+  -- Fair, crash-safe round robin: 100 old unpaid invoices must not
+  -- starve all newer paid invoices. Record the scan lease before the
+  -- provider request, and revisit all unpaid rows on later scans.
+  WITH candidates AS MATERIALIZED (
+    SELECT o.id
+    FROM public.platform_saas_gateway_orders o
+    WHERE o.status='issued'
+      AND NOT EXISTS(
+        SELECT 1 FROM public.platform_saas_gateway_charges c
+        WHERE c.order_id=o.id
+      )
+    ORDER BY o.last_rechecked_at NULLS FIRST,o.created_at ASC,o.id
+    FOR UPDATE OF o SKIP LOCKED LIMIT p_limit
+  ), updated AS (
+    UPDATE public.platform_saas_gateway_orders o
+    SET last_rechecked_at=clock_timestamp()
+    FROM candidates c WHERE c.id=o.id
+    RETURNING o.id,o.invoice_id,o.owner_user_id,o.payer_telegram_id,
+      o.central_bot_id,o.provider,o.invoice_payload,
+      o.amount_rub::text AS amount_rub,o.provider_invoice_id,
+      o.created_at
+  )
+  SELECT coalesce(jsonb_agg(to_jsonb(x)),'[]'::jsonb)
+    INTO selected FROM updated x;
+  RETURN selected;
 END; $f$
     """)
     op.execute("""
