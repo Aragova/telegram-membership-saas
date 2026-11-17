@@ -1,3 +1,28 @@
+## 2026-11-17 — Draft #181: Lava.top real-payer-email checkout
+
+This PR now routes the platform-owned Lava.top payment through CENTRAL
+@vimipay_bot only, including when the merchant opens the bill from a
+connected bot. A private, 10-minute, one-shot ForceReply collects the
+payer's supplied email for the provider, without logging/storing that
+email in ViMi Pay or putting it in a tenant bot. The email reply is bound
+to the central bot's original prompt message and payer ID. No extra
+payment menu or bot worker is introduced.
+
+Before asking for an email the original issued invoice must be authorized,
+unpaid, and within Lava's RUB dynamic price bounds. The already-existing
+provider POST /api/v3/invoice, immutable invoice/order binding, 60-second
+central provider GET reconciliation, SQL exact-once charge accounting and
+the current refund evidence command are reused. Failed API calls, invalid
+emails, expired replies and unset API key/offer fail closed. No payment is
+considered completed from a link or Telegram message.
+
+**Draft only.** Operator credentials, offer permissions, real acceptance
+and provider-refund reconciliation remain unverified in the live 51-bot
+installation. No merge, VM configuration or bot fleet deploy performed.
+The stage-4 isolated FastAPI ingress remains strictly /health-only.
+
+---
+
 ## 2026-11-17 — Verified Stage 4 API infrastructure and draft Stars invoice rail
 
 **User-observed VM evidence on 17 November, newer than older Stage 3/4

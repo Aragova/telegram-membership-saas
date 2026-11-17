@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
+import re
 
 LAVA_API_BASE = "https://gate.lava.top"
 LAVA_LIMITS: dict[str, tuple[Decimal, Decimal]] = {
@@ -68,6 +69,28 @@ def _checkout_link(value: object) -> str:
         raise LavaTopError("Lava.top returned an unsafe checkout link")
     return value
 
+
+
+LAVA_EMAIL_PATTERN = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@[A-Za-z0-9]"
+    r"(?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+$"
+)
+
+
+def validate_lava_customer_email(value: object) -> str:
+    """Accept a plausible payer email without storing or logging its value."""
+    if (
+        not isinstance(value, str)
+        or not 5 <= len(value) <= 254
+        or value != value.strip()
+        or LAVA_EMAIL_PATTERN.fullmatch(value) is None
+    ):
+        raise ValueError("A valid payer email is required for Lava.top")
+    local = value.split("@", 1)[0]
+    if local.startswith(".") or local.endswith(".") or ".." in local:
+        raise ValueError("A valid payer email is required for Lava.top")
+    return value
 
 @dataclass(frozen=True, slots=True)
 class LavaTopCreatedInvoice:
@@ -186,12 +209,7 @@ class LavaTopClient:
         amount: Decimal, currency: str,
     ) -> LavaTopCreatedInvoice:
         total = _amount(amount, currency)
-        if (
-            not isinstance(email, str) or not 5 <= len(email) <= 254
-            or email != email.strip() or email.count("@") != 1
-            or any(c.isspace() for c in email)
-        ):
-            raise ValueError("A verified payer email is required for Lava.top")
+        email = validate_lava_customer_email(email)
         data = await self._request("POST", "/api/v3/invoice", json={
             "email": email,
             "offerId": str(offer_id),
