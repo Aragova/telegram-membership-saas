@@ -3587,7 +3587,7 @@ def create_owner_setup_router(
                 "connarchive:", "connarchiveok:", "saasinvoices:", "saaspaychoices:",
                 "saasprice:", "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
-                "spm:", "spv:", "spc:",
+                "spm:", "spr:", "spb:", "spv:", "spc:",
             ))
             if not is_registry_action:
                 await query.answer(
@@ -3990,7 +3990,7 @@ def create_owner_setup_router(
                     currencies=[_button(
                         ("✅ " if c==currency else "")
                         + _saas_currency_label(c),
-                        "spm:"+invoice_token+":"+c+":"+page_text,
+                        "spb:"+invoice_token+":"+c+":"+page_text,
                         "success" if c==currency else "primary",
                     ) for c in available]
                     rows.extend(currencies[i:i+3] for i in
