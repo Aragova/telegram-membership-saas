@@ -75,7 +75,8 @@ async def test_create_invoice_uses_v3_dynamic_price_and_secret_header():
             "amount": 150.0,
         }
         return httpx.Response(200, json={
-            "data": {"invoiceId": str(invoice),
+            "data": {"id": str(invoice), "status": "new",
+                     "amountTotal": {"amount": 150, "currency": "RUB"},
                      "paymentUrl": "https://app.lava.top/checkout/abc"},
         })
 
@@ -93,11 +94,16 @@ async def test_create_invoice_uses_v3_dynamic_price_and_secret_header():
 
 
 @pytest.mark.parametrize("result", [
-    {"invoiceId": "not-uuid", "paymentUrl": "https://lava.top/pay"},
-    {"invoiceId": str(uuid4()), "paymentUrl": "https://evil.example/pay"},
-    {"invoiceId": str(uuid4()), "paymentUrl": "http://lava.top/pay"},
-    {"invoiceId": str(uuid4())},
-    {"invoiceId": str(uuid4()), "contractId": str(uuid4()),
+    {"id": "not-uuid", "status": "new", "amountTotal":
+     {"amount": 150, "currency": "RUB"}, "paymentUrl": "https://lava.top/pay"},
+    {"id": str(uuid4()), "status": "new", "amountTotal":
+     {"amount": 150, "currency": "RUB"}, "paymentUrl": "https://evil.example/pay"},
+    {"id": str(uuid4()), "status": "new", "amountTotal":
+     {"amount": 150, "currency": "RUB"}, "paymentUrl": "http://lava.top/pay"},
+    {"id": str(uuid4()), "status": "new", "amountTotal":
+     {"amount": 150, "currency": "RUB"}},
+    {"id": str(uuid4()), "invoiceId": str(uuid4()),
+     "status": "new", "amountTotal": {"amount": 150, "currency": "RUB"},
      "paymentUrl": "https://lava.top/pay"},
 ])
 async def test_create_fails_closed_on_untrusted_provider_reply(result):
@@ -114,19 +120,19 @@ async def test_create_fails_closed_on_untrusted_provider_reply(result):
 
 
 @pytest.mark.parametrize("reply", [
-    {"status": "pending"},
+    {"status": "new"},
     {"status": "failed"},
-    {"status": "SUCCESS", "currency": "USD"},
-    {"status": "SUCCESS", "amount": 149},
-    {"status": "SUCCESS", "amount": "NaN"},
+    {"receipt": {"amount": 150, "currency": "USD", "fee": 0}},
+    {"receipt": {"amount": 149, "currency": "RUB", "fee": 0}},
+    {"receipt": {"amount": "NaN", "currency": "RUB", "fee": 0}},
+    {"type": "RECURRING"},
 ])
 def test_verified_settlement_requires_exact_provider_identity(reply):
     invoice_id = uuid4()
     frozen = {
         "invoiceId": str(invoice_id),
-        "status": "SUCCESS",
-        "currency": "RUB",
-        "amount": 150,
+        "status": "completed", "type": "ONE_TIME",
+        "receipt": {"currency": "RUB", "amount": 150, "fee": 0},
     }
     frozen.update(reply)
     with pytest.raises((LavaTopError, ValueError)):
@@ -139,8 +145,9 @@ def test_verified_settlement_requires_exact_provider_identity(reply):
 def test_verified_settlement_accepts_matching_provider_get():
     invoice_id = uuid4()
     result = verify_lava_paid_invoice({
-        "contractId": str(invoice_id), "status": "SUCCESS",
-        "currency": "RUB", "amount": "150.00",
+        "id": str(invoice_id), "status": "completed",
+        "type": "ONE_TIME",
+        "receipt": {"currency": "RUB", "amount": "150.00", "fee": 0},
     }, expected_id=invoice_id, expected_currency="RUB",
         expected_amount=Decimal("150.00"))
     assert result.invoice_id == invoice_id
