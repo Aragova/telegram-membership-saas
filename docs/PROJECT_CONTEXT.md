@@ -1,3 +1,33 @@
+## 2026-11-17 — Next billing decision: $5 and four invoice rails (Draft)
+
+Owner approved a prospective new ViMi Pay USD service fee of **$5 per bot
+per month** (RUB remains 150 ₽ and commission remains 5%) because Lava.top
+dynamic-price checkout requires at least 5 USD / 5 EUR / 50 RUB. Existing $3
+invoices, FX snapshots, allocations, confirmed bank receipts and entitlements
+must not be repriced or deleted.
+
+Target invoice Pay selector has exactly two rows of two choices:
+Lava.top | ⭐ Telegram Stars; 💎 Crypto Pay | Manual bank settlement.
+RU/EN must agree and any page/callback must remain in the same existing bill.
+Manual settlement is already supported and must not be duplicated.
+
+**Critical provider ownership:** a Stars invoice sent by a connected merchant
+bot pays THAT MERCHANT bot, not ViMi Pay. Platform SaaS Stars require a
+secure handoff to the CENTRAL @vimipay_bot and binding to the original
+merchant invoice. Crypto Pay requires the platform operator's own app/key,
+not a tenant app. Lava.top requires approved API product, user email,
+operator API/Webhook keys, amount validation and authoritative paid
+reconciliation. No provider is treated as paid from a click, an arbitrary
+callback, return URL or screenshot. Historical payments remain immutable.
+
+The four-button menu is currently a fail-closed Draft integration: the three
+automatic rails are not live until provider-specific verified settlement is
+implemented and real acceptance tests run. Do not deploy dead provider buttons
+to the 51-bot fleet. Review Telegram rules requiring Stars for digital goods
+and services sold inside Telegram before enabling other rails.
+
+---
+
 ## 2026-11-17 — Stage 4 live GitHub status and next release boundary
 
 GitHub on 17 Nov confirms Stage-3 PR #176 and isolated FastAPI PR #178
