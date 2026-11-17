@@ -113,11 +113,11 @@ async def _reserve(
 
 async def _bind(
     factory: async_sessionmaker[AsyncSession], *,
-    order_id: UUID, payer_telegram_id: int, bot_id: int,
-    provider_id: str, url: str,
+    settings: Settings, order_id: UUID, payer_telegram_id: int,
+    bot_id: int, provider_id: str, url: str,
 ) -> None:
     result = await _rpc(
-        factory, telegram_id=payer_telegram_id,
+        factory, telegram_id=_platform_operator(settings),
         name="platform_saas_gateway_bind",
         values={
             "order": order_id, "telegram_id": payer_telegram_id,
@@ -152,7 +152,7 @@ async def issue_platform_crypto_checkout(
         settings, order_id=order_id, rub_amount=amount,
     )
     await _bind(
-        factory, order_id=order_id,
+        factory, settings=settings, order_id=order_id,
         payer_telegram_id=payer_telegram_id,
         bot_id=central_bot_id,
         provider_id=str(provider.provider_invoice_id),
@@ -189,7 +189,7 @@ async def issue_platform_lava_checkout(
             amount=amount, currency="RUB",
         )
     await _bind(
-        factory, order_id=order_id,
+        factory, settings=settings, order_id=order_id,
         payer_telegram_id=payer_telegram_id,
         bot_id=central_bot_id,
         provider_id=str(created.invoice_id),
