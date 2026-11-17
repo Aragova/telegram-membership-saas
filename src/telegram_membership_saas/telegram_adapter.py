@@ -30,11 +30,11 @@ from telegram_membership_saas.modules.platform_dashboard_handlers import (
     PlatformBankNavigationMiddleware,
     create_platform_dashboard_router,
 )
-from telegram_membership_saas.modules.platform_saas_receipt_handlers import (
-    create_saas_receipt_router,
-)
 from telegram_membership_saas.modules.platform_saas_gateway_handlers import (
     create_platform_saas_gateway_router,
+)
+from telegram_membership_saas.modules.platform_saas_receipt_handlers import (
+    create_saas_receipt_router,
 )
 from telegram_membership_saas.modules.platform_saas_stars_handlers import (
     create_platform_saas_stars_router,
