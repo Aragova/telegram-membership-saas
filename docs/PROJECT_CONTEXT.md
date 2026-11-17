@@ -1,9 +1,9 @@
 ## 2026-11-17 — Stage 4 live GitHub status and next release boundary
 
 GitHub on 17 Nov confirms Stage-3 PR #176 and isolated FastAPI PR #178
-are MERGED into main. The separate API-only staging release mechanism is
-open as Draft PR #179 (exact HEAD 93f1e894, CI success and Codex no
-findings), and is not merged or installed. A code merge does not provision
+are MERGED into main. The separate API-only staging release mechanism was
+merged as PR #179 (exact reviewed HEAD 93f1e894, CI success and Codex no
+findings), but is not installed on the VM. A code merge does not provision
 the dedicated VM SSH account, root-owned deploy scripts, GitHub environment
 or start any API container.
 

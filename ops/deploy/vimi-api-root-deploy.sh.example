@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Install root-owned at /usr/local/sbin/vimi-api-root-deploy.
+# Requires a separate, root-owned /opt/vimi-pay-api/repo checkout with
+# read-only origin access. Never uses or modifies the bot stack checkout.
+set -Eeuo pipefail
+# Never trust inherited SSH-user PATH, Docker endpoint or Git directory overrides.
+umask 077
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_FILE COMPOSE_PROJECT_NAME
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_SSH_COMMAND GIT_CONFIG_COUNT
+[[ "$(id -u)" == 0 ]] || { echo "root required" >&2; exit 2; }
+[[ "$#" == 0 ]] || { echo "no command-line arguments allowed" >&2; exit 2; }
+
+IFS= read -r requested || { echo "missing approved SHA" >&2; exit 2; }
+[[ "$requested" =~ ^[a-f0-9]{40}$ ]] || { echo "invalid SHA" >&2; exit 2; }
+[[ -z "$(cat)" ]] || { echo "unexpected extra input" >&2; exit 2; }
+
+readonly repo=/opt/vimi-pay-api/repo
+readonly project=vimi-pay-public
+readonly compose=ops/public-api.compose.yaml
+[[ -d "$repo/.git" ]] || { echo "independent API checkout missing" >&2; exit 3; }
+[[ "$(stat -c %u "$repo")" == "0" ]] || { echo "API checkout must be root-owned" >&2; exit 3; }
+
+exec 9>/run/lock/vimi-pay-api-deploy.lock
+flock -w 180 9 || { echo "API-only deploy lock timed out" >&2; exit 3; }
+cd "$repo"
+[[ -z "$(git status --porcelain --untracked-files=all)" ]] || {
+  echo "API checkout is dirty; refusing to overwrite files" >&2; exit 3;
+}
+before="$(git rev-parse HEAD)"
+[[ "$before" =~ ^[a-f0-9]{40}$ ]] || exit 3
+
+# A root-only read-only GitHub deploy key and pinned github.com host key
+# must already be configured on this independent checkout.
+git fetch --quiet --no-tags origin main
+[[ "$(git rev-parse refs/remotes/origin/main)" == "$requested" ]] || {
+  echo "Requested SHA differs from current origin/main" >&2; exit 3;
+}
+git merge-base --is-ancestor "$before" "$requested" || {
+  echo "Refusing history rewrite or downgrade; use reviewed rollback" >&2; exit 3;
+}
+previous_running=0
+if [[ -n "$(docker ps -q --filter label=com.docker.compose.project="$project" --filter label=com.docker.compose.service=pay-api)" ]]; then
+  previous_running=1
+fi
+
+restore_on_error() {
+  local rc="$1"
+  trap - ERR
+  set +e
+  echo "API-ONLY DEPLOY FAILED; restoring only the isolated API service" >&2
+  # If there was no previously running API, stop only the new API service.
+  if [[ "$previous_running" == 0 && -f "$compose" ]]; then
+    docker compose -p "$project" -f "$compose" stop pay-api >/dev/null 2>&1 || true
+  fi
+  git checkout --quiet --detach "$before" || true
+  if [[ "$previous_running" == 1 && -f "$compose" ]]; then
+    docker compose -p "$project" -f "$compose" up -d --no-deps --build pay-api >&2 || {
+      echo "WARNING: failed to restore prior API. Operator intervention required." >&2;
+    }
+  fi
+  exit "$rc"
+}
+trap 'restore_on_error "$?"' ERR
+
+git checkout --quiet --detach "$requested"
+[[ -f "$compose" ]] || { echo "No independent API Compose file" >&2; false; }
+
+# Validate the fully resolved Compose file before touching any container.
+# Fail closed on public/extra ports, dependencies, services, secrets or mounts.
+config_json="$(docker compose -p "$project" -f "$compose" config --format json)"
+printf '%s\n' "$config_json" | python3 -c '
+import json, sys
+conf = json.load(sys.stdin)
+assert set(conf.get("services", {})) == {"pay-api"}
+s = conf["services"]["pay-api"]
+ports = s.get("ports", [])
+assert len(ports) == 1, ports
+p = ports[0]
+assert str(p.get("host_ip")) == "127.0.0.1", p
+assert str(p.get("published")) == "18080", p
+assert int(p.get("target")) == 8000, p
+assert p.get("protocol", "tcp") == "tcp", p
+assert s.get("read_only") is True
+assert s.get("privileged") is not True
+assert str(s.get("user")) == "65534:65534"
+assert "ALL" in s.get("cap_drop", [])
+assert "depends_on" not in s and "network_mode" not in s
+assert not s.get("volumes") and not s.get("secrets")
+assert set(s.get("environment", {})) == {"TMS_ENVIRONMENT"}
+assert s["environment"]["TMS_ENVIRONMENT"] == "staging"
+'
+docker compose -p "$project" -f "$compose" up -d --no-deps --build pay-api
+
+# Check both Docker health and the actual loopback API, including a closed
+# unknown route. No Nginx changes or bot restart are performed here.
+healthy=0
+for _ in $(seq 1 45); do
+  cid="$(docker compose -p "$project" -f "$compose" ps -q pay-api)"
+  if [[ -n "$cid" && "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null)" == "healthy" ]]; then
+    healthy=1
+    break
+  fi
+  sleep 2
+done
+[[ "$healthy" == 1 ]] || { echo "API container never became healthy" >&2; false; }
+python3 -c '
+import json
+import urllib.error
+import urllib.request
+url = "http://127.0.0.1:18080"
+with urllib.request.urlopen(url + "/health", timeout=5) as r:
+    assert r.status == 200 and json.load(r) == {"status": "ok"}
+try:
+    urllib.request.urlopen(url + "/payments", timeout=5)
+except urllib.error.HTTPError as e:
+    assert e.code == 404, e.code
+else:
+    raise AssertionError("business route unexpectedly exposed")
+'
+trap - ERR
+echo "PAY_API_DEPLOY_SUCCESS: $requested (loopback only; public ingress unchanged)"
