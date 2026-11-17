@@ -60,7 +60,7 @@ async def prepare(factory, conn):
     await conn.execute(text(
         "UPDATE platform_saas_invoices SET status='issued' WHERE id=:id"
     ), {"id": invoice})
-    return owner_tg, owner, operator, invoice
+    return owner_tg, owner, operator, invoice, project
 
 
 async def test_central_stars_settlement_replay_refund_and_bank_cap():
@@ -72,7 +72,7 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
-                owner_tg, owner, operator, invoice = await prepare(factory, conn)
+                owner_tg, owner, operator, invoice, project = await prepare(factory, conn)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
                 assert await call(
@@ -100,6 +100,10 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                     conn, "platform_saas_stars_precheckout",
                     payload, owner_tg, 987654321, 60,
                 )
+                assert not await call(
+                    conn, "platform_saas_stars_precheckout",
+                    payload, owner_tg, 987654321, 60,
+                ), "Same order cannot pass pre-checkout a second time"
                 charge = "synthetic-star-charge-" + uuid4().hex
                 paid_at = datetime.now(UTC)
                 result = await call(
@@ -115,6 +119,28 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                     json=True,
                 )
                 assert replay["applied"] and replay["duplicate"]
+                # An unexpected SECOND real provider charge is not the
+                # same as Telegram redelivering the first update.
+                extra = "second-star-charge-" + uuid4().hex
+                unapplied = await call(
+                    conn, "platform_saas_stars_record_charge",
+                    payload, owner_tg, 987654321, 60, extra,
+                    datetime.now(UTC), json=True,
+                )
+                assert not unapplied["applied"] and unapplied["requires_review"]
+                assert not unapplied["duplicate"]
+                assert await call(
+                    conn, "platform_saas_stars_record_refund",
+                    payload, owner_tg, 987654321, 60,
+                    extra, datetime.now(UTC),
+                )
+                report = await call(
+                    conn, "platform_saas_merchant_bill_summary",
+                    datetime.now(UTC).date().replace(day=1),
+                    project, json=True,
+                )
+                assert Decimal(report["paid_rub"]) == Decimal("150")
+                assert Decimal(report["credit_rub"]) == 0
                 balance = await call(
                     conn, "platform_saas_v2_invoice_balance", invoice,
                     json=True,
@@ -167,7 +193,7 @@ async def test_stars_price_is_disabled_until_operator_sets_it_and_owned_bills_on
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
-                owner_tg, owner, operator, invoice = await prepare(factory, conn)
+                owner_tg, owner, operator, invoice, project = await prepare(factory, conn)
                 stranger_tg = _tid()
                 stranger = await ensure_telegram_actor(
                     factory, telegram_id=stranger_tg,
@@ -222,7 +248,7 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
-                owner_tg, owner, operator, invoice = await prepare(factory, conn)
+                owner_tg, owner, operator, invoice, project = await prepare(factory, conn)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
                 await call(
