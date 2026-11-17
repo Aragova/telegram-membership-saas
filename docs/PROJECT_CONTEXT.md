@@ -1,3 +1,46 @@
+## 2026-11-17 — Stage 3 operator evidence and Stage 4 boundary
+
+Operator-supplied output from 16 Nov (not an independently repeated probe)
+showed Nginx active and bound to ports 80/443, `nginx -t` passing, a
+`pay-api.usevimi.ru` certificate expiring 2027-02-14 and a successful
+Certbot simulated renewal. An external `curl -i` returned precisely
+`503 {"status":"api_not_deployed"}` on `/health`: **closed HTTPS ingress**,
+not an active FastAPI backend. The automatic renewal timer was present;
+successful future renewal and actual renewal-hook deployment are not proven.
+Static IP reservation, authoritative DNS control, currently installed vhost
+content and old hostname isolation must be rechecked before cutover.
+See `docs/STAGE3_PUBLIC_INGRESS.md` for history and operator-only gates.
+
+Stage 4 is **independent** `public_api:app` and the separate loopback
+Compose project; PR #178 adds the foundational code but no public deploy.
+Never use the existing staging bot SSH deploy workflow for this API and
+never restart 51 bot/customer-supervisor services as an API side effect.
+Public `/health` stays 503 until an additional explicitly approved ingress
+release. Both PR #176 and #178 remain unmerged until owner approval.
+
+---
+
+## 2026-11-16 — Stage 3 public ingress preflight (draft; not deployed)
+
+The approved next infrastructure phase is a **separate** `pay-api.usevimi.ru`
+hostname with HTTPS, without changing `usevimi.ru`, `api.usevimi.ru`,
+`staging.usevimi.ru`, Telegram polling, SaaS invoices or bot access.
+
+Read [STAGE3_PUBLIC_INGRESS.md](STAGE3_PUBLIC_INGRESS.md) before any
+network changes. The stage-2 historical static address `34.13.188.95`
+requires an authorized live check of attachment/reservation on GCE `fast-vm`.
+DNS zone authority and Nginx listeners are also **unverified**. No DNS,
+GCP or VM change is implied by this PR.
+
+The new Nginx samples provide an isolated ACME challenge on HTTP and an
+intentionally **closed** HTTPS ingress (503 for /health, 404 otherwise)
+until a separately reviewed loopback-only API is ready. Do **not** start
+Compose `app` on public staging as shipped: base `ports: 8000:8000`
+publishes it on host interfaces. The normal staging deploy remains
+manual-only and restarts bot/supervisor; it does not configure Nginx/DNS.
+
+---
+
 ## 2026-11-15 — Launch-readiness audit, usevimi.ru and Lava
 
 The current verified GitHub main is `12427b17` (#168); CI #1721 passed

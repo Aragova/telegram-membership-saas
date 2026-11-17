@@ -1,0 +1,48 @@
+# Stage 3B ONLY: use AFTER single-host certificate issuance succeeds.
+# Intentionally CLOSED ingress. No backend, payment, webhook or bot endpoint.
+# Do not enable this file before the referenced TLS keypair exists.
+server {
+    listen 80;
+    server_name pay-api.usevimi.ru;
+    server_tokens off;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/vimi-pay-acme;
+        default_type text/plain;
+        try_files $uri =404;
+    }
+
+    location / {
+        return 308 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name pay-api.usevimi.ru;
+    server_tokens off;
+
+    ssl_certificate /etc/letsencrypt/live/pay-api.usevimi.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/pay-api.usevimi.ru/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+
+    access_log /var/log/nginx/vimi-pay-api-access.log;
+    error_log /var/log/nginx/vimi-pay-api-error.log warn;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cache-Control "no-store" always;
+
+    # NOT an application readiness signal. Real FastAPI is not exposed yet.
+    location = /health {
+        default_type application/json;
+        return 503 '{"status":"api_not_deployed"}';
+    }
+
+    # Fail closed. A separate reviewed release can add a narrowly scoped
+    # loopback-only reverse proxy with authentication and webhook verification.
+    location / {
+        return 404;
+    }
+}
