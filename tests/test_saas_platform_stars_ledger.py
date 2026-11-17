@@ -28,12 +28,12 @@ pytestmark = pytest.mark.skipif(
 async def call(conn, name, *args, json=False):
     stmt = text(
         "SELECT public." + name + "("
-        + ",".join(":" + str(i) for i in range(len(args))) + ") AS result"
+        + ",".join(":a" + str(i) for i in range(len(args))) + ") AS result"
     )
     if json:
         stmt = stmt.columns(result=JSONB)
     return (await conn.execute(
-        stmt, {str(i): arg for i, arg in enumerate(args)},
+        stmt, {"a" + str(i): arg for i, arg in enumerate(args)},
     )).scalar_one()
 
 
@@ -115,14 +115,12 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                     json=True,
                 )
                 assert replay["applied"] and replay["duplicate"]
-                assert await call(
-                    conn, "platform_saas_v2_remaining", invoice,
-                ) == Decimal("0.00")
                 balance = await call(
                     conn, "platform_saas_v2_invoice_balance", invoice,
                     json=True,
                 )
                 assert balance["paid"] and Decimal(balance["stars_rub"]) == 150
+                assert Decimal(balance["remaining_rub"]) == 0
                 # No duplicated payment can be inserted as a legacy receipt.
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
@@ -143,14 +141,12 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                     payload, owner_tg, 987654321, 60,
                     charge, datetime.now(UTC),
                 )
-                assert await call(
-                    conn, "platform_saas_v2_remaining", invoice,
-                ) == Decimal("150.00")
                 balance = await call(
                     conn, "platform_saas_v2_invoice_balance",
                     invoice, json=True,
                 )
                 assert not balance["paid"] and Decimal(balance["stars_rub"]) == 0
+                assert Decimal(balance["remaining_rub"]) == 150
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
                     payload, owner_tg, 987654321, 60,
