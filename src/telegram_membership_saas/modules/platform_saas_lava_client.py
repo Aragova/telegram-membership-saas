@@ -8,9 +8,10 @@ frozen amount/ID and idempotency before extending any bot service.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
