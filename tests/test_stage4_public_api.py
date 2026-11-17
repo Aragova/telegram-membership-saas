@@ -4,6 +4,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from telegram_membership_saas.api import create_app
+from telegram_membership_saas.config import Settings
 from telegram_membership_saas.public_api import app
 
 
@@ -56,9 +58,6 @@ def test_public_api_compose_never_exposes_a_public_host_port() -> None:
 
 def test_existing_development_api_is_unchanged() -> None:
     """The public entrypoint must not replace the existing dev/staging API."""
-    from telegram_membership_saas.api import create_app
-    from telegram_membership_saas.config import Settings
-
     test_app = create_app(Settings(environment="test", _env_file=None))
     response = TestClient(test_app).get("/health")
 
