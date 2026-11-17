@@ -3989,9 +3989,9 @@ def create_owner_setup_router(
                                 )
                             except Exception:
                                 await bot.send_message(user_id,tr(
-                                    "⚠️ 💎 Crypto Pay пока недоступен. "
+                                    "⚠️ 💎 Оплата Crypto Pay пока недоступна. "
                                     "Счёт не изменён; вернитесь к способам оплаты.",
-                                    "⚠️ 💎 Crypto Pay is unavailable. "
+                                    "⚠️ 💎 Crypto Pay payment is not available. "
                                     "The invoice is unchanged; choose another method.",
                                 ))
                         else:
