@@ -3682,15 +3682,23 @@ def create_owner_setup_router(
                 await query.answer()
                 return
             if action.startswith("managedconfirm:"):
-                if get_settings().bot_token_encryption_key is None:
-                    raise ValueError(tr(
-                        "Подключение ботов пока недоступно",
-                        "Bot connections are unavailable",
-                    ))
-                _, id_text, generation = action.split(":", 2)
-                if not id_text.isascii() or not id_text.isdecimal():
-                    raise ValueError(tr("Некорректный бот", "Invalid bot"))
+                # Telegram callback acknowledgements expire quickly, while
+                # Telegram token lookup and atomic DB onboarding can take longer.
+                # Acknowledge the click BEFORE any external work; send a normal
+                # private message for every eventual outcome.
+                await query.answer(tr(
+                    "⏳ Проверяю подключение бота…",
+                    "⏳ Checking the bot connection…",
+                ))
                 try:
+                    if get_settings().bot_token_encryption_key is None:
+                        raise ValueError(tr(
+                            "Подключение ботов пока недоступно",
+                            "Bot connections are unavailable",
+                        ))
+                    _, id_text, generation = action.split(":", 2)
+                    if not id_text.isascii() or not id_text.isdecimal():
+                        raise ValueError(tr("Некорректный бот", "Invalid bot"))
                     result = await connect_managed_bot_event(
                         factory, central_bot=bot,
                         creator_telegram_id=user_id,
@@ -3698,23 +3706,61 @@ def create_owner_setup_router(
                         encryption_key=get_settings().bot_token_encryption_key,
                         generation=generation,
                     )
+                except (ValueError, PermissionError) as exc:
+                    # The owner must see billing holds, expired requests and
+                    # registration limits, even after the callback was acked.
+                    await bot.send_message(
+                        user_id, "⚠️ " + owner_error(str(exc))[:850],
+                    )
+                    return
                 except (AiogramError, RuntimeError):
-                    # Transport failures can include token-bearing Telegram URLs.
-                    # Keep the pending candidate and never display raw exceptions.
+                    # Telegram API errors may contain token-bearing URLs.
                     logging.getLogger(__name__).warning(
                         "Managed bot confirmation failed; candidate remains pending"
                     )
-                    await query.answer(tr(
-                        "⚠️ Telegram временно недоступен. Повторите подтверждение.",
-                        "⚠️ Telegram is temporarily unavailable. Try again.",
-                    ), show_alert=True)
+                    await bot.send_message(
+                        user_id, tr(
+                            "⚠️ Не удалось подтвердить подключение. "
+                            "Попробуйте эту кнопку ещё раз. "
+                            "Если ошибка повторится, используйте "
+                            "«Через BotFather» в разделе подключений.",
+                            "⚠️ Could not complete the connection. "
+                            "Try the same button again. If it keeps failing, "
+                            "use Via BotFather in My connections.",
+                        ),
+                    )
+                    return
+                except Exception as exc:
+                    # Unexpected database/RLS/integration errors must not
+                    # leave the owner with an apparently dead button. Do not
+                    # log the exception text: provider errors can contain tokens.
+                    logging.getLogger(__name__).error(
+                        "Managed bot confirmation failed unexpectedly: %s",
+                        type(exc).__name__,
+                    )
+                    await bot.send_message(
+                        user_id, tr(
+                            "⚠️ Подключение не завершено из-за внутренней ошибки. "
+                            "Повторите подтверждение или используйте "
+                            "«Через BotFather». Оплаченные счета не изменены.",
+                            "⚠️ The bot was not connected due to an internal "
+                            "error. Retry confirmation or use Via BotFather. "
+                            "Existing paid invoices were not changed.",
+                        ),
+                    )
                     return
                 if result.kind != "created" or result.project_id is None:
-                    raise ValueError(tr(
-                        "Запрос устарел. Создайте подключение заново.",
-                        "This request has expired. Start again.",
-                    ))
-                await query.answer()
+                    await bot.send_message(
+                        user_id, tr(
+                            "⚠️ Этот запрос уже обработан или устарел. "
+                            "Проверьте «Мои подключения», затем при "
+                            "необходимости создайте новый запрос.",
+                            "⚠️ This request was already processed or has "
+                            "expired. Check My connections before starting "
+                            "another request.",
+                        ),
+                    )
+                    return
                 await bot.send_message(
                     user_id, tr(
                         "✅ Managed Bot подключён.",
