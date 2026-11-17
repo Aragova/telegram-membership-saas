@@ -114,6 +114,17 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 )
                 assert result["applied"] and not result["duplicate"]
                 assert Decimal(result["allocated_rub"]) == Decimal("150")
+                # Even an administrative maintenance write cannot erase
+                # a legitimate charged invoice without refund evidence.
+                await conn.execute(text("RESET ROLE"))
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "UPDATE platform_saas_invoices "
+                            "SET status='void' WHERE id=:invoice"
+                        ), {"invoice": invoice})
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, owner)
                 replay = await call(
                     conn, "platform_saas_stars_record_charge",
                     payload, owner_tg, 987654321, 60, charge, paid_at,
