@@ -76,7 +76,10 @@ CREATE TABLE public.platform_saas_gateway_refunds (
   charge_id uuid NOT NULL REFERENCES public.platform_saas_gateway_charges(id),
   provider text NOT NULL CHECK (provider IN ('crypto','lava')),
   provider_refund_id text NOT NULL,
-  reversed_rub numeric(38,2) NOT NULL CHECK (reversed_rub>0),
+  amount_rub numeric(38,2) NOT NULL CHECK (amount_rub>0),
+  -- An unapplied provider charge may be refunded without restoring credit.
+  reversed_rub numeric(38,2) NOT NULL
+    CHECK (reversed_rub>=0 AND reversed_rub<=amount_rub),
   refunded_at timestamptz NOT NULL,
   recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   UNIQUE(provider,provider_refund_id)
@@ -615,7 +618,7 @@ CREATE FUNCTION public.platform_saas_gateway_record_charge(
   p_amount_rub numeric,p_paid_at timestamptz
 ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
-DECLARE o record; i record; old record;
+DECLARE o record; i record; old record; target_invoice uuid;
         ownership_owner uuid; allocated numeric:=0;
 BEGIN
   PERFORM public.platform_saas_require_owner();
@@ -627,9 +630,18 @@ BEGIN
     RAISE EXCEPTION 'Invalid authoritative gateway receipt'
       USING ERRCODE='22023';
   END IF;
+  -- Acquire the invoice lock BEFORE the order lock, exactly like
+  -- gateway_reserve. An order-first lock here deadlocks with checkout.
+  SELECT invoice_id INTO target_invoice
+  FROM public.platform_saas_gateway_orders WHERE id=p_order;
+  IF target_invoice IS NULL THEN
+    RAISE EXCEPTION 'Provider order does not exist' USING ERRCODE='42501';
+  END IF;
+  PERFORM 1 FROM public.platform_saas_invoices
+    WHERE id=target_invoice FOR UPDATE;
   SELECT * INTO o FROM public.platform_saas_gateway_orders
     WHERE id=p_order FOR UPDATE;
-  IF o.id IS NULL OR o.status<>'issued'
+  IF o.id IS NULL OR o.invoice_id<>target_invoice OR o.status<>'issued'
      OR o.provider<>p_provider
      OR o.provider_invoice_id IS DISTINCT FROM p_provider_id
      OR o.amount_rub<>p_amount_rub THEN
@@ -679,7 +691,8 @@ CREATE FUNCTION public.platform_saas_gateway_record_refund(
   p_refund_id text,p_reversed_rub numeric,p_refunded_at timestamptz
 ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
-DECLARE c record; old record; already numeric;
+DECLARE c record; old record; target_invoice uuid;
+        already numeric; already_reversed numeric; credit_to_reverse numeric;
 BEGIN
   PERFORM public.platform_saas_require_owner();
   IF p_order IS NULL OR p_provider NOT IN ('crypto','lava')
@@ -690,6 +703,17 @@ BEGIN
   THEN
     RAISE EXCEPTION 'Invalid provider refund evidence' USING ERRCODE='22023';
   END IF;
+  -- Lock invoice before charged receipt; record_charge uses that same
+  -- invoice -> order -> charge order and reserve uses invoice -> order.
+  SELECT invoice_id INTO target_invoice FROM public.platform_saas_gateway_charges
+  WHERE order_id=p_order AND provider=p_provider
+    AND provider_invoice_id=p_provider_invoice_id;
+  IF target_invoice IS NULL THEN
+    RAISE EXCEPTION 'Original paid provider invoice required'
+      USING ERRCODE='42501';
+  END IF;
+  PERFORM 1 FROM public.platform_saas_invoices
+    WHERE id=target_invoice FOR UPDATE;
   SELECT * INTO c FROM public.platform_saas_gateway_charges
   WHERE order_id=p_order AND provider=p_provider
     AND provider_invoice_id=p_provider_invoice_id FOR UPDATE;
@@ -700,23 +724,25 @@ BEGIN
   SELECT * INTO old FROM public.platform_saas_gateway_refunds
     WHERE provider=p_provider AND provider_refund_id=p_refund_id;
   IF old.id IS NOT NULL THEN
-    IF old.charge_id<>c.id OR old.reversed_rub<>p_reversed_rub THEN
+    IF old.charge_id<>c.id OR old.amount_rub<>p_reversed_rub THEN
       RAISE EXCEPTION 'Conflicting provider refund replay'
         USING ERRCODE='23505';
     END IF;
     RETURN false;
   END IF;
-  SELECT coalesce(sum(reversed_rub),0) INTO already
+  SELECT coalesce(sum(amount_rub),0),coalesce(sum(reversed_rub),0)
+  INTO already,already_reversed
   FROM public.platform_saas_gateway_refunds WHERE charge_id=c.id;
-  IF p_reversed_rub+already>c.applied_rub THEN
-    RAISE EXCEPTION 'Provider refund exceeds original credited payment'
+  IF p_reversed_rub+already>c.amount_rub THEN
+    RAISE EXCEPTION 'Provider refund exceeds original actual payment'
       USING ERRCODE='23514';
   END IF;
-  PERFORM 1 FROM public.platform_saas_invoices
-    WHERE id=c.invoice_id FOR UPDATE;
+  credit_to_reverse:=least(p_reversed_rub,greatest(c.applied_rub-already_reversed,0));
   INSERT INTO public.platform_saas_gateway_refunds(
-    charge_id,provider,provider_refund_id,reversed_rub,refunded_at
-  ) VALUES(c.id,p_provider,p_refund_id,p_reversed_rub,p_refunded_at);
+    charge_id,provider,provider_refund_id,amount_rub,reversed_rub,refunded_at
+  ) VALUES(
+    c.id,p_provider,p_refund_id,p_reversed_rub,credit_to_reverse,p_refunded_at
+  );
   RETURN true;
 END; $f$
     """)
