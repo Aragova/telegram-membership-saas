@@ -3933,12 +3933,56 @@ def create_owner_setup_router(
                         action="spb:"+invoice_token+":RUB:"+page_text
                         kind="spb"
                         parts=action.split(":")
+                    elif parts[2]=="S":
+                        if fixed_project_id is None:
+                            # Telegram Stars must be received by the actual
+                            # CENTRAL platform bot, never by tenant bots.
+                            from telegram_membership_saas.modules.platform_saas_stars_handlers import (
+                                send_platform_stars_invoice,
+                            )
+                            try:
+                                await send_platform_stars_invoice(
+                                    bot, factory, payer_telegram_id=user_id,
+                                    invoice_id=invoice_id,
+                                )
+                            except Exception:
+                                await bot.send_message(user_id,tr(
+                                    "⚠️ ⭐ Оплата пока недоступна: "
+                                    "курс выплат или счёт требуют проверки.",
+                                    "⚠️ ⭐ Stars checkout is unavailable: "
+                                    "the payout rate or invoice needs review.",
+                                ))
+                        else:
+                            # Payer-only deep link keeps the same immutable
+                            # invoice ID while opening @vimipay_bot privately.
+                            central=get_settings().saas_central_bot_username
+                            deep_link=(
+                                "https://t.me/"+central+"?start=sa_"+invoice_token
+                            )
+                            await _show_saas_payment_step(
+                                bot,query,tr(
+                                    "⭐ <b>Оплата через Telegram Stars</b>\n"
+                                    "Платёж принимает центральный ViMi Pay.",
+                                    "⭐ <b>Pay with Telegram Stars</b>\n"
+                                    "Payment is received by central ViMi Pay.",
+                                ),[
+                                    [InlineKeyboardButton(
+                                        text=tr("⭐ Продолжить в ViMi Pay",
+                                                "⭐ Continue in ViMi Pay"),
+                                        url=deep_link,
+                                    )],
+                                    [_button(tr("⬅️ Способы оплаты",
+                                                "⬅️ Payment methods"),
+                                             "spm:"+invoice_token+":RUB:"
+                                             +page_text)],
+                                ],
+                            )
+                        await query.answer()
+                        return
                     else:
-                        # No fake 'I paid' button, payment instructions or
-                        # balance change while gateway credentials/verified
-                        # provider ledgers have not been deployed.
-                        name={"L":"Lava.top","S":"⭐ Telegram Stars",
-                              "C":"💎 Crypto Pay"}[parts[2]]
+                        # Lava and Crypto must not be displayed as paid until
+                        # independent platform provider reconciliation exists.
+                        name={"L":"Lava.top","C":"💎 Crypto Pay"}[parts[2]]
                         await _show_saas_payment_step(
                             bot,query,
                             "⚠️ <b>"+escape(name)+"</b>\n"+
