@@ -3922,6 +3922,8 @@ def create_owner_setup_router(
                         +"\n<b>"+format(remaining,".2f")+" ₽</b>",
                         rows,
                     )
+                    await query.answer()
+                    return
                 elif kind=="spr":
                     if parts[2]=="M":
                         # Explicitly choose the manual-payment currency only
