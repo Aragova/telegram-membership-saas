@@ -57,6 +57,7 @@ from telegram_membership_saas.modules.crypto_pay.service import (
     disconnect_crypto_pay,
     read_crypto_pay_connection,
 )
+from telegram_membership_saas.modules import platform_saas_stars_handlers as stars_ui
 from telegram_membership_saas.modules.owner_notifications import (
     read_owner_settings,
     set_owner_setting,
@@ -3937,11 +3938,8 @@ def create_owner_setup_router(
                         if fixed_project_id is None:
                             # Telegram Stars must be received by the actual
                             # CENTRAL platform bot, never by tenant bots.
-                            from telegram_membership_saas.modules.platform_saas_stars_handlers import (
-                                send_platform_stars_invoice,
-                            )
                             try:
-                                await send_platform_stars_invoice(
+                                await stars_ui.send_platform_stars_invoice(
                                     bot, factory, payer_telegram_id=user_id,
                                     invoice_id=invoice_id,
                                 )
