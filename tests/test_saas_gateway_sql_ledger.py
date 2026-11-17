@@ -31,7 +31,7 @@ async def rpc(conn, name, *args, json=False):
     if json:
         sql = sql.columns(result=JSONB)
     return (await conn.execute(sql, {
-        "p" + str(i): arg for i, arg in enumerate(args),
+        "p" + str(i): arg for i, arg in enumerate(args)
     })).scalar_one()
 
 
