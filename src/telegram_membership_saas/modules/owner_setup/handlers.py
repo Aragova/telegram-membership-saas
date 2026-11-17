@@ -3988,12 +3988,19 @@ def create_owner_setup_router(
                                     invoice_id=invoice_id,
                                 )
                             except Exception:
-                                await bot.send_message(user_id,tr(
-                                    "⚠️ 💎 Оплата Crypto Pay пока недоступна. "
-                                    "Счёт не изменён; вернитесь к способам оплаты.",
-                                    "⚠️ 💎 Crypto Pay payment is not available. "
-                                    "The invoice is unchanged; choose another method.",
-                                ))
+                                await _show_saas_payment_step(
+                                    bot, query,
+                                    tr(
+                                        "⚠️ 💎 Оплата Crypto Pay пока недоступна. "
+                                        "Счёт не изменён; вернитесь к способам оплаты.",
+                                        "⚠️ 💎 Crypto Pay payment is not available. "
+                                        "The invoice is unchanged; choose another method.",
+                                    ),
+                                    [[_button(
+                                        tr("⬅️ Способы оплаты", "⬅️ Payment methods"),
+                                        "spm:"+invoice_token+":RUB:"+page_text,
+                                    )]],
+                                )
                         else:
                             central=get_settings().saas_central_bot_username
                             deep_link=(
