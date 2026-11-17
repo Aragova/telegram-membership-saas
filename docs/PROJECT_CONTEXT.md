@@ -1,3 +1,26 @@
+## 2026-11-17 — Stage 4 live GitHub status and next release boundary
+
+GitHub on 17 Nov confirms Stage-3 PR #176 and isolated FastAPI PR #178
+are MERGED into main. The separate API-only staging release mechanism is
+open as Draft PR #179 (exact HEAD 93f1e894, CI success and Codex no
+findings), and is not merged or installed. A code merge does not provision
+the dedicated VM SSH account, root-owned deploy scripts, GitHub environment
+or start any API container.
+
+Stage 4C is the next independent ingress slice, prepared as a reviewed,
+opt-in EXACT /health location only, with smoke checks and rollback:
+see docs/STAGE4_INGRESS_CUTOVER.md. It must NOT be merged/installed or
+publicly enabled without separate owner approval and a healthy API
+deployment. Stage-3 public /health remains intentionally 503 until operator
+verification and that later release. Never run the 51-bot staging deploy
+to install the API or Nginx.
+
+The sections below are historical snapshots and may mention PRs as
+unmerged at the time they were authored. Use this latest section as the
+GitHub stage status, while re-checking the live VM separately.
+
+---
+
 ## 2026-11-17 — Stage 3 operator evidence and Stage 4 boundary
 
 Operator-supplied output from 16 Nov (not an independently repeated probe)
@@ -16,7 +39,7 @@ Compose project; PR #178 adds the foundational code but no public deploy.
 Never use the existing staging bot SSH deploy workflow for this API and
 never restart 51 bot/customer-supervisor services as an API side effect.
 Public `/health` stays 503 until an additional explicitly approved ingress
-release. Both PR #176 and #178 remain unmerged until owner approval.
+release. Both PR #176 and #178 were merged on 17 November; this older paragraph predates that approval.
 
 ---
 
