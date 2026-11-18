@@ -1,7 +1,7 @@
 """Regression tests for secure native paid channel invitations."""
+import os
 from contextlib import asynccontextmanager
 from decimal import Decimal
-import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
