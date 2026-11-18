@@ -200,11 +200,11 @@ def unified_merchant_bill_rich(
     if future_profile_currency is not None:
         lines.append(service_currency_hint(future_profile_currency, rich=True))
     if bill.get("invoice_id") is None:
-        lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
-        lines.append("<p>" + tr(
+        status = _bill_status(bill) or [tr(
             "⏳ Счёт пока не выставлен.",
             "⏳ No invoice issued yet.",
-        ) + "</p>")
+        )]
+        lines.extend("<p>" + entry + "</p>" for entry in status)
         return "\n".join(lines)
     lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
     lines.extend([
@@ -245,11 +245,10 @@ def unified_merchant_bill_classic(
     if future_profile_currency is not None:
         lines.extend(["", service_currency_hint(future_profile_currency), ""])
     if bill.get("invoice_id") is None:
-        lines.extend(_bill_status(bill))
-        lines.append(tr(
+        lines.extend(_bill_status(bill) or [tr(
             "⏳ Счёт пока не выставлен.",
             "⏳ No invoice issued yet.",
-        ))
+        )])
         return "\n".join(lines)
     lines.extend(_bill_status(bill))
     lines.extend([
