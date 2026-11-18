@@ -5,8 +5,8 @@ commission policies remain untouched; native channel sales are NOT bot sales.
 """
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision: str = "0095_native_channel_stars"
 down_revision: str | None = "0094_retired_bot_payments"
