@@ -100,22 +100,23 @@ async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sec
             ]
             for row in dashboard_rows
         )
-        # Every two-button row must use one consistent color.
+        # The approved premium dashboard alternates button accents within
+        # each existing two-button row. Callback contracts remain unchanged.
         expected_rows = [
-            (["own:resources", "own:methods"], "primary"),
-            (["own:plans", "own:reviews"], "success"),
-            (["own:subscribers", "own:statistics:7"], "primary"),
-            (["bc:home", "fs:home"], "success"),
-            (["own:preview", "own:settings"], "primary"),
-            (["own:saasinvoices:0", "lng:menu"], "success"),
+            (["own:resources", "own:methods"], ["success", "primary"]),
+            (["own:plans", "own:reviews"], ["primary", "success"]),
+            (["own:subscribers", "own:statistics:7"], ["success", "primary"]),
+            (["bc:home", "fs:home"], ["primary", "success"]),
+            (["own:preview", "own:settings"], ["success", "primary"]),
+            (["own:saasinvoices:0", "lng:menu"], ["primary", "success"]),
         ]
-        for callbacks, style in expected_rows:
+        for callbacks, styles in expected_rows:
             matches = [
                 row for row in dashboard_rows
                 if [button.callback_data for button in row] == callbacks
             ]
             assert len(matches) == 1
-            assert [button.style for button in matches[0]] == [style, style]
+            assert [button.style for button in matches[0]] == styles
         assert next(b.text for b in main_buttons if b.callback_data == "own:settings") == (
             settings_label
         )
