@@ -424,11 +424,17 @@ def _private(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
 
 
-def _readiness_steps(snapshot) -> tuple[tuple[str, bool], ...]:
+def _readiness_steps(
+    snapshot, *, channel_verified: bool | None = None,
+) -> tuple[tuple[str, bool], ...]:
     """Four actionable checks on the already-connected bot's dashboard."""
+    resource_active = any(
+        status == "active" for _, _, status in snapshot.resources
+    )
+    if channel_verified is not None:
+        resource_active = resource_active and channel_verified
     return (
-        (tr("Канал / группа", "Channel / group"),
-         any(status == "active" for _, _, status in snapshot.resources)),
+        (tr("Канал / группа", "Channel / group"), resource_active),
         (tr("Тариф", "Plan"),
          any(status == "active" for _, _, status in snapshot.plans)),
         (tr("Способ оплаты", "Payment method"),
@@ -876,7 +882,9 @@ def create_owner_setup_router(
                 "project_name": data.project_name,
                 "timezone": data.timezone,
                 "trial_banner": trial_banner,
-                "readiness": _readiness_steps(data),
+                "readiness": _readiness_steps(
+                    data, channel_verified=finances.channel_ready,
+                ),
                 "sales_status": _sales_status_text(
                     configured=data.sales_configured, hold_state=hold_state,
                 ),
