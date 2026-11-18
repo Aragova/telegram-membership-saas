@@ -8,7 +8,7 @@ ledger is migrated or modified.
 
 - **Bot invoices** (`sendInvoice` in Stars) credit the connected bot.
   The connected bot's administrator can view **the actual live balance**
-  in **Admin panel → Statistics**, fetched with the connected bot's
+  on the **connected bot's main Admin dashboard**, fetched with the connected bot's
   `getMyStarBalance`. A true zero displays as **0**; Telegram errors show
   **unavailable**, not an invented zero. This is not the channel balance.
 - **Native paid channel invite links** (`createChatSubscriptionInviteLink`)
@@ -63,3 +63,30 @@ Telegram.
 - https://core.telegram.org/bots/api#createchatsubscriptioninvitelink
 - https://core.telegram.org/bots/api#getmystarbalance
 - https://core.telegram.org/api/subscriptions
+
+## Compact administrator dashboard
+
+The connected bot's main panel uses Telegram Rich HTML tables rather than
+large stacks of status lines:
+
+- Row 1: Bot, Channel / group, Plan.
+- Row 2: Payment method, Bot running.
+- Each readiness check preserves its existing factual source, green check
+  or unready marker, and the original setup action when incomplete.
+- A single compact finance area shows the live connected-bot Stars balance
+  via `getMyStarBalance`, channel owner identity from
+  `getChatAdministrators` (only a `creator` record counts), and the
+  currently configured Stars checkout recipient.
+- Telegram Bot API does **not** expose the channel's actual Stars revenue
+  balance or its withdrawal eligibility. Both fields explicitly show
+  **unavailable / not verified**, not a fabricated amount or success flag.
+- At most three linked channels appear on the dashboard. The existing
+  **Channels** button remains the route to the full catalog.
+- Existing callback IDs and both RU/EN rendering remain functional.
+  The old Stars balance line was removed from Statistics to avoid duplication.
+- The dashboard only uses data visible to the authorized project manager.
+  It never stores Telegram account credentials or guesses channel balances.
+
+Native Rich does not support arbitrary browser CSS or image-mockup gradients:
+the implemented design uses supported compact native Rich tables and regular
+Telegram inline button styles.
