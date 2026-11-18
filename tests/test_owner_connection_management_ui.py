@@ -87,6 +87,7 @@ async def test_connection_list_paginates_100_without_overflow(monkeypatch):
     first = buttons(instance.send_message.await_args)
     assert len([x for x in first if x.startswith("own:select:")]) == 10
     assert "own:projects:1" in first
+    assert first.count("own:saasinvoices:0") == 1
     await cb(query("projects:9"), instance)
     last = buttons(instance.send_message.await_args)
     assert len([x for x in last if x.startswith("own:select:")]) == 10
@@ -109,6 +110,7 @@ async def test_select_unused_connection_shows_rename_and_delete(monkeypatch):
     await cb(query("select:" + project_id.hex), instance)
     actions = buttons(instance.send_message.await_args)
     assert "own:connrename:" + project_id.hex in actions
+    assert actions.count("own:saasinvoices:0") == 1
     assert "own:connremove:" + project_id.hex in actions
     assert "own:projects" in actions
     assert "own:drop:" not in str(actions)
@@ -266,3 +268,68 @@ async def test_last_archived_connection_is_reachable_from_central_start(monkeypa
     await home_message(message, instance)
     assert "own:archives" in buttons(instance.send_message.await_args)
     assert "own:new" in buttons(instance.send_message.await_args)
+    assert buttons(instance.send_message.await_args).count(
+        "own:saasinvoices:0",
+    ) == 1
+
+
+async def test_central_main_menu_has_invoice_entry_without_connections(monkeypatch):
+    monkeypatch.setattr(
+        ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
+    )
+    monkeypatch.setattr(ui, "send_owner_rich", AsyncMock())
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ui, "set_chat_commands", AsyncMock())
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
+    router = ui.create_owner_setup_router(MagicMock())
+    home_message = next(
+        x.callback for x in router.message.handlers
+        if x.callback.__name__ == "home_message"
+    )
+    bot_instance = bot()
+    await home_message(
+        SimpleNamespace(
+            from_user=SimpleNamespace(
+                id=123, first_name="Owner", username="owner",
+            ),
+            chat=SimpleNamespace(id=123, type="private"),
+            text="/menu",
+        ),
+        bot_instance,
+    )
+    markup = ui.send_owner_rich.await_args.kwargs["reply_markup"]
+    actions = [
+        b.callback_data for row in markup.inline_keyboard
+        for b in row if b.callback_data
+    ]
+    assert actions.count("own:saasinvoices:0") == 1
+    assert "own:newmanaged" in actions
+
+
+async def test_archived_registry_keeps_direct_invoice_navigation(monkeypatch):
+    monkeypatch.setattr(
+        ui, "list_archived_owner_connections", AsyncMock(return_value=()),
+    )
+    cb = handler(monkeypatch)
+    instance = bot()
+    await cb(query("archives"), instance)
+    actions = buttons(instance.send_message.await_args)
+    assert actions.count("own:saasinvoices:0") == 1
+    assert "own:projects" in actions
+
+
+def test_central_native_telegram_menu_exposes_billing_but_customer_does_not():
+    from telegram_membership_saas.telegram_menus import commands_for
+
+    for role in ("central", "platform"):
+        for language in ("ru", "en"):
+            commands = commands_for(role, language)
+            assert [c.command for c in commands].count("billing") == 1
+            label = next(c.description for c in commands if c.command == "billing")
+            assert "Счета ViMi Pay" in label if language == "ru" else (
+                "ViMi Pay invoices" in label
+            )
+    for role in ("buyer", "owner", "payment_manager"):
+        assert "billing" not in [c.command for c in commands_for(role, "ru")]
