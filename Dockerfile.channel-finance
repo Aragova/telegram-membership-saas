@@ -5,5 +5,5 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir ".[channel-finance]"
-USER 65534:65534
+USER 25073:25073
 CMD ["uvicorn", "telegram_membership_saas.channel_finance_agent:app", "--host", "0.0.0.0", "--port", "8033", "--no-proxy-headers"]
