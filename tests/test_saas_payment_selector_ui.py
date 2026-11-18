@@ -108,3 +108,72 @@ async def test_central_account_pay_selector_routes_to_approved_method(
     selected.assert_not_awaited()
     assert balance.await_count==4
     assert catalog.await_count==3
+
+
+@pytest.mark.parametrize("language", ("ru", "en"))
+@pytest.mark.parametrize("rail,prefix,heading", [
+    ("L", "sl_", "💳 <b>Lava.top · ViMi Pay</b>"),
+    ("S", "sa_", "⭐ <b>"),
+    ("C", "sc_", "💎 <b>Crypto Pay · ViMi Pay</b>"),
+])
+async def test_tenant_saas_automatic_rail_handoff_keeps_original_invoice(
+    monkeypatch, language, rail, prefix, heading,
+):
+    """Connected-bot buttons only open payer-bound central handoffs.
+
+    They must not mutate invoice balances or call provider API in a merchant
+    bot. Text contains real newlines, not escaped backslash-n artifacts.
+    """
+    actor_id, project_id, invoice = uuid4(), uuid4(), uuid4()
+    token = encode_uuid(invoice)
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor",
+        AsyncMock(return_value=actor_id),
+    )
+    monkeypatch.setattr(
+        ui, "can_manage_project",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        ui, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    step = AsyncMock()
+    monkeypatch.setattr(ui, "_show_saas_payment_step", step)
+    router = ui.create_owner_setup_router(
+        MagicMock(), fixed_project_id=project_id,
+    )
+    callback = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "owner_callback"
+    )
+    bot = MagicMock()
+    bot.id = 9917
+    bot.send_message = AsyncMock()
+    query = SimpleNamespace(
+        data="own:spr:" + token + ":" + rail + ":0",
+        from_user=SimpleNamespace(
+            id=9871, username="payer", first_name="Owner",
+        ),
+        message=SimpleNamespace(chat=SimpleNamespace(type="private", id=9871)),
+        answer=AsyncMock(),
+    )
+
+    locale = _language.set(language)
+    try:
+        await callback(query, bot)
+        step.assert_awaited_once()
+        html, rows = step.await_args.args[2:]
+        assert heading in html
+        assert "\\n" not in html
+        assert "\n" in html
+        assert rows[0][0].url == (
+            "https://t.me/vimipay_bot?start=" + prefix + token
+        )
+        assert rows[1][0].callback_data == (
+            "own:spm:" + token + ":RUB:0"
+        )
+    finally:
+        _language.reset(locale)
+    query.answer.assert_awaited_once()
+    bot.send_message.assert_not_awaited()

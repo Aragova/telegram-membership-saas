@@ -16,6 +16,7 @@ from aiogram.filters import Command
 from aiogram.types import LabeledPrice, Message, PreCheckoutQuery
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.platform_saas_stars_service import (
     confirm_platform_stars_charge,
@@ -208,6 +209,101 @@ def create_platform_saas_stars_router(
                     "The invoice may be due again; open /billing.",
                 ),
             )
+
+    @router.message(Command("saasrails"))
+    async def platform_rails_readiness(
+        message: Message, bot: Bot,
+    ) -> None:
+        """Owner-only configuration check; never contact or charge providers.
+
+        Useful before real acceptance testing of the three platform rails.
+        No credential, offer identifier, invoice or payout amount leaks to
+        merchant accounts, logs or other chats.
+        """
+        settings = get_settings()
+        actor = message.from_user
+        if (
+            settings.telegram_central_access_enabled
+            or settings.platform_owner_telegram_id is None
+            or actor is None
+            or message.chat.type != "private"
+            or message.chat.id != actor.id
+            or actor.id != settings.platform_owner_telegram_id
+        ):
+            return
+
+        def has_secret(value: object) -> bool:
+            return bool(
+                value is not None and value.get_secret_value().strip()
+            )
+
+        lava_ready = (
+            has_secret(settings.saas_lava_top_api_key)
+            and settings.saas_lava_top_offer_id is not None
+        )
+        crypto_ready = has_secret(settings.saas_crypto_pay_api_token)
+        if settings.environment == "production" and settings.saas_crypto_pay_testnet:
+            # The provider adapter itself rejects production testnet checkout.
+            crypto_ready = False
+
+        try:
+            rate = await platform_stars_rate(
+                factory, operator_telegram_id=actor.id,
+            )
+        except Exception:
+            LOG.warning("Platform Stars rail readiness could not be checked")
+            stars_status = tr(
+                "⚠️ Проверка ставки недоступна",
+                "⚠️ Payout-rate check unavailable",
+            )
+        else:
+            stars_status = (
+                tr("✅ Ставка задана: ", "✅ Rate configured: ")
+                + f"{rate} ₽ / ⭐"
+                if rate is not None
+                else tr(
+                    "⚪ Ставка не задана. Команда: /saasstarsrate",
+                    "⚪ Rate not set. Use /saasstarsrate",
+                )
+            )
+
+        lava_status = (
+            tr("✅ API-ключ и оффер заданы", "✅ API key and offer configured")
+            if lava_ready else tr(
+                "⚪ Нужны API-ключ и оффер",
+                "⚪ API key and offer are needed",
+            )
+        )
+        crypto_status = (
+            tr("✅ API-токен задан", "✅ API token configured")
+            if crypto_ready else tr(
+                "⚪ Нет подходящего API-токена",
+                "⚪ Valid-environment API token not configured",
+            )
+        )
+        if crypto_ready and settings.saas_crypto_pay_testnet:
+            crypto_status += tr(
+                " (тестовая сеть)", " (testnet)",
+            )
+
+        await bot.send_message(
+            actor.id,
+            tr(
+                "🔎 <b>Готовность оплаты счетов ViMi Pay</b>",
+                "🔎 <b>ViMi Pay invoice rail readiness</b>",
+            )
+            + "\n\n💳 Lava.top: " + lava_status
+            + "\n⭐ Telegram Stars: " + stars_status
+            + "\n💎 Crypto Pay: " + crypto_status
+            + "\n\n"
+            + tr(
+                "Это проверка настроек, НЕ подтверждение работы провайдеров. "
+                "Счета, деньги и подписки не изменены.",
+                "Configuration only, NOT proof of live provider availability. "
+                "Invoices, funds and subscriptions are unchanged.",
+            ),
+            parse_mode="HTML",
+        )
 
     @router.message(Command("saasstarsrate"))
     async def configure_platform_stars_rate(
