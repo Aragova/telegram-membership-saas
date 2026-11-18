@@ -974,10 +974,10 @@ def create_owner_setup_router(
             else tr("🇷🇺 RUB · 150 ₽/мес.", "🇷🇺 RUB · 150 ₽/month")
         )
         caption = tr(
-            "Новый тариф для всех ботов аккаунта. "
-            "Выставленные счета не изменятся.",
-            "New tariff for all bots on this account. "
-            "Issued invoices stay unchanged.",
+            "Для будущих счетов всех ботов аккаунта. "
+            "При долге смена недоступна.",
+            "For future invoices across your account. "
+            "Changes are unavailable while invoices are unpaid.",
         )
         keyboard = _markup([
             [
