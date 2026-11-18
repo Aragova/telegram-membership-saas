@@ -136,7 +136,7 @@ def rich_channel_card(metrics: ChannelInsights, *, members_text: str) -> str:
     return "\n".join(body)
 
 
-def rich_owner_statistics(stats: OwnerStatistics, *, stars_balance: str | None = None) -> str:
+def rich_owner_statistics(stats: OwnerStatistics) -> str:
     """Owner project figures as explicit tables, never converted across currencies."""
     bounds = (
         f"{stats.since:%d.%m.%Y} — {stats.through:%d.%m.%Y}"
@@ -147,12 +147,6 @@ def rich_owner_statistics(stats: OwnerStatistics, *, stars_balance: str | None =
         "<p><b>" + _safe(stats.project_name) + "</b><br>"
         + "🌍 " + _safe(stats.timezone) + "<br>"
         + "🗓️ " + _safe(bounds) + "</p>",
-        "<p><b>" + tr("⭐ Баланс бота Telegram Stars", "⭐ Bot Telegram Stars balance")
-        + "</b>: " + (
-            stars_balance if stars_balance is not None
-            else tr("недоступен", "unavailable")
-        )
-        + "</p>",
         "<p><b>" + tr("💰 Подтверждённые оплаты", "💰 Confirmed payments")
         + "</b></p>",
         "<table bordered compact>",
