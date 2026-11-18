@@ -43,16 +43,18 @@ ROLE_COMMANDS = {
         ("filepayments", "🧾 Проверка оплат файлов", "🧾 File payment reviews"),
         ("support", "🛟 Поддержка", "🛟 Support"),
     ),
-    # The central bot has no buyer subscriptions; show only three relevant,
-    # implemented commands instead of exposing a fake subscriptions shortcut.
+    # The central bot has no buyer subscriptions. The account-level
+    # /billing command is needed even after every bot has been deleted.
     "central": (
         ("menu", "🏠 Главное меню", "🏠 Main menu"),
         ("bots", "🤖 Мои боты", "🤖 My bots"),
+        ("billing", "🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
         ("help", "🛟 Помощь", "🛟 Help"),
     ),
     "platform": (
         ("menu", "🏠 Главное меню", "🏠 Main menu"),
         ("bots", "🤖 Мои боты", "🤖 My bots"),
+        ("billing", "🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
         ("help", "🛟 Помощь", "🛟 Help"),
     ),
 }

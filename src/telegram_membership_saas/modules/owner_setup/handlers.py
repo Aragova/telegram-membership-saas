@@ -730,6 +730,9 @@ def create_owner_setup_router(
             _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
             _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
         ])
+        # Account-level bills remain reachable even with zero connections.
+        rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                     "saasinvoices:0")])
         rows.append([InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
@@ -765,6 +768,8 @@ def create_owner_setup_router(
             rows = [
                 [_button("🤖 Управление ботом", "bots", "success")],
                 [_button("📁 Все подключения", "projects")],
+                [_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                     "saasinvoices:0")],
                 [_button("❔ Как это работает", "help")],
                 [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
             ]
@@ -1485,6 +1490,11 @@ def create_owner_setup_router(
                     tr("📦 Архив подключений", "📦 Archived connections"),
                     "archives",
                 )])
+        # The only entry to the existing central-account invoice ledger.
+        # It must remain visible whether the owner has active, archived,
+        # or zero bots. Do not create another invoice screen.
+        rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                     "saasinvoices:0")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
         title = tr("📁 <b>Мои подключения</b>", "📁 <b>My connections</b>")
@@ -1616,6 +1626,9 @@ def create_owner_setup_router(
         rows.append([_button(
             tr("⬅️ Все подключения", "⬅️ All connections"), "projects",
         )])
+        # Account bills are independent of the selected connected bot.
+        rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                     "saasinvoices:0")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
         await bot.send_message(
