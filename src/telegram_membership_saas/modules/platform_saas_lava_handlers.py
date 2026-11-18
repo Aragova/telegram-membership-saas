@@ -14,13 +14,14 @@ from decimal import Decimal
 from time import monotonic
 from uuid import UUID
 
-from aiogram import Bot, F, Router
+from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.filters import BaseFilter
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.bots.service import TOKEN_PATTERN
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_saas_gateway_service import (
     issue_platform_lava_checkout,
@@ -152,7 +153,10 @@ class _LavaEmailReplyFilter(BaseFilter):
             or not isinstance(message.text, str)
             or not message.text
             or message.text.startswith("/")
+            or TOKEN_PATTERN.fullmatch(message.text.strip()) is not None
         ):
+            # Never swallow BotFather tokens before the existing security
+            # handler can delete and warn about credential exposure.
             return False
         current = _current_prompt(message.from_user.id, bot.id)
         if current is None:
@@ -166,6 +170,42 @@ class _LavaEmailReplyFilter(BaseFilter):
             and reply.from_user is not None
             and reply.from_user.id == bot.id
         )
+
+
+class ClearPendingLavaOnNavigation(BaseMiddleware):
+    """Disarm stale email capture before unrelated central navigation.
+
+    Other owner/account flows then receive their next plain input normally.
+    Only *actual* navigation actions for the same private Telegram user
+    invalidate their own pending email. No customer bots use this middleware.
+    """
+
+    async def __call__(self, handler, event, data):
+        user = getattr(event, "from_user", None)
+        chat = (
+            getattr(event, "chat", None) if isinstance(event, Message)
+            else getattr(getattr(event, "message", None), "chat", None)
+        )
+        if (
+            user is not None and chat is not None
+            and chat.type == "private" and chat.id == user.id
+        ):
+            navigating = (
+                isinstance(event, CallbackQuery)
+                or (
+                    isinstance(event, Message)
+                    and isinstance(event.text, str)
+                    and event.text.startswith("/")
+                    and event.text not in (
+                        "/cancel", "/cancel@vimipay_bot",
+                    )
+                )
+            )
+            if navigating:
+                for key in tuple(_pending_lava):
+                    if key[0] == user.id:
+                        _pending_lava.pop(key, None)
+        return await handler(event, data)
 
 
 class _LavaCancelFilter(BaseFilter):
