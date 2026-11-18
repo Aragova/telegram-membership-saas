@@ -152,6 +152,10 @@ async def replace_active_plan_price(
     )
 
     if current is not None:
+        if code == "XTR" and current.native_subscription_active is True:
+            raise ValueError(
+                "Disable and revoke the channel subscription link before changing Stars price"
+            )
         current.status = PlanPriceStatus.RETIRED.value
         current.active_until = timestamp
         await session.flush()
@@ -195,6 +199,10 @@ async def retire_active_plan_price(
     )
     if current is None:
         return None
+    if code == "XTR" and current.native_subscription_active is True:
+        raise ValueError(
+            "Disable and revoke the channel subscription link before retiring Stars price"
+        )
 
     timestamp = _effective_timestamp(retired_at, not_before=current.active_from)
     current.status = PlanPriceStatus.RETIRED.value
