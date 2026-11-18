@@ -378,7 +378,7 @@ def create_platform_saas_lava_router(
         await bot.send_message(
             message.chat.id,
             tr(
-                "💳 <b>Счёт Lava.top создан</b>\\n"
+                "💳 <b>Счёт Lava.top создан</b>\n"
                 "К оплате: <b>{amount:.2f} ₽</b>\n"
                 "После успешного платежа ViMi Pay самостоятельно "
                 "проверит его и продлит обслуживание.",
