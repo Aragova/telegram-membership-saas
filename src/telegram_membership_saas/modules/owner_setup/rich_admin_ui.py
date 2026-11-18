@@ -148,7 +148,10 @@ def rich_owner_statistics(stats: OwnerStatistics, *, stars_balance: str | None =
         + "🌍 " + _safe(stats.timezone) + "<br>"
         + "🗓️ " + _safe(bounds) + "</p>",
         "<p><b>" + tr("⭐ Баланс бота Telegram Stars", "⭐ Bot Telegram Stars balance")
-        + "</b>: " + (stars_balance if stars_balance is not None else tr("недоступен", "unavailable"))
+        + "</b>: " + (
+            stars_balance if stars_balance is not None
+            else tr("недоступен", "unavailable")
+        )
         + "</p>",
         "<p><b>" + tr("💰 Подтверждённые оплаты", "💰 Confirmed payments")
         + "</b></p>",
