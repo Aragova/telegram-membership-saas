@@ -112,6 +112,18 @@ def _owner_from_admins(admins: object) -> tuple[str | None, bool]:
     return result.label, result.deleted
 
 
+def _revenue_actor_matches_creator(
+    actor_telegram_id: int | None, ownership: ChannelOwner,
+) -> bool:
+    """Project access alone never permits channel-owner financial disclosure."""
+    return bool(
+        actor_telegram_id is not None
+        and actor_telegram_id > 0
+        and not ownership.deleted
+        and ownership.user_id == actor_telegram_id
+    )
+
+
 async def _live_stars(bot: Bot) -> str | None:
     try:
         amount = await asyncio.wait_for(
@@ -257,9 +269,7 @@ async def read_dashboard_finances(
     # the regular dashboard do not receive MTProto revenue information.
     # The isolated bridge also verifies the precise Telegram creator ID.
     async def revenue_for(channel, ownership) -> ChannelRevenue | None:
-        if (actor_telegram_id is None or ownership.deleted
-                or ownership.user_id is None
-                or actor_telegram_id != ownership.user_id):
+        if not _revenue_actor_matches_creator(actor_telegram_id, ownership):
             return None
         try:
             return await live_channel_revenue(
