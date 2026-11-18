@@ -390,7 +390,11 @@ def create_platform_saas_lava_router(
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text=tr("💳 Оплатить {amount:.2f} ₽", "💳 Pay {amount:.2f} RUB").format(\n                        amount=link.amount_rub,\n                    ),\n                    url=url,
+                    text=tr(
+                        "💳 Оплатить {amount:.2f} ₽",
+                        "💳 Pay {amount:.2f} RUB",
+                    ).format(amount=link.amount_rub),
+                    url=url,
                 ),
             ]]),
         )
