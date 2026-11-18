@@ -153,15 +153,46 @@ async def list_buyer_offers(
             option.plan_price_id for option in options if option.currency_code == "XTR"
         ]
         if price_ids:
-            native_links = dict((await session.execute(
-                select(PlanPrice.id, PlanPrice.native_subscription_link).where(
+            # A paid invite is bound to the EXACT Telegram chat where
+            # it was created. Never send an old channel link if a plan was
+            # later attached to other resources or the chat was replaced.
+            matches = (await session.execute(
+                select(
+                    PlanPrice.id, PlanPrice.native_subscription_link,
+                    PlanPrice.native_subscription_chat_id,
+                    Resource.external_id, Resource.status, Resource.removed_at,
+                ).join(
+                    PlanResource,
+                    and_(
+                        PlanResource.project_id == PlanPrice.project_id,
+                        PlanResource.plan_id == PlanPrice.plan_id,
+                    ),
+                ).join(
+                    Resource,
+                    and_(
+                        Resource.project_id == PlanResource.project_id,
+                        Resource.id == PlanResource.resource_id,
+                    ),
+                ).where(
                     PlanPrice.project_id == project_id,
                     PlanPrice.id.in_(price_ids),
                     PlanPrice.status == "active",
                     PlanPrice.native_subscription_active.is_(True),
                     PlanPrice.native_subscription_bot_id == bot_id,
                 )
-            )).all())
+            )).all()
+            counts: dict[UUID, int] = {}
+            for price_id, url, stored_chat, live_chat, status, removed_at in matches:
+                counts[price_id] = counts.get(price_id, 0) + 1
+                if (stored_chat == live_chat
+                        and status == ResourceStatus.ACTIVE.value
+                        and removed_at is None
+                        and url is not None):
+                    native_links[price_id] = url
+            native_links = {
+                price_id: url for price_id, url in native_links.items()
+                if counts[price_id] == 1
+            }
     return build_buyer_offers(
         options, {plan_id: tuple(names) for plan_id, names in by_plan.items()},
         native_links,
