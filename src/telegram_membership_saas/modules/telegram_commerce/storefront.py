@@ -11,11 +11,12 @@ from html import escape
 from uuid import UUID
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
@@ -148,11 +149,38 @@ async def list_buyer_offers(
         if name not in names:
             names.append(name)
     native_links: dict[UUID, str] = {}
+    native_active_ids: set[UUID] = set()
     if bot_id is not None:
         price_ids = [
             option.plan_price_id for option in options if option.currency_code == "XTR"
         ]
         if price_ids:
+            native_active_ids = set((await session.scalars(
+                select(PlanPrice.id).where(
+                    PlanPrice.project_id == project_id,
+                    PlanPrice.id.in_(price_ids),
+                    PlanPrice.native_subscription_active.is_(True),
+                )
+            )).all())
+            if native_active_ids:
+                registered_bot = await session.scalar(select(BotInstance.id).where(
+                    BotInstance.project_id == project_id,
+                    BotInstance.telegram_bot_id == bot_id,
+                    BotInstance.status == "registered",
+                ))
+                state = (
+                    await session.scalar(
+                        text(
+                            "SELECT public.platform_saas_project_commerce_state("
+                            ":project,:bot)"
+                        ),
+                        {"project": project_id, "bot": registered_bot},
+                    ) if registered_bot is not None else None
+                )
+                if state not in ("clear", "disabled"):
+                    # Native paid URLs bypass the old invoice trigger.
+                    # A hold or unknown state must hide the channel URL.
+                    price_ids = []
             # A paid invite is bound to the EXACT Telegram chat where
             # it was created. Never send an old channel link if a plan was
             # later attached to other resources or the chat was replaced.
@@ -193,8 +221,18 @@ async def list_buyer_offers(
                 price_id: url for price_id, url in native_links.items()
                 if counts[price_id] == 1
             }
+    # Never show a bot-invoice button as fallback for a price that was
+    # switched to channel-paid Stars but whose link cannot be published
+    # (billing hold, removed resource, or a different registered bot).
+    if native_active_ids:
+        options = [
+            item for item in options
+            if (item.plan_price_id not in native_active_ids
+                or item.plan_price_id in native_links)
+        ]
     return build_buyer_offers(
-        options, {plan_id: tuple(names) for plan_id, names in by_plan.items()},
+        tuple(options),
+        {plan_id: tuple(names) for plan_id, names in by_plan.items()},
         native_links,
     )
 
