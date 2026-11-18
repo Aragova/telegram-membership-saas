@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
@@ -47,6 +47,20 @@ class NativeStarsTarget:
     bot_id: int
     invite_link: str | None
     active: bool
+
+
+async def native_commerce_state(
+    session: AsyncSession, *, project_id: UUID, bot_instance_id: UUID,
+) -> str:
+    """Use the same live platform gate as bot Stars checkout and admin billing."""
+    state = await session.scalar(
+        text(
+            "SELECT public.platform_saas_project_commerce_state("
+            ":project,:bot)"
+        ),
+        {"project": project_id, "bot": bot_instance_id},
+    )
+    return str(state)
 
 
 async def _target(
@@ -86,6 +100,17 @@ async def _target(
         raise ValueError(
             "Channel Stars require a 1-month plan priced at 1–10000 whole Stars"
         )
+    if not price.native_subscription_active:
+        state = await native_commerce_state(
+            session, project_id=project_id, bot_instance_id=registered,
+        )
+        if state not in ("clear", "disabled"):
+            # A payment hold cannot be bypassed by moving the charge onto
+            # the channel. Unknown billing state must also fail closed.
+            raise PermissionError(
+                "Новые продажи ⭐ Telegram Stars заблокированы "
+                "ограничениями обслуживания ViMi Pay."
+            )
     resources = (await session.scalars(
         select(Resource).join(PlanResource, (
             Resource.project_id == PlanResource.project_id
