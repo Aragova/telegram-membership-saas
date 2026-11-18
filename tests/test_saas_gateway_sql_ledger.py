@@ -462,3 +462,85 @@ async def test_gateway_partial_refunds_reverse_only_actual_credited_rub():
                 await outer.rollback()
     finally:
         await admin.dispose()
+
+
+async def test_shortlink_reader_can_resolve_only_live_original_lava_order():
+    """A distinct no-login read-only role cannot access payment ledger tables."""
+    from uuid import UUID
+
+    cfg = Settings()
+    admin = create_async_engine(cfg.migration_database_url)
+    signed_link = (
+        "https://app.lava.top/products/original/offer"
+        "?paymentParams=SIGNED&signature=OPAQUE"
+    )
+    try:
+        async with admin.connect() as conn:
+            outer = await conn.begin()
+            try:
+                factory = async_sessionmaker(
+                    conn, expire_on_commit=False,
+                    join_transaction_mode="create_savepoint",
+                )
+                payer_tg, payer, operator, invoice, _ = await prepare(
+                    factory, conn,
+                )
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, payer)
+                order = await rpc(
+                    conn, "platform_saas_gateway_reserve",
+                    invoice, "lava", payer_tg, 99887766, json=True,
+                )
+                assert order["status"] == "reserved"
+                await set_actor(conn, operator)
+                provider_id = str(uuid4())
+                assert await rpc(
+                    conn, "platform_saas_gateway_bind",
+                    order["id"], payer_tg, 99887766,
+                    provider_id, signed_link,
+                )
+                # Only the purpose-built GET lookup is exposed by the new role.
+                await conn.execute(text(
+                    "SET LOCAL ROLE membership_shortlink_reader"
+                ))
+                target = await rpc(
+                    conn, "platform_saas_lava_shortlink_target",
+                    UUID(order["id"]),
+                )
+                assert target == signed_link
+                assert await rpc(
+                    conn, "platform_saas_lava_shortlink_target", uuid4(),
+                ) is None
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "SELECT * FROM public.platform_saas_gateway_orders"
+                        ))
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await rpc(
+                            conn, "platform_saas_gateway_record_charge",
+                            order["id"], "lava", str(uuid4()),
+                            Decimal("150"), datetime.now(UTC), json=True,
+                        )
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await set_actor(conn, operator)
+                # A verified original-order charge makes short redirect
+                # unavailable forever, even if refund later reopens debt.
+                result = await rpc(
+                    conn, "platform_saas_gateway_record_charge",
+                    order["id"], "lava", provider_id,
+                    Decimal("150"), datetime.now(UTC), json=True,
+                )
+                assert result["applied"]
+                await conn.execute(text(
+                    "SET LOCAL ROLE membership_shortlink_reader"
+                ))
+                assert await rpc(
+                    conn, "platform_saas_lava_shortlink_target",
+                    UUID(order["id"]),
+                ) is None
+            finally:
+                await outer.rollback()
+    finally:
+        await admin.dispose()

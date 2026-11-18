@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     saas_crypto_pay_testnet: bool = False
     saas_lava_top_api_key: SecretStr | None = None
     saas_lava_top_offer_id: UUID | None = None
+    # Enable only after separate public API and /p/ HTTPS ingress are validated.
+    saas_shortlinks_enabled: bool = False
     platform_timezone: str = "Europe/Moscow"
     # Explicit opt-in, only for central platform owner monitoring.
     platform_backup_gcs_bucket: str | None = None

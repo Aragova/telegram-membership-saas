@@ -1,3 +1,25 @@
+## 2026-11-18 — Draft: clean Lava.top short checkout URLs (operator approval required)
+
+An isolated opt-in redirect is proposed for **existing platform SaaS Lava.top
+orders only**: `pay-api.usevimi.ru/p/<opaque UUIDv4 token>` looks up the
+existing, unexpired, same-amount original order through a dedicated
+least-privilege DB role and responds with a no-store HTTPS Lava-only redirect.
+The signed provider URL and original verified GET settlement are unchanged.
+This is not a new invoice, customer flow, webhook, currency conversion, or
+access grant. Central `TMS_SAAS_SHORTLINKS_ENABLED` defaults OFF, and the
+public /p/ Nginx route requires separately approved operator cutover after
+API-only release and DB-role verification. Existing direct provider links work
+until that gate passes. See [SAAS_PAYMENT_SHORTLINKS.md](SAAS_PAYMENT_SHORTLINKS.md).
+
+**Currency clarification:** historical 150 RUB and $5 USD are different
+service-price profiles, not exchange rates. Existing Lava platform checkout is
+fixed to the original RUB outstanding balance; manual bank methods already
+support RUB/USD/EUR/UAH/BYN. USD/EUR Lava payment of a 150 RUB debt is not
+enabled: FX quoting, immutable provider quote and provider minimum of 5 USD/EUR
+require separate approval, never an automatic surcharge to 5.
+
+---
+
 ## 2026-11-18 — Visual cleanup of SaaS Bill and currency picker
 
 An existing live staging screenshot of PR #192 showed stacked compact text

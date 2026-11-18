@@ -1,3 +1,14 @@
+> **2026-11-18 — New opt-in Lava checkout shortlinks (Draft).** The short
+> URL is only a clean redirect to the existing frozen 150 RUB Lava gateway
+> order. It does not change the invoice currency, pricing, commissions,
+> settlement, FX, Telegram Stars or Crypto. Disabled by default, with a
+> separate API/HTTPS release gate. See [shortlink release procedure](SAAS_PAYMENT_SHORTLINKS.md).
+> Original RUB 150 and USD $5 service rates are **price choices at invoice
+> creation**, not interchangeable at payment time. Manual payment methods
+> support the existing currency catalog. Lava still issues RUB only; USD/EUR
+> dynamic payments require an independently reviewed FX/quote/settlement
+> change, respecting Lava's minimum rather than silently overcharging.
+
 > **2026-11-18 — SaaS Bill visual follow-up.** Future service-currency
 > label is now rendered as a compact Rich table, paired with distinct bill
 > status text and minimal inline buttons; Telegram HTML fallback has readable

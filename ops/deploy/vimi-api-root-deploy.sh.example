@@ -18,6 +18,20 @@ IFS= read -r requested || { echo "missing approved SHA" >&2; exit 2; }
 readonly repo=/opt/vimi-pay-api/repo
 readonly project=vimi-pay-public
 readonly compose=ops/public-api.compose.yaml
+# Optional root-owned API-only secret file. Never reuse the bot DB role.
+# Treat the file as data for Compose interpolation, not executable shell.
+compose_env=()
+if [[ -e /etc/vimi-pay-api/shortlinks.env ]]; then
+  secret_file=/etc/vimi-pay-api/shortlinks.env
+  [[ -f "$secret_file" && ! -L "$secret_file" ]] || {
+    echo "Shortlink secrets must be a regular file" >&2; exit 3;
+  }
+  [[ "$(stat -c %u "$secret_file")" == 0
+      && "$(stat -c %a "$secret_file")" == 600 ]] || {
+    echo "Shortlink secrets must be root-owned mode 0600" >&2; exit 3;
+  }
+  compose_env=(--env-file "$secret_file")
+fi
 [[ -d "$repo/.git" ]] || { echo "independent API checkout missing" >&2; exit 3; }
 [[ "$(stat -c %u "$repo")" == "0" ]] || { echo "API checkout must be root-owned" >&2; exit 3; }
 
@@ -51,11 +65,11 @@ restore_on_error() {
   echo "API-ONLY DEPLOY FAILED; restoring only the isolated API service" >&2
   # If there was no previously running API, stop only the new API service.
   if [[ "$previous_running" == 0 && -f "$compose" ]]; then
-    docker compose -p "$project" -f "$compose" stop pay-api >/dev/null 2>&1 || true
+    docker compose "${compose_env[@]}" -p "$project" -f "$compose" stop pay-api >/dev/null 2>&1 || true
   fi
   git checkout --quiet --detach "$before" || true
   if [[ "$previous_running" == 1 && -f "$compose" ]]; then
-    docker compose -p "$project" -f "$compose" up -d --no-deps --build pay-api >&2 || {
+    docker compose "${compose_env[@]}" -p "$project" -f "$compose" up -d --no-deps --build pay-api >&2 || {
       echo "WARNING: failed to restore prior API. Operator intervention required." >&2;
     }
   fi
@@ -68,7 +82,7 @@ git checkout --quiet --detach "$requested"
 
 # Validate the fully resolved Compose file before touching any container.
 # Fail closed on public/extra ports, dependencies, services, secrets or mounts.
-config_json="$(docker compose -p "$project" -f "$compose" config --format json)"
+config_json="$(docker compose "${compose_env[@]}" -p "$project" -f "$compose" config --format json)"
 printf '%s\n' "$config_json" | python3 -c '
 import json, sys
 conf = json.load(sys.stdin)
@@ -87,16 +101,25 @@ assert str(s.get("user")) == "65534:65534"
 assert "ALL" in s.get("cap_drop", [])
 assert "depends_on" not in s and "network_mode" not in s
 assert not s.get("volumes") and not s.get("secrets")
-assert set(s.get("environment", {})) == {"TMS_ENVIRONMENT"}
+assert set(s.get("environment", {})) == {"TMS_ENVIRONMENT", "TMS_SHORTLINK_DATABASE_URL"}
 assert s["environment"]["TMS_ENVIRONMENT"] == "staging"
+# Docker Compose `config --format json` canonicalizes service networks
+# to a mapping: {"staging-db": {}} (never the YAML shorthand list).
+service_networks = s.get("networks", {})
+assert isinstance(service_networks, dict), service_networks
+assert set(service_networks) == {"staging-db"}, service_networks
+assert service_networks["staging-db"] in ({}, None), service_networks
+network = conf.get("networks", {}).get("staging-db", {})
+assert network.get("external") is True
+assert network.get("name") == "telegram-membership-saas-staging_default"
 '
-docker compose -p "$project" -f "$compose" up -d --no-deps --build pay-api
+docker compose "${compose_env[@]}" -p "$project" -f "$compose" up -d --no-deps --build pay-api
 
 # Check both Docker health and the actual loopback API, including a closed
 # unknown route. No Nginx changes or bot restart are performed here.
 healthy=0
 for _ in $(seq 1 45); do
-  cid="$(docker compose -p "$project" -f "$compose" ps -q pay-api)"
+  cid="$(docker compose "${compose_env[@]}" -p "$project" -f "$compose" ps -q pay-api)"
   if [[ -n "$cid" && "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null)" == "healthy" ]]; then
     healthy=1
     break
