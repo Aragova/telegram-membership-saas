@@ -100,6 +100,10 @@ large stacks of status lines:
 - Use compact ON / OFF in both Russian and English, with additional spacing
   around emoji. The bot-running status is based on the live supervisor
   heartbeat, independently of configured prices/payment methods.
+- Channel / group ON also requires current Telegram administrator permissions
+  to invite and restrict members (not just an active row in the database).
+  Verification uses bounded live checks on up to eight associated resources;
+  unavailable/unverified rights are not displayed as ON.
 - Each readiness check preserves its existing factual source and existing
   setup action when incomplete.
 - A single compact finance area shows the live connected-bot Stars balance
