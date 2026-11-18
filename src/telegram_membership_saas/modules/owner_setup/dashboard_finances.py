@@ -43,6 +43,7 @@ class DashboardFinances:
     bot_stars: str | None
     channels: tuple[ChannelFinance, ...]
     extra_channels: int = 0
+    available: bool = True
 
 
 def _format_stars_amount(amount: object) -> str:
