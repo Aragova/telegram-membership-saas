@@ -425,25 +425,31 @@ def _private(message: Message) -> bool:
 
 
 def _readiness_steps(snapshot) -> tuple[tuple[str, bool], ...]:
-    """Single source of truth for both two-row Rich and classic readiness."""
-    # A registered bot is configured, not necessarily running.
+    """Four actionable checks on the already-connected bot's dashboard."""
     return (
-        (tr("Собственный бот", "Connected bot"),
-         any(s == "registered" for _, s in snapshot.bots)),
         (tr("Канал / группа", "Channel / group"),
-         any(s == "active" for _, _, s in snapshot.resources)),
-        (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
+         any(status == "active" for _, _, status in snapshot.resources)),
+        (tr("Тариф", "Plan"),
+         any(status == "active" for _, _, status in snapshot.plans)),
         (tr("Способ оплаты", "Payment method"),
-         any(s == "active" for _, _, s in snapshot.methods)
+         any(status == "active" for _, _, status in snapshot.methods)
          or snapshot.sales_configured),
-        (tr("Бот работает", "Bot is running"), bool(snapshot.live_bot_username)),
+        (tr("Бот работает", "Bot running"), bool(snapshot.bot_running)),
     )
 
 
 def _progress(snapshot) -> tuple[str, ...]:
+    """Central connection readiness retains the bot-registration check.
+
+    The connected bot's own dashboard intentionally omits this tautology.
+    """
+    steps = (
+        (tr("Собственный бот", "Connected bot"),
+         any(status == "registered" for _, status in snapshot.bots)),
+        *_readiness_steps(snapshot),
+    )
     return tuple(
-        ("✅ " if ready else "▫️ ") + label
-        for label, ready in _readiness_steps(snapshot)
+        ("✅ " if ready else "▫️ ") + label for label, ready in steps
     )
 
 
