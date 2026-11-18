@@ -30,8 +30,10 @@ ledger is migrated or modified.
    the owner is alerted with the exact link for manual revocation.
 
 Existing bot invoices already paid and the payment history stay intact.
-Prices with an active native link cannot be changed or retired until the
-native mode is disabled. A Telegram-paid subscriber is **not** created as
+Prices with an active native link cannot be changed, retired, archived,
+hard-deleted, or have their linked channel removed until the native mode is
+disabled. If a historic plan is already archived, its original paid link can
+still be disabled and revoked from the existing Stars payment-method screen. A Telegram-paid subscriber is **not** created as
 a ViMi Pay-paid order, since the bot has no verified channel transaction
 record. Do not equate Telegram member counts with confirmed payments.
 
@@ -51,6 +53,14 @@ entitlement for the *same channel* may be affected by an old queued access
 revocation. Run first on a **new separate channel without existing ViMi Pay
 grants**. Do not automatically switch active legacy channels to native mode
 until reconciliation and mixed-entitlement access semantics are covered.
+
+Banned customers cannot see native paid invite URLs in ViMi Pay's buyer
+catalog; their existing paid subscriptions and access-history controls remain
+available. However, Telegram paid invitation URLs are **shareable**. A person
+who receives a valid link from someone else may buy directly through Telegram
+outside the bot's ban-checked checkout, and Bot API cannot reject that native
+payment before it is charged. Do not rely on this rail for an irreversible
+per-buyer purchase ban without a separate Telegram membership policy.
 
 A native paid invitation can remain valid outside ViMi Pay if a user saved
 the URL. Removing a plan from ViMi Pay does not necessarily cancel a
