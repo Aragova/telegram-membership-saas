@@ -953,24 +953,23 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=fixed_project_id,
         )
         currency = str(data["currency"])
-        amount = "$5" if currency == "USD" else "150 ₽"
         label = "USD · $5" if currency == "USD" else "RUB · 150 ₽"
         await bot.send_message(
             user_id,
             tr(
-                "💱 <b>Валюта обслуживания ViMi Pay</b>\\n\\n"
-                "Сейчас: <b>{label} в месяц за бота</b>.\\n"
-                "Выберите валюту для следующих счетов.\\n\\n"
+                "💱 <b>Валюта обслуживания ViMi Pay</b>\n\n"
+                "Сейчас: <b>{label} в месяц за бота</b>.\n"
+                "Выберите валюту для следующих счетов.\n\n"
                 "ℹ️ Настройка действует на аккаунт и будущие счета "
                 "всех его ботов. Уже выставленные счета, их суммы "
-                "и подтверждённые платежи не изменятся.\\n"
+                "и подтверждённые платежи не изменятся.\n"
                 "Это не выбор валюты конкретного платежа.",
-                "💱 <b>ViMi Pay service currency</b>\\n\\n"
-                "Current: <b>{label} per bot per month</b>.\\n"
-                "Choose the currency for future invoices.\\n\\n"
+                "💱 <b>ViMi Pay service currency</b>\n\n"
+                "Current: <b>{label} per bot per month</b>.\n"
+                "Choose the currency for future invoices.\n\n"
                 "ℹ️ This account-wide setting applies to future bills "
                 "for all your bots. Already issued invoices, amounts "
-                "and confirmed payments stay unchanged.\\n"
+                "and confirmed payments stay unchanged.\n"
                 "This is not the currency selector for a payment.",
             ).format(label=label),
             parse_mode="HTML",
@@ -1059,7 +1058,7 @@ def create_owner_setup_router(
                     "Unpaid invoices: {unpaid} · {due:.2f} RUB",
                 ).format(
                     unpaid=report.unpaid, due=report.outstanding_rub,
-                ) + "\\n\\n" + service_currency_hint(str(profile["currency"])),
+                ) + "\n\n" + service_currency_hint(str(profile["currency"])),
                 parse_mode="HTML", reply_markup=_markup(rows),
             )
             return
@@ -1152,9 +1151,9 @@ def create_owner_setup_router(
         await send_owner_rich(
             bot, chat_id=user_id,
             rich_html=(issued_invoice_rich(item, snapshot, credits, balance)
-                       + "\\n<p>" + hint.replace("\\n", "</p><p>") + "</p>"),
+                       + "\n<p>" + hint.replace("\n", "</p><p>") + "</p>"),
             classic_html=(issued_invoice_classic(item, snapshot, credits, balance)
-                          + "\\n\\n" + hint),
+                          + "\n\n" + hint),
             reply_markup=_markup(buttons),
         )
 
