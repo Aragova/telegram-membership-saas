@@ -39,9 +39,14 @@ def test_new_price_in_both_owner_languages() -> None:
     ui = (ROOT / "src/telegram_membership_saas/modules/owner_setup/handlers.py").read_text(
         encoding="utf-8",
     )
-    assert "150 ₽ или $5 за бот" in ui
-    assert "150 RUB or 5 USD per bot per month" in ui
-    assert '_button("$5","saasprice:USD")' in ui
+    # Price is still 150 RUB / USD 5; navigation belongs to Bill, not Settings.
+    assert "🇷🇺 150 ₽" in ui
+    assert "🇺🇸 $5" in ui
+    assert '"saasprice:USD"' in ui
+    assert '"saasprice:RUB"' in ui
+    assert "Валюта обслуживания ViMi Pay" in ui
+    assert "ViMi Pay service currency" in ui
+    assert '"saasinvoices:0"' in ui
 
 
 @pytest.mark.skipif(
