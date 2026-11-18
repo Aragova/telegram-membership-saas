@@ -48,13 +48,28 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,channel-finance]"
 
       - name: Lint
         run: ruff check .
 
       - name: Validate opt-in backup shell syntax
         run: bash -n ops/backup/vimi-pay-gcs-backup.sh
+
+      - name: Validate protected channel finance secret provisioning
+        run: bash -n ops/channel_finance_prepare_secrets.sh
+
+      - name: Verify finance secrets are readable only by the sidecar UID
+        run: |
+          set -Eeuo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"; sudo rm -rf /srv/vimi-channel-finance-secrets' EXIT
+          printf 'dummy-api-hash-only' > "$tmp/hash"
+          printf 'dummy-session-only' > "$tmp/session"
+          printf 'dummy-access-key-only' > "$tmp/key"
+          sudo bash ops/channel_finance_prepare_secrets.sh "$tmp/hash" "$tmp/session" "$tmp/key" /srv/vimi-channel-finance-secrets
+          test "$(sudo stat -c '%u:%g:%a' /srv/vimi-channel-finance-secrets/channel_finance_session)" = "25073:25073:400"
+          docker run --rm --user 25073:25073 -v /srv/vimi-channel-finance-secrets/channel_finance_session:/run/secrets/session:ro python:3.12-slim python -c "from pathlib import Path; assert Path('/run/secrets/session').read_text() == 'dummy-session-only'"
 
       # Real deployment starts each entrypoint in a fresh interpreter.
       # compileall and pytest's preloaded import graph cannot detect cycles.
@@ -63,6 +78,13 @@ jobs:
           python -c "import telegram_membership_saas.customer_supervisor_main"
           python -c "import telegram_membership_saas.customer_bot_main"
           python -c "import telegram_membership_saas.bot_main"
+
+      - name: Smoke-test optional Telegram revenue MTProto schema
+        run: |
+          python -c "from telethon.tl.functions.payments import GetStarsRevenueStatsRequest"
+          python -c "from telethon.tl.functions.channels import GetParticipantRequest"
+          python -c "from telethon.tl.types import ChannelParticipantCreator"
+          python -c "import telegram_membership_saas.channel_finance_agent"
 
       - name: Alembic heads
         run: alembic heads
@@ -298,6 +320,21 @@ jobs:
 
       - name: Validate opt-in light 100-bot compose overlay
         run: docker compose -f compose.yaml -f compose.light100.yaml --profile supervisor config -q
+
+      - name: Validate opt-in private channel finance compose
+        env:
+          TMS_CHANNEL_FINANCE_API_ID: "1"
+          TMS_CHANNEL_FINANCE_OWNER_ID: "2"
+          TMS_CHANNEL_FINANCE_ALLOWED_CHAT_IDS: "-100123456789"
+          CHANNEL_FINANCE_API_HASH_FILE: "/dev/null"
+          CHANNEL_FINANCE_SESSION_FILE: "/dev/null"
+          CHANNEL_FINANCE_ACCESS_KEY_FILE: "/dev/null"
+        run: |
+          docker compose -f compose.yaml -f compose.channel-finance.yaml \
+            --profile supervisor config -q
+
+      - name: Build channel-finance isolated image
+        run: docker build -t telegram-membership-saas-channel-finance:ci -f Dockerfile.channel-finance .
 
       - name: Build container
         run: docker build -t telegram-membership-saas:ci .

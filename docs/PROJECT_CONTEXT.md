@@ -20,6 +20,28 @@ migrations, or runtime configuration.
 
 ---
 
+## 2026-11-18 — Draft #193: actual channel ⭐ Telegram Stars revenue
+
+Operator request: replace "unavailable" channel balances on connected-bot
+admin dashboards with real channel Telegram Stars balances, withdrawable Stars,
+withdrawal permission and remaining wait / next permitted date.
+
+Official Telegram `payments.getStarsRevenueStats` is USER MTProto only; bot
+tokens cannot call it. Draft PR #193 introduces an opt-in, separate single-
+owner, allowlisted Telethon bridge. Bot workers keep only an internal shared
+bridge key, no user session/API hash. Only project owners with verified live
+Telegram channel creator IDs may read fresh, channel-matched snapshots.
+The UI shows real values with observation time or fails closed; no estimated
+balances or automatic withdrawals, and no inclusion in 5% SaaS charges.
+
+**Not enabled on existing 51-bot staging fleet; not general merchant onboarding.**
+A Telegram user session is full-account-capability even though bridge code is
+read-only. Initial release gate is isolated own test account with separately
+managed secrets, CI, Codex, explicit merge/deploy approval and real live
+Telegram comparison. See [CHANNEL_STARS_REVENUE_BRIDGE.md](CHANNEL_STARS_REVENUE_BRIDGE.md).
+
+---
+
 ## 2026-11-18 — Draft: manage SaaS service currency from Bill
 
 Move the existing **account-level** ViMi Pay service-price currency selector
