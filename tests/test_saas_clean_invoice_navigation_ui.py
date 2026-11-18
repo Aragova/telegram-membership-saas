@@ -51,6 +51,9 @@ async def test_bot_invoice_has_single_pay_and_home(monkeypatch, lang):
         "paid_rub": "0", "credit_rub": "0", "total_due_rub": "850",
     })
     monkeypatch.setattr(ui, "merchant_saas_bill_summary", summary)
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "RUB", "monthly_amount": "150.00"},
+    ))
     old_index = AsyncMock(side_effect=AssertionError("No account-wide invoices"))
     monkeypatch.setattr(ui, "merchant_saas_statements", old_index)
     bot = MagicMock()
@@ -67,11 +70,17 @@ async def test_bot_invoice_has_single_pay_and_home(monkeypatch, lang):
     body = bot.send_message.await_args.args[1]
     buttons = [b for row in bot.send_message.await_args.kwargs[
         "reply_markup"].inline_keyboard for b in row]
-    assert len(buttons) == 2
+    assert len(buttons) == 3
     assert buttons[0].callback_data == (
         "own:spm:" + encode_uuid(invoice) + ":RUB:0"
     )
-    assert buttons[1].callback_data == "own:dashboard"
+    assert buttons[1].callback_data == "own:saasprofile"
+    assert buttons[2].callback_data == "own:dashboard"
+    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert [len(row) for row in rows] == [1, 1, 1]
+    assert ("Новые счета" if lang == "ru" else
+            "Future bills") in body
+    assert "150" in body
     assert "850.00 ₽" in body and "10000 RUB" in body
     assert str(invoice) not in body
     assert ("Продажи подписок" if lang == "ru" else
@@ -126,7 +135,7 @@ async def test_one_method_creates_only_full_payment_attempt(monkeypatch, lang):
     assert "50%" not in str(bot.send_message.await_args.kwargs)
 
 
-async def test_paid_bot_bill_has_only_main_menu(monkeypatch):
+async def test_unissued_bot_bill_still_offers_service_currency(monkeypatch):
     project = uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor",
                         AsyncMock(return_value=uuid4()))
@@ -139,9 +148,17 @@ async def test_paid_bot_bill_has_only_main_menu(monkeypatch):
             "credit_rub": "0", "total_due_rub": "0",
         },
     ))
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "USD", "monthly_amount": "5.00"},
+    ))
     bot = MagicMock()
     bot.send_message = AsyncMock()
     await _handler(project)(_callback("saasinvoices:0"), bot)
     rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
-    assert len(rows) == 1
-    assert rows[0][0].callback_data == "own:dashboard"
+    assert len(rows) == 2
+    assert [row[0].callback_data for row in rows] == [
+        "own:saasprofile", "own:dashboard",
+    ]
+    assert all(len(row) == 1 for row in rows)
+    body = bot.send_message.await_args.args[1]
+    assert "USD" in body and "$5" in body

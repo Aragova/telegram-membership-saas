@@ -20,6 +20,49 @@ require separate approval, never an automatic surcharge to 5.
 
 ---
 
+## 2026-11-18 — Visual cleanup of SaaS Bill and currency picker
+
+An existing live staging screenshot of PR #192 showed stacked compact text
+without Rich structure or spacing. The account service currency picker also
+had wordy text. Follow-up keeps **all existing financial rules**:
+RUB 150 / USD 5 affects future bills only, and the existing PostgreSQL rule
+blocks currency changes while **any issued account service invoice is unpaid**.
+The paid-account switch is already functional. The restriction is not bypassed
+or migrated.
+
+A compact explicit Rich heading/table/status replaces repeated navigation
+instructions on connected-bot bills (issued, paid, no invoice), on the
+currency picker and on the central billing overview. Telegram HTML fallback
+keeps readable blank lines and exact same actions. The connected-bot Bill
+uses at most two keyboard rows (Pay if owed; currency + Main menu). Currency
+choices remain two buttons in one row plus Back to Bill. A blocked attempt
+shows a RU/EN popup explaining the existing debt restriction rather than an
+unhandled SQL exception. No new menus, payment actions, tariff writes, SQL
+migrations, or runtime configuration.
+
+---
+
+## 2026-11-18 — Draft: manage SaaS service currency from Bill
+
+Move the existing **account-level** ViMi Pay service-price currency selector
+(RUB 150 / USD 5 per bot per month) from connected-bot Settings to **🧾 Bill**
+on both connected bots and central historical invoice lists. The selector
+continues to call the same authenticated price-profile read/set RPC; no new
+table, billing migration, price rule, payment currency, or settlement changes.
+Show the *future-invoice* service currency and a "Bill → Service currency"
+hint in every relevant bill state, including before issue and after payment.
+Changing the profile never reprices an existing invoice or modifies historic
+finance evidence. The selector returns to Bill, not Settings. No duplicate
+action in Settings.
+
+The per-bot paid status and owner-wide commerce hold are separate:
+a paid bot may still show a network-level hold from **another overdue bot
+invoice**. The invoice copy now explains this case instead of appearing
+self-contradictory. RU/EN parity, stable original callbacks and original
+billing rules are preserved. No deployment without approval.
+
+---
+
 ## 2026-11-17 — Approved future web cabinet + provider webhook architecture (PR #184)
 
 Owner approves the **target** split: within Telegram, buyer digital checkout

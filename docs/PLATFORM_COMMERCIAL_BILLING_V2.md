@@ -9,6 +9,30 @@
 > dynamic payments require an independently reviewed FX/quote/settlement
 > change, respecting Lava's minimum rather than silently overcharging.
 
+> **2026-11-18 — SaaS Bill visual follow-up.** Future service-currency
+> label is now rendered as a compact Rich table, paired with distinct bill
+> status text and minimal inline buttons; Telegram HTML fallback has readable
+> spacing. The RU/EN picker uses a single current-currency row, one short
+> explanation and the original two selection buttons + Back to Bill. Existing
+> PostgreSQL `platform_saas_price_profile_set` **intentionally denies changes
+> while any issued service bill remains unpaid**; this is a financial rule, not
+> a broken selector. An affected account receives a localized callback alert.
+> After settling debt the existing USD/RUB selector works. No SQL migration,
+> revaluation, payment-method or ledger modification is introduced.
+
+
+> **2026-11-18 — Draft service-currency navigation cleanup.**
+> Connected bot 🧾 Bill and central historical billing list now expose
+> a single **💱 Service currency** selector. This replaces the old Settings
+> placement (old saved Telegram callbacks remain navigable). It is the
+> pre-existing **account-wide prospective service price**: RUB 150 / USD 5
+> per bot per month. New invoice currency is chosen for *future* bot charges;
+> existing issued paid/unpaid rows, their FX snapshots, and actual payment
+> method currencies are immutable. Every bill state shows a compact current
+> profile + navigation hint. A paid current bill with owner-wide hold explicitly
+> attributes the hold to another unpaid network bill. No SQL or automatic
+> provider-currency selection changes.
+
 > **2026-11-18 — Historical bill after a connected bot was deleted (PR #186).**
 > Issued ViMi Pay debt is owned by the originally liable **account**, not by
 > the lifetime of its Telegram bot token. Permanently removing a bot with no

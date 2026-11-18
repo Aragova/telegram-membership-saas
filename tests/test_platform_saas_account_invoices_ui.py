@@ -28,6 +28,9 @@ async def test_central_has_archive_but_no_cross_bot_live_invoice(
                    "status": "issued", "amount_rub": "150.00"},),
     ))
     monkeypatch.setattr(ui, "merchant_saas_statements", old)
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "RUB", "monthly_amount": "150.00"},
+    ))
     live = AsyncMock(side_effect=AssertionError(
         "Central bot must not aggregate a live merchant invoice",
     ))
@@ -54,11 +57,12 @@ async def test_central_has_archive_but_no_cross_bot_live_invoice(
         "reply_markup"].inline_keyboard for b in row]
     assert "own:saasbill:" + encode_uuid(invoice) + ":0" in buttons
     assert "own:projects" in buttons
+    assert "own:saasprofile" in buttons
     assert not any(x.startswith("own:spm:") for x in buttons)
     text_body = bot.send_message.await_args.args[1]
     assert ("Счета ViMi Pay" if language == "ru" else "ViMi Pay invoices") in text_body
-    assert ("Неоплаченных счетов: 1" if language == "ru"
-            else "Unpaid invoices: 1") in text_body
+    assert ("Неоплачено: 1" if language == "ru"
+            else "Unpaid: 1") in text_body
     invoice_button = next(
         b.text
         for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard

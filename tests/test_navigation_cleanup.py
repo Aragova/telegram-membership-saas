@@ -32,7 +32,7 @@ def _buttons(markup):
     [("ru", "⚙️ Настройки", "⬅️ Панель администратора"),
      ("en", "⚙️ Settings", "⬅️ Admin dashboard")],
 )
-async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sections(
+async def test_owner_dashboard_keeps_billing_currency_out_of_settings(
     monkeypatch, language, settings_label, back_label,
 ):
     project_id, actor_id = uuid4(), uuid4()
@@ -130,12 +130,12 @@ async def test_owner_dashboard_hides_settings_children_and_settings_has_five_sec
         assert settings_actions == {
             "own:notifications", "own:readiness", "own:timezone",
             "own:network", "own:modmanage", "own:transfer",
-            "own:help", "own:dashboard", "own:saasprofile",
+            "own:help", "own:dashboard",
         }
         assert next(
             b.text for b in settings_buttons if b.callback_data == "own:dashboard"
         ) == back_label
-        assert len(bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard) == 8
+        assert len(bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard) == 7
     finally:
         _language.reset(token)
 
