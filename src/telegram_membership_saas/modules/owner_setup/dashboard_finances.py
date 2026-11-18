@@ -27,6 +27,7 @@ from telegram_membership_saas.tenant_context import TenantContext
 log = logging.getLogger(__name__)
 MAX_CHANNELS_ON_DASHBOARD = 3
 TELEGRAM_READ_TIMEOUT = 4
+MAX_RESOURCE_ACCESS_CHECKS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,7 @@ class DashboardFinances:
     channels: tuple[ChannelFinance, ...]
     extra_channels: int = 0
     available: bool = True
+    channel_ready: bool = False
 
 
 def _format_stars_amount(amount: object) -> str:
@@ -126,6 +128,25 @@ async def _live_owner(bot: Bot, chat_id: str) -> ChannelOwner:
         return ChannelOwner(label=None)
 
 
+async def _live_resource_rights(bot: Bot, chat_id: str) -> bool:
+    """Check current Telegram rights, not a stale active Resource row."""
+    try:
+        member = await asyncio.wait_for(
+            bot.get_chat_member(chat_id=int(chat_id), user_id=bot.id),
+            timeout=TELEGRAM_READ_TIMEOUT,
+        )
+        if member.status == "creator":
+            return True
+        return bool(
+            member.status == "administrator"
+            and getattr(member, "can_invite_users", False)
+            and getattr(member, "can_restrict_members", False)
+        )
+    except (AiogramError, TimeoutError, TypeError, AttributeError, ValueError):
+        log.info("Telegram bot resource rights unavailable: %s", chat_id)
+        return False
+
+
 async def read_dashboard_finances(
     factory: async_sessionmaker[AsyncSession], *, actor_id: UUID,
     project_id: UUID, bot: Bot,
@@ -148,6 +169,19 @@ async def read_dashboard_finances(
             Resource.resource_type == "telegram_channel",
             Resource.status == "active", Resource.removed_at.is_(None),
         ).order_by(Resource.name, Resource.id))).all()
+        # The setup screen previously trusted a stored Resource.status
+        # despite revoked or changed Telegram admin permissions. Validate
+        # the current rights for all normally connected resources.
+        active_resource_chats = (await session.scalars(
+            select(Resource.external_id).where(
+                Resource.project_id == project_id,
+                Resource.resource_type.in_(
+                    ("telegram_channel", "telegram_group"),
+                ),
+                Resource.status == "active",
+                Resource.removed_at.is_(None),
+            ).order_by(Resource.id)
+        )).all()
         # Each active Stars price points to one or more current resources.
         # This distinguishes the native paid channel link from old bot invoices.
         stars = (await session.execute(select(
@@ -183,6 +217,14 @@ async def read_dashboard_finances(
         routes.setdefault(resource_id, set()).add(route)
 
     visible = channels[:MAX_CHANNELS_ON_DASHBOARD]
+    # An unverified resource must not display a green ON. Limit per-open
+    # Telegram requests, rather than polling arbitrarily many resources.
+    channel_ready = False
+    if 0 < len(active_resource_chats) <= MAX_RESOURCE_ACCESS_CHECKS:
+        rights = await asyncio.gather(*(
+            _live_resource_rights(bot, chat_id) for chat_id in active_resource_chats
+        ))
+        channel_ready = all(rights)
     results = await asyncio.gather(
         _live_stars(bot),
         *(_live_owner(bot, chat.external_id) for chat in visible),
@@ -206,4 +248,5 @@ async def read_dashboard_finances(
         bot_stars=bot_balance,
         channels=tuple(cards),
         extra_channels=max(0, len(channels) - len(cards)),
+        channel_ready=channel_ready,
     )
