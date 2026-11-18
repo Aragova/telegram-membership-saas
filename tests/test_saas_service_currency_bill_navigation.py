@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
@@ -49,9 +50,11 @@ def test_price_hint_on_all_bill_states_and_ru_en(lang, state):
         for renderer in (unified_merchant_bill_rich, unified_merchant_bill_classic):
             screen = renderer(bill, future_profile_currency="USD")
             assert "USD" in screen and "$5" in screen
-            assert ("Валюта обслуживания" if lang == "ru"
-                    else "Service currency") in screen
-            assert ("Счёт → " if lang == "ru" else "Bill → ") in screen
+            assert ("Новые счета" if lang == "ru"
+                    else "Future bills") in screen
+            if renderer is unified_merchant_bill_rich:
+                assert "<table bordered compact>" in screen
+                assert screen.count("<table bordered compact>") >= 1
             if state != "unissued":
                 assert "150.00 ₽" in screen  # Original invoice unchanged
     finally:
@@ -111,7 +114,8 @@ async def test_currency_picker_is_bill_only_and_uses_existing_profile_rpc(
         await handler(picker, bot)
         first = bot.send_message.await_args
         assert "150 ₽" in first.args[1]
-        assert ("будущие" if lang == "ru" else "future") in first.args[1].lower()
+        assert ("Для будущих счетов" if lang == "ru" else
+                "For future invoices") in first.args[1]
         actions = [
             b.callback_data for row in first.kwargs["reply_markup"].inline_keyboard
             for b in row
@@ -137,3 +141,46 @@ def test_settings_no_longer_contains_financial_menu_item():
     assert "saasprofile" not in settings_section
     assert "Валюта обслуживания" in source
     assert "saasinvoices:0" in source
+
+
+@pytest.mark.parametrize("lang", ("ru", "en"))
+@pytest.mark.parametrize("connected", (True, False))
+async def test_unpaid_invoice_preserves_tariff_choice_and_explains_block(
+    monkeypatch, lang, connected,
+):
+    """Existing database guard blocks the switch, but Telegram explains why."""
+    project = uuid4() if connected else None
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+
+    class UnpaidInvoice(Exception):
+        sqlstate = "23514"
+
+    save = AsyncMock(side_effect=DBAPIError(
+        "SELECT public.platform_saas_price_profile_set(:currency)", {},
+        UnpaidInvoice("Settle outstanding service invoice before changing profile"),
+    ))
+    monkeypatch.setattr(ui, "saas_price_profile", save)
+    router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=project)
+    handler = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "owner_callback"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    token = _language.set(lang)
+    try:
+        callback = _callback("saasprice:USD")
+        await handler(callback, bot)
+        assert callback.answer.await_count == 1
+        options = callback.answer.await_args.kwargs
+        assert options["show_alert"] is True
+        message = callback.answer.await_args.args[0]
+        assert ("Сначала погасите" if lang == "ru"
+                else "Settle outstanding") in message
+        bot.send_message.assert_not_awaited()
+        save.assert_awaited_once()
+    finally:
+        _language.reset(token)

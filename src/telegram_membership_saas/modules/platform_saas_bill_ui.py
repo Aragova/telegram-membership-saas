@@ -26,22 +26,21 @@ def _native(amount: object, code: str) -> str:
 
 
 def service_currency_hint(currency: str, *, rich: bool = False) -> str:
-    """Future account price, never the currency of an already-issued bill."""
+    """Compact *future* tariff row, independent of an issued invoice."""
     if currency not in {"RUB", "USD"}:
         raise ValueError("Unsupported ViMi Pay service currency")
-    label = "USD · $5/мес." if currency == "USD" else "RUB · 150 ₽/мес."
-    english = "USD · $5/month" if currency == "USD" else "RUB · 150 ₽/month"
-    body = tr(
-        "💱 Валюта обслуживания новых счетов: ",
-        "💱 Service currency for future invoices: ",
-    ) + "<b>" + (label if tr("ru", "en") == "ru" else english) + "</b>"
-    detail = tr(
-        "Сменить можно здесь: 🧾 Счёт → 💱 Валюта обслуживания.",
-        "Change here: 🧾 Bill → 💱 Service currency.",
+    label = (
+        tr("USD · $5/мес.", "USD · $5/month")
+        if currency == "USD"
+        else tr("RUB · 150 ₽/мес.", "RUB · 150 ₽/month")
     )
-    return "<p>" + body + "</p><p>" + detail + "</p>" if rich else (
-        body + "\n" + detail
-    )
+    name = tr("💱 Новые счета", "💱 Future bills")
+    if rich:
+        return (
+            "<table bordered compact><tr><th>" + name
+            + "</th><td><b>" + label + "</b></td></tr></table>"
+        )
+    return name + ": <b>" + label + "</b>"
 
 
 def _service_amount(bill: dict) -> str:
@@ -201,11 +200,11 @@ def unified_merchant_bill_rich(
     if future_profile_currency is not None:
         lines.append(service_currency_hint(future_profile_currency, rich=True))
     if bill.get("invoice_id") is None:
-        lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
-        lines.append("<p>" + tr(
-            "Счёт ещё не выставлен. Оплата доступна только по реальному счёту.",
-            "No invoice issued yet. Pay only an actual issued invoice.",
-        ) + "</p>")
+        status = _bill_status(bill) or [tr(
+            "⏳ Счёт пока не выставлен.",
+            "⏳ No invoice issued yet.",
+        )]
+        lines.extend("<p>" + entry + "</p>" for entry in status)
         return "\n".join(lines)
     lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
     lines.extend([
@@ -244,13 +243,12 @@ def unified_merchant_bill_classic(
     _validate(bill)
     lines = [tr("🧾 <b>Счёт ViMi Pay</b>", "🧾 <b>ViMi Pay invoice</b>")]
     if future_profile_currency is not None:
-        lines.append(service_currency_hint(future_profile_currency))
+        lines.extend(["", service_currency_hint(future_profile_currency), ""])
     if bill.get("invoice_id") is None:
-        lines.extend(_bill_status(bill))
-        lines.append(tr(
-            "Счёт пока не выставлен.",
-            "No invoice has been issued yet.",
-        ))
+        lines.extend(_bill_status(bill) or [tr(
+            "⏳ Счёт пока не выставлен.",
+            "⏳ No invoice issued yet.",
+        )])
         return "\n".join(lines)
     lines.extend(_bill_status(bill))
     lines.extend([

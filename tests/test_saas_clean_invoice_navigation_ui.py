@@ -76,8 +76,10 @@ async def test_bot_invoice_has_single_pay_and_home(monkeypatch, lang):
     )
     assert buttons[1].callback_data == "own:saasprofile"
     assert buttons[2].callback_data == "own:dashboard"
-    assert ("Валюта обслуживания" if lang == "ru" else
-            "Service currency") in body
+    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert [len(row) for row in rows] == [1, 1, 1]
+    assert ("Новые счета" if lang == "ru" else
+            "Future bills") in body
     assert "150" in body
     assert "850.00 ₽" in body and "10000 RUB" in body
     assert str(invoice) not in body
@@ -154,7 +156,9 @@ async def test_unissued_bot_bill_still_offers_service_currency(monkeypatch):
     await _handler(project)(_callback("saasinvoices:0"), bot)
     rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
     assert len(rows) == 2
-    assert rows[0][0].callback_data == "own:saasprofile"
-    assert rows[1][0].callback_data == "own:dashboard"
+    assert [row[0].callback_data for row in rows] == [
+        "own:saasprofile", "own:dashboard",
+    ]
+    assert all(len(row) == 1 for row in rows)
     body = bot.send_message.await_args.args[1]
     assert "USD" in body and "$5" in body

@@ -1,3 +1,25 @@
+## 2026-11-18 — Visual cleanup of SaaS Bill and currency picker
+
+An existing live staging screenshot of PR #192 showed stacked compact text
+without Rich structure or spacing. The account service currency picker also
+had wordy text. Follow-up keeps **all existing financial rules**:
+RUB 150 / USD 5 affects future bills only, and the existing PostgreSQL rule
+blocks currency changes while **any issued account service invoice is unpaid**.
+The paid-account switch is already functional. The restriction is not bypassed
+or migrated.
+
+A compact explicit Rich heading/table/status replaces repeated navigation
+instructions on connected-bot bills (issued, paid, no invoice), on the
+currency picker and on the central billing overview. Telegram HTML fallback
+keeps readable blank lines and exact same actions. The connected-bot Bill
+uses at most two keyboard rows (Pay if owed; currency + Main menu). Currency
+choices remain two buttons in one row plus Back to Bill. A blocked attempt
+shows a RU/EN popup explaining the existing debt restriction rather than an
+unhandled SQL exception. No new menus, payment actions, tariff writes, SQL
+migrations, or runtime configuration.
+
+---
+
 ## 2026-11-18 — Draft #193: actual channel ⭐ Telegram Stars revenue
 
 Operator request: replace "unavailable" channel balances on connected-bot

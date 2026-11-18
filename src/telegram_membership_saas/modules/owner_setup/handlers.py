@@ -29,6 +29,7 @@ from aiogram.types import (
 )
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
@@ -962,49 +963,56 @@ def create_owner_setup_router(
     async def show_saas_service_profile(
         bot: Bot, user_id: int, actor_id: UUID,
     ) -> None:
-        """The price profile is account-wide, for future SaaS invoices only."""
+        """The account-level choice affects future bills, not existing debt."""
         data = await saas_price_profile(
             factory, actor_id=actor_id, project_id=fixed_project_id,
         )
         currency = str(data["currency"])
-        label = "USD · $5" if currency == "USD" else "RUB · 150 ₽"
-        await bot.send_message(
-            user_id,
-            tr(
-                "💱 <b>Валюта обслуживания ViMi Pay</b>\n\n"
-                "Сейчас: <b>{label} в месяц за бота</b>.\n"
-                "Выберите валюту для следующих счетов.\n\n"
-                "ℹ️ Настройка действует на аккаунт и будущие счета "
-                "всех его ботов. Уже выставленные счета, их суммы "
-                "и подтверждённые платежи не изменятся.\n"
-                "Это не выбор валюты конкретного платежа.",
-                "💱 <b>ViMi Pay service currency</b>\n\n"
-                "Current: <b>{label} per bot per month</b>.\n"
-                "Choose the currency for future invoices.\n\n"
-                "ℹ️ This account-wide setting applies to future bills "
-                "for all your bots. Already issued invoices, amounts "
-                "and confirmed payments stay unchanged.\n"
-                "This is not the currency selector for a payment.",
-            ).format(label=label),
-            parse_mode="HTML",
-            reply_markup=_markup([
-                [
-                    _button(
-                        ("✅ " if currency == "RUB" else "") + "🇷🇺 150 ₽",
-                        "saasprice:RUB",
-                        "success" if currency == "RUB" else "primary",
-                    ),
-                    _button(
-                        ("✅ " if currency == "USD" else "") + "🇺🇸 $5",
-                        "saasprice:USD",
-                        "success" if currency == "USD" else "primary",
-                    ),
-                ],
-                [_button(
-                    tr("⬅️ К счёту", "⬅️ Back to bill"),
-                    "saasinvoices:0",
-                )],
-            ]),
+        label = (
+            tr("🇺🇸 USD · $5/мес.", "🇺🇸 USD · $5/month")
+            if currency == "USD"
+            else tr("🇷🇺 RUB · 150 ₽/мес.", "🇷🇺 RUB · 150 ₽/month")
+        )
+        caption = tr(
+            "Для будущих счетов всех ботов аккаунта. "
+            "При долге смена недоступна.",
+            "For future invoices across your account. "
+            "Changes are unavailable while invoices are unpaid.",
+        )
+        keyboard = _markup([
+            [
+                _button(
+                    ("✅ " if currency == "RUB" else "") + "🇷🇺 RUB · 150 ₽",
+                    "saasprice:RUB",
+                    "success" if currency == "RUB" else "primary",
+                ),
+                _button(
+                    ("✅ " if currency == "USD" else "") + "🇺🇸 USD · $5",
+                    "saasprice:USD",
+                    "success" if currency == "USD" else "primary",
+                ),
+            ],
+            [_button(tr("⬅️ К счёту", "⬅️ Back to bill"), "saasinvoices:0")],
+        ])
+        heading = tr(
+            "💱 Валюта обслуживания",
+            "💱 Service currency",
+        )
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=(
+                "<h3>" + heading + "</h3>"
+                "<table bordered compact>"
+                "<tr><th>" + tr("Сейчас", "Current") + "</th><td><b>"
+                + label + "</b></td></tr></table>"
+                "<p>" + caption + "</p>"
+            ),
+            classic_html=(
+                "<b>" + heading + "</b>\n\n"
+                + tr("Сейчас: ", "Current: ") + "<b>" + label + "</b>"
+                + "\n\n" + caption
+            ),
+            reply_markup=keyboard,
         )
 
     async def show_saas_statements(
@@ -1057,23 +1065,24 @@ def create_owner_setup_router(
             rows.append([_button(
                 tr("🏠 Главное меню", "🏠 Main menu"), "projects",
             )])
-            await bot.send_message(
-                user_id,
-                tr(
-                    "🧾 <b>Счета ViMi Pay</b>\n"
-                    "Счета остаются доступными для оплаты даже после "
-                    "отключения бота. Погашение просроченного долга "
-                    "снимает ограничения на новые подключения.\n"
-                    "Неоплаченных счетов: {unpaid} · {due:.2f} ₽",
-                    "🧾 <b>ViMi Pay invoices</b>\n"
-                    "Bills remain payable even after disconnecting a bot. "
-                    "Settling overdue debt restores the ability to add "
-                    "connections.\n"
-                    "Unpaid invoices: {unpaid} · {due:.2f} RUB",
-                ).format(
-                    unpaid=report.unpaid, due=report.outstanding_rub,
-                ) + "\n\n" + service_currency_hint(str(profile["currency"])),
-                parse_mode="HTML", reply_markup=_markup(rows),
+            amount = format(report.outstanding_rub, ".2f") + " ₽"
+            count = str(report.unpaid)
+            future = service_currency_hint(str(profile["currency"]), rich=True)
+            title = tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices")
+            table = (
+                "<table bordered compact><tr><th>"
+                + tr("Неоплачено", "Unpaid") + "</th><td><b>"
+                + count + " · " + amount + "</b></td></tr></table>"
+            )
+            await send_owner_rich(
+                bot, chat_id=user_id,
+                rich_html="<h3>" + title + "</h3>" + table + future,
+                classic_html=(
+                    "<b>" + title + "</b>\n\n"
+                    + tr("Неоплачено: ", "Unpaid: ") + count + " · " + amount
+                    + "\n\n" + service_currency_hint(str(profile["currency"]))
+                ),
+                reply_markup=_markup(rows),
             )
             return
         # This project must have exactly one connected bot. SQL verifies
@@ -1099,9 +1108,10 @@ def create_owner_setup_router(
             tr("💱 Валюта обслуживания", "💱 Service currency"),
             "saasprofile",
         )])
-        rows.append([_button(tr(
-            "🏠 Главное меню", "🏠 Main menu",
-        ), "dashboard")])
+        rows.append([_button(
+            tr("🏠 Главное меню", "🏠 Main menu"),
+            "dashboard",
+        )])
         await send_owner_rich(
             bot, chat_id=user_id,
             rich_html=unified_merchant_bill_rich(
@@ -1161,13 +1171,16 @@ def create_owner_setup_router(
             tr("⬅️ К счетам", "⬅️ Invoices"),
             "saasinvoices:" + str(page),
         )])
-        hint = service_currency_hint(str(profile["currency"]))
         await send_owner_rich(
             bot, chat_id=user_id,
             rich_html=(issued_invoice_rich(item, snapshot, credits, balance)
-                       + "\n<p>" + hint.replace("\n", "</p><p>") + "</p>"),
+                       + "\n" + service_currency_hint(
+                           str(profile["currency"]), rich=True,
+                       )),
             classic_html=(issued_invoice_classic(item, snapshot, credits, balance)
-                          + "\n\n" + hint),
+                          + "\n\n" + service_currency_hint(
+                              str(profile["currency"]),
+                          )),
             reply_markup=_markup(buttons),
         )
 
@@ -4424,12 +4437,35 @@ def create_owner_setup_router(
                 chosen_price = action.split(":", 1)[1]
                 if chosen_price not in ("RUB", "USD"):
                     raise ValueError("Invalid service billing profile")
-                await saas_price_profile(
-                    factory, actor_id=actor_id,
-                    currency=chosen_price, project_id=fixed_project_id,
-                )
+                try:
+                    changed = await saas_price_profile(
+                        factory, actor_id=actor_id,
+                        currency=chosen_price, project_id=fixed_project_id,
+                    )
+                except DBAPIError as exc:
+                    # Existing account-wide billing rule: unpaid issued
+                    # invoices prohibit tariff changes. Never change the
+                    # finance policy here or expose raw database errors.
+                    cause = str(exc.orig)
+                    if (
+                        getattr(exc.orig, "sqlstate", None) == "23514"
+                        and "Settle outstanding service invoice" in cause
+                    ):
+                        await query.answer(tr(
+                            "⛔ Сначала погасите неоплаченные счета ViMi Pay. "
+                            "После этого можно сменить валюту обслуживания.",
+                            "⛔ Settle outstanding ViMi Pay invoices first. "
+                            "Then you can change the service currency.",
+                        ), show_alert=True)
+                        return
+                    raise
+                if str(changed["currency"]) != chosen_price:
+                    raise RuntimeError("Future ViMi Pay tariff did not persist")
                 await show_saas_service_profile(bot, user_id, actor_id)
-                await query.answer()
+                await query.answer(tr(
+                    "✅ Валюта будущих счетов изменена.",
+                    "✅ Future invoice currency updated.",
+                ))
                 return
             if action.startswith("saaspaychoices:"):
                 # Old Telegram keyboard: no longer allow splitting one bill
