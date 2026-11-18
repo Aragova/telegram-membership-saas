@@ -99,6 +99,7 @@ class SetupOverview:
     methods: tuple[tuple[UUID, str, str], ...]
     bot_runtime_label: str = "⚪ Ожидает запуска"
     live_bot_username: str | None = None
+    bot_running: bool = False
     sales_configured: bool = False
     bot_instances: tuple[tuple[UUID, str, str], ...] = ()
     can_delete_bot: bool = False
@@ -653,6 +654,7 @@ async def setup_overview(
                 eligible_bots[0].username if live and sales_configured else None
             ),
             sales_configured=sales_configured,
+            bot_running=live,
             project_id=project_id,
             project_name=project.name,
             timezone=project.timezone,
