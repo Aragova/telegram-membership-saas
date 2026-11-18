@@ -55,6 +55,8 @@ async def retired_invoice(conn, invoice):
 
 
 async def assert_no_ghost_activation(conn, invoice):
+    # The activation ledger is RLS-protected; inspect only as DB owner.
+    await conn.execute(text("RESET ROLE"))
     assert (await conn.execute(text(
         "SELECT count(*) FROM public.platform_saas_bot_service_activations "
         "WHERE invoice_id=:invoice"
