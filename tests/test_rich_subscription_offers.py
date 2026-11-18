@@ -179,7 +179,7 @@ async def test_buyer_offer_screen_rich_and_fallback_use_same_legacy_keyboard(
     options = (offer,)
     @asynccontextmanager
     async def scope(*_a, **_k):
-        yield MagicMock()
+        yield MagicMock(scalar=AsyncMock(return_value=None))
 
     monkeypatch.setattr(buyer_ui, "system_project_session_scope", scope)
     monkeypatch.setattr(
@@ -253,7 +253,7 @@ async def test_cancellation_notice_preserves_rich_subscription_catalog(
     offer = _offer(name="1 месяц", price="500")
     @asynccontextmanager
     async def scope(*_a, **_k):
-        yield MagicMock()
+        yield MagicMock(scalar=AsyncMock(return_value=None))
 
     monkeypatch.setattr(buyer_ui, "system_project_session_scope", scope)
     monkeypatch.setattr(
@@ -300,7 +300,7 @@ async def test_cancellation_notice_classic_fallback_is_unchanged(monkeypatch):
     offer = _offer(name="1 месяц", price="500")
     @asynccontextmanager
     async def scope(*_a, **_k):
-        yield MagicMock()
+        yield MagicMock(scalar=AsyncMock(return_value=None))
 
     monkeypatch.setattr(buyer_ui, "system_project_session_scope", scope)
     monkeypatch.setattr(
