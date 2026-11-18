@@ -87,7 +87,7 @@ def test_trial_has_no_issued_invoice_or_payable_amount():
     bill = deepcopy(BILL)
     bill.update(invoice_id=None, turnover=[], total_due_rub="0")
     text = unified_merchant_bill_rich(bill)
-    assert "no invoice" in text.lower() or "Счёт ещё не выставлен" in text
+    assert "no invoice" in text.lower() or "Счёт пока не выставлен" in text
     assert "850.00 ₽" not in text
 
 
