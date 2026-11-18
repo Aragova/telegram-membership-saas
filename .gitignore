@@ -16,10 +16,3 @@ build/
 .idea/
 .vscode/
 .DS_Store
-
-# Telegram user MTProto login secrets (never commit to a public repository)
-*.session
-*.session-journal
-*.session.lock
-channel_finance_access_key
-channel_finance_api_hash

@@ -1,3 +1,20 @@
+## 2026-11-18 — Remove channel-finance MTProto prototype and unsupported UI rows
+
+Owner decision: do not require merchant Telegram USER sessions or local Python/
+Git setup to view revenue. Revert the opt-in, never-provisioned PR #193
+MTProto bridge, its container, provisioning helpers, dependency and tests.
+The connected-bot dashboard keeps **verified Bot API data only**: live bot
+Stars (`getMyStarBalance`), Telegram channel creator identity (when visible),
+selected channel/bot Stars checkout routing, and readiness checks. Do not
+render unverified channel balance, available Stars or withdrawal timing/status.
+
+**Preserve PR #188 native channel paid invite links, bot Stars invoices, live
+bot balance, existing purchase/history, SaaS invoices and commission rules.**
+Channel Stars transactions remain outside 5% billing until there is an
+approved verified ledger source. No DB migration, payments or access changes.
+
+---
+
 ## 2026-11-18 — Draft: clean Lava.top short checkout URLs (operator approval required)
 
 An isolated opt-in redirect is proposed for **existing platform SaaS Lava.top
@@ -39,28 +56,6 @@ choices remain two buttons in one row plus Back to Bill. A blocked attempt
 shows a RU/EN popup explaining the existing debt restriction rather than an
 unhandled SQL exception. No new menus, payment actions, tariff writes, SQL
 migrations, or runtime configuration.
-
----
-
-## 2026-11-18 — Draft #193: actual channel ⭐ Telegram Stars revenue
-
-Operator request: replace "unavailable" channel balances on connected-bot
-admin dashboards with real channel Telegram Stars balances, withdrawable Stars,
-withdrawal permission and remaining wait / next permitted date.
-
-Official Telegram `payments.getStarsRevenueStats` is USER MTProto only; bot
-tokens cannot call it. Draft PR #193 introduces an opt-in, separate single-
-owner, allowlisted Telethon bridge. Bot workers keep only an internal shared
-bridge key, no user session/API hash. Only project owners with verified live
-Telegram channel creator IDs may read fresh, channel-matched snapshots.
-The UI shows real values with observation time or fails closed; no estimated
-balances or automatic withdrawals, and no inclusion in 5% SaaS charges.
-
-**Not enabled on existing 51-bot staging fleet; not general merchant onboarding.**
-A Telegram user session is full-account-capability even though bridge code is
-read-only. Initial release gate is isolated own test account with separately
-managed secrets, CI, Codex, explicit merge/deploy approval and real live
-Telegram comparison. See [CHANNEL_STARS_REVENUE_BRIDGE.md](CHANNEL_STARS_REVENUE_BRIDGE.md).
 
 ---
 
