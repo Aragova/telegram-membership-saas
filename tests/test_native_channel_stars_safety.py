@@ -1,12 +1,16 @@
 """Regression tests for secure native paid channel invitations."""
 from contextlib import asynccontextmanager
 from decimal import Decimal
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.bots.deletion_service import RetirementBlockers
 from telegram_membership_saas.modules.crypto_pay import buyer as crypto_buyer
 from telegram_membership_saas.modules.owner_setup import native_channel_stars as native
@@ -164,3 +168,31 @@ async def test_native_paid_checkout_is_not_published_under_hold(
             (offer.native_stars_link or "").startswith("https://t.me/+",)
             for offer in offers
         )
+
+
+async def test_native_buyer_hold_rpc_is_authorized_without_admin_actor():
+    """Real PostgreSQL runtime role has only a scoped boolean, not billing data."""
+    url = os.getenv("TMS_DATABASE_URL")
+    if not url:
+        pytest.skip("PostgreSQL runtime test database is not configured")
+    engine = create_async_engine(url)
+    project_id, other_project = uuid4(), uuid4()
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with system_project_session_scope(factory, project_id) as session:
+            statement = text(
+                "SELECT public.platform_saas_native_buyer_sales_allowed("
+                ":project,:bot)"
+            )
+            # The test project has no connected bot: fail closed, not 42501.
+            allowed = await session.scalar(
+                statement, {"project": project_id, "bot": 987654321},
+            )
+            assert allowed is False
+            # A spoofed project argument cannot cross tenant context.
+            other = await session.scalar(
+                statement, {"project": other_project, "bot": 987654321},
+            )
+            assert other is False
+    finally:
+        await engine.dispose()
