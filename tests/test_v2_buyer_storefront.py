@@ -240,7 +240,7 @@ async def test_repeated_currency_click_does_not_send_duplicate_message(monkeypat
 
     @asynccontextmanager
     async def scope(*_args, **_kwargs):
-        yield MagicMock()
+        yield MagicMock(scalar=AsyncMock(return_value=None))
     monkeypatch.setattr(ui, "system_project_session_scope", scope)
     monkeypatch.setattr(ui, "list_buyer_offers", AsyncMock(return_value=offers))
     result = await ui._send_catalog(
