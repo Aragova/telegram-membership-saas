@@ -88,6 +88,8 @@ async def create_stars_subscription_order(
     if result is None:
         raise ValueError("Stars plan price is no longer available")
     plan, price = result
+    if price.native_subscription_active is True:
+        raise ValueError("This plan now uses Telegram's channel-paid subscription link")
     if (
         price.amount != price.amount.to_integral_value()
         or not 1 <= price.amount <= STARS_MAX
@@ -175,6 +177,7 @@ async def stars_subscription_precheckout(
         PlanPrice.project_id == project_id,
         PlanPrice.status == "active",
         PlanPrice.currency_code == "XTR",
+        PlanPrice.native_subscription_active.is_(False),
     ))
     customer = await session.scalar(select(ProjectCustomer).where(
         ProjectCustomer.id == order.customer_id,

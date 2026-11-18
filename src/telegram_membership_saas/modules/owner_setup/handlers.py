@@ -106,6 +106,14 @@ from telegram_membership_saas.modules.owner_setup.currencies import (
 from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
     parse_customer_command,
 )
+from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
+    DashboardFinances,
+    read_dashboard_finances,
+)
+from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
+    classic_dashboard,
+    rich_dashboard,
+)
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
     owner_button_label,
@@ -130,6 +138,12 @@ from telegram_membership_saas.modules.owner_setup.moderator_handlers import (
 from telegram_membership_saas.modules.owner_setup.moderators import (
     list_project_moderators,
     set_project_moderator,
+)
+from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
+    NATIVE_PERIOD_SECONDS,
+    activate_native_stars_link,
+    deactivate_native_stars_link,
+    read_native_stars_target,
 )
 from telegram_membership_saas.modules.owner_setup.network_profiles import (
     get_project_import_status,
@@ -410,10 +424,12 @@ def _private(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
 
 
-def _progress(snapshot) -> tuple[str, ...]:
+def _readiness_steps(snapshot) -> tuple[tuple[str, bool], ...]:
+    """Single source of truth for both two-row Rich and classic readiness."""
     # A registered bot is configured, not necessarily running.
-    steps = (
-        (tr("Собственный бот", "Connected bot"), any(s == "registered" for _, s in snapshot.bots)),
+    return (
+        (tr("Собственный бот", "Connected bot"),
+         any(s == "registered" for _, s in snapshot.bots)),
         (tr("Канал / группа", "Channel / group"),
          any(s == "active" for _, _, s in snapshot.resources)),
         (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
@@ -422,7 +438,13 @@ def _progress(snapshot) -> tuple[str, ...]:
          or snapshot.sales_configured),
         (tr("Бот работает", "Bot is running"), bool(snapshot.live_bot_username)),
     )
-    return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
+
+
+def _progress(snapshot) -> tuple[str, ...]:
+    return tuple(
+        ("✅ " if ready else "▫️ ") + label
+        for label, ready in _readiness_steps(snapshot)
+    )
 
 
 async def _project_saas_hold_state(
@@ -832,50 +854,71 @@ def create_owner_setup_router(
                         "⚠️ Service status could not be checked. "
                         "Open 🧾 Bill.",
                     )
-            text = (
-                tr("✦ <b>Панель администратора</b>\n",
-                   "✦ <b>Admin dashboard</b>\n") +
-                f"<b>{escape(data.project_name)}</b>\n"
-                f"🌍 {escape(data.timezone)}\n\n"
-                + (trial_banner + "\n\n" if trial_banner else "")
-                + "\n".join(_progress(data))
-                + "\n\n"
-                + _sales_status_text(
-                    configured=data.sales_configured, hold_state=hold_state,
+            try:
+                finances = await read_dashboard_finances(
+                    factory, actor_id=actor_id, project_id=project_id, bot=bot,
                 )
-            )
+            except Exception:
+                # Live Telegram reads never block the existing admin menu.
+                logging.getLogger(__name__).exception(
+                    "ViMi Pay dashboard finance data unavailable"
+                )
+                finances = DashboardFinances(
+                    bot_stars=None, channels=(), available=False,
+                )
+            view = {
+                "project_name": data.project_name,
+                "timezone": data.timezone,
+                "trial_banner": trial_banner,
+                "readiness": _readiness_steps(data),
+                "sales_status": _sales_status_text(
+                    configured=data.sales_configured, hold_state=hold_state,
+                ),
+                "finances": finances,
+                "exempt": trial is not None and trial.get("state") == "exempt",
+            }
+            text = classic_dashboard(**view)
+            rich_html = rich_dashboard(**view)
             rows = []
             if next_step is not None:
                 label, action = next_step
                 rows.append([_button(label, action, "success")])
             rows.extend([
                 # Consistent row-based colors: blue / green / blue / green / blue.
-                [_button("📢 Каналы", "resources"),
+                [_button("📢 Каналы", "resources", "success"),
                  _button("💳 Оплата", "methods")],
-                [_button("📦 Тарифы", "plans", "success"),
+                [_button("📦 Тарифы", "plans"),
                  _button("📋 Заявки", "reviews", "success")],
-                [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
+                [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers",
+                         "success"),
                  _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
                 [InlineKeyboardButton(
                     text=tr("📨 Рассылки", "📨 Broadcasts"),
-                    callback_data="bc:home", style="success",
+                    callback_data="bc:home", style="primary",
                 ), InlineKeyboardButton(
                     text=tr("📂 Продажа файлов", "📂 File sales"),
                     callback_data="fs:home", style="success",
                 )],
-                [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview"),
+                [_button(tr("👀 Смотреть гостем", "👀 View as guest"),
+                         "preview", "success"),
                  _button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
                 [
-                    _button(tr("🧾 Счёт", "🧾 Bill"), "saasinvoices:0", "success"),
+                    _button(tr("🧾 Счёт", "🧾 Bill"), "saasinvoices:0"),
                     InlineKeyboardButton(
                         text="🌐 Language / Язык", callback_data="lng:menu",
                         style="success",
                     ),
                 ],
             ])
-        await bot.send_message(
-            user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
-        )
+        if fixed_project_id is None:
+            await bot.send_message(
+                user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+            )
+        else:
+            await send_owner_rich(
+                bot, chat_id=user_id, rich_html=rich_html,
+                classic_html=text, reply_markup=_markup(rows),
+            )
 
     async def show_settings(
         bot: Bot, user_id: int,
@@ -1340,7 +1383,8 @@ def create_owner_setup_router(
                      "dashboard")],
         ]
         await send_owner_rich(
-            bot, chat_id=user_id, rich_html=rich_owner_statistics(stats),
+            bot, chat_id=user_id,
+            rich_html=rich_owner_statistics(stats),
             classic_html=text, reply_markup=_markup(rows),
         )
 
@@ -2781,10 +2825,15 @@ def create_owner_setup_router(
                 if stars_price is not None
                 else tr("не настроено", "not configured")
             )
+            native_active = bool(
+                stars_price is not None and stars_price.native_stars_active
+            )
             name = plan_name or tr("Без названия", "Unnamed")
             lines.append(
                 "• <b>" + escape(name) + "</b> · "
                 + escape(price_label) + " · " + _status(plan_status)
+                + (" · " + tr("⭐ Баланс канала", "⭐ Channel balance")
+                   if native_active else "")
             )
             row = [_button(
                 "⚙️ " + name[:30],
@@ -2796,6 +2845,17 @@ def create_owner_setup_router(
                     "danger",
                 ))
             rows.append(row)
+            if stars_price is not None and (
+                plan_status == "active" or native_active
+            ):
+                rows.append([_button(
+                    tr("↩️ Вернуть оплату боту", "↩️ Return Stars to bot")
+                    if native_active else
+                    tr("⭐ На баланс канала", "⭐ To channel balance"),
+                    ("starsnativeoff:" if native_active else "starsnative:")
+                    + plan_id.hex + ":" + str(page),
+                    "success" if not native_active else "danger",
+                )])
         nav = []
         if page:
             nav.append(_button("⬅️", "starspage:" + str(page - 1)))
@@ -6424,6 +6484,143 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     page=int(page_token),
                 )
+            elif action.startswith(("starsnative:", "starsnativeok:",
+                                    "starsnativeoff:")):
+                part, plan_hex, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars page")
+                page = int(page_token)
+                if not 0 <= page <= 10000:
+                    raise ValueError("Invalid Stars page")
+                plan_id = UUID(hex=plan_hex)
+                target = (
+                    await read_native_stars_target(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=plan_id, bot_id=bot.id,
+                    )
+                    if part != "starsnativeoff" else None
+                )
+                if part == "starsnative":
+                    if target.active:
+                        await show_stars_payments(
+                            bot, user_id, actor_id, project_id, page=page,
+                        )
+                    else:
+                        await bot.send_message(
+                            user_id,
+                            tr(
+                                "⭐ <b>Платная ссылка Telegram-канала</b>\n\n"
+                                "Подписка: <b>30 дней</b>, "
+                                "автоматическое продление.\n"
+                                "Цена: <b>",
+                                "⭐ <b>Telegram channel paid invitation</b>\n\n"
+                                "Subscription: <b>30 days</b>, "
+                                "automatic renewal.\n"
+                                "Price: <b>",
+                            ) + str(target.amount) + " ⭐</b>\n\n"
+                            + tr(
+                                "Звёзды получит канал, а не бот. "
+                                "Telegram управляет выдачей доступа и продлениями. "
+                                "ViMi Pay пока не видит транзакции баланса канала "
+                                "и не включает их в подтверждённую выручку и 5%.\n\n"
+                                "Подтвердить создание ссылки?",
+                                "Stars will go to the channel, not the bot. "
+                                "Telegram manages access and renewals. "
+                                "ViMi Pay cannot yet verify channel transactions "
+                                "and will not report them as confirmed 5% revenue.\n\n"
+                                "Create the paid link?",
+                            ),
+                            parse_mode="HTML",
+                            reply_markup=_markup([
+                                [_button(
+                                    tr("✅ Создать ссылку", "✅ Create link"),
+                                    "starsnativeok:" + plan_id.hex + ":" + str(page),
+                                    "success",
+                                )],
+                                [_button(
+                                    tr("⬅️ Отмена", "⬅️ Cancel"),
+                                    "starspage:" + str(page),
+                                )],
+                            ]),
+                        )
+                elif part == "starsnativeok":
+                    if target.active:
+                        await show_stars_payments(
+                            bot, user_id, actor_id, project_id, page=page,
+                        )
+                    else:
+                        chat = await bot.get_chat(target.chat_id)
+                        if getattr(chat, "type", None) != "channel":
+                            raise ValueError("Telegram target is not a channel")
+                        if getattr(chat, "username", None):
+                            raise ValueError("Telegram channel must be private")
+                        admin = await bot.get_chat_member(target.chat_id, bot.id)
+                        if (
+                            admin.status not in ("administrator", "creator")
+                            or (admin.status != "creator"
+                                and not getattr(admin, "can_invite_users", False))
+                        ):
+                            raise ValueError("Bot needs channel invite administrator rights")
+                        invite = await bot.create_chat_subscription_invite_link(
+                            chat_id=target.chat_id,
+                            name="ViMi Pay",
+                            subscription_period=NATIVE_PERIOD_SECONDS,
+                            subscription_price=target.amount,
+                        )
+                        if (
+                            invite.subscription_price != target.amount
+                            or invite.subscription_period != NATIVE_PERIOD_SECONDS
+                        ):
+                            try:
+                                await bot.revoke_chat_invite_link(
+                                    target.chat_id, invite.invite_link,
+                                )
+                            except AiogramError:
+                                logging.exception("Native channel link cleanup failed")
+                            raise ValueError("Telegram returned unexpected invite pricing")
+                        try:
+                            await activate_native_stars_link(
+                                factory, actor_id=actor_id, project_id=project_id,
+                                plan_id=plan_id, bot_id=bot.id,
+                                expected_price_id=target.price_id,
+                                invite_link=invite.invite_link,
+                            )
+                        except Exception:
+                            try:
+                                await bot.revoke_chat_invite_link(
+                                    target.chat_id, invite.invite_link,
+                                )
+                            except AiogramError:
+                                logging.exception("Native channel link cleanup failed")
+                            raise
+                        await show_stars_payments(
+                            bot, user_id, actor_id, project_id, page=page,
+                        )
+                else:
+                    old = await deactivate_native_stars_link(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=plan_id, bot_id=bot.id,
+                    )
+                    if old is not None:
+                        chat_id, url = old
+                        try:
+                            await bot.revoke_chat_invite_link(
+                                chat_id=chat_id, invite_link=url,
+                            )
+                        except AiogramError:
+                            await bot.send_message(
+                                user_id, tr(
+                                    "⚠️ Новые продажи через ссылку в ViMi Pay выключены, "
+                                    "но Telegram не подтвердил отзыв ссылки. "
+                                    "Отзовите её вручную в канале:",
+                                    "⚠️ New link sales are disabled in ViMi Pay, "
+                                    "but Telegram did not confirm revocation. "
+                                    "Revoke this invitation manually:",
+                                ) + "\n" + escape(url), parse_mode="HTML",
+                            )
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id, page=page,
+                    )
             elif action == "cryptopay":
                 await show_crypto_pay(bot, user_id, actor_id, project_id)
             elif action == "cryptonet":

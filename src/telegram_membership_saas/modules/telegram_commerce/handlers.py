@@ -41,6 +41,7 @@ from telegram_membership_saas.modules.entitlements import (
     EntitlementGrantStatus,
     EntitlementSource,
 )
+from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.platform_saas_hold_errors import CommercialHoldError
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.stars_subscription_recovery import (
@@ -393,9 +394,41 @@ async def _send_catalog(
 ) -> bool:
     """Build a fresh, project-isolated catalog and edit the current screen."""
     async with system_project_session_scope(session_factory, project_id) as session:
-        offers = await list_buyer_offers(
-            session, project_id=project_id, bot_id=getattr(bot, "id", None),
+        # The paid channel invite is an external URL. It bypasses the
+        # bot-invoice pre-checkout ban, so never disclose it to a customer
+        # whom this project's owner has blocked from new purchases.
+        banned = await session.scalar(
+            select(ProjectCustomer.is_banned).join(
+                TelegramUser, TelegramUser.id == ProjectCustomer.user_id,
+            ).where(
+                ProjectCustomer.project_id == project_id,
+                TelegramUser.telegram_user_id == chat_id,
+            )
         )
+        if not banned:
+            offers = await list_buyer_offers(
+                session, project_id=project_id, bot_id=getattr(bot, "id", None),
+            )
+    if banned:
+        await _send_screen(
+            bot, chat_id=chat_id,
+            text=tr(
+                "⛔ <b>Новые покупки заблокированы администратором.</b>\n"
+                "Ранее оплаченный доступ сохраняется. "
+                "Ваши подписки: /subscriptions",
+                "⛔ <b>New purchases are blocked by the administrator.</b>\n"
+                "Previously paid access is retained. "
+                "Your subscriptions: /subscriptions",
+            ),
+            keyboard=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=tr("📦 Мои подписки", "📦 My subscriptions"),
+                    callback_data="account:home",
+                ), support_button()],
+            ]),
+            message_id=message_id,
+        )
+        return True
     if price_id is not None:
         rendered = offer_screen(offers, price_id=price_id, page=page)
         if rendered is None:

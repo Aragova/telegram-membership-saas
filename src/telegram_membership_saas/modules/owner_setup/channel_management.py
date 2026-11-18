@@ -19,6 +19,7 @@ from telegram_membership_saas.modules.entitlements import EntitlementGrant
 from telegram_membership_saas.modules.merchant_revenue import merchant_confirmed_sales
 from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan, PlanResource
+from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import Subscription
@@ -138,6 +139,17 @@ async def remove_channel_without_paid_purchases(
         ).with_for_update())
         if channel is None or channel.removed_at is not None:
             raise ValueError("Канал уже удалён или недоступен")
+        native_link = await session.scalar(select(PlanPrice.id).where(
+            PlanPrice.project_id == project_id,
+            PlanPrice.plan_id.in_(_linked_plans(project_id, resource_id)),
+            PlanPrice.currency_code == "XTR",
+            PlanPrice.native_subscription_active.is_(True),
+        ).limit(1))
+        if native_link is not None:
+            raise ValueError(
+                "Сначала отключите платную ссылку ⭐ Telegram Stars. "
+                "Она продолжит принимать оплату даже после удаления канала."
+            )
         paid = await session.scalar(select(Payment.id).where(
             Payment.project_id == project_id,
             Payment.plan_id.in_(_linked_plans(project_id, resource_id)),

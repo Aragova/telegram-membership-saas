@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.db import tenant_session_scope
 from telegram_membership_saas.modules.payments import Payment, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan, PlanResource, PlanStatus
+from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions import Subscription
@@ -172,6 +173,23 @@ async def edit_owner_draft_resource(
         await session.flush()
 
 
+async def _require_no_native_paid_link(
+    session: AsyncSession, *, project_id: UUID, plan_id: UUID,
+) -> None:
+    """Do not discard the only way to revoke a Telegram-owned paid link."""
+    price_id = await session.scalar(select(PlanPrice.id).where(
+        PlanPrice.project_id == project_id,
+        PlanPrice.plan_id == plan_id,
+        PlanPrice.currency_code == "XTR",
+        PlanPrice.native_subscription_active.is_(True),
+    ).limit(1))
+    if price_id is not None:
+        raise ValueError(
+            "Сначала отключите платную ссылку ⭐ Telegram Stars "
+            "в разделе «Способы оплаты»."
+        )
+
+
 async def archive_owner_plan(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, plan_id: UUID,
@@ -190,6 +208,9 @@ async def archive_owner_plan(
             raise ValueError("Снять с продажи можно только активный тариф")
         if plan_revision(plan) != expected_revision:
             raise ValueError("Тариф изменился. Откройте карточку заново.")
+        await _require_no_native_paid_link(
+            session, project_id=project_id, plan_id=plan_id,
+        )
         plan.status = PlanStatus.ARCHIVED.value
         await session.flush()
         return plan.name
@@ -217,6 +238,9 @@ async def delete_unused_owner_plan(
         if (plan.status != expected_status
                 or plan_revision(plan) != expected_revision):
             raise ValueError("Тариф изменился. Откройте карточку заново.")
+        await _require_no_native_paid_link(
+            session, project_id=project_id, plan_id=plan_id,
+        )
         if await plan_has_confirmed_purchases(
             session, project_id=project_id, plan_id=plan_id,
         ):

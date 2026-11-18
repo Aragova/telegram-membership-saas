@@ -443,7 +443,7 @@ async def test_failed_rich_catalog_does_not_trigger_second_rich_send(monkeypatch
 
     @asynccontextmanager
     async def scope(*_args, **_kwargs):
-        yield MagicMock()
+        yield MagicMock(scalar=AsyncMock(return_value=None))
 
     monkeypatch.setattr(ui, "system_project_session_scope", scope)
     monkeypatch.setattr(ui, "list_buyer_offers", AsyncMock(return_value=offers))

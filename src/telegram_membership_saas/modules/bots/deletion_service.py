@@ -28,6 +28,7 @@ from telegram_membership_saas.modules.file_sales.manual_models import FileManual
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments.models import PaymentRequest, PaymentRequestStatus
+from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions.models import Subscription
@@ -45,6 +46,7 @@ class RetirementBlockers:
     requests: int = 0
     file_orders: int = 0
     stars_checkouts: int = 0
+    native_paid_links: int = 0
     subscriptions: int = 0
     grants: int = 0
     access: int = 0
@@ -55,6 +57,7 @@ class RetirementBlockers:
     def has_blockers(self) -> bool:
         return any((
             self.requests, self.file_orders, self.stars_checkouts,
+            self.native_paid_links,
             self.subscriptions, self.grants,
             self.access, self.access_actions, self.join_tickets,
         ))
@@ -64,6 +67,7 @@ class RetirementBlockers:
             ("незавершённых оплат", self.requests),
             ("незавершённых оплат файлов", self.file_orders),
             ("Stars-оплат с возможным списанием", self.stars_checkouts),
+            ("активных платных ссылок канала", self.native_paid_links),
             ("действующих подписок", self.subscriptions),
             ("действующих прав доступа", self.grants),
             ("неотозванных доступов", self.access),
@@ -133,6 +137,11 @@ async def count_retirement_blockers(
             session, FileManualOrder,
             FileManualOrder.project_id == project_id,
             FileManualOrder.status.in_(("pending", "submitted")),
+        ),
+        native_paid_links=await _count(
+            session, PlanPrice,
+            PlanPrice.project_id == project_id,
+            PlanPrice.native_subscription_active.is_(True),
         ),
         stars_checkouts=await _count(
             session, SubscriptionStarOrder,

@@ -11,12 +11,13 @@ from html import escape
 from uuid import UUID
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.plans import PlanResource
+from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
@@ -67,14 +68,17 @@ class BuyerOffer:
     option: CheckoutOption
     methods: tuple[CheckoutOption, ...]
     resource_label: str
+    native_stars_link: str | None = None
 
 
 def build_buyer_offers(
     options: tuple[CheckoutOption, ...],
     resources: dict[UUID, tuple[str, ...]] | None = None,
+    native_links: dict[UUID, str] | None = None,
 ) -> tuple[BuyerOffer, ...]:
     """Collapse the SQL price×method rows to one offer per priced plan."""
     resources = resources or {}
+    native_links = native_links or {}
     methods_by_price: dict[UUID, list[CheckoutOption]] = {}
     first: dict[UUID, CheckoutOption] = {}
     for option in options:
@@ -98,6 +102,9 @@ def build_buyer_offers(
             option=option,
             methods=tuple(methods_by_price[price_id]),
             resource_label=label,
+            native_stars_link=(
+                native_links.get(price_id) if option.currency_code == "XTR" else None
+            ),
         ))
     return tuple(result)
 
@@ -140,8 +147,89 @@ async def list_buyer_offers(
         names = by_plan.setdefault(plan_id, [])
         if name not in names:
             names.append(name)
+    native_links: dict[UUID, str] = {}
+    native_active_ids: set[UUID] = set()
+    if bot_id is not None:
+        price_ids = [
+            option.plan_price_id for option in options if option.currency_code == "XTR"
+        ]
+        if price_ids:
+            native_active_ids = set((await session.scalars(
+                select(PlanPrice.id).where(
+                    PlanPrice.project_id == project_id,
+                    PlanPrice.id.in_(price_ids),
+                    PlanPrice.native_subscription_active.is_(True),
+                )
+            )).all())
+            if native_active_ids:
+                # Buyer sessions intentionally have no admin actor context.
+                # The private owner billing RPC would raise 42501 here.
+                # This narrow SECURITY DEFINER RPC returns only a boolean
+                # for the bot in the trusted project context.
+                sales_allowed = await session.scalar(
+                    text(
+                        "SELECT public.platform_saas_native_buyer_sales_allowed("
+                        ":project,:bot)"
+                    ),
+                    {"project": project_id, "bot": bot_id},
+                )
+                if not sales_allowed:
+                    # Native paid URLs bypass the old invoice trigger.
+                    # A hold or unknown state must hide the channel URL.
+                    price_ids = []
+            # A paid invite is bound to the EXACT Telegram chat where
+            # it was created. Never send an old channel link if a plan was
+            # later attached to other resources or the chat was replaced.
+            matches = (await session.execute(
+                select(
+                    PlanPrice.id, PlanPrice.native_subscription_link,
+                    PlanPrice.native_subscription_chat_id,
+                    Resource.external_id, Resource.status, Resource.removed_at,
+                ).join(
+                    PlanResource,
+                    and_(
+                        PlanResource.project_id == PlanPrice.project_id,
+                        PlanResource.plan_id == PlanPrice.plan_id,
+                    ),
+                ).join(
+                    Resource,
+                    and_(
+                        Resource.project_id == PlanResource.project_id,
+                        Resource.id == PlanResource.resource_id,
+                    ),
+                ).where(
+                    PlanPrice.project_id == project_id,
+                    PlanPrice.id.in_(price_ids),
+                    PlanPrice.status == "active",
+                    PlanPrice.native_subscription_active.is_(True),
+                    PlanPrice.native_subscription_bot_id == bot_id,
+                )
+            )).all()
+            counts: dict[UUID, int] = {}
+            for price_id, url, stored_chat, live_chat, status, removed_at in matches:
+                counts[price_id] = counts.get(price_id, 0) + 1
+                if (stored_chat == live_chat
+                        and status == ResourceStatus.ACTIVE.value
+                        and removed_at is None
+                        and url is not None):
+                    native_links[price_id] = url
+            native_links = {
+                price_id: url for price_id, url in native_links.items()
+                if counts[price_id] == 1
+            }
+    # Never show a bot-invoice button as fallback for a price that was
+    # switched to channel-paid Stars but whose link cannot be published
+    # (billing hold, removed resource, or a different registered bot).
+    if native_active_ids:
+        options = [
+            item for item in options
+            if (item.plan_price_id not in native_active_ids
+                or item.plan_price_id in native_links)
+        ]
     return build_buyer_offers(
-        options, {plan_id: tuple(names) for plan_id, names in by_plan.items()},
+        tuple(options),
+        {plan_id: tuple(names) for plan_id, names in by_plan.items()},
+        native_links,
     )
 
 
@@ -367,7 +455,20 @@ def offer_screen(
         + tr("👇 <b>Как вам удобнее оплатить?</b>",
              "👇 <b>How would you like to pay?</b>")
     )
+    if current.native_stars_link:
+        text += "\n\n" + tr(
+            "⭐ Звёзды поступят на баланс канала. Telegram автоматически "
+            "продлевает подписку каждые 30 дней. Покупка управляется Telegram.",
+            "⭐ Stars go to the channel balance. Telegram automatically "
+            "renews this subscription every 30 days. Telegram manages the purchase.",
+        )
     for method in current.methods:
+        if method.payment_method_id.int == 0 and current.native_stars_link:
+            rows.append([InlineKeyboardButton(
+                text=tr("⭐ Оплатить и войти в канал", "⭐ Pay and join channel"),
+                url=current.native_stars_link, style="success",
+            )])
+            continue
         crypto = method.payment_method_id.int == 1
         rows.append([InlineKeyboardButton(
             text=("💎 Crypto Pay" if crypto else

@@ -61,6 +61,7 @@ class PriceInfo:
     amount: Decimal
     precision: int
     method_count: int
+    native_stars_active: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +268,7 @@ async def get_owner_plan_info(
         prices = (await session.execute(
             select(
                 PlanPrice.currency_code, PlanPrice.amount,
-                CurrencyAsset.precision,
+                CurrencyAsset.precision, PlanPrice.native_subscription_active,
             )
             .join(CurrencyAsset, CurrencyAsset.code == PlanPrice.currency_code)
             .where(
@@ -312,7 +313,8 @@ async def get_owner_plan_info(
                 PriceInfo(
                     currency=code, amount=amount, precision=precision,
                     method_count=int(method_counts.get(code, 0)),
+                    native_stars_active=bool(native_active),
                 )
-                for code, amount, precision in prices
+                for code, amount, precision, native_active in prices
             ),
         )
