@@ -1284,6 +1284,19 @@ def create_owner_setup_router(
         stats = await read_owner_statistics(
             factory, actor_id=actor_id, project_id=project_id, period=period,
         )
+        # Bot API balance is authoritative for THIS bot, not the channel.
+        # Show a real zero instead of hiding the line, and never guess
+        # when the Telegram API is unavailable.
+        stars_balance: str | None = None
+        try:
+            balance = await bot.get_my_star_balance()
+            whole = int(balance.amount)
+            nanos = int(getattr(balance, "nanostar_amount", 0) or 0)
+            exact = Decimal(whole) + Decimal(nanos) / Decimal(1_000_000_000)
+            stars_balance = format(exact, "f").rstrip("0").rstrip(".") if nanos else str(whole)
+        except (AiogramError, TypeError, ValueError, AttributeError):
+            pass
+
         labels = {
             "7": tr("7 дней", "7 days"),
             "30": tr("30 дней", "30 days"),
@@ -1306,6 +1319,9 @@ def create_owner_setup_router(
             + f"<b>{escape(stats.project_name)}</b>\n"
             + f"🌍 {escape(stats.timezone)}\n"
             + f"🗓️ {bounds}\n\n"
+            + tr("⭐ <b>Баланс бота Telegram Stars:</b> ", "⭐ <b>Bot Telegram Stars balance:</b> ")
+            + (stars_balance if stars_balance is not None else tr("недоступен", "unavailable"))
+            + "\n\n"
             + tr("💰 <b>Подтверждённые оплаты</b>\n", "💰 <b>Confirmed payments</b>\n")
             + tr("Платежей: ", "Payments: ") + str(stats.payment_count) + "\n"
             + sales + "\n\n"
@@ -1335,7 +1351,7 @@ def create_owner_setup_router(
                      "dashboard")],
         ]
         await send_owner_rich(
-            bot, chat_id=user_id, rich_html=rich_owner_statistics(stats),
+            bot, chat_id=user_id, rich_html=rich_owner_statistics(stats, stars_balance=stars_balance),
             classic_html=text, reply_markup=_markup(rows),
         )
 
