@@ -229,6 +229,24 @@ def test_reader_endpoint_never_exposes_values_without_key():
     reader = agent.ChannelRevenueReader(data)
     reader.read = AsyncMock(return_value=_snapshot())
     agent.app.state.finance_reader = reader
-    with TestClient(agent.app) as client:
-        # Lifespan is intentionally not entered without real Telegram secrets.
-        pass
+    # Avoid running the real lifespan in tests: startup requires a user's
+    # out-of-band authorized Telegram session, which is intentionally absent.
+    client = TestClient(agent.app)
+    denied = client.get(
+        "/v1/channel/-100777777", params={"owner_id": 12345},
+    )
+    assert denied.status_code == 403
+    mismatched = client.get(
+        "/v1/channel/-100777777",
+        params={"owner_id": 98765},
+        headers={"x-vimi-finance-key": "x" * 40},
+    )
+    assert mismatched.status_code == 404
+    allowed = client.get(
+        "/v1/channel/-100777777",
+        params={"owner_id": 12345},
+        headers={"x-vimi-finance-key": "x" * 40},
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["current_balance"] == "5400"
+    reader.read.assert_awaited_once()
