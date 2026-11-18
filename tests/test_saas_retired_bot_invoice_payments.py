@@ -180,7 +180,10 @@ async def test_retired_service_invoice_accepts_native_stars_without_activation()
         await engine.dispose()
 
 
-async def test_operator_verified_bank_receipt_pays_retired_invoice():
+async def test_operator_verified_bank_proof_pays_retired_invoice():
+    """Use the CURRENT owner proof -> operator approval, never the retired
+    privileged platform_saas_confirm_receipt() legacy endpoint.
+    """
     config = Settings()
     engine = create_async_engine(config.migration_database_url)
     try:
@@ -191,18 +194,38 @@ async def test_operator_verified_bank_receipt_pays_retired_invoice():
                     conn, expire_on_commit=False,
                     join_transaction_mode="create_savepoint",
                 )
-                _, payer, operator, invoice, _ = await prepare(factory, conn)
+                payer_tg, payer, operator, invoice, _ = await prepare(
+                    factory, conn,
+                )
                 await retired_invoice(conn, invoice)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
-                receipt_id = await rpc(
-                    conn, "platform_saas_confirm_receipt",
-                    invoice, "bank-verified-retired-bot",
+                method_id = await rpc(
+                    conn, "platform_saas_catalog_create",
+                    "Test bank", "Test bank payment instructions",
+                    "RUB",
                 )
-                assert receipt_id is not None
+                await set_actor(conn, payer)
+                attempt = await rpc(
+                    conn, "platform_saas_v3_create_attempt",
+                    invoice, Decimal("150.00"), "RUB", method_id,
+                    json=True,
+                )
+                await rpc(
+                    conn, "platform_saas_v2_submit_proof",
+                    attempt["id"], 987654321, payer_tg, 12345,
+                    "test-photo-file-id-123", "photo", "unique-file-123",
+                )
+                await set_actor(conn, operator)
+                allocation = await rpc(
+                    conn, "platform_saas_v2_approve_checked_attempt",
+                    attempt["id"],
+                )
+                assert allocation is not None
                 await set_actor(conn, payer)
                 balance = await rpc(
-                    conn, "platform_saas_v2_invoice_balance", invoice, json=True,
+                    conn, "platform_saas_v2_invoice_balance", invoice,
+                    json=True,
                 )
                 assert Decimal(balance["remaining_rub"]) == 0
                 await assert_no_ghost_activation(conn, invoice)
