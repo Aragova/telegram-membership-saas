@@ -36,6 +36,8 @@ class ChannelFinance:
     owner_label: str | None
     owner_deleted: bool
     stars_recipient: str  # bot, channel, mixed, unconfigured
+    owner_username: str | None = None
+    owner_user_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,8 +57,16 @@ def _format_stars_amount(amount: object) -> str:
     return format(value, "f").rstrip("0").rstrip(".") if nanos else str(whole)
 
 
-def _owner_from_admins(admins: object) -> tuple[str | None, bool]:
-    """Only creator/owner is ownership evidence; an admin is not the owner."""
+@dataclass(frozen=True, slots=True)
+class ChannelOwner:
+    label: str | None
+    deleted: bool = False
+    username: str | None = None
+    user_id: int | None = None
+
+
+def _owner_details_from_admins(admins: object) -> ChannelOwner:
+    """Only a Telegram creator is an owner; admins are not interchangeable."""
     for member in admins:
         if getattr(member, "status", None) != "creator":
             continue
@@ -64,19 +74,33 @@ def _owner_from_admins(admins: object) -> tuple[str | None, bool]:
         deleted = bool(getattr(user, "is_deleted", False))
         user_id = getattr(user, "id", None)
         if deleted:
-            return ("ID " + str(user_id) if user_id is not None else None), True
+            return ChannelOwner(
+                label="ID " + str(user_id) if user_id is not None else None,
+                deleted=True, user_id=user_id,
+            )
         username = getattr(user, "username", None)
-        if username:
-            name = "@" + username
-        else:
-            name = " ".join(filter(None, (
+        label = (
+            "@" + username if username else
+            " ".join(filter(None, (
                 getattr(user, "first_name", None),
                 getattr(user, "last_name", None),
             ))) or None
-        if user_id is not None:
-            name = (name + " · " if name else "") + "ID " + str(user_id)
-        return name, False
-    return None, False
+        )
+        # Keep the numeric user ID as evidence, not as UI copy.
+        legacy_label = (
+            (label + " · " if label else "") + "ID " + str(user_id)
+            if user_id is not None else label
+        )
+        return ChannelOwner(
+            label=legacy_label, username=username, user_id=user_id,
+        )
+    return ChannelOwner(label=None)
+
+
+def _owner_from_admins(admins: object) -> tuple[str | None, bool]:
+    """Compatible helper used by existing ownership contract tests."""
+    result = _owner_details_from_admins(admins)
+    return result.label, result.deleted
 
 
 async def _live_stars(bot: Bot) -> str | None:
@@ -90,16 +114,16 @@ async def _live_stars(bot: Bot) -> str | None:
         return None
 
 
-async def _live_owner(bot: Bot, chat_id: str) -> tuple[str | None, bool]:
+async def _live_owner(bot: Bot, chat_id: str) -> ChannelOwner:
     try:
         admins = await asyncio.wait_for(
             bot.get_chat_administrators(chat_id=int(chat_id)),
             timeout=TELEGRAM_READ_TIMEOUT,
         )
-        return _owner_from_admins(admins)
+        return _owner_details_from_admins(admins)
     except (AiogramError, TimeoutError, AttributeError, TypeError, ValueError):
         log.info("Telegram owner unavailable for channel %s", chat_id)
-        return None, False
+        return ChannelOwner(label=None)
 
 
 async def read_dashboard_finances(
@@ -171,11 +195,12 @@ async def read_dashboard_finances(
             "mixed" if len(available) > 1 else
             next(iter(available)) if available else "unconfigured"
         )
-        owner_label, deleted = ownership
         cards.append(ChannelFinance(
             name=channel.name, chat_id=channel.external_id,
-            owner_label=owner_label, owner_deleted=deleted,
+            owner_label=ownership.label, owner_deleted=ownership.deleted,
             stars_recipient=payout,
+            owner_username=ownership.username,
+            owner_user_id=ownership.user_id,
         ))
     return DashboardFinances(
         bot_stars=bot_balance,
