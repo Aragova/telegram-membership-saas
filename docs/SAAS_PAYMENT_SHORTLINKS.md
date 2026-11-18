@@ -61,12 +61,19 @@ separate API-only deployment, without Telegram bot/API or Lava credentials.
    The API joins only this existing network; this does not restart bots or
    alter other Docker networks. Operator must verify network topology before
    release. If it differs, stop instead of guessing/auto-connecting.
-5. Only after API-only CI/review and explicit owner approval, use the
+5. Independently authorize and install the **updated** reviewed
+   `ops/deploy/vimi-api-root-deploy.sh.example` into the existing root-owned
+   `/usr/local/sbin/vimi-api-root-deploy` (mode 0755), and validate it with
+   `bash -n`. The previously installed API deployment script predates
+   these optional secret and network checks and must not be assumed updated
+   by a repository merge. The restricted SSH gate and its sudoers rules
+   remain unchanged; do not widen privileges.
+6. Only after API-only CI/review and explicit owner approval, use the
    `api-staging` manual workflow on merged main, and test local
    `/health` 200 and unknown routes 404. The API service must not be
    deployed by the central-bot staging workflow. Health alone is not a
    successful payment redirect test.
-6. **Separately**, after an approved Nginx backup and `nginx -t`, install
+7. **Separately**, after an approved Nginx backup and `nginx -t`, install
    the example `ops/ingress/pay-api.lava-shortlink.location.nginx.example`
    as the sole additional `GET /p/<22 token>` route in the existing 443
    `pay-api.usevimi.ru` vhost. Register the example's named
@@ -75,14 +82,14 @@ separate API-only deployment, without Telegram bot/API or Lava credentials.
    and existing websites, ACME, SSL, API and Telegram routes unchanged.
    No wildcard proxy. Disable Nginx token access logs, while Uvicorn
    access logging is disabled in isolated API Compose.
-7. Inspect a single **already issued and unpaid** original Lava gateway order
+8. Inspect a single **already issued and unpaid** original Lava gateway order
    with a short token through the API as an operator-only acceptance test.
    Expect HTTP 302 whose Location is the existing signed Lava checkout, with
    exactly the original amount. Test random/expired/paid tokens 404,
    `/payments` and `/webhooks/telegram` 404 and other ViMi sites unchanged.
    Do not perform a provider payment or create another invoice as a
    health check. Keep signed URLs and bearer tokens out of chat/screenshots.
-8. **Only then** set `TMS_SAAS_SHORTLINKS_ENABLED=true` in the central
+9. **Only then** set `TMS_SAAS_SHORTLINKS_ENABLED=true` in the central
    bot's private staging `.env` and roll out the central bot through the
    separately approved bot staging workflow. Confirm `💳 Оплатить 150 ₽`
    leads through short `/p/` to the original amount, no duplicate order,
