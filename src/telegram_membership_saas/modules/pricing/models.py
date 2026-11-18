@@ -4,6 +4,8 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -109,6 +111,13 @@ class PlanPrice(Base):
         CheckConstraint("amount > 0", name="ck_plan_prices_amount_positive"),
         CheckConstraint("version >= 1", name="ck_plan_prices_version_positive"),
         CheckConstraint(
+            "NOT native_subscription_active OR "
+            "(native_subscription_link IS NOT NULL AND "
+            "native_subscription_chat_id IS NOT NULL AND "
+            "native_subscription_bot_id IS NOT NULL)",
+            name="ck_plan_prices_native_stars_complete",
+        ),
+        CheckConstraint(
             "status IN ('active', 'retired')",
             name="ck_plan_prices_status",
         ),
@@ -141,6 +150,14 @@ class PlanPrice(Base):
         default=PlanPriceStatus.ACTIVE.value,
         server_default=PlanPriceStatus.ACTIVE.value,
         nullable=False,
+    )
+    # Telegram-owned paid invite links are a distinct checkout rail. No
+    # successful bot payment / EntitlementGrant is created for this route.
+    native_subscription_link: Mapped[str | None] = mapped_column(String(512))
+    native_subscription_chat_id: Mapped[str | None] = mapped_column(String(128))
+    native_subscription_bot_id: Mapped[int | None] = mapped_column(BigInteger)
+    native_subscription_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
     )
     active_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
