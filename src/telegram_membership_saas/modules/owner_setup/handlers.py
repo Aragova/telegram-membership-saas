@@ -4445,18 +4445,19 @@ def create_owner_setup_router(
                         currency=chosen_price, project_id=fixed_project_id,
                     )
                 except DBAPIError as exc:
-                    # Compatibility with an older staging DB, before migration
-                    # 0097; never expose SQL, role details or raw stack traces.
+                    # Existing account-wide billing rule: unpaid issued
+                    # invoices prohibit tariff changes. Never change the
+                    # finance policy here or expose raw database errors.
                     cause = str(exc.orig)
                     if (
                         getattr(exc.orig, "sqlstate", None) == "23514"
                         and "Settle outstanding service invoice" in cause
                     ):
                         await query.answer(tr(
-                            "⚠️ Смена заблокирована старой версией базы: "
-                            "есть неоплаченные счета сети. Обновите ViMi Pay.",
-                            "⚠️ The old database blocks changing currency "
-                            "while network bills are unpaid. Update ViMi Pay.",
+                            "⛔ Сначала погасите неоплаченные счета ViMi Pay. "
+                            "После этого можно сменить валюту обслуживания.",
+                            "⛔ Settle outstanding ViMi Pay invoices first. "
+                            "Then you can change the service currency.",
                         ), show_alert=True)
                         return
                     raise
