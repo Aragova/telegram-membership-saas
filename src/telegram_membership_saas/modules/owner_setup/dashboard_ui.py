@@ -92,7 +92,7 @@ def _finance_rows(
     if revenue is None:
         return (
             (tr("📢 Баланс канала", "📢 Channel balance"),
-             tr("Недоступен", "Unavailable")),
+             tr("Недоступен через Bot API", "Unavailable through Bot API")),
             (tr("💸 Вывод", "💸 Withdrawal"),
              tr("⚪ Не проверен", "⚪ Not verified")),
         )
