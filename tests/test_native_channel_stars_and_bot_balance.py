@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from test_channel_management_ui import _auth, _bot, _handler, _query
 
+from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
     NATIVE_PERIOD_SECONDS,
     native_price_allowed,
@@ -17,8 +19,6 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     build_buyer_offers,
     offer_screen,
 )
-from test_channel_management_ui import _auth, _bot, _handler, _query
-from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
 
 
 @pytest.mark.parametrize(("value", "unit", "amount", "allowed"), [
