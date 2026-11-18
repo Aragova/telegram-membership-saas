@@ -424,26 +424,38 @@ def _private(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
 
 
-def _readiness_steps(snapshot) -> tuple[tuple[str, bool], ...]:
-    """Single source of truth for both two-row Rich and classic readiness."""
-    # A registered bot is configured, not necessarily running.
+def _readiness_steps(
+    snapshot, *, channel_verified: bool | None = None,
+) -> tuple[tuple[str, bool], ...]:
+    """Four actionable checks on the already-connected bot's dashboard."""
+    resource_active = any(
+        status == "active" for _, _, status in snapshot.resources
+    )
+    if channel_verified is not None:
+        resource_active = resource_active and channel_verified
     return (
-        (tr("Собственный бот", "Connected bot"),
-         any(s == "registered" for _, s in snapshot.bots)),
-        (tr("Канал / группа", "Channel / group"),
-         any(s == "active" for _, _, s in snapshot.resources)),
-        (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
+        (tr("Канал / группа", "Channel / group"), resource_active),
+        (tr("Тариф", "Plan"),
+         any(status == "active" for _, _, status in snapshot.plans)),
         (tr("Способ оплаты", "Payment method"),
-         any(s == "active" for _, _, s in snapshot.methods)
+         any(status == "active" for _, _, status in snapshot.methods)
          or snapshot.sales_configured),
-        (tr("Бот работает", "Bot is running"), bool(snapshot.live_bot_username)),
+        (tr("Бот работает", "Bot running"), bool(snapshot.bot_running)),
     )
 
 
 def _progress(snapshot) -> tuple[str, ...]:
+    """Central connection readiness retains the bot-registration check.
+
+    The connected bot's own dashboard intentionally omits this tautology.
+    """
+    steps = (
+        (tr("Собственный бот", "Connected bot"),
+         any(status == "registered" for _, status in snapshot.bots)),
+        *_readiness_steps(snapshot),
+    )
     return tuple(
-        ("✅ " if ready else "▫️ ") + label
-        for label, ready in _readiness_steps(snapshot)
+        ("✅ " if ready else "▫️ ") + label for label, ready in steps
     )
 
 
@@ -870,7 +882,9 @@ def create_owner_setup_router(
                 "project_name": data.project_name,
                 "timezone": data.timezone,
                 "trial_banner": trial_banner,
-                "readiness": _readiness_steps(data),
+                "readiness": _readiness_steps(
+                    data, channel_verified=finances.channel_ready,
+                ),
                 "sales_status": _sales_status_text(
                     configured=data.sales_configured, hold_state=hold_state,
                 ),

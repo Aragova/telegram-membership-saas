@@ -1,10 +1,12 @@
-"""Compact, localized dashboard: two status rows and one Telegram finance card.
+"""Compact RU/EN dashboard: two 2-cell rows and verified Telegram finances.
 
-Rendering only. Every readiness check comes from the existing live setup
-overview; missing balances/ownership are never synthesized as successes.
+Render-only: readiness comes from setup state, owner from Telegram's creator,
+and the bot's Stars balance from the official Bot API. No invented channel
+balance, available withdrawal, or beneficiary identity.
 """
 from __future__ import annotations
 
+import re
 from html import escape
 
 from telegram_membership_saas.localization import tr
@@ -13,19 +15,17 @@ from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
     DashboardFinances,
 )
 
+EMOJI_GAP = "\u2002"
+
 
 def _status_text(label: str, ready: bool) -> str:
-    return ("✅ " if ready else "▫️ ") + label
+    return ("✅" if ready else "▫️") + EMOJI_GAP + escape(label)
 
 
-def _status_cell(label: str, ready: bool, *, bot_runtime: bool) -> str:
-    result = (
-        tr("🟢 Активен", "🟢 Active")
-        if bot_runtime and ready else
-        tr("🟢 Подключено", "🟢 Connected") if ready else
-        tr("⚪ Не готов", "⚪ Not ready")
-    )
-    return "<td><b>" + _status_text(escape(label), ready) + "</b><br>" + result + "</td>"
+def _status_cell(label: str, ready: bool) -> str:
+    # The same ON / OFF vocabulary is used for Russian and English.
+    state = ("🟢" if ready else "⚪") + EMOJI_GAP + ("ON" if ready else "OFF")
+    return "<td><b>" + _status_text(label, ready) + "</b><br>" + state + "</td>"
 
 
 def _recipient(value: str) -> str:
@@ -38,12 +38,48 @@ def _recipient(value: str) -> str:
 
 
 def _owner(channel: ChannelFinance) -> str:
+    """Only expose real Telegram identity; never turn arbitrary text into a URL."""
     if channel.owner_deleted:
         return (
             tr("⚠️ Удалённый аккаунт", "⚠️ Deleted account")
-            + (" · " + channel.owner_label if channel.owner_label else "")
+            + (" · " + escape(channel.owner_label) if channel.owner_label else "")
         )
-    return channel.owner_label or tr("Не удалось определить", "Cannot determine")
+    username = channel.owner_username
+    if username and re.fullmatch(r"[A-Za-z0-9_]{1,32}", username):
+        # An official @username resolves directly to a Telegram profile.
+        name = escape(username)
+        return f'<a href="https://t.me/{name}">@{name}</a>'
+    user_id = channel.owner_user_id
+    if user_id is not None and user_id > 0:
+        # Telegram's user mention deep link works without a public username
+        # when privacy and Telegram client permissions permit it.
+        display = (
+            channel.owner_label.split(" · ID ", 1)[0]
+            if channel.owner_label else ""
+        )
+        if not display or display.startswith("ID "):
+            display = tr("Профиль Telegram", "Telegram profile")
+        return f'<a href="tg://user?id={user_id}">{escape(display)}</a>'
+    return escape(channel.owner_label or tr(
+        "Не удалось определить", "Cannot determine",
+    ))
+
+
+def _channel_rows(channel: ChannelFinance) -> tuple[tuple[str, str], ...]:
+    """Channel Stars and owner share one row, without pretending bot Stars
+    are channel revenue. Mixed / bot routes retain an explicit beneficiary.
+    """
+    owner = _owner(channel)
+    if channel.stars_recipient == "channel":
+        return ((
+            tr("👑 Владелец · ⭐ каналу", "👑 Owner · ⭐ to channel"),
+            owner,
+        ),)
+    return (
+        (tr("👑 Владелец канала", "👑 Channel owner"), owner),
+        (tr("💳 Получатель звёзд", "💳 Stars recipient"),
+         _recipient(channel.stars_recipient)),
+    )
 
 
 def classic_dashboard(
@@ -51,17 +87,20 @@ def classic_dashboard(
     readiness: tuple[tuple[str, bool], ...], sales_status: str,
     finances: DashboardFinances, exempt: bool = False,
 ) -> str:
-    statuses = (
-        " · ".join(_status_text(label, ready) for label, ready in readiness[:3])
-        + "\n" + " · ".join(
-            _status_text(label, ready) for label, ready in readiness[3:5]
+    statuses = "\n".join(
+        "  ·  ".join(
+            _status_text(label, ready) + EMOJI_GAP
+            + ("🟢" if ready else "⚪") + EMOJI_GAP
+            + ("ON" if ready else "OFF")
+            for label, ready in group
         )
+        for group in (readiness[:2], readiness[2:4])
     )
     items = [
         tr("✦ <b>Панель администратора</b>", "✦ <b>Admin dashboard</b>")
         + (" · 👑 ViMi Pay PRO" if exempt else ""),
-        "<b>" + escape(project_name) + "</b>",
-        "🌍 " + escape(timezone),
+        "<b>" + escape(project_name) + "</b>"
+        + EMOJI_GAP + "🌍" + EMOJI_GAP + escape(timezone),
     ]
     if trial_banner:
         items.extend(["", trial_banner])
@@ -82,11 +121,11 @@ def classic_dashboard(
             tr("📢 Баланс канала: недоступен через Bot API",
                "📢 Channel balance: unavailable through Bot API"),
             tr("💸 Вывод: не проверен", "💸 Withdrawal: not verified"),
-            tr("👑 Владелец канала: ", "👑 Channel owner: ")
-            + escape(_owner(channel)),
-            tr("💳 Получатель звёзд: ", "💳 Stars recipient: ")
-            + _recipient(channel.stars_recipient),
         ])
+        items.extend(
+            escape(label) + ": " + value
+            for label, value in _channel_rows(channel)
+        )
     if not finances.channels and finances.available:
         items.append(tr("📢 Нет подключённых каналов",
                         "📢 No connected channels"))
@@ -103,24 +142,19 @@ def rich_dashboard(
     readiness: tuple[tuple[str, bool], ...], sales_status: str,
     finances: DashboardFinances, exempt: bool = False,
 ) -> str:
-    """Telegram Rich HTML supports tables, not custom CSS or invented badges."""
+    """Use native Rich HTML tables without custom CSS or unsupported badges."""
     parts = [
         "<h3>" + tr("✦ Панель администратора", "✦ Admin dashboard")
         + (" · 👑 ViMi Pay PRO" if exempt else "") + "</h3>",
-        "<p><b>" + escape(project_name) + "</b><br>"
-        + "🌍 " + escape(timezone) + "</p>",
+        "<p><b>" + escape(project_name) + "</b>" + EMOJI_GAP
+        + "🌍" + EMOJI_GAP + escape(timezone) + "</p>",
     ]
     if trial_banner:
         parts.append("<p><b>" + trial_banner.replace("\n", "<br>") + "</b></p>")
-    # Actual two-row status layout, 3 compact cells and then 2 wide cells.
-    for group in (readiness[:3], readiness[3:5]):
+    # Exactly two rows of two actionable readiness checks, RU and EN alike.
+    for group in (readiness[:2], readiness[2:4]):
         parts.append("<table bordered compact><tr>")
-        parts.extend(
-            _status_cell(label, ready, bot_runtime=(index == 4))
-            for index, (label, ready) in enumerate(
-                group, start=0 if len(group) == 3 else 3,
-            )
-        )
+        parts.extend(_status_cell(label, ready) for label, ready in group)
         parts.append("</tr></table>")
     parts.extend([
         "<p>" + sales_status.replace("\n", "<br>") + "</p>",
@@ -145,7 +179,8 @@ def rich_dashboard(
         ) + "</p>")
     for channel in finances.channels:
         if len(finances.channels) > 1 or finances.extra_channels:
-            parts.append("<p><b>📢 " + escape(channel.name) + "</b></p>")
+            parts.append("<p><b>📢" + EMOJI_GAP + escape(channel.name)
+                         + "</b></p>")
         parts.extend([
             "<table bordered compact>",
             "<tr><th>" + tr("📢 Баланс канала", "📢 Channel balance")
@@ -153,12 +188,13 @@ def rich_dashboard(
                                "Unavailable through Bot API") + "</td></tr>",
             "<tr><th>" + tr("💸 Вывод", "💸 Withdrawal")
             + "</th><td>" + tr("⚪ Не проверен", "⚪ Not verified") + "</td></tr>",
-            "<tr><th>" + tr("👑 Владелец канала", "👑 Channel owner")
-            + "</th><td>" + escape(_owner(channel)) + "</td></tr>",
-            "<tr><th>" + tr("💳 Получатель звёзд", "💳 Stars recipient")
-            + "</th><td>" + _recipient(channel.stars_recipient) + "</td></tr>",
-            "</table>",
         ])
+        for label, value in _channel_rows(channel):
+            parts.append(
+                "<tr><th>" + escape(label) + "</th><td>"
+                + value + "</td></tr>"
+            )
+        parts.append("</table>")
     if finances.extra_channels:
         parts.append("<p>" + tr(
             f"Ещё {finances.extra_channels} канал(ов). Откройте «Каналы».",
