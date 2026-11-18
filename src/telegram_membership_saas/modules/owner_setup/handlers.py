@@ -5146,13 +5146,20 @@ def create_owner_setup_router(
                             "способы оплаты, каналы). Данные других ботов "
                             "и профиль сети сохранятся.\n\n"
                             "Проекты с платежами, подписчиками или историей "
-                            "доступа удалить нельзя.",
+                            "доступа удалить нельзя.\n\n"
+                            "⚠️ Неоплаченные счета ViMi Pay сохраняются "
+                            "после удаления подключения и могут блокировать "
+                            "новые подключения. Оплатить их можно в "
+                            "@vimipay_bot через /billing.",
                             "This cannot be undone. Configuration of this "
                             "DISCONNECTED project (plans, methods, channels) "
                             "will be deleted. Other bots and your network "
                             "profile remain untouched.\n\n"
                             "Projects with payment or access history cannot "
-                            "be permanently deleted.",
+                            "be permanently deleted.\n\n"
+                            "⚠️ Unpaid ViMi Pay invoices survive connection "
+                            "deletion and may block new connections. Pay them "
+                            "in @vimipay_bot via /billing.",
                         ),
                         parse_mode="HTML",
                         reply_markup=_markup([
