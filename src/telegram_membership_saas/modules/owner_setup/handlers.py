@@ -943,9 +943,23 @@ def create_owner_setup_router(
             )
             rows: list[list[InlineKeyboardButton]] = []
             for item in report.invoices:
+                # Issued debt remains payable after physical bot retirement.
+                # Never disguise an outstanding amount as a paid "archive".
+                due = Decimal(str(item.get("remaining_rub", item["amount_rub"])))
+                if item.get("status") == "paid":
+                    due = Decimal("0")
+                label = (
+                    tr("🔴 К оплате", "🔴 Amount due") + " · "
+                    + format(due, ".2f") + " ₽"
+                    if due > 0 else tr("✅ Оплачено", "✅ Paid") + " · "
+                    + format(Decimal(str(item["amount_rub"])), ".2f") + " ₽"
+                )
+                service_day = str(item.get("period_start") or "")[:10]
+                if len(service_day) == 10 and service_day[4:5] == "-":
+                    label += (" · " + service_day[8:10] + "."
+                              + service_day[5:7] + "." + service_day[:4])
                 rows.append([_button(
-                    tr("🧾 Архивный счёт", "🧾 Historical invoice") + " · "
-                    + str(item["amount_rub"]) + " ₽",
+                    label,
                     "saasbill:" + encode_uuid(UUID(str(item["id"])))
                     + ":" + str(page),
                 )])
@@ -962,12 +976,18 @@ def create_owner_setup_router(
             await bot.send_message(
                 user_id,
                 tr(
-                    "🧾 <b>Архив платежей ViMi Pay</b>\n"
-                    "Текущий единый счёт каждого бота находится "
-                    "в его собственной админ-панели.",
-                    "🧾 <b>ViMi Pay payment history</b>\n"
-                    "Each bot has its own current invoice "
-                    "in its admin panel.",
+                    "🧾 <b>Счета ViMi Pay</b>\n"
+                    "Счета остаются доступными для оплаты даже после "
+                    "отключения бота. Погашение просроченного долга "
+                    "снимает ограничения на новые подключения.\n"
+                    "Неоплаченных счетов: {unpaid} · {due:.2f} ₽",
+                    "🧾 <b>ViMi Pay invoices</b>\n"
+                    "Bills remain payable even after disconnecting a bot. "
+                    "Settling overdue debt restores the ability to add "
+                    "connections.\n"
+                    "Unpaid invoices: {unpaid} · {due:.2f} RUB",
+                ).format(
+                    unpaid=report.unpaid, due=report.outstanding_rub,
                 ),
                 parse_mode="HTML", reply_markup=_markup(rows),
             )
@@ -5126,13 +5146,20 @@ def create_owner_setup_router(
                             "способы оплаты, каналы). Данные других ботов "
                             "и профиль сети сохранятся.\n\n"
                             "Проекты с платежами, подписчиками или историей "
-                            "доступа удалить нельзя.",
+                            "доступа удалить нельзя.\n\n"
+                            "⚠️ Неоплаченные счета ViMi Pay сохраняются "
+                            "после удаления подключения и могут блокировать "
+                            "новые подключения. Оплатить их можно в "
+                            "@vimipay_bot через /billing.",
                             "This cannot be undone. Configuration of this "
                             "DISCONNECTED project (plans, methods, channels) "
                             "will be deleted. Other bots and your network "
                             "profile remain untouched.\n\n"
                             "Projects with payment or access history cannot "
-                            "be permanently deleted.",
+                            "be permanently deleted.\n\n"
+                            "⚠️ Unpaid ViMi Pay invoices survive connection "
+                            "deletion and may block new connections. Pay them "
+                            "in @vimipay_bot via /billing.",
                         ),
                         parse_mode="HTML",
                         reply_markup=_markup([
