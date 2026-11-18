@@ -1357,7 +1357,8 @@ def create_owner_setup_router(
                      "dashboard")],
         ]
         await send_owner_rich(
-            bot, chat_id=user_id, rich_html=rich_owner_statistics(stats, stars_balance=stars_balance),
+            bot, chat_id=user_id,
+            rich_html=rich_owner_statistics(stats, stars_balance=stars_balance),
             classic_html=text, reply_markup=_markup(rows),
         )
 
