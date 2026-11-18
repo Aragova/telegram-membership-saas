@@ -93,10 +93,15 @@ Telegram.
 The connected bot's main panel uses Telegram Rich HTML tables rather than
 large stacks of status lines:
 
-- Row 1: Bot, Channel / group, Plan.
+- Row 1: Channel / group, Plan.
 - Row 2: Payment method, Bot running.
-- Each readiness check preserves its existing factual source, green check
-  or unready marker, and the original setup action when incomplete.
+- The redundant 'Connected bot' check is intentionally omitted inside the
+  already connected bot; it remains on the central setup/readiness screen.
+- Use compact ON / OFF in both Russian and English, with additional spacing
+  around emoji. The bot-running status is based on the live supervisor
+  heartbeat, independently of configured prices/payment methods.
+- Each readiness check preserves its existing factual source and existing
+  setup action when incomplete.
 - A single compact finance area shows the live connected-bot Stars balance
   via `getMyStarBalance`, channel owner identity from
   `getChatAdministrators` (only a `creator` record counts), and the
@@ -114,3 +119,13 @@ large stacks of status lines:
 Native Rich does not support arbitrary browser CSS or image-mockup gradients:
 the implemented design uses supported compact native Rich tables and regular
 Telegram inline button styles.
+
+- Bot name and timezone share a single line in the connected admin header.
+  Verified Telegram channel creator usernames appear as clickable @username
+  links; where no username is available, a user-ID mention can open a profile
+  if Telegram privacy settings permit. Deleted owners are never shown as
+  functional profile links.
+- With native channel Stars, combine the channel owner and channel Stars
+  recipient into one row. With bot/mixed/unconfigured Stars routes, keep
+  beneficiary information distinct. This never implies the owner's
+  personal Stars wallet and the channel wallet are the same balance.
