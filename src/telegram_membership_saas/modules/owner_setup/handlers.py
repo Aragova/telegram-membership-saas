@@ -78,6 +78,14 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
+from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
+    DashboardFinances,
+    read_dashboard_finances,
+)
+from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
+    classic_dashboard,
+    rich_dashboard,
+)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     archive_owner_connection,
     get_connection_disposition,
@@ -416,10 +424,12 @@ def _private(message: Message) -> bool:
     return message.chat.type == "private" and message.from_user is not None
 
 
-def _progress(snapshot) -> tuple[str, ...]:
+def _readiness_steps(snapshot) -> tuple[tuple[str, bool], ...]:
+    """Single source of truth for both two-row Rich and classic readiness."""
     # A registered bot is configured, not necessarily running.
-    steps = (
-        (tr("Собственный бот", "Connected bot"), any(s == "registered" for _, s in snapshot.bots)),
+    return (
+        (tr("Собственный бот", "Connected bot"),
+         any(s == "registered" for _, s in snapshot.bots)),
         (tr("Канал / группа", "Channel / group"),
          any(s == "active" for _, _, s in snapshot.resources)),
         (tr("Тариф", "Plan"), any(s == "active" for _, _, s in snapshot.plans)),
@@ -428,7 +438,13 @@ def _progress(snapshot) -> tuple[str, ...]:
          or snapshot.sales_configured),
         (tr("Бот работает", "Bot is running"), bool(snapshot.live_bot_username)),
     )
-    return tuple(("✅ " if ready else "▫️ ") + label for label, ready in steps)
+
+
+def _progress(snapshot) -> tuple[str, ...]:
+    return tuple(
+        ("✅ " if ready else "▫️ ") + label
+        for label, ready in _readiness_steps(snapshot)
+    )
 
 
 async def _project_saas_hold_state(
@@ -833,50 +849,71 @@ def create_owner_setup_router(
                         "⚠️ Service status could not be checked. "
                         "Open 🧾 Bill.",
                     )
-            text = (
-                tr("✦ <b>Панель администратора</b>\n",
-                   "✦ <b>Admin dashboard</b>\n") +
-                f"<b>{escape(data.project_name)}</b>\n"
-                f"🌍 {escape(data.timezone)}\n\n"
-                + (trial_banner + "\n\n" if trial_banner else "")
-                + "\n".join(_progress(data))
-                + "\n\n"
-                + _sales_status_text(
-                    configured=data.sales_configured, hold_state=hold_state,
+            try:
+                finances = await read_dashboard_finances(
+                    factory, actor_id=actor_id, project_id=project_id, bot=bot,
                 )
-            )
+            except Exception:
+                # Live Telegram reads never block the existing admin menu.
+                logging.getLogger(__name__).exception(
+                    "ViMi Pay dashboard finance data unavailable"
+                )
+                finances = DashboardFinances(
+                    bot_stars=None, channels=(), available=False,
+                )
+            view = {
+                "project_name": data.project_name,
+                "timezone": data.timezone,
+                "trial_banner": trial_banner,
+                "readiness": _readiness_steps(data),
+                "sales_status": _sales_status_text(
+                    configured=data.sales_configured, hold_state=hold_state,
+                ),
+                "finances": finances,
+                "exempt": trial is not None and trial.get("state") == "exempt",
+            }
+            text = classic_dashboard(**view)
+            rich_html = rich_dashboard(**view)
             rows = []
             if next_step is not None:
                 label, action = next_step
                 rows.append([_button(label, action, "success")])
             rows.extend([
                 # Consistent row-based colors: blue / green / blue / green / blue.
-                [_button("📢 Каналы", "resources"),
+                [_button("📢 Каналы", "resources", "success"),
                  _button("💳 Оплата", "methods")],
-                [_button("📦 Тарифы", "plans", "success"),
+                [_button("📦 Тарифы", "plans"),
                  _button("📋 Заявки", "reviews", "success")],
-                [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers"),
+                [_button(tr("👥 Подписчики", "👥 Subscribers"), "subscribers",
+                         "success"),
                  _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
                 [InlineKeyboardButton(
                     text=tr("📨 Рассылки", "📨 Broadcasts"),
-                    callback_data="bc:home", style="success",
+                    callback_data="bc:home",
                 ), InlineKeyboardButton(
                     text=tr("📂 Продажа файлов", "📂 File sales"),
                     callback_data="fs:home", style="success",
                 )],
-                [_button(tr("👀 Смотреть гостем", "👀 View as guest"), "preview"),
+                [_button(tr("👀 Смотреть гостем", "👀 View as guest"),
+                         "preview", "success"),
                  _button(tr("⚙️ Настройки", "⚙️ Settings"), "settings")],
                 [
-                    _button(tr("🧾 Счёт", "🧾 Bill"), "saasinvoices:0", "success"),
+                    _button(tr("🧾 Счёт", "🧾 Bill"), "saasinvoices:0"),
                     InlineKeyboardButton(
                         text="🌐 Language / Язык", callback_data="lng:menu",
                         style="success",
                     ),
                 ],
             ])
-        await bot.send_message(
-            user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
-        )
+        if fixed_project_id is None:
+            await bot.send_message(
+                user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+            )
+        else:
+            await send_owner_rich(
+                bot, chat_id=user_id, rich_html=rich_html,
+                classic_html=text, reply_markup=_markup(rows),
+            )
 
     async def show_settings(
         bot: Bot, user_id: int,
