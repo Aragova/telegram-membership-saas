@@ -151,6 +151,7 @@ jobs:
                       "platform_saas_payment_details_set(text)",
                       "platform_saas_owner_invoice_report(integer,integer)",
                       "platform_saas_project_commerce_state(uuid,uuid)",
+                      "platform_saas_native_buyer_sales_allowed(uuid,bigint)",
                       "platform_saas_bind_payment_prompt(uuid,bigint,bigint,bigint)",
                       "platform_saas_resolve_payment_prompt(bigint,bigint,bigint)",
                       "platform_saas_v2_approve_checked_attempt(uuid)",
