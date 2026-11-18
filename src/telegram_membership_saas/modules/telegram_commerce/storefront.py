@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
@@ -163,21 +162,18 @@ async def list_buyer_offers(
                 )
             )).all())
             if native_active_ids:
-                registered_bot = await session.scalar(select(BotInstance.id).where(
-                    BotInstance.project_id == project_id,
-                    BotInstance.telegram_bot_id == bot_id,
-                    BotInstance.status == "registered",
-                ))
-                state = (
-                    await session.scalar(
-                        text(
-                            "SELECT public.platform_saas_project_commerce_state("
-                            ":project,:bot)"
-                        ),
-                        {"project": project_id, "bot": registered_bot},
-                    ) if registered_bot is not None else None
+                # Buyer sessions intentionally have no admin actor context.
+                # The private owner billing RPC would raise 42501 here.
+                # This narrow SECURITY DEFINER RPC returns only a boolean
+                # for the bot in the trusted project context.
+                sales_allowed = await session.scalar(
+                    text(
+                        "SELECT public.platform_saas_native_buyer_sales_allowed("
+                        ":project,:bot)"
+                    ),
+                    {"project": project_id, "bot": bot_id},
                 )
-                if state not in ("clear", "disabled"):
+                if not sales_allowed:
                     # Native paid URLs bypass the old invoice trigger.
                     # A hold or unknown state must hide the channel URL.
                     price_ids = []
