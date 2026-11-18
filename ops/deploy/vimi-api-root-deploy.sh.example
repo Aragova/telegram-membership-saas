@@ -103,7 +103,12 @@ assert "depends_on" not in s and "network_mode" not in s
 assert not s.get("volumes") and not s.get("secrets")
 assert set(s.get("environment", {})) == {"TMS_ENVIRONMENT", "TMS_SHORTLINK_DATABASE_URL"}
 assert s["environment"]["TMS_ENVIRONMENT"] == "staging"
-assert s.get("networks") == ["staging-db"]
+# Docker Compose `config --format json` canonicalizes service networks
+# to a mapping: {"staging-db": {}} (never the YAML shorthand list).
+service_networks = s.get("networks", {})
+assert isinstance(service_networks, dict), service_networks
+assert set(service_networks) == {"staging-db"}, service_networks
+assert service_networks["staging-db"] in ({}, None), service_networks
 network = conf.get("networks", {}).get("staging-db", {})
 assert network.get("external") is True
 assert network.get("name") == "telegram-membership-saas-staging_default"
