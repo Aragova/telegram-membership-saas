@@ -1,3 +1,18 @@
+> **2026-11-18 — Historical bill after a connected bot was deleted (PR #186).**
+> Issued ViMi Pay debt is owned by the originally liable **account**, not by
+> the lifetime of its Telegram bot token. Permanently removing a bot with no
+> buyer/access blockers **does not erase** that owner's original invoice.
+> The central @vimipay_bot `/billing` must display unpaid bills as payable
+> (never obscure them as a paid "archive"). The original liable user can
+> pay their immutable invoice via the existing central platform methods,
+> even if the historical `bot_instance_id` no longer exists. A verified
+> payment clears the account hold, without recreating the retired bot,
+> issuing an extra subscription or granting ghost service coverage. A bot
+> still present but **transferred to a different owner** remains ineligible
+> for the old owner's ordinary auto-settlement and needs operator review.
+> An outdated operator confirmation card must be refreshed before any
+> genuine bank receipt is accepted; don't treat a staged screenshot as money.
+>
 > **2026-11-17 — утверждена будущая концепция личного кабинета, НЕ текущий релиз.**
 > Для покупок цифрового контента внутри Telegram целевой интерфейс сохраняет
 > ⭐ Telegram Stars и нейтральный переход в личный кабинет. Полуавтомат
