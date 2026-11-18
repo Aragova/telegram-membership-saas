@@ -493,10 +493,11 @@ async def test_shortlink_reader_can_resolve_only_live_original_lava_order():
                 )
                 assert order["status"] == "reserved"
                 await set_actor(conn, operator)
+                provider_id = str(uuid4())
                 assert await rpc(
                     conn, "platform_saas_gateway_bind",
                     order["id"], payer_tg, 99887766,
-                    str(uuid4()), signed_link,
+                    provider_id, signed_link,
                 )
                 # Only the purpose-built GET lookup is exposed by the new role.
                 await conn.execute(text(
@@ -526,14 +527,6 @@ async def test_shortlink_reader_can_resolve_only_live_original_lava_order():
                 await set_actor(conn, operator)
                 # A verified original-order charge makes short redirect
                 # unavailable forever, even if refund later reopens debt.
-                provider_id = str(uuid4())
-                # Re-bind is not allowed to invent a new provider invoice ID;
-                # read the already-bound value via original issuer context.
-                bound = await conn.execute(text(
-                    "SELECT provider_invoice_id FROM "
-                    "public.platform_saas_gateway_orders WHERE id=:order"
-                ), {"order": UUID(order["id"])})
-                provider_id = bound.scalar_one()
                 result = await rpc(
                     conn, "platform_saas_gateway_record_charge",
                     order["id"], "lava", provider_id,
