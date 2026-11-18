@@ -1,11 +1,19 @@
 """Regression tests for secure native paid channel invitations."""
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+import pytest
+
+from telegram_membership_saas.modules.bots.deletion_service import RetirementBlockers
+from telegram_membership_saas.modules.crypto_pay import buyer as crypto_buyer
 
 from telegram_membership_saas.modules.owner_setup import native_channel_stars as native
 from telegram_membership_saas.modules.telegram_commerce import handlers as buyer
+from telegram_membership_saas.modules.telegram_commerce import storefront
+from telegram_membership_saas.modules.telegram_commerce.service import CheckoutOption
 
 
 async def test_project_ban_hides_paid_invite_url_and_all_checkout_options(
@@ -78,3 +86,78 @@ async def test_archived_native_invite_deactivation_uses_original_snapshot(
     assert price.native_subscription_active is False
     session.flush.assert_awaited_once()
     target.assert_not_awaited()
+
+
+def test_active_native_paid_link_is_bot_retirement_blocker():
+    guard = RetirementBlockers(native_paid_links=1)
+    assert guard.has_blockers
+    assert "активных платных ссылок канала: 1" in guard.display()
+
+
+async def test_native_activation_rejects_saas_hold_before_telegram_link_creation(
+    monkeypatch,
+):
+    project_id, plan_id, bot_id = uuid4(), uuid4(), 5511
+    plan = SimpleNamespace(duration_value=1, duration_unit="month")
+    price = SimpleNamespace(
+        amount=Decimal("100"), native_subscription_active=False,
+    )
+    session = SimpleNamespace(scalar=AsyncMock(
+        side_effect=[uuid4(), plan, price],
+    ))
+    check = AsyncMock(return_value="held")
+    monkeypatch.setattr(native, "native_commerce_state", check)
+    with pytest.raises(PermissionError, match="заблокированы"):
+        await native._target(
+            session, project_id=project_id, plan_id=plan_id, bot_id=bot_id,
+        )
+    check.assert_awaited_once()
+    assert session.scalar.await_count == 3
+
+
+@pytest.mark.parametrize(("state", "visible"), [
+    ("clear", True),
+    ("disabled", True),
+    ("held", False),
+])
+async def test_native_paid_checkout_is_not_published_under_hold(
+    monkeypatch, state, visible,
+):
+    price_id, plan_id, project_id = uuid4(), uuid4(), uuid4()
+    option = CheckoutOption(
+        plan_id=plan_id, plan_name="Premium", duration_value=1,
+        duration_unit="month", plan_price_id=price_id,
+        currency_code="XTR", amount=Decimal("100"), currency_precision=0,
+        payment_method_id=UUID(int=0), payment_method_name="⭐ Telegram Stars",
+    )
+    monkeypatch.setattr(storefront, "list_checkout_options", AsyncMock(
+        return_value=(option,),
+    ))
+    monkeypatch.setattr(crypto_buyer, "subscription_crypto_options", AsyncMock(
+        return_value=[],
+    ))
+    original = "https://t.me/+approved_channel_invite"
+    session = SimpleNamespace(
+        scalars=AsyncMock(return_value=SimpleNamespace(
+            all=lambda: [price_id],
+        )),
+        scalar=AsyncMock(side_effect=[uuid4(), state]),
+        execute=AsyncMock(side_effect=[
+            SimpleNamespace(all=lambda: []),
+            SimpleNamespace(all=lambda: [(
+                price_id, original, "-100777", "-100777", "active", None,
+            )]),
+        ]),
+    )
+    offers = await storefront.list_buyer_offers(
+        session, project_id=project_id, bot_id=5511,
+    )
+    if visible:
+        assert len(offers) == 1
+        assert offers[0].native_stars_link == original
+    else:
+        assert offers == ()
+        assert not any(
+            (offer.native_stars_link or "").startswith("https://t.me/+",)
+            for offer in offers
+        )
