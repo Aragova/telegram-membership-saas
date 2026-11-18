@@ -4,6 +4,8 @@ from __future__ import annotations
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+from sqlalchemy.exc import DBAPIError
 from uuid import uuid4
 
 import pytest
@@ -113,8 +115,8 @@ async def test_currency_picker_is_bill_only_and_uses_existing_profile_rpc(
         await handler(picker, bot)
         first = bot.send_message.await_args
         assert "150 ₽" in first.args[1]
-        assert ("Новый тариф" if lang == "ru" else
-                "New tariff") in first.args[1]
+        assert ("Для будущих счетов" if lang == "ru" else
+                "For future invoices") in first.args[1]
         actions = [
             b.callback_data for row in first.kwargs["reply_markup"].inline_keyboard
             for b in row
@@ -140,3 +142,46 @@ def test_settings_no_longer_contains_financial_menu_item():
     assert "saasprofile" not in settings_section
     assert "Валюта обслуживания" in source
     assert "saasinvoices:0" in source
+
+
+@pytest.mark.parametrize("lang", ("ru", "en"))
+@pytest.mark.parametrize("connected", (True, False))
+async def test_unpaid_invoice_preserves_tariff_choice_and_explains_block(
+    monkeypatch, lang, connected,
+):
+    """Existing database guard blocks the switch, but Telegram explains why."""
+    project = uuid4() if connected else None
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
+
+    class UnpaidInvoice(Exception):
+        sqlstate = "23514"
+
+    save = AsyncMock(side_effect=DBAPIError(
+        "SELECT public.platform_saas_price_profile_set(:currency)", {},
+        UnpaidInvoice("Settle outstanding service invoice before changing profile"),
+    ))
+    monkeypatch.setattr(ui, "saas_price_profile", save)
+    router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=project)
+    handler = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "owner_callback"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    token = _language.set(lang)
+    try:
+        callback = _callback("saasprice:USD")
+        await handler(callback, bot)
+        assert callback.answer.await_count == 1
+        options = callback.answer.await_args.kwargs
+        assert options["show_alert"] is True
+        message = callback.answer.await_args.args[0]
+        assert ("Сначала погасите" if lang == "ru"
+                else "Settle outstanding") in message
+        bot.send_message.assert_not_awaited()
+        save.assert_awaited_once()
+    finally:
+        _language.reset(token)
