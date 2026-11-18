@@ -46,6 +46,9 @@ async def test_issued_bill_card_works_without_selected_project(monkeypatch, lang
     monkeypatch.setattr(ui, "saas_invoice_credit_history", credit)
     balance = AsyncMock(return_value={"remaining_rub": "150.00"})
     monkeypatch.setattr(ui, "saas_v2_invoice_balance", balance)
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "RUB", "monthly_amount": "150.00"},
+    ))
     router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=None)
     callback_handler = next(
         h.callback for h in router.callback_query.handlers
