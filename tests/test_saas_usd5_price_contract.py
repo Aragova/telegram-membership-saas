@@ -44,7 +44,7 @@ def test_new_price_in_both_owner_languages() -> None:
     assert "🇺🇸 $5" in ui
     assert '"saasprice:USD"' in ui
     assert '"saasprice:RUB"' in ui
-    assert "Валюта обслуживания ViMi Pay" in ui
+    assert "💱 Валюта обслуживания" in ui
     assert "ViMi Pay service currency" in ui
     assert '"saasinvoices:0"' in ui
 
