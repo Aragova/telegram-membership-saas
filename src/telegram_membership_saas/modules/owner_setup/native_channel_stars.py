@@ -182,13 +182,30 @@ async def deactivate_native_stars_link(
         await _require_project_manager(
             session, project_id=project_id, actor_user_id=actor_id,
         )
-        target = await _target(
-            session, project_id=project_id, plan_id=plan_id,
-            bot_id=bot_id, for_update=True,
+        # Deactivation uses the immutable Telegram link snapshot, not the
+        # currently active plan/channel. Owners must be able to stop sales
+        # even after a plan was archived or its linked resource changed.
+        registered = await session.scalar(select(BotInstance.id).where(
+            BotInstance.project_id == project_id,
+            BotInstance.telegram_bot_id == bot_id,
+            BotInstance.status == BotInstanceStatus.REGISTERED.value,
+        ))
+        if registered is None:
+            raise PermissionError("This bot does not belong to the active project")
+        price = await session.scalar(
+            select(PlanPrice).where(
+                PlanPrice.project_id == project_id,
+                PlanPrice.plan_id == plan_id,
+                PlanPrice.currency_code == "XTR",
+                PlanPrice.native_subscription_active.is_(True),
+                PlanPrice.native_subscription_bot_id == bot_id,
+            ).order_by(PlanPrice.version.desc()).limit(1).with_for_update()
         )
-        if not target.active or not target.invite_link:
+        if price is None:
             return None
-        price = await session.get(PlanPrice, target.price_id)
+        # Snapshot fields are constrained together by migration 0095.
+        chat_id = int(price.native_subscription_chat_id)
+        invite_link = price.native_subscription_link
         price.native_subscription_active = False
         await session.flush()
-        return target.chat_id, target.invite_link
+        return chat_id, invite_link
