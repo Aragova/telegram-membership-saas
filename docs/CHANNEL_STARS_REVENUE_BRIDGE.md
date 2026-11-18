@@ -102,15 +102,31 @@ own test channel. Nothing in this PR starts it automatically.
    operator-controlled Docker host using an independently authenticated
    secret-transfer mechanism. Keep files outside the repository, .env,
    screenshots, builds, backups and chat histories.
+   **Docker Compose file-backed secrets retain host UID/GID and permissions**.
+   The locally created session is mode 0600 and would be unreadable by a
+   different non-root container user. Do NOT use mode 0444 or world-readable
+   session secrets. Instead, on the trusted Docker host, after separate
+   deployment approval, provision the three files with the root-only script:
+
+   ```bash
+   sudo bash ops/channel_finance_prepare_secrets.sh \\
+     /private/api_hash /private/channel_finance.session \\
+     /private/access_key /srv/vimi-channel-finance-secrets
+   ```
+
+   It installs three host files as UID/GID **25073**, mode **0400**,
+   into a root-owned mode-0700 directory. The isolated reader runs as
+   dedicated UID 25073 and can read its mounts. Secrets remain unreadable
+   to other unprivileged host accounts.
 5. Set operator-controlled environment configuration:
 
    ```dotenv
    TMS_CHANNEL_FINANCE_API_ID=YOUR_API_ID
    TMS_CHANNEL_FINANCE_OWNER_ID=YOUR_TELEGRAM_NUMERIC_ID
    TMS_CHANNEL_FINANCE_ALLOWED_CHAT_IDS=-100YOUR_PRIVATE_CHANNEL_ID
-   CHANNEL_FINANCE_API_HASH_FILE=/secure/api_hash
-   CHANNEL_FINANCE_SESSION_FILE=/secure/channel_finance.session
-   CHANNEL_FINANCE_ACCESS_KEY_FILE=/secure/channel_finance_access_key
+   CHANNEL_FINANCE_API_HASH_FILE=/srv/vimi-channel-finance-secrets/channel_finance_api_hash
+   CHANNEL_FINANCE_SESSION_FILE=/srv/vimi-channel-finance-secrets/channel_finance_session
+   CHANNEL_FINANCE_ACCESS_KEY_FILE=/srv/vimi-channel-finance-secrets/channel_finance_access_key
    ```
 
    These are names/placeholders only. Do not commit a real values file.
