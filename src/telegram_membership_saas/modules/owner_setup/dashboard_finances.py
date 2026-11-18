@@ -47,7 +47,7 @@ class DashboardFinances:
 
 
 def _format_stars_amount(amount: object) -> str:
-    whole = int(getattr(amount, "amount"))
+    whole = int(amount.amount)
     nanos = int(getattr(amount, "nanostar_amount", 0) or 0)
     if abs(nanos) >= 1_000_000_000:
         raise ValueError("Invalid fractional Telegram Stars amount")
@@ -85,7 +85,7 @@ async def _live_stars(bot: Bot) -> str | None:
             bot.get_my_star_balance(), timeout=TELEGRAM_READ_TIMEOUT,
         )
         return _format_stars_amount(amount)
-    except (AiogramError, asyncio.TimeoutError, AttributeError, TypeError, ValueError):
+    except (AiogramError, TimeoutError, AttributeError, TypeError, ValueError):
         log.info("Bot Telegram Stars balance unavailable for dashboard")
         return None
 
@@ -97,7 +97,7 @@ async def _live_owner(bot: Bot, chat_id: str) -> tuple[str | None, bool]:
             timeout=TELEGRAM_READ_TIMEOUT,
         )
         return _owner_from_admins(admins)
-    except (AiogramError, asyncio.TimeoutError, AttributeError, TypeError, ValueError):
+    except (AiogramError, TimeoutError, AttributeError, TypeError, ValueError):
         log.info("Telegram owner unavailable for channel %s", chat_id)
         return None, False
 
