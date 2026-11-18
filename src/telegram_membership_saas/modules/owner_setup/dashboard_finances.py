@@ -18,11 +18,11 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.owner_setup.channel_revenue_bridge import (
     ChannelRevenue,
     live_channel_revenue,
 )
-from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import Project
