@@ -91,7 +91,7 @@ def test_failed_lookup_is_generic_503_without_leaking_db_details(monkeypatch) ->
 
 def test_migration_has_read_only_isolated_role_and_no_new_invoice_table() -> None:
     sql = (REPO / "migrations" / "versions" /
-           "0095_saas_payment_shortlinks.py").read_text(encoding="utf-8")
+           "0097_saas_payment_shortlinks.py").read_text(encoding="utf-8")
     assert "CREATE ROLE membership_shortlink_reader NOLOGIN" in sql
     assert "SECURITY DEFINER" in sql
     assert "REVOKE ALL ON FUNCTION public.platform_saas_lava_shortlink_target" in sql
