@@ -75,6 +75,7 @@ async def test_admin_dashboard_shows_two_rows_live_star_balance_and_actual_owner
         plans=((uuid4(), "Monthly", "active"),),
         methods=((uuid4(), "Manual", "active"),),
         live_bot_username="premium0fans_bot",
+        bot_running=True,
         sales_configured=True,
         bot_instances=((uuid4(), "premium0fans_bot", "registered"),),
     )
@@ -90,6 +91,7 @@ async def test_admin_dashboard_shows_two_rows_live_star_balance_and_actual_owner
             name="Private VIP", chat_id="-100111111",
             owner_label="@actual_owner · ID 12345",
             owner_deleted=False, stars_recipient="channel",
+            owner_username="actual_owner", owner_user_id=12345,
         ),),
     )
     monkeypatch.setattr(owner_ui, "read_dashboard_finances", AsyncMock(
@@ -100,15 +102,22 @@ async def test_admin_dashboard_shows_two_rows_live_star_balance_and_actual_owner
     await _handler(project)(_query("dashboard"), _bot())
     message = send.await_args.kwargs
     assert "0 ⭐" in message["rich_html"]
-    assert "@actual_owner" in message["rich_html"]
+    assert '<a href="https://t.me/actual_owner">@actual_owner</a>' in message[
+        "rich_html"
+    ]
+    assert "ID 12345" not in message["rich_html"]
+    assert "Получатель звёзд" not in message["rich_html"]
     assert "Недоступен через Bot API" in message["rich_html"]
     assert "⚪ Не проверен" in message["rich_html"]
     assert "ViMi Pay PRO" in message["rich_html"]
-    # Exactly two status-grid rows: three checks, then two.
+    # Exactly two 2-cell rows: four meaningful checks, no self-bot tautology.
     first_grid = message["rich_html"].split("<h4>")[0]
     assert first_grid.count("<table bordered compact>") == 2
     assert first_grid.count("<tr>") == 2
-    assert first_grid.count("<td>") == 5
+    assert first_grid.count("<td>") == 4
+    assert "Собственный бот" not in first_grid
+    assert "🟢" in first_grid and "ON" in first_grid
+    assert "Подключено" not in first_grid
     assert "Продажи доступны" in message["rich_html"]
     assert "Баланс бота" in message["classic_html"]
     buttons = [
@@ -134,8 +143,8 @@ async def test_dashboard_balance_unknown_is_not_zero_and_owner_deleted(monkeypat
     data = dict(
         project_name="<VIP> & MORE", timezone="Europe/Moscow",
         trial_banner="", sales_status="⚠️ Нет продаж",
-        readiness=(("Connected bot", True), ("Channel", False),
-                   ("Plan", True), ("Method", False), ("Running", False)),
+        readiness=(("Channel", False), ("Plan", True),
+                   ("Method", False), ("Running", False)),
         finances=DashboardFinances(
             bot_stars=None,
             channels=(ChannelFinance(
@@ -152,7 +161,8 @@ async def test_dashboard_balance_unknown_is_not_zero_and_owner_deleted(monkeypat
     assert "Old &lt;Channel&gt;" not in html or "<VIP>" not in html
     assert "&lt;VIP&gt; &amp; MORE" in html
     assert "🔒" not in html
-    assert "Не готов" in html
+    assert "OFF" in html
+    assert "Не готов" not in html
 
 
 async def test_bot_star_balance_live_zero_and_failed_are_distinct():
@@ -187,3 +197,93 @@ def test_owner_identity_requires_creator_not_other_admins():
         id=777, username=None, is_deleted=True,
     ))
     assert _owner_from_admins([deleted]) == ("ID 777", True)
+
+
+def test_owner_link_uses_real_username_not_internal_id():
+    from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
+        ChannelFinance,
+        DashboardFinances,
+    )
+    from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
+        classic_dashboard,
+        rich_dashboard,
+    )
+
+    base = dict(
+        project_name="@premium0fans_bot", timezone="Europe/Moscow",
+        trial_banner="", sales_status="✅ Продажи доступны",
+        readiness=(("Канал / группа", True), ("Тариф", True),
+                   ("Способ оплаты", True), ("Бот работает", False)),
+    )
+    channel = ChannelFinance(
+        name="VIP", chat_id="-10011", owner_label="@kostik · ID 321",
+        owner_deleted=False, stars_recipient="channel",
+        owner_username="kostik", owner_user_id=321,
+    )
+    for render in (classic_dashboard, rich_dashboard):
+        html = render(**base, finances=DashboardFinances(
+            bot_stars="0", channels=(channel,),
+        ))
+        assert '<a href="https://t.me/kostik">@kostik</a>' in html
+        assert "ID 321" not in html
+        assert "Получатель звёзд" not in html
+        assert "Владелец" in html
+        assert "⭐" in html
+        assert "🟢" in html and "OFF" in html
+        assert "Подключено" not in html
+        assert "<b>@premium0fans_bot</b>" in html
+        assert "🌍" in html and "Europe/Moscow" in html
+    rich = rich_dashboard(**base, finances=DashboardFinances(
+        bot_stars="0", channels=(channel,),
+    ))
+    assert rich.split("<h4>")[0].count("<td>") == 4
+    assert rich.split("<h4>")[0].count("<tr>") == 2
+
+
+def test_owner_without_username_gets_clickable_telegram_mention_and_bot_recipient():
+    from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
+        ChannelFinance,
+        DashboardFinances,
+    )
+    from telegram_membership_saas.modules.owner_setup.dashboard_ui import rich_dashboard
+
+    render = lambda channel: rich_dashboard(
+        project_name="Bot", timezone="Europe/Moscow", trial_banner="",
+        readiness=(("Channel", True), ("Plan", True),
+                   ("Payment", True), ("Running", True)),
+        sales_status="", finances=DashboardFinances(
+            bot_stars="0", channels=(channel,),
+        ),
+    )
+    channel = ChannelFinance(
+        name="VIP", chat_id="-10011", owner_label="Анатолий · ID 321",
+        owner_deleted=False, stars_recipient="bot", owner_user_id=321,
+    )
+    html = render(channel)
+    assert '<a href="tg://user?id=321">Анатолий</a>' in html
+    assert "Получатель звёзд" in html
+    assert "🤖 Бот" in html
+    assert "ID 321" not in html
+
+    deleted = ChannelFinance(
+        name="VIP", chat_id="-10011", owner_label="ID 321",
+        owner_deleted=True, stars_recipient="channel", owner_user_id=321,
+    )
+    deleted_html = render(deleted)
+    assert "Удалённый аккаунт" in deleted_html
+    assert 'href="tg://user?id=321"' not in deleted_html
+
+
+def test_running_status_reads_real_worker_heartbeat_not_invoice_configuration():
+    from telegram_membership_saas.modules.owner_setup.service import SetupOverview
+    from telegram_membership_saas.modules.owner_setup.handlers import _readiness_steps
+
+    overview = SetupOverview(
+        project_id=uuid4(), project_name="Bot", timezone="Europe/Moscow",
+        bots=(("bot", "registered"),), resources=(), plans=(), methods=(),
+        sales_configured=False, live_bot_username=None, bot_running=True,
+    )
+    checks = _readiness_steps(overview)
+    assert len(checks) == 4
+    assert checks[-1][1] is True
+    assert all("Собственный бот" not in label for label, _ in checks)
