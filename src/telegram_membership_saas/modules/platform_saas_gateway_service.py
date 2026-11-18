@@ -182,10 +182,18 @@ async def issue_platform_lava_checkout(
     offer = settings.saas_lava_top_offer_id
     if api_key is None or offer is None:
         raise LavaTopError("Platform Lava.top credentials/product not configured")
-    reservation = await _reserve(
-        factory, invoice_id=invoice_id, provider="lava",
-        payer_telegram_id=payer_telegram_id, bot_id=central_bot_id,
-    )
+    try:
+        reservation = await _reserve(
+            factory, invoice_id=invoice_id, provider="lava",
+            payer_telegram_id=payer_telegram_id, bot_id=central_bot_id,
+        )
+    except Exception:
+        # Preserve the frozen original invoice; report only stage, not the
+        # provider order, payer identity, DB error text or customer email.
+        raise LavaTopError(
+            "Original invoice could not be reserved",
+            code="LAVA-RESERVE",
+        ) from None
     order_id = UUID(str(reservation["id"]))
     amount = Decimal(str(reservation["amount_rub"]))
     if reservation["status"] == "issued":
@@ -193,18 +201,32 @@ async def issue_platform_lava_checkout(
         return GatewayLink(
             "lava", order_id, _checkout_link(url), amount,
         )
-    async with LavaTopClient(api_key.get_secret_value()) as provider:
-        created = await provider.create_dynamic_invoice(
-            email=customer_email, offer_id=offer,
-            amount=amount, currency="RUB",
+    try:
+        async with LavaTopClient(api_key.get_secret_value()) as provider:
+            created = await provider.create_dynamic_invoice(
+                email=customer_email, offer_id=offer,
+                amount=amount, currency="RUB",
+            )
+    except LavaTopError:
+        raise
+    except Exception:
+        raise LavaTopError(
+            "Lava.top invoice creation unavailable", code="LAVA-CREATE",
+        ) from None
+    try:
+        await _bind(
+            factory, settings=settings, order_id=order_id,
+            payer_telegram_id=payer_telegram_id,
+            bot_id=central_bot_id,
+            provider_id=str(created.invoice_id),
+            url=created.payment_url,
         )
-    await _bind(
-        factory, settings=settings, order_id=order_id,
-        payer_telegram_id=payer_telegram_id,
-        bot_id=central_bot_id,
-        provider_id=str(created.invoice_id),
-        url=created.payment_url,
-    )
+    except Exception:
+        # The provider MAY have issued a link; do not claim payment success
+        # or change the original invoice balance if binding failed.
+        raise LavaTopError(
+            "Lava.top provider invoice binding failed", code="LAVA-BIND",
+        ) from None
     return GatewayLink("lava", order_id, created.payment_url, amount)
 
 
