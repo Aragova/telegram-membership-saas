@@ -18,8 +18,8 @@ session_source="$2"
 key_source="$3"
 destination="$4"
 
-if [[ "${destination}" != /* || "${destination}" == "/" ]]; then
-  echo "Destination must be a dedicated absolute host directory." >&2
+if [[ "${destination}" != "/srv/vimi-channel-finance-secrets" ]]; then
+  echo "Destination must be the dedicated finance secret directory." >&2
   exit 2
 fi
 for source in "$hash_source" "$session_source" "$key_source"; do
@@ -28,7 +28,7 @@ for source in "$hash_source" "$session_source" "$key_source"; do
     exit 1
   fi
 done
-if [[ -e "$destination" && -L "$destination" ]]; then
+if [[ -L "$destination" ]]; then
   echo "Finance destination must not be a symlink." >&2
   exit 1
 fi
