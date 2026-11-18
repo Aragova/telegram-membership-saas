@@ -29,6 +29,15 @@ ledger is migrated or modified.
    The bot also tries to revoke the link in Telegram. If revocation fails,
    the owner is alerted with the exact link for manual revocation.
 
+Native paid-link activation and buyer catalog publication are blocked when
+ViMi Pay reports a SaaS commerce hold for the connected bot. A bot also
+cannot be retired while any project-owned native paid link remains active.
+The owner must disable/revoke the link before deleting its bot or channel
+or archiving the linked plan. A Telegram invite URL saved outside ViMi Pay
+can still be used directly even if ViMi Pay later hides it on a billing hold:
+this requires an independent external-link revocation policy before this
+mode can be considered an enforced merchant-wide hold.
+
 Existing bot invoices already paid and the payment history stay intact.
 Prices with an active native link cannot be changed, retired, archived,
 hard-deleted, or have their linked channel removed until the native mode is
