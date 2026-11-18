@@ -7,9 +7,7 @@ balance, available withdrawal, or beneficiary identity.
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
 from html import escape
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
@@ -84,51 +82,6 @@ def _channel_rows(channel: ChannelFinance) -> tuple[tuple[str, str], ...]:
     )
 
 
-def _finance_rows(
-    channel: ChannelFinance, *, timezone: str,
-) -> tuple[tuple[str, str], ...]:
-    """Render only verified, fresh official Telegram revenue snapshots."""
-    revenue = channel.revenue
-    if revenue is None:
-        return (
-            (tr("📢 Баланс канала", "📢 Channel balance"),
-             tr("Недоступен через Bot API", "Unavailable through Bot API")),
-            (tr("💸 Вывод", "💸 Withdrawal"),
-             tr("⚪ Не проверен", "⚪ Not verified")),
-        )
-    try:
-        tz = ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, ValueError):
-        tz = UTC
-    rows = [
-        (tr("📢 Баланс канала", "📢 Channel balance"),
-         f"{revenue.current_balance:f} ⭐"),
-        (tr("💰 Доступно к выводу", "💰 Withdrawable"),
-         f"{revenue.available_balance:f} ⭐"),
-    ]
-    unlock = revenue.next_withdrawal_at
-    waiting = unlock is not None and unlock > datetime.now(UTC)
-    if waiting:
-        outcome = tr("⏳ Ожидание", "⏳ Waiting")
-    elif not revenue.withdrawal_enabled:
-        outcome = tr("⛔ Недоступен", "⛔ Unavailable")
-    elif revenue.available_balance == 0:
-        outcome = tr("⚪ Нет доступных звёзд", "⚪ No withdrawable Stars")
-    else:
-        outcome = tr("✅ Разрешён Telegram", "✅ Allowed by Telegram")
-    rows.append((tr("💸 Вывод", "💸 Withdrawal"), outcome))
-    if waiting:
-        rows.append((
-            tr("⏳ Ожидание до", "⏳ Waiting until"),
-            unlock.astimezone(tz).strftime("%d.%m.%Y %H:%M"),
-        ))
-    rows.append((
-        tr("🕒 Проверено", "🕒 Checked"),
-        revenue.observed_at.astimezone(tz).strftime("%d.%m.%Y %H:%M"),
-    ))
-    return tuple(rows)
-
-
 def classic_dashboard(
     *, project_name: str, timezone: str, trial_banner: str,
     readiness: tuple[tuple[str, bool], ...], sales_status: str,
@@ -164,10 +117,6 @@ def classic_dashboard(
     for channel in finances.channels:
         if len(finances.channels) > 1 or finances.extra_channels:
             items.append("📢 <b>" + escape(channel.name) + "</b>")
-        items.extend(
-            escape(label) + ": " + escape(value)
-            for label, value in _finance_rows(channel, timezone=timezone)
-        )
         items.extend(
             escape(label) + ": " + value
             for label, value in _channel_rows(channel)
@@ -228,11 +177,6 @@ def rich_dashboard(
             parts.append("<p><b>📢" + EMOJI_GAP + escape(channel.name)
                          + "</b></p>")
         parts.append("<table bordered compact>")
-        for label, value in _finance_rows(channel, timezone=timezone):
-            parts.append(
-                "<tr><th>" + escape(label) + "</th><td>"
-                + escape(value) + "</td></tr>"
-            )
         for label, value in _channel_rows(channel):
             parts.append(
                 "<tr><th>" + escape(label) + "</th><td>"

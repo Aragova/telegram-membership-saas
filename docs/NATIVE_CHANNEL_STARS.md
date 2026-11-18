@@ -88,21 +88,6 @@ Telegram.
 - https://core.telegram.org/bots/api#getmystarbalance
 - https://core.telegram.org/api/subscriptions
 
-## Opt-in actual channel balance and withdrawal data
-
-The previously unavailable channel balance/withdrawal fields can now be
-populated from a separately authorized user-MTProto reader via
-`payments.getStarsRevenueStats`. The reader does NOT run by default,
-cannot use a bot token, verifies the channel creator, and provides fresh
-current balance, withdrawable balance, withdrawal flag and earliest next
-withdrawal time when the Telegram RPC supplies one. A missing or unauthorized
-reader leaves the same fail-closed "unavailable" display.
-
-First rollout is an operator-owned test channel only, with one isolated,
-preauthorized user account, NEVER a customer-user login inside ViMi Pay.
-See [CHANNEL_STARS_REVENUE_BRIDGE.md](CHANNEL_STARS_REVENUE_BRIDGE.md).
-Do not automatically convert this balance into 5% commission invoices.
-
 ## Compact administrator dashboard
 
 The connected bot's main panel uses Telegram Rich HTML tables rather than
@@ -126,8 +111,8 @@ large stacks of status lines:
   `getChatAdministrators` (only a `creator` record counts), and the
   currently configured Stars checkout recipient.
 - Telegram Bot API does **not** expose the channel's actual Stars revenue
-  balance or its withdrawal eligibility. Both fields explicitly show
-  **unavailable / not verified**, not a fabricated amount or success flag.
+  balance or withdrawal eligibility. The dashboard intentionally omits those
+  fields rather than showing unverified placeholders or fabricated values.
 - At most three linked channels appear on the dashboard. The existing
   **Channels** button remains the route to the full catalog.
 - Existing callback IDs and both RU/EN rendering remain functional.

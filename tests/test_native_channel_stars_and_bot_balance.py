@@ -107,8 +107,9 @@ async def test_admin_dashboard_shows_two_rows_live_star_balance_and_actual_owner
     ]
     assert "ID 12345" not in message["rich_html"]
     assert "Получатель звёзд" not in message["rich_html"]
-    assert "Недоступен через Bot API" in message["rich_html"]
-    assert "⚪ Не проверен" in message["rich_html"]
+    assert "Баланс канала" not in message["rich_html"]
+    assert "Вывод" not in message["rich_html"]
+    assert "Доступно к выводу" not in message["rich_html"]
     assert "ViMi Pay PRO" in message["rich_html"]
     # Exactly two 2-cell rows: four meaningful checks, no self-bot tautology.
     first_grid = message["rich_html"].split("<h4>")[0]
@@ -162,6 +163,11 @@ async def test_dashboard_balance_unknown_is_not_zero_and_owner_deleted(monkeypat
     assert "&lt;VIP&gt; &amp; MORE" in html
     assert "🔒" not in html
     assert "OFF" in html
+    for output in (classic, html):
+        assert "Баланс канала" not in output
+        assert "Вывод" not in output
+        assert "Channel balance" not in output
+        assert "Withdrawal" not in output
     assert "Не готов" not in html
 
 
