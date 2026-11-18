@@ -87,9 +87,9 @@ async def create_stars_subscription_order(
     )).first()
     if result is None:
         raise ValueError("Stars plan price is no longer available")
+    plan, price = result
     if price.native_subscription_active is True:
         raise ValueError("This plan now uses Telegram's channel-paid subscription link")
-    plan, price = result
     if (
         price.amount != price.amount.to_integral_value()
         or not 1 <= price.amount <= STARS_MAX
