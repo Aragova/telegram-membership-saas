@@ -109,9 +109,7 @@ own test channel. Nothing in this PR starts it automatically.
    deployment approval, provision the three files with the root-only script:
 
    ```bash
-   sudo bash ops/channel_finance_prepare_secrets.sh \\
-     /private/api_hash /private/channel_finance.session \\
-     /private/access_key /srv/vimi-channel-finance-secrets
+   sudo bash ops/channel_finance_prepare_secrets.sh /private/api_hash /private/channel_finance.session /private/access_key /srv/vimi-channel-finance-secrets
    ```
 
    It installs three host files as UID/GID **25073**, mode **0400**,
