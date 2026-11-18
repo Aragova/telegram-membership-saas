@@ -177,6 +177,7 @@ async def stars_subscription_precheckout(
         PlanPrice.project_id == project_id,
         PlanPrice.status == "active",
         PlanPrice.currency_code == "XTR",
+        PlanPrice.native_subscription_active.is_(False),
     ))
     customer = await session.scalar(select(ProjectCustomer).where(
         ProjectCustomer.id == order.customer_id,
