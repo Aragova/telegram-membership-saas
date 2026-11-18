@@ -49,9 +49,11 @@ def test_price_hint_on_all_bill_states_and_ru_en(lang, state):
         for renderer in (unified_merchant_bill_rich, unified_merchant_bill_classic):
             screen = renderer(bill, future_profile_currency="USD")
             assert "USD" in screen and "$5" in screen
-            assert ("Валюта обслуживания" if lang == "ru"
-                    else "Service currency") in screen
-            assert ("Счёт → " if lang == "ru" else "Bill → ") in screen
+            assert ("Новые счета" if lang == "ru"
+                    else "Future bills") in screen
+            if renderer is unified_merchant_bill_rich:
+                assert "<table bordered compact>" in screen
+                assert screen.count("<table bordered compact>") >= 1
             if state != "unissued":
                 assert "150.00 ₽" in screen  # Original invoice unchanged
     finally:
@@ -111,7 +113,8 @@ async def test_currency_picker_is_bill_only_and_uses_existing_profile_rpc(
         await handler(picker, bot)
         first = bot.send_message.await_args
         assert "150 ₽" in first.args[1]
-        assert ("будущие" if lang == "ru" else "future") in first.args[1].lower()
+        assert ("Новый тариф" if lang == "ru" else
+                "New tariff") in first.args[1]
         actions = [
             b.callback_data for row in first.kwargs["reply_markup"].inline_keyboard
             for b in row
