@@ -64,17 +64,12 @@ jobs:
           set -Eeuo pipefail
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"; sudo rm -rf /srv/vimi-channel-finance-secrets' EXIT
-          printf 'dummy-api-hash-only\\n' > "$tmp/hash"
-          printf 'dummy-session-only\\n' > "$tmp/session"
-          printf 'dummy-access-key-only\\n' > "$tmp/key"
-          sudo bash ops/channel_finance_prepare_secrets.sh \\
-            "$tmp/hash" "$tmp/session" "$tmp/key" \\
-            /srv/vimi-channel-finance-secrets
+          printf 'dummy-api-hash-only' > "$tmp/hash"
+          printf 'dummy-session-only' > "$tmp/session"
+          printf 'dummy-access-key-only' > "$tmp/key"
+          sudo bash ops/channel_finance_prepare_secrets.sh "$tmp/hash" "$tmp/session" "$tmp/key" /srv/vimi-channel-finance-secrets
           test "$(sudo stat -c '%u:%g:%a' /srv/vimi-channel-finance-secrets/channel_finance_session)" = "25073:25073:400"
-          docker run --rm --user 25073:25073 \\
-            -v /srv/vimi-channel-finance-secrets/channel_finance_session:/run/secrets/session:ro \\
-            python:3.12-slim python -c "from pathlib import Path; assert Path('/run/secrets/session').read_text().strip() == 'dummy-session-only'"
-
+          docker run --rm --user 25073:25073 -v /srv/vimi-channel-finance-secrets/channel_finance_session:/run/secrets/session:ro python:3.12-slim python -c "from pathlib import Path; assert Path('/run/secrets/session').read_text() == 'dummy-session-only'"
 
       # Real deployment starts each entrypoint in a fresh interpreter.
       # compileall and pytest's preloaded import graph cannot detect cycles.
