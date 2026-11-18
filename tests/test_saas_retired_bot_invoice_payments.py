@@ -12,7 +12,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
 from test_saas_platform_stars_ledger import prepare, set_actor
 
 from telegram_membership_saas.config import Settings
