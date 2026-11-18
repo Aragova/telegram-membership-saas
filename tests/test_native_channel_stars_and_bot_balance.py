@@ -247,14 +247,15 @@ def test_owner_without_username_gets_clickable_telegram_mention_and_bot_recipien
     )
     from telegram_membership_saas.modules.owner_setup.dashboard_ui import rich_dashboard
 
-    render = lambda channel: rich_dashboard(
-        project_name="Bot", timezone="Europe/Moscow", trial_banner="",
-        readiness=(("Channel", True), ("Plan", True),
-                   ("Payment", True), ("Running", True)),
-        sales_status="", finances=DashboardFinances(
-            bot_stars="0", channels=(channel,),
-        ),
-    )
+    def render(channel):
+        return rich_dashboard(
+            project_name="Bot", timezone="Europe/Moscow", trial_banner="",
+            readiness=(("Channel", True), ("Plan", True),
+                       ("Payment", True), ("Running", True)),
+            sales_status="", finances=DashboardFinances(
+                bot_stars="0", channels=(channel,),
+            ),
+        )
     channel = ChannelFinance(
         name="VIP", chat_id="-10011", owner_label="Анатолий · ID 321",
         owner_deleted=False, stars_recipient="bot", owner_user_id=321,
@@ -275,8 +276,8 @@ def test_owner_without_username_gets_clickable_telegram_mention_and_bot_recipien
 
 
 def test_running_status_reads_real_worker_heartbeat_not_invoice_configuration():
-    from telegram_membership_saas.modules.owner_setup.service import SetupOverview
     from telegram_membership_saas.modules.owner_setup.handlers import _readiness_steps
+    from telegram_membership_saas.modules.owner_setup.service import SetupOverview
 
     overview = SetupOverview(
         project_id=uuid4(), project_name="Bot", timezone="Europe/Moscow",
