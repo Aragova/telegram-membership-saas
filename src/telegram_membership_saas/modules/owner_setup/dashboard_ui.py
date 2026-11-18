@@ -72,6 +72,9 @@ def classic_dashboard(
         + (escape(finances.bot_stars) + " ⭐" if finances.bot_stars is not None
            else tr("Недоступен", "Unavailable")),
     ])
+    if not finances.available:
+        items.append(tr("📢 Данные каналов временно недоступны",
+                        "📢 Channel data temporarily unavailable"))
     for channel in finances.channels:
         if len(finances.channels) > 1 or finances.extra_channels:
             items.append("📢 <b>" + escape(channel.name) + "</b>")
@@ -84,7 +87,7 @@ def classic_dashboard(
             tr("💳 Получатель звёзд: ", "💳 Stars recipient: ")
             + _recipient(channel.stars_recipient),
         ])
-    if not finances.channels:
+    if not finances.channels and finances.available:
         items.append(tr("📢 Нет подключённых каналов",
                         "📢 No connected channels"))
     if finances.extra_channels:
@@ -130,7 +133,12 @@ def rich_dashboard(
         + "</b></td></tr>",
         "</table>",
     ])
-    if not finances.channels:
+    if not finances.available:
+        parts.append("<p>" + tr(
+            "📢 Данные каналов временно недоступны",
+            "📢 Channel data temporarily unavailable",
+        ) + "</p>")
+    if not finances.channels and finances.available:
         parts.append("<p>" + tr(
             "📢 Подключённых каналов нет",
             "📢 No connected channels",
