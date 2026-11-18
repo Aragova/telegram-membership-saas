@@ -889,7 +889,7 @@ def create_owner_setup_router(
                  _button(tr("📊 Статистика", "📊 Statistics"), "statistics:7")],
                 [InlineKeyboardButton(
                     text=tr("📨 Рассылки", "📨 Broadcasts"),
-                    callback_data="bc:home",
+                    callback_data="bc:home", style="primary",
                 ), InlineKeyboardButton(
                     text=tr("📂 Продажа файлов", "📂 File sales"),
                     callback_data="fs:home", style="success",
