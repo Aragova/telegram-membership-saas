@@ -22,6 +22,7 @@ from telegram_membership_saas.modules.owner_setup.channel_revenue_bridge import 
     ChannelRevenue,
     live_channel_revenue,
 )
+from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import Project
@@ -171,7 +172,16 @@ async def read_dashboard_finances(
         project_owner_id = await session.scalar(
             select(Project.owner_user_id).where(Project.id == project_id)
         )
-        show_sensitive_revenue = project_owner_id == actor_id
+        # The project owner is not necessarily the Telegram channel creator:
+        # project setup explicitly permits connecting as channel admin.
+        # Revenue must never leak across these two different identities.
+        actor_telegram_id = None
+        if project_owner_id == actor_id:
+            actor_telegram_id = await session.scalar(
+                select(TelegramUser.telegram_user_id).where(
+                    TelegramUser.id == actor_id,
+                )
+            )
         channels = (await session.execute(select(
             Resource.id, Resource.name, Resource.external_id,
         ).where(
@@ -247,8 +257,9 @@ async def read_dashboard_finances(
     # the regular dashboard do not receive MTProto revenue information.
     # The isolated bridge also verifies the precise Telegram creator ID.
     async def revenue_for(channel, ownership) -> ChannelRevenue | None:
-        if (not show_sensitive_revenue or ownership.deleted
-                or ownership.user_id is None):
+        if (actor_telegram_id is None or ownership.deleted
+                or ownership.user_id is None
+                or actor_telegram_id != ownership.user_id):
             return None
         try:
             return await live_channel_revenue(
