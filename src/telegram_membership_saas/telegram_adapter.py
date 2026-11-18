@@ -34,6 +34,7 @@ from telegram_membership_saas.modules.platform_saas_gateway_handlers import (
     create_platform_saas_gateway_router,
 )
 from telegram_membership_saas.modules.platform_saas_lava_handlers import (
+    ClearPendingLavaOnNavigation,
     create_platform_saas_lava_router,
 )
 from telegram_membership_saas.modules.platform_saas_receipt_handlers import (
@@ -73,6 +74,12 @@ def create_dispatcher(
         # Register durable ViMi Pay receipt replies before generic handlers.
         dispatcher.include_router(create_saas_receipt_router(session_factory))
         if not enable_access:
+            # A pending Lava email is only valid inside its own flow. When
+            # the user opens another central menu/flow, remove the pending
+            # capture so ordinary text (especially bot secrets) is routed
+            # to the actual owner/security handlers.
+            dispatcher.message.outer_middleware(ClearPendingLavaOnNavigation())
+            dispatcher.callback_query.outer_middleware(ClearPendingLavaOnNavigation())
             # Only the central ViMi Pay polling process receives SaaS Stars.
             # Project-specific merchant bots never host this router.
             dispatcher.include_router(create_platform_saas_stars_router(session_factory))
