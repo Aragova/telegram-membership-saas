@@ -1,3 +1,15 @@
+> **2026-11-18 — Draft service-currency navigation cleanup.**
+> Connected bot 🧾 Bill and central historical billing list now expose
+> a single **💱 Service currency** selector. This replaces the old Settings
+> placement (old saved Telegram callbacks remain navigable). It is the
+> pre-existing **account-wide prospective service price**: RUB 150 / USD 5
+> per bot per month. New invoice currency is chosen for *future* bot charges;
+> existing issued paid/unpaid rows, their FX snapshots, and actual payment
+> method currencies are immutable. Every bill state shows a compact current
+> profile + navigation hint. A paid current bill with owner-wide hold explicitly
+> attributes the hold to another unpaid network bill. No SQL or automatic
+> provider-currency selection changes.
+
 > **2026-11-18 — Historical bill after a connected bot was deleted (PR #186).**
 > Issued ViMi Pay debt is owned by the originally liable **account**, not by
 > the lifetime of its Telegram bot token. Permanently removing a bot with no

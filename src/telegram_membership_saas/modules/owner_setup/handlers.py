@@ -240,6 +240,7 @@ from telegram_membership_saas.modules.owner_setup.tenant_admin import (
 from telegram_membership_saas.modules.payments.models import PaymentMethod, PaymentRequest
 from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.platform_saas_bill_ui import (
+    service_currency_hint,
     unified_merchant_bill_classic,
     unified_merchant_bill_rich,
 )
@@ -951,8 +952,6 @@ def create_owner_setup_router(
                  _button("🌍 TimeZone", "timezone")],
                 [_button(tr("📁 Профиль сети", "📁 Network profile"), "network")],
                 [_button(tr("🛡 Модераторы", "🛡 Moderators"), "modmanage")],
-                [_button(tr("🧾 Тариф обслуживания ViMi Pay",
-                            "🧾 ViMi Pay service tariff"), "saasprofile")],
                 [_button(tr("🔁 Передать бота", "🔁 Transfer bot"), "transfer")],
                 [_button(tr("❔ Помощь", "❔ Help"), "help")],
                 [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
@@ -963,32 +962,48 @@ def create_owner_setup_router(
     async def show_saas_service_profile(
         bot: Bot, user_id: int, actor_id: UUID,
     ) -> None:
+        """The price profile is account-wide, for future SaaS invoices only."""
         data = await saas_price_profile(
             factory, actor_id=actor_id, project_id=fixed_project_id,
         )
+        currency = str(data["currency"])
+        label = "USD · $5" if currency == "USD" else "RUB · 150 ₽"
         await bot.send_message(
             user_id,
             tr(
-                "🧾 <b>Тариф обслуживания ViMi Pay</b>\n\n"
-                "Профиль влияет на будущие счета: 150 ₽ или $5 за бот "
-                "в месяц. Это <b>не выбор способа оплаты</b>.\n"
-                "Оплатить существующий счёт можно в разделе 🧾 Счёт "
-                "в одной из валют, разрешённых платформой.\n\n"
-                "Текущий профиль: ",
-                "🧾 <b>ViMi Pay service tariff</b>\n\n"
-                "This selects the service price on future invoices: "
-                "150 RUB or 5 USD per bot per month. "
-                "It does <b>not</b> choose a payment method.\n"
-                "To pay an existing invoice, open 🧾 Bill and choose "
-                "a currency enabled by the platform.\n\n"
-                "Current profile: ",
-            ) + "<b>" + ("$5" if data["currency"]=="USD" else "150 ₽")
-            + "</b>",
+                "💱 <b>Валюта обслуживания ViMi Pay</b>\n\n"
+                "Сейчас: <b>{label} в месяц за бота</b>.\n"
+                "Выберите валюту для следующих счетов.\n\n"
+                "ℹ️ Настройка действует на аккаунт и будущие счета "
+                "всех его ботов. Уже выставленные счета, их суммы "
+                "и подтверждённые платежи не изменятся.\n"
+                "Это не выбор валюты конкретного платежа.",
+                "💱 <b>ViMi Pay service currency</b>\n\n"
+                "Current: <b>{label} per bot per month</b>.\n"
+                "Choose the currency for future invoices.\n\n"
+                "ℹ️ This account-wide setting applies to future bills "
+                "for all your bots. Already issued invoices, amounts "
+                "and confirmed payments stay unchanged.\n"
+                "This is not the currency selector for a payment.",
+            ).format(label=label),
             parse_mode="HTML",
             reply_markup=_markup([
-                [_button("150 ₽","saasprice:RUB"),
-                 _button("$5","saasprice:USD")],
-                [_button(tr("⬅️ Настройки","⬅️ Settings"),"settings")],
+                [
+                    _button(
+                        ("✅ " if currency == "RUB" else "") + "🇷🇺 150 ₽",
+                        "saasprice:RUB",
+                        "success" if currency == "RUB" else "primary",
+                    ),
+                    _button(
+                        ("✅ " if currency == "USD" else "") + "🇺🇸 $5",
+                        "saasprice:USD",
+                        "success" if currency == "USD" else "primary",
+                    ),
+                ],
+                [_button(
+                    tr("⬅️ К счёту", "⬅️ Back to bill"),
+                    "saasinvoices:0",
+                )],
             ]),
         )
 
@@ -1002,6 +1017,9 @@ def create_owner_setup_router(
             # Current per-bot statements are opened INSIDE each connected bot.
             report = await merchant_saas_statements(
                 factory, actor_user_id=actor_id, page=page,
+            )
+            profile = await saas_price_profile(
+                factory, actor_id=actor_id, project_id=None,
             )
             rows: list[list[InlineKeyboardButton]] = []
             for item in report.invoices:
@@ -1033,6 +1051,10 @@ def create_owner_setup_router(
             if nav:
                 rows.append(nav)
             rows.append([_button(
+                tr("💱 Валюта обслуживания", "💱 Service currency"),
+                "saasprofile",
+            )])
+            rows.append([_button(
                 tr("🏠 Главное меню", "🏠 Main menu"), "projects",
             )])
             await bot.send_message(
@@ -1050,7 +1072,7 @@ def create_owner_setup_router(
                     "Unpaid invoices: {unpaid} · {due:.2f} RUB",
                 ).format(
                     unpaid=report.unpaid, due=report.outstanding_rub,
-                ),
+                ) + "\n\n" + service_currency_hint(str(profile["currency"])),
                 parse_mode="HTML", reply_markup=_markup(rows),
             )
             return
@@ -1061,6 +1083,9 @@ def create_owner_setup_router(
             month=datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1),
             project_id=project_id,
         )
+        profile = await saas_price_profile(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         rows: list[list[InlineKeyboardButton]] = []
         due = Decimal(str(summary["total_due_rub"]))
         invoice_id = summary.get("invoice_id")
@@ -1070,13 +1095,21 @@ def create_owner_setup_router(
                 "spm:" + encode_uuid(UUID(str(invoice_id))) + ":RUB:0",
                 "success",
             )])
+        rows.append([_button(
+            tr("💱 Валюта обслуживания", "💱 Service currency"),
+            "saasprofile",
+        )])
         rows.append([_button(tr(
             "🏠 Главное меню", "🏠 Main menu",
         ), "dashboard")])
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=unified_merchant_bill_rich(summary),
-            classic_html=unified_merchant_bill_classic(summary),
+            rich_html=unified_merchant_bill_rich(
+                summary, future_profile_currency=str(profile["currency"]),
+            ),
+            classic_html=unified_merchant_bill_classic(
+                summary, future_profile_currency=str(profile["currency"]),
+            ),
             reply_markup=_markup(rows),
         )
 
@@ -1112,6 +1145,9 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, invoice_id=invoice_id,
             project_id=fixed_project_id,
         )
+        profile = await saas_price_profile(
+            factory, actor_id=actor_id, project_id=fixed_project_id,
+        )
         buttons: list[list[InlineKeyboardButton]] = []
         if Decimal(str(balance["remaining_rub"])) > 0:
             buttons.append([_button(
@@ -1125,10 +1161,13 @@ def create_owner_setup_router(
             tr("⬅️ К счетам", "⬅️ Invoices"),
             "saasinvoices:" + str(page),
         )])
+        hint = service_currency_hint(str(profile["currency"]))
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=issued_invoice_rich(item, snapshot, credits, balance),
-            classic_html=issued_invoice_classic(item, snapshot, credits, balance),
+            rich_html=(issued_invoice_rich(item, snapshot, credits, balance)
+                       + "\n<p>" + hint.replace("\n", "</p><p>") + "</p>"),
+            classic_html=(issued_invoice_classic(item, snapshot, credits, balance)
+                          + "\n\n" + hint),
             reply_markup=_markup(buttons),
         )
 
@@ -3695,7 +3734,8 @@ def create_owner_setup_router(
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasinvoices:", "saaspaychoices:",
-                "saasprice:", "saasbill:", "saasbillchoose:", "saasbillquote:", "sl:",
+                "saasprofile", "saasprice:", "saasbill:", "saasbillchoose:",
+                "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
                 "spm:", "spr:", "spb:", "spv:", "spc:",
             ))
@@ -4374,6 +4414,10 @@ def create_owner_setup_router(
                                 "Unbound ViMi Pay payment prompt cannot be deleted"
                             )
                         raise RuntimeError("ViMi Pay payment instruction unavailable") from None
+                await query.answer()
+                return
+            if action == "saasprofile":
+                await show_saas_service_profile(bot, user_id, actor_id)
                 await query.answer()
                 return
             if action.startswith("saasprice:"):
@@ -5174,8 +5218,6 @@ def create_owner_setup_router(
                 await show_notifications(bot, user_id, actor_id, project_id)
             elif action == "settings":
                 await show_settings(bot, user_id)
-            elif action == "saasprofile":
-                await show_saas_service_profile(bot, user_id, actor_id)
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action.startswith("connrename:"):
