@@ -28,8 +28,8 @@ from telegram_membership_saas.modules.file_sales.manual_models import FileManual
 from telegram_membership_saas.modules.identity import ProjectCustomer
 from telegram_membership_saas.modules.owner_setup.obligation_audit import OwnerObligationAudit
 from telegram_membership_saas.modules.payments.models import PaymentRequest, PaymentRequestStatus
-from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.pricing import PlanPrice
+from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.stars_subscriptions import SubscriptionStarOrder
 from telegram_membership_saas.modules.subscriptions.models import Subscription
 from telegram_membership_saas.modules.telegram_access.models import TelegramJoinTicket
