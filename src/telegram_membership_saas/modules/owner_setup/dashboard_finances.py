@@ -217,21 +217,24 @@ async def read_dashboard_finances(
         routes.setdefault(resource_id, set()).add(route)
 
     visible = channels[:MAX_CHANNELS_ON_DASHBOARD]
-    # An unverified resource must not display a green ON. Limit per-open
-    # Telegram requests, rather than polling arbitrarily many resources.
-    channel_ready = False
-    if 0 < len(active_resource_chats) <= MAX_RESOURCE_ACCESS_CHECKS:
-        rights = await asyncio.gather(*(
-            _live_resource_rights(bot, chat_id) for chat_id in active_resource_chats
-        ))
-        channel_ready = all(rights)
+    # An unverified resource must not display green ON. All Telegram calls
+    # run concurrently to avoid doubling main-panel latency.
+    verify_resources = 0 < len(active_resource_chats) <= MAX_RESOURCE_ACCESS_CHECKS
     results = await asyncio.gather(
         _live_stars(bot),
         *(_live_owner(bot, chat.external_id) for chat in visible),
+        *(
+            _live_resource_rights(bot, chat_id)
+            for chat_id in (active_resource_chats if verify_resources else ())
+        ),
     )
     bot_balance = results[0]
+    owner_results = results[1:1 + len(visible)]
+    channel_ready = (
+        all(results[1 + len(visible):]) if verify_resources else False
+    )
     cards = []
-    for channel, ownership in zip(visible, results[1:], strict=True):
+    for channel, ownership in zip(visible, owner_results, strict=True):
         available = routes.get(channel.id, set())
         payout = (
             "mixed" if len(available) > 1 else
