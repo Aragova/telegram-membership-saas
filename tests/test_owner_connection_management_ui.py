@@ -308,6 +308,44 @@ async def test_central_main_menu_has_invoice_entry_without_connections(monkeypat
     assert "own:newmanaged" in actions
 
 
+async def test_central_selected_connection_dashboard_has_invoice_entry(
+    monkeypatch,
+):
+    project_id = uuid4()
+    monkeypatch.setattr(
+        ui, "owner_home",
+        AsyncMock(return_value=OwnerHome(((project_id, "ViMi E2E"),), project_id)),
+    )
+    monkeypatch.setattr(
+        ui, "setup_overview",
+        AsyncMock(return_value=overview(project_id, has_bot=True)),
+    )
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ui, "set_chat_commands", AsyncMock())
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
+    router = ui.create_owner_setup_router(MagicMock())
+    home_message = next(
+        x.callback for x in router.message.handlers
+        if x.callback.__name__ == "home_message"
+    )
+    instance = bot()
+    await home_message(
+        SimpleNamespace(
+            from_user=SimpleNamespace(
+                id=123, first_name="Owner", username="owner",
+            ),
+            chat=SimpleNamespace(id=123, type="private"),
+            text="/menu",
+        ),
+        instance,
+    )
+    assert buttons(instance.send_message.await_args).count(
+        "own:saasinvoices:0",
+    ) == 1
+
+
 async def test_archived_registry_keeps_direct_invoice_navigation(monkeypatch):
     monkeypatch.setattr(
         ui, "list_archived_owner_connections", AsyncMock(return_value=()),
