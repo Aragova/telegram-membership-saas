@@ -1,0 +1,25 @@
+# Opt-in GET-only short Lava checkout ingress for pay-api.usevimi.ru:443.
+# Install ONLY inside the existing HTTPS vhost after API-only acceptance.
+# Do not modify the health location, wildcard location or other vhosts.
+#
+# Also install this line in the *http* context before enabling this block:
+# limit_req_zone $binary_remote_addr zone=vimi_checkout:10m rate=5r/s;
+#
+# The 22-char URL token is a bearer capability. Do not access-log it.
+location ~ "^/p/[A-Za-z0-9_-]{22}$" {
+    limit_except GET {
+        deny all;
+    }
+    limit_req zone=vimi_checkout burst=10 nodelay;
+    access_log off;
+    proxy_pass http://127.0.0.1:18080;
+    proxy_http_version 1.1;
+    proxy_set_header Host pay-api.usevimi.ru;
+    proxy_set_header Connection "";
+    proxy_connect_timeout 2s;
+    proxy_send_timeout 3s;
+    proxy_read_timeout 4s;
+    proxy_next_upstream off;
+    proxy_buffering off;
+    proxy_redirect off;
+}
