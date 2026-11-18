@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import tr
 from telegram_membership_saas.modules.plans import PlanResource
+from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.telegram_commerce.service import (
     CheckoutOption,
@@ -67,14 +68,17 @@ class BuyerOffer:
     option: CheckoutOption
     methods: tuple[CheckoutOption, ...]
     resource_label: str
+    native_stars_link: str | None = None
 
 
 def build_buyer_offers(
     options: tuple[CheckoutOption, ...],
     resources: dict[UUID, tuple[str, ...]] | None = None,
+    native_links: dict[UUID, str] | None = None,
 ) -> tuple[BuyerOffer, ...]:
     """Collapse the SQL price×method rows to one offer per priced plan."""
     resources = resources or {}
+    native_links = native_links or {}
     methods_by_price: dict[UUID, list[CheckoutOption]] = {}
     first: dict[UUID, CheckoutOption] = {}
     for option in options:
@@ -98,6 +102,9 @@ def build_buyer_offers(
             option=option,
             methods=tuple(methods_by_price[price_id]),
             resource_label=label,
+            native_stars_link=(
+                native_links.get(price_id) if option.currency_code == "XTR" else None
+            ),
         ))
     return tuple(result)
 
@@ -140,8 +147,24 @@ async def list_buyer_offers(
         names = by_plan.setdefault(plan_id, [])
         if name not in names:
             names.append(name)
+    native_links: dict[UUID, str] = {}
+    if bot_id is not None:
+        price_ids = [
+            option.plan_price_id for option in options if option.currency_code == "XTR"
+        ]
+        if price_ids:
+            native_links = dict((await session.execute(
+                select(PlanPrice.id, PlanPrice.native_subscription_link).where(
+                    PlanPrice.project_id == project_id,
+                    PlanPrice.id.in_(price_ids),
+                    PlanPrice.status == "active",
+                    PlanPrice.native_subscription_active.is_(True),
+                    PlanPrice.native_subscription_bot_id == bot_id,
+                )
+            )).all())
     return build_buyer_offers(
         options, {plan_id: tuple(names) for plan_id, names in by_plan.items()},
+        native_links,
     )
 
 
@@ -367,7 +390,20 @@ def offer_screen(
         + tr("👇 <b>Как вам удобнее оплатить?</b>",
              "👇 <b>How would you like to pay?</b>")
     )
+    if current.native_stars_link:
+        text += "\n\n" + tr(
+            "⭐ Звёзды поступят на баланс канала. Telegram автоматически "
+            "продлевает подписку каждые 30 дней. Покупка управляется Telegram.",
+            "⭐ Stars go to the channel balance. Telegram automatically "
+            "renews this subscription every 30 days. Telegram manages the purchase.",
+        )
     for method in current.methods:
+        if method.payment_method_id.int == 0 and current.native_stars_link:
+            rows.append([InlineKeyboardButton(
+                text=tr("⭐ Оплатить и войти в канал", "⭐ Pay and join channel"),
+                url=current.native_stars_link, style="success",
+            )])
+            continue
         crypto = method.payment_method_id.int == 1
         rows.append([InlineKeyboardButton(
             text=("💎 Crypto Pay" if crypto else
