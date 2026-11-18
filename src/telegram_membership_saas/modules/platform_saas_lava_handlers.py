@@ -37,6 +37,9 @@ from telegram_membership_saas.modules.platform_saas_lava_client import (
     LavaTopError,
     validate_lava_customer_email,
 )
+from telegram_membership_saas.modules.platform_saas_payment_redirect import (
+    short_lava_url,
+)
 from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
     saas_v2_invoice_balance,
 )
@@ -363,10 +366,19 @@ def create_platform_saas_lava_router(
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
+        # Shortlinks are a central-only opt-in after the isolated public API
+        # and dedicated HTTPS /p/ ingress have passed acceptance. Without
+        # approval, retain the original working provider checkout URL.
+        url = link.invoice_url
+        if get_settings().saas_shortlinks_enabled:
+            try:
+                url = short_lava_url(link.order_id)
+            except ValueError:
+                LOG.warning("Invalid platform Lava order identity for shortlink")
         await bot.send_message(
             message.chat.id,
             tr(
-                "💳 <b>Счёт Lava.top создан</b>\n"
+                "💳 <b>Счёт Lava.top создан</b>\\n"
                 "К оплате: <b>{amount:.2f} ₽</b>\n"
                 "После успешного платежа ViMi Pay самостоятельно "
                 "проверит его и продлит обслуживание.",
@@ -378,8 +390,7 @@ def create_platform_saas_lava_router(
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text=tr("💳 Открыть Lava.top", "💳 Open Lava.top"),
-                    url=link.invoice_url,
+                    text=tr("💳 Оплатить {amount:.2f} ₽", "💳 Pay {amount:.2f} RUB").format(\n                        amount=link.amount_rub,\n                    ),\n                    url=url,
                 ),
             ]]),
         )
