@@ -206,3 +206,89 @@ async def test_missing_email_never_reaches_provider():
                 amount=Decimal("150"), currency="RUB",
             )
     assert not calls
+
+
+@pytest.mark.parametrize(("status", "details", "expected"), [
+    (400, {"currency": "PRIVATE_EMAIL SECRET_API_KEY"}, "LAVA-HTTP-400-CURRENCY"),
+    (400, {"offerId": "PRIVATE_OFFER"}, "LAVA-HTTP-400-OFFER"),
+    (422, {"amount": "PRIVATE_AMOUNT"}, "LAVA-HTTP-422-AMOUNT"),
+    (401, {"email": "PRIVATE_EMAIL"}, "LAVA-HTTP-401"),
+    (403, None, "LAVA-HTTP-403"),
+    (404, None, "LAVA-HTTP-404"),
+    (429, None, "LAVA-HTTP-429"),
+    (503, None, "LAVA-HTTP-503"),
+])
+async def test_lava_http_rejections_show_safe_diagnostic_only(
+    status, details, expected,
+):
+    response = {
+        "error": "SECRET_API_KEY PRIVATE_EMAIL",
+        "details": details,
+    }
+    async with LavaTopClient(
+        "SECRET_API_KEY",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(status, json=response),
+        ),
+    ) as adapter:
+        with pytest.raises(LavaTopError) as exc:
+            await adapter.create_dynamic_invoice(
+                email="private@example.com",
+                offer_id=uuid4(), amount=Decimal("150"), currency="RUB",
+            )
+    assert exc.value.code == expected
+    assert "PRIVATE_EMAIL" not in str(exc.value)
+    assert "SECRET_API_KEY" not in str(exc.value)
+    assert "private@example.com" not in str(exc.value)
+    assert "PRIVATE" not in exc.value.code
+
+
+async def test_arbitrary_provider_error_field_is_not_exposed():
+    async with LavaTopClient(
+        "TOP_SECRET",
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(400, json={
+                "details": {"TOP_SECRET": "private@example.com"},
+                "error": "request echoed TOP_SECRET",
+            }),
+        ),
+    ) as adapter:
+        with pytest.raises(LavaTopError) as exc:
+            await adapter.create_dynamic_invoice(
+                email="private@example.com",
+                offer_id=uuid4(), amount=Decimal("150"), currency="RUB",
+            )
+    assert exc.value.code == "LAVA-HTTP-400"
+    assert "TOP_SECRET" not in str(exc.value)
+
+
+async def test_provider_non_json_2xx_is_distinct_from_http_error():
+    async with LavaTopClient(
+        "key", transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, text="<html>Not JSON</html>"),
+        ),
+    ) as adapter:
+        with pytest.raises(LavaTopError) as exc:
+            await adapter.create_dynamic_invoice(
+                email="buyer@example.com", offer_id=uuid4(),
+                currency="RUB", amount=Decimal("150"),
+            )
+    assert exc.value.code == "LAVA-INVALID-JSON"
+
+
+async def test_unknown_create_response_status_is_diagnosed_without_accepting_link():
+    async with LavaTopClient(
+        "key", transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json={
+                "id": str(uuid4()), "status": "failed",
+                "amountTotal": {"amount": 150, "currency": "RUB"},
+                "paymentUrl": "https://lava.top/pay/test",
+            }),
+        ),
+    ) as adapter:
+        with pytest.raises(LavaTopError) as exc:
+            await adapter.create_dynamic_invoice(
+                email="buyer@example.com", offer_id=uuid4(),
+                currency="RUB", amount=Decimal("150"),
+            )
+    assert exc.value.code == "LAVA-CREATE-STATUS"

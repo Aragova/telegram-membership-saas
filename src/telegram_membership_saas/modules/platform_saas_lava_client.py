@@ -27,7 +27,45 @@ LAVA_LIMITS: dict[str, tuple[Decimal, Decimal]] = {
 
 
 class LavaTopError(RuntimeError):
-    """Safe, credential-free provider error."""
+    """Credential-free provider error with a bounded support diagnostic.
+
+    Never include provider response text, customer email or request headers
+    in this exception: user messages and server logs can both display it.
+    """
+
+    def __init__(self, message: str, *, code: str = "LAVA-RESPONSE") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _http_diagnostic(response: httpx.Response) -> str:
+    """Only status and a *known field name* may leave provider error data.
+
+    Lava.top may echo email, API keys or other sensitive request values in
+    its error response. Do not log, interpolate or return those values.
+    """
+    status = response.status_code
+    field = ""
+    if status in (400, 422):
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            details = payload.get("details")
+            if isinstance(details, dict):
+                # The order here is fixed, never take an untrusted map key.
+                for candidate, label in (
+                    ("currency", "CURRENCY"),
+                    ("offerId", "OFFER"),
+                    ("amount", "AMOUNT"),
+                    ("email", "EMAIL"),
+                    ("paymentProvider", "PROVIDER"),
+                ):
+                    if candidate in details:
+                        field = "-" + label
+                        break
+    return f"LAVA-HTTP-{status}{field}"
 
 
 def _amount(value: Decimal | str | int, currency: str) -> Decimal:
@@ -199,9 +237,24 @@ class LavaTopClient:
             )
             response.raise_for_status()
             result = response.json()
-        except (httpx.HTTPError, ValueError):
-            # HTTP exceptions can contain the request's secret header.
-            raise LavaTopError("Lava.top API is temporarily unavailable") from None
+        except httpx.HTTPStatusError as exc:
+            # Do not stringify the exception, URL, response body or headers.
+            # The bounded code lets the operator distinguish a currency
+            # rejection, expired key, product issue and a provider outage.
+            raise LavaTopError(
+                "Lava.top declined the API request",
+                code=_http_diagnostic(exc.response),
+            ) from None
+        except httpx.HTTPError:
+            raise LavaTopError(
+                "Lava.top API transport unavailable",
+                code="LAVA-TRANSPORT",
+            ) from None
+        except ValueError:
+            raise LavaTopError(
+                "Lava.top returned non-JSON data",
+                code="LAVA-INVALID-JSON",
+            ) from None
         return _unwrap(result)
 
     async def create_dynamic_invoice(
@@ -217,15 +270,23 @@ class LavaTopClient:
             "amount": float(total),
         })
         if data.get("status") not in ("new", "in-progress"):
-            raise LavaTopError("Lava.top invoice is not payable")
+            raise LavaTopError(
+                "Lava.top invoice is not payable", code="LAVA-CREATE-STATUS",
+            )
         amount_total = data.get("amountTotal")
         if not isinstance(amount_total, dict):
-            raise LavaTopError("Lava.top invoice amount snapshot missing")
+            raise LavaTopError(
+                "Lava.top invoice amount snapshot missing",
+                code="LAVA-CREATE-SNAPSHOT",
+            )
         if (
             amount_total.get("currency") != currency
             or _amount(amount_total.get("amount"), currency) != total
         ):
-            raise LavaTopError("Lava.top invoice quote differs from original")
+            raise LavaTopError(
+                "Lava.top invoice quote differs from original",
+                code="LAVA-CREATE-QUOTE",
+            )
         provider_id = _id_from(data)
         url = _checkout_link(data.get("paymentUrl"))
         return LavaTopCreatedInvoice(

@@ -14,13 +14,20 @@ from decimal import Decimal
 from time import monotonic
 from uuid import UUID
 
-from aiogram import Bot, F, Router
+from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.filters import BaseFilter
-from aiogram.types import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardRemove,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.bots.service import TOKEN_PATTERN
 from telegram_membership_saas.modules.owner_setup.service import ensure_telegram_actor
 from telegram_membership_saas.modules.platform_saas_gateway_service import (
     issue_platform_lava_checkout,
@@ -108,19 +115,22 @@ async def send_platform_lava_email_prompt(
         tr(
             "💳 <b>Lava.top · оплата ViMi Pay</b>\n"
             "К оплате: <b>{amount:.2f} ₽</b>\n\n"
-            "Ответьте на это сообщение адресом email для выставления "
-            "счёта. Адрес передаётся Lava.top, а не владельцу канала. "
+            "Отправьте адрес email <b>обычным сообщением</b> "
+            "для выставления счёта. /cancel — отменить ввод. "
+            "Адрес передаётся Lava.top, а не владельцу канала. "
             "Это ещё не платёж.",
             "💳 <b>Lava.top · ViMi Pay payment</b>\n"
             "Amount: <b>{amount:.2f} RUB</b>\n\n"
-            "Reply to this message with the email address for checkout. "
-            "The address is sent to Lava.top, not to the channel owner. "
+            "Send your email address <b>as a normal message</b> "
+            "to create the checkout. /cancel — stop email entry. "
+            "The address is sent to Lava.top, not the channel owner. "
             "No payment is made yet.",
         ).format(amount=remaining),
         parse_mode="HTML",
-        reply_markup=ForceReply(
-            selective=True, input_field_placeholder="name@example.com",
-        ),
+        # ForceReply leaves the native "В ответ…" composer pinned in some
+        # Telegram clients. The next plain message is matched to the
+        # per-user, per-central-bot, 10-minute in-memory request instead.
+        reply_markup=ReplyKeyboardRemove(),
     )
     _pending_lava[(payer_telegram_id, prompt.message_id)] = _PendingEmail(
         invoice_id=invoice_id, central_bot_id=bot.id,
@@ -128,15 +138,90 @@ async def send_platform_lava_email_prompt(
     )
 
 
+def _current_prompt(
+    payer_id: int, bot_id: int,
+) -> tuple[tuple[int, int], _PendingEmail] | None:
+    # There is at most one active email prompt for a payer; retain the
+    # prompt message ID so replies to unrelated Telegram messages are not
+    # accidentally interpreted as checkout information.
+    for key, request in tuple(_pending_lava.items()):
+        if key[0] == payer_id and request.central_bot_id == bot_id:
+            return key, request
+    return None
+
+
 class _LavaEmailReplyFilter(BaseFilter):
-    async def __call__(self, message: Message) -> bool:
+    async def __call__(self, message: Message, bot: Bot) -> bool:
+        if (
+            message.chat.type != "private"
+            or message.from_user is None
+            or message.from_user.id != message.chat.id
+            or not isinstance(message.text, str)
+            or not message.text
+            or message.text.startswith("/")
+            or TOKEN_PATTERN.fullmatch(message.text.strip()) is not None
+        ):
+            # Never swallow BotFather tokens before the existing security
+            # handler can delete and warn about credential exposure.
+            return False
+        current = _current_prompt(message.from_user.id, bot.id)
+        if current is None:
+            return False
         reply = message.reply_to_message
+        if reply is None:
+            return True  # Normal typed email, with no stuck reply composer.
+        key, _ = current
+        return bool(
+            reply.message_id == key[1]
+            and reply.from_user is not None
+            and reply.from_user.id == bot.id
+        )
+
+
+class ClearPendingLavaOnNavigation(BaseMiddleware):
+    """Disarm stale email capture before unrelated central navigation.
+
+    Other owner/account flows then receive their next plain input normally.
+    Only *actual* navigation actions for the same private Telegram user
+    invalidate their own pending email. No customer bots use this middleware.
+    """
+
+    async def __call__(self, handler, event, data):
+        user = getattr(event, "from_user", None)
+        chat = (
+            getattr(event, "chat", None) if isinstance(event, Message)
+            else getattr(getattr(event, "message", None), "chat", None)
+        )
+        if (
+            user is not None and chat is not None
+            and chat.type == "private" and chat.id == user.id
+        ):
+            navigating = (
+                isinstance(event, CallbackQuery)
+                or (
+                    isinstance(event, Message)
+                    and isinstance(event.text, str)
+                    and event.text.startswith("/")
+                    and event.text not in (
+                        "/cancel", "/cancel@vimipay_bot",
+                    )
+                )
+            )
+            if navigating:
+                for key in tuple(_pending_lava):
+                    if key[0] == user.id:
+                        _pending_lava.pop(key, None)
+        return await handler(event, data)
+
+
+class _LavaCancelFilter(BaseFilter):
+    async def __call__(self, message: Message, bot: Bot) -> bool:
         return bool(
             message.chat.type == "private"
             and message.from_user is not None
             and message.from_user.id == message.chat.id
-            and reply is not None
-            and (message.from_user.id, reply.message_id) in _pending_lava
+            and message.text in ("/cancel", "/cancel@vimipay_bot")
+            and _current_prompt(message.from_user.id, bot.id) is not None
         )
 
 
@@ -175,21 +260,35 @@ def create_platform_saas_lava_router(
                 ),
             )
 
+    @router.message(_LavaCancelFilter())
+    async def cancel_lava_email(message: Message, bot: Bot) -> None:
+        if message.from_user is None:
+            return
+        current = _current_prompt(message.from_user.id, bot.id)
+        if current is None:
+            return
+        _pending_lava.pop(current[0], None)
+        await bot.send_message(
+            message.chat.id,
+            tr(
+                "✅ Ввод email для Lava.top отменён. Счёт не изменён. "
+                "Откройте 🧾 Счета ViMi Pay.",
+                "✅ Lava.top email entry cancelled. Invoice unchanged. "
+                "Open 🧾 ViMi Pay invoices.",
+            ),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
     @router.message(_LavaEmailReplyFilter())
     async def accept_lava_email_reply(message: Message, bot: Bot) -> None:
-        reply = message.reply_to_message
-        if reply is None or message.from_user is None:
+        if message.from_user is None:
             return
-        key = (message.from_user.id, reply.message_id)
-        request = _pending_lava.pop(key, None)
-        if request is None:
+        current = _current_prompt(message.from_user.id, bot.id)
+        if current is None:
             return
-        if (
-            monotonic() >= request.expires_at
-            or request.central_bot_id != bot.id
-            or reply.from_user is None
-            or reply.from_user.id != bot.id
-        ):
+        key, request = current
+        _pending_lava.pop(key, None)
+        if monotonic() >= request.expires_at:
             await bot.send_message(
                 message.chat.id,
                 tr(
@@ -226,20 +325,42 @@ def create_platform_saas_lava_router(
                 central_bot_id=bot.id, invoice_id=request.invoice_id,
                 customer_email=email,
             )
-        except Exception:
-            # An API failure does not prove that a previous provider charge
-            # did not happen. Never invent success or ask for a second payment.
-            LOG.warning("Lava.top checkout link could not be issued")
+        except Exception as exc:
+            # No provider response, email, request headers or exception stack
+            # is emitted. The code is a hard-bounded diagnostic from our own
+            # adapter (e.g. LAVA-HTTP-400-CURRENCY, LAVA-HTTP-401).
+            code = exc.code if isinstance(exc, LavaTopError) else "LAVA-CHECKOUT"
+            if not re.fullmatch(r"LAVA-[A-Z0-9-]{3,55}", code):
+                code = "LAVA-CHECKOUT"
+            LOG.warning("ViMi Pay platform Lava.top checkout failed: code=%s", code)
+            advice = (
+                tr(
+                    " Проверьте включение RUB в платёжных настройках Lava.top.",
+                    " Check RUB payment acceptance settings in Lava.top.",
+                ) if code == "LAVA-HTTP-400-CURRENCY" else
+                tr(
+                    " Проверьте API-ключ ViMi Pay в Lava.top.",
+                    " Check the ViMi Pay Lava.top API key.",
+                ) if code in ("LAVA-HTTP-401", "LAVA-HTTP-403") else
+                tr(
+                    " Проверьте offerId опубликованного продукта.",
+                    " Check the published product offerId.",
+                ) if code in ("LAVA-HTTP-400-OFFER", "LAVA-HTTP-404") else ""
+            )
             await bot.send_message(
                 message.chat.id,
                 tr(
-                    "⚠️ Ссылка Lava.top недоступна. Счёт не отмечен "
-                    "оплаченным. Если вы уже платили, не платите повторно "
-                    "и обратитесь в /paysupport.",
-                    "⚠️ Lava.top checkout link unavailable. The invoice "
-                    "is not marked paid. If you have already paid, do not "
-                    "pay again; contact /paysupport.",
-                ),
+                    "⚠️ Не удалось создать ссылку Lava.top. "
+                    "Счёт не отмечен оплаченным. Если вы уже платили, "
+                    "не платите повторно. Обратитесь в /paysupport.\n"
+                    "Код диагностики: <code>{code}</code>.",
+                    "⚠️ Lava.top checkout link unavailable. "
+                    "Invoice was not marked paid. If you already paid, "
+                    "do not pay again. Contact /paysupport.\n"
+                    "Diagnostic code: <code>{code}</code>.",
+                ).format(code=code) + advice,
+                parse_mode="HTML",
+                reply_markup=ReplyKeyboardRemove(),
             )
             return
         await bot.send_message(
