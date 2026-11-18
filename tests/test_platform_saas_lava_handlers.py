@@ -343,3 +343,129 @@ async def test_non_lava_reply_and_unrelated_user_not_swallowed(monkeypatch):
             message_id=907, from_user=SimpleNamespace(id=9000),
         )), bot,
     )
+
+
+async def test_lava_pending_never_intercepts_botfather_credential(monkeypatch):
+    from telegram_membership_saas.modules.owner_setup.handlers import (
+        StrayBotTokenFilter,
+    )
+
+    monkeypatch.setattr(lava, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        lava, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        lava, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    bot = MagicMock()
+    bot.id = 904
+    bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 908
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=123, invoice_id=uuid4(),
+    )
+    token_message = _message(
+        123, text="123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    )
+    assert not await lava._LavaEmailReplyFilter()(token_message, bot)
+    # The existing central security handler must still scrub tokens.
+    assert await StrayBotTokenFilter()(token_message)
+
+
+async def test_unrelated_central_navigation_disarms_email_capture(monkeypatch):
+    from datetime import UTC, datetime
+
+    from aiogram.types import CallbackQuery, Chat, Message, User
+
+    monkeypatch.setattr(lava, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        lava, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        lava, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    bot = MagicMock()
+    bot.id = 900
+    bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 903
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=123, invoice_id=uuid4(),
+    )
+    middleware = lava.ClearPendingLavaOnNavigation()
+    seen = []
+
+    async def downstream(event, data):
+        seen.append(event)
+        return "continued"
+
+    me = User(id=123, is_bot=False, first_name="Payer")
+    stranger = User(id=456, is_bot=False, first_name="Other")
+    original = Message(
+        message_id=1, date=datetime.now(UTC),
+        chat=Chat(id=123, type="private"), from_user=me,
+        text="/menu",
+    )
+    other = Message(
+        message_id=2, date=datetime.now(UTC),
+        chat=Chat(id=456, type="private"), from_user=stranger,
+        text="/menu",
+    )
+    assert await middleware(downstream, other, {}) == "continued"
+    assert lava._pending_lava
+    assert await middleware(downstream, original, {}) == "continued"
+    assert not lava._pending_lava
+    assert len(seen) == 2
+
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=123, invoice_id=uuid4(),
+    )
+    callback = CallbackQuery(
+        id="callback-x", from_user=me, chat_instance="private-session",
+        data="own:projects",
+        message=original,
+    )
+    await middleware(downstream, callback, {})
+    assert not lava._pending_lava
+    assert not await lava._LavaEmailReplyFilter()(
+        _message(123, text="payer@example.com"), bot,
+    )
+
+
+async def test_lava_cancel_command_stays_available_before_navigation_middleware(
+    monkeypatch,
+):
+    from datetime import UTC, datetime
+
+    from aiogram.types import Chat, Message, User
+
+    monkeypatch.setattr(lava, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        lava, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        lava, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    bot = MagicMock()
+    bot.id = 900
+    bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 903
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=123, invoice_id=uuid4(),
+    )
+    message = Message(
+        message_id=8, date=datetime.now(UTC),
+        chat=Chat(id=123, type="private"),
+        from_user=User(id=123, is_bot=False, first_name="Payer"),
+        text="/cancel",
+    )
+    await lava.ClearPendingLavaOnNavigation()(
+        lambda *_: _async_true(), message, {},
+    )
+    assert lava._pending_lava
+
+
+async def _async_true():
+    return True
