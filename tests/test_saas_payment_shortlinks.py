@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -161,6 +163,30 @@ def test_api_deploy_validates_canonical_network_mapping() -> None:
         )
 
     assert check(expected).returncode == 0
+    if shutil.which("docker") and subprocess.run(
+        ["docker", "compose", "version"], capture_output=True, check=False,
+        timeout=5,
+    ).returncode == 0:
+        # CI has Compose. Verify the exact real canonical JSON, not only
+        # a plausible handcrafted example (a previous PR failed here).
+        env = dict(
+            os.environ,
+            TMS_SHORTLINK_DATABASE_URL="",
+            TMS_BOT_DOCKER_NETWORK="telegram-membership-saas-staging_default",
+        )
+        rendered = subprocess.run(
+            [
+                "docker", "compose", "-p", "vimi-pay-public",
+                "-f", str(REPO / "ops/public-api.compose.yaml"),
+                "config", "--format", "json",
+            ],
+            env=env, text=True, capture_output=True,
+            check=True, timeout=15,
+        )
+        canonical = json.loads(rendered.stdout)
+        assert set(canonical["services"]["pay-api"]["networks"]) == {"staging-db"}
+        checked = check(canonical)
+        assert checked.returncode == 0, checked.stderr
     wrong = json.loads(json.dumps(expected))
     wrong["services"]["pay-api"]["networks"] = ["staging-db"]
     assert check(wrong).returncode != 0
