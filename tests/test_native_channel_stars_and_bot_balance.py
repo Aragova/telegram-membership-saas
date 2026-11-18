@@ -288,3 +288,42 @@ def test_running_status_reads_real_worker_heartbeat_not_invoice_configuration():
     assert len(checks) == 4
     assert checks[-1][1] is True
     assert all("Собственный бот" not in label for label, _ in checks)
+
+
+@pytest.mark.parametrize(("status", "invites", "restrictions", "expected"), [
+    ("administrator", True, True, True),
+    ("administrator", True, False, False),
+    ("administrator", False, True, False),
+    ("member", True, True, False),
+    ("creator", False, False, True),
+])
+async def test_channel_status_requires_live_bot_admin_rights(
+    status, invites, restrictions, expected,
+):
+    from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
+        _live_resource_rights,
+    )
+    bot = _bot()
+    bot.get_chat_member = AsyncMock(return_value=SimpleNamespace(
+        status=status, can_invite_users=invites,
+        can_restrict_members=restrictions,
+    ))
+    assert await _live_resource_rights(bot, "-1001234") is expected
+    bot.get_chat_member.assert_awaited_once_with(
+        chat_id=-1001234, user_id=bot.id,
+    )
+
+
+def test_stale_active_channel_does_not_display_on_without_live_permissions():
+    from telegram_membership_saas.modules.owner_setup.handlers import _readiness_steps
+    from telegram_membership_saas.modules.owner_setup.service import SetupOverview
+
+    snapshot = SetupOverview(
+        project_id=uuid4(), project_name="Bot", timezone="Europe/Moscow",
+        bots=(("bot", "registered"),),
+        resources=((uuid4(), "VIP", "active"),), plans=(), methods=(),
+        bot_running=True,
+    )
+    assert _readiness_steps(snapshot)[0][1] is True
+    assert _readiness_steps(snapshot, channel_verified=False)[0][1] is False
+    assert _readiness_steps(snapshot, channel_verified=True)[0][1] is True
