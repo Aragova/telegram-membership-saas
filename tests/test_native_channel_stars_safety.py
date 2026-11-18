@@ -140,7 +140,7 @@ async def test_native_paid_checkout_is_not_published_under_hold(
         scalars=AsyncMock(return_value=SimpleNamespace(
             all=lambda: [price_id],
         )),
-        scalar=AsyncMock(side_effect=[uuid4(), state]),
+        scalar=AsyncMock(return_value=state in ("clear", "disabled")),
         execute=AsyncMock(side_effect=[
             SimpleNamespace(all=lambda: []),
             SimpleNamespace(all=lambda: [(
@@ -150,6 +150,10 @@ async def test_native_paid_checkout_is_not_published_under_hold(
     )
     offers = await storefront.list_buyer_offers(
         session, project_id=project_id, bot_id=5511,
+    )
+    session.scalar.assert_awaited_once()
+    assert "native_buyer_sales_allowed" in str(
+        session.scalar.await_args.args[0],
     )
     if visible:
         assert len(offers) == 1
