@@ -89,7 +89,9 @@ def classic_dashboard(
 ) -> str:
     statuses = "\n".join(
         "  ·  ".join(
-            _status_text(label, ready) + " " + ("ON" if ready else "OFF")
+            _status_text(label, ready) + EMOJI_GAP
+            + ("🟢" if ready else "⚪") + EMOJI_GAP
+            + ("ON" if ready else "OFF")
             for label, ready in group
         )
         for group in (readiness[:2], readiness[2:4])
