@@ -56,6 +56,9 @@ jobs:
       - name: Validate opt-in backup shell syntax
         run: bash -n ops/backup/vimi-pay-gcs-backup.sh
 
+      - name: Validate protected channel finance secret provisioning
+        run: bash -n ops/channel_finance_prepare_secrets.sh
+
       # Real deployment starts each entrypoint in a fresh interpreter.
       # compileall and pytest's preloaded import graph cannot detect cycles.
       - name: Cold-start import smoke tests
