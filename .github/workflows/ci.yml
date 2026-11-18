@@ -48,7 +48,7 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,channel-finance]"
 
       - name: Lint
         run: ruff check .
@@ -63,6 +63,13 @@ jobs:
           python -c "import telegram_membership_saas.customer_supervisor_main"
           python -c "import telegram_membership_saas.customer_bot_main"
           python -c "import telegram_membership_saas.bot_main"
+
+      - name: Smoke-test optional Telegram revenue MTProto schema
+        run: |
+          python -c "from telethon.tl.functions.payments import GetStarsRevenueStatsRequest"
+          python -c "from telethon.tl.functions.channels import GetParticipantRequest"
+          python -c "from telethon.tl.types import ChannelParticipantCreator"
+          python -c "import telegram_membership_saas.channel_finance_agent"
 
       - name: Alembic heads
         run: alembic heads
@@ -298,6 +305,21 @@ jobs:
 
       - name: Validate opt-in light 100-bot compose overlay
         run: docker compose -f compose.yaml -f compose.light100.yaml --profile supervisor config -q
+
+      - name: Validate opt-in private channel finance compose
+        env:
+          TMS_CHANNEL_FINANCE_API_ID: "1"
+          TMS_CHANNEL_FINANCE_OWNER_ID: "2"
+          TMS_CHANNEL_FINANCE_ALLOWED_CHAT_IDS: "-100123456789"
+          CHANNEL_FINANCE_API_HASH_FILE: "/dev/null"
+          CHANNEL_FINANCE_SESSION_FILE: "/dev/null"
+          CHANNEL_FINANCE_ACCESS_KEY_FILE: "/dev/null"
+        run: |
+          docker compose -f compose.yaml -f compose.channel-finance.yaml \
+            --profile supervisor config -q
+
+      - name: Build channel-finance isolated image
+        run: docker build -t telegram-membership-saas-channel-finance:ci -f Dockerfile.channel-finance .
 
       - name: Build container
         run: docker build -t telegram-membership-saas:ci .
