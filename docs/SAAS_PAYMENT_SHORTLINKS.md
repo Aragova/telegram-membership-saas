@@ -80,8 +80,12 @@ separate API-only deployment, without Telegram bot/API or Lava credentials.
    `limit_req_zone` in Nginx `http` context; this is required for
    rate limiting. Keep `/health` as-is, `location /` returning 404,
    and existing websites, ACME, SSL, API and Telegram routes unchanged.
-   No wildcard proxy. Disable Nginx token access logs, while Uvicorn
-   access logging is disabled in isolated API Compose.
+   No wildcard proxy. Disable Nginx token access logs **and** configure
+   the scoped `/p/` location's `error_log /dev/null crit;` so inherited
+   warning/error handlers cannot persist live bearer tokens in request lines
+   on rate-limits or upstream timeouts. Keep vhost error logging unchanged
+   for all other paths. Uvicorn access logging is disabled in the isolated
+   API Compose.
 8. Inspect a single **already issued and unpaid** original Lava gateway order
    with a short token through the API as an operator-only acceptance test.
    Expect HTTP 302 whose Location is the existing signed Lava checkout, with
