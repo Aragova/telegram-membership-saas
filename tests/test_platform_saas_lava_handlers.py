@@ -469,3 +469,43 @@ async def test_lava_cancel_command_stays_available_before_navigation_middleware(
 
 async def _async_true():
     return True
+
+async def test_platform_lava_shortlink_opt_in_keeps_original_order(monkeypatch):
+    from telegram_membership_saas.modules.platform_saas_payment_redirect import (
+        short_lava_url,
+    )
+
+    payer, invoice, order = 33771, uuid4(), uuid4()
+    settings = Settings(
+        _env_file=None, telegram_central_access_enabled=False,
+        saas_lava_top_api_key="TEST_KEY", saas_lava_top_offer_id=uuid4(),
+        saas_shortlinks_enabled=True,
+    )
+    monkeypatch.setattr(lava, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        lava, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        lava, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    issue = AsyncMock(return_value=GatewayLink(
+        "lava", order, "https://app.lava.top/pay/long?paymentParams=SENSITIVE",
+        Decimal("150.00"),
+    ))
+    monkeypatch.setattr(lava, "issue_platform_lava_checkout", issue)
+    bot = MagicMock()
+    bot.id = 9009
+    bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 300
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=payer, invoice_id=invoice,
+    )
+    router = lava.create_platform_saas_lava_router(MagicMock())
+    await _handler(router, "accept_lava_email_reply")(
+        _message(payer, text="test@example.com"), bot,
+    )
+    assert issue.await_count == 1
+    result = bot.send_message.await_args.kwargs["reply_markup"]
+    assert result.inline_keyboard[0][0].url == short_lava_url(order)
+    assert "Оплатить" in result.inline_keyboard[0][0].text
