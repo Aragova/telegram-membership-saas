@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     rich_subscription_checkout_bot_ids: str = ""
     # Project-wide Rich UI. Set false to restore classic HTML for all bots.
     rich_messages_enabled: bool = True
+    # Optional isolated user-MTProto finance reader. NEVER configure this
+    # URL on a public ingress or pass a Telegram user session to bot workers.
+    # Both fields are absent by default, so existing dashboards stay safe.
+    channel_finance_bridge_url: str | None = None
+    channel_finance_bridge_token_file: str | None = None
     # Fail closed for local/standalone runners. The opt-in light100 release
     # overlay enables buyer checkout on the supervised staging deployment.
     # This does NOT activate platform SaaS invoices/holds, and turning it off
