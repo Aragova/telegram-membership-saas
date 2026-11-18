@@ -187,6 +187,11 @@ async def test_owner_deletion_is_two_explicit_steps(monkeypatch):
     assert "own:connremoveok:" + project_id.hex in buttons(
         instance.send_message.await_args,
     )
+    # Before a destructive deletion, debt must be explained without adding
+    # any new payment menu or pretending an unpaid bill will vanish.
+    notice = instance.send_message.await_args.args[1]
+    assert "Неоплаченные счета ViMi Pay сохраняются" in notice
+    assert "/billing" in notice
     ui.remove_unused_connection.assert_not_awaited()
     await cb(query("connremoveok:" + project_id.hex), instance)
     ui.remove_unused_connection.assert_awaited_once()
