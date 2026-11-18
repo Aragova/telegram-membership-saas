@@ -1,3 +1,24 @@
+## 2026-11-18 — Draft: manage SaaS service currency from Bill
+
+Move the existing **account-level** ViMi Pay service-price currency selector
+(RUB 150 / USD 5 per bot per month) from connected-bot Settings to **🧾 Bill**
+on both connected bots and central historical invoice lists. The selector
+continues to call the same authenticated price-profile read/set RPC; no new
+table, billing migration, price rule, payment currency, or settlement changes.
+Show the *future-invoice* service currency and a "Bill → Service currency"
+hint in every relevant bill state, including before issue and after payment.
+Changing the profile never reprices an existing invoice or modifies historic
+finance evidence. The selector returns to Bill, not Settings. No duplicate
+action in Settings.
+
+The per-bot paid status and owner-wide commerce hold are separate:
+a paid bot may still show a network-level hold from **another overdue bot
+invoice**. The invoice copy now explains this case instead of appearing
+self-contradictory. RU/EN parity, stable original callbacks and original
+billing rules are preserved. No deployment without approval.
+
+---
+
 ## 2026-11-17 — Approved future web cabinet + provider webhook architecture (PR #184)
 
 Owner approves the **target** split: within Telegram, buyer digital checkout
