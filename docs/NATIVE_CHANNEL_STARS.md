@@ -30,7 +30,12 @@ ledger is migrated or modified.
    the owner is alerted with the exact link for manual revocation.
 
 Native paid-link activation and buyer catalog publication are blocked when
-ViMi Pay reports a SaaS commerce hold for the connected bot. A bot also
+ViMi Pay reports a SaaS commerce hold for the connected bot. Owner activation
+uses the authenticated owner-only commerce RPC; buyer catalog uses the
+narrow `platform_saas_native_buyer_sales_allowed(project,bot_id)` boolean
+security-definer RPC. The buyer runtime has no owner actor GUC, and may never
+call the privileged `platform_saas_project_commerce_state` RPC. A real
+runtime-role CI test checks both project context isolation and executable grants. A bot also
 cannot be retired while any project-owned native paid link remains active.
 The owner must disable/revoke the link before deleting its bot or channel
 or archiving the linked plan. A Telegram invite URL saved outside ViMi Pay
