@@ -18,8 +18,13 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.owner_setup.channel_revenue_bridge import (
+    ChannelRevenue,
+    live_channel_revenue,
+)
 from telegram_membership_saas.modules.plans import Plan, PlanResource
 from telegram_membership_saas.modules.pricing import PlanPrice
+from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource
 from telegram_membership_saas.modules.telegram_admin.service import _require_project_manager
 from telegram_membership_saas.tenant_context import TenantContext
@@ -39,6 +44,7 @@ class ChannelFinance:
     stars_recipient: str  # bot, channel, mixed, unconfigured
     owner_username: str | None = None
     owner_user_id: int | None = None
+    revenue: ChannelRevenue | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +168,10 @@ async def read_dashboard_finances(
         await _require_project_manager(
             session, project_id=project_id, actor_user_id=actor_id,
         )
+        project_owner_id = await session.scalar(
+            select(Project.owner_user_id).where(Project.id == project_id)
+        )
+        show_sensitive_revenue = project_owner_id == actor_id
         channels = (await session.execute(select(
             Resource.id, Resource.name, Resource.external_id,
         ).where(
@@ -233,8 +243,28 @@ async def read_dashboard_finances(
     channel_ready = (
         all(results[1 + len(visible):]) if verify_resources else False
     )
+    # Channel finances are sensitive. Even project moderators who can view
+    # the regular dashboard do not receive MTProto revenue information.
+    # The isolated bridge also verifies the precise Telegram creator ID.
+    async def revenue_for(channel, ownership) -> ChannelRevenue | None:
+        if (not show_sensitive_revenue or ownership.deleted
+                or ownership.user_id is None):
+            return None
+        try:
+            return await live_channel_revenue(
+                chat_id=int(channel.external_id), owner_id=ownership.user_id,
+            )
+        except (ValueError, TypeError):
+            return None
+
+    revenue_results = await asyncio.gather(*(
+        revenue_for(channel, ownership)
+        for channel, ownership in zip(visible, owner_results, strict=True)
+    ))
     cards = []
-    for channel, ownership in zip(visible, owner_results, strict=True):
+    for channel, ownership, revenue in zip(
+        visible, owner_results, revenue_results, strict=True,
+    ):
         available = routes.get(channel.id, set())
         payout = (
             "mixed" if len(available) > 1 else
@@ -245,7 +275,7 @@ async def read_dashboard_finances(
             owner_label=ownership.label, owner_deleted=ownership.deleted,
             stars_recipient=payout,
             owner_username=ownership.username,
-            owner_user_id=ownership.user_id,
+            owner_user_id=ownership.user_id, revenue=revenue,
         ))
     return DashboardFinances(
         bot_stars=bot_balance,
