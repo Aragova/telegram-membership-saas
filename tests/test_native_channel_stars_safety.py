@@ -146,7 +146,7 @@ async def test_native_paid_checkout_is_not_published_under_hold(
             SimpleNamespace(all=lambda: []),
             SimpleNamespace(all=lambda: [(
                 price_id, original, "-100777", "-100777", "active", None,
-            )]),
+            )] if state in ("clear", "disabled") else []),
         ]),
     )
     offers = await storefront.list_buyer_offers(
