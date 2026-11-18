@@ -35,7 +35,7 @@ currency conversion, buyer purchase flow or settlement route.
 Public API remains a **separate Docker Compose project** (127.0.0.1:18080),
 separate API-only deployment, without Telegram bot/API or Lava credentials.
 
-1. Apply reviewed migration `0095_saas_payment_shortlinks` through the
+1. Apply reviewed migration `0097_saas_payment_shortlinks` through the
    existing controlled migration release. It creates a NOLOGIN group role
    `membership_shortlink_reader`, with schema USAGE and EXECUTE only on
    `platform_saas_lava_shortlink_target(uuid)`; PUBLIC execution is revoked.
