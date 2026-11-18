@@ -16,10 +16,17 @@ services:
       - --port
       - "8000"
       - --no-proxy-headers
+      # Never log short bearer URLs or signed provider redirect parameters.
+      - --no-access-log
     environment:
       TMS_ENVIRONMENT: staging
+      # Supplied only from root-owned API secrets, never central-bot DB URL.
+      TMS_SHORTLINK_DATABASE_URL: ${TMS_SHORTLINK_DATABASE_URL:-}
     ports:
       - "127.0.0.1:18080:8000"
+    # Read-only DB lookup requires the already-existing staging Postgres network.
+    # This does not publish Postgres, expose a new host port or restart bots.
+    networks: [staging-db]
     restart: unless-stopped
     init: true
     read_only: true
@@ -37,3 +44,8 @@ services:
       timeout: 4s
       retries: 3
       start_period: 10s
+
+networks:
+  staging-db:
+    external: true
+    name: ${TMS_BOT_DOCKER_NETWORK:-telegram-membership-saas-staging_default}
