@@ -2832,7 +2832,9 @@ def create_owner_setup_router(
                     "danger",
                 ))
             rows.append(row)
-            if stars_price is not None and plan_status == "active":
+            if stars_price is not None and (
+                plan_status == "active" or native_active
+            ):
                 rows.append([_button(
                     tr("↩️ Вернуть оплату боту", "↩️ Return Stars to bot")
                     if native_active else
@@ -6478,9 +6480,12 @@ def create_owner_setup_router(
                 if not 0 <= page <= 10000:
                     raise ValueError("Invalid Stars page")
                 plan_id = UUID(hex=plan_hex)
-                target = await read_native_stars_target(
-                    factory, actor_id=actor_id, project_id=project_id,
-                    plan_id=plan_id, bot_id=bot.id,
+                target = (
+                    await read_native_stars_target(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=plan_id, bot_id=bot.id,
+                    )
+                    if part != "starsnativeoff" else None
                 )
                 if part == "starsnative":
                     if target.active:
