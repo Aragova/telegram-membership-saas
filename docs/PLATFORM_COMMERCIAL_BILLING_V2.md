@@ -1,3 +1,15 @@
+> **2026-11-18 — SaaS Bill visual follow-up.** Future service-currency
+> label is now rendered as a compact Rich table, paired with distinct bill
+> status text and minimal inline buttons; Telegram HTML fallback has readable
+> spacing. The RU/EN picker uses a single current-currency row, one short
+> explanation and the original two selection buttons + Back to Bill. Existing
+> PostgreSQL `platform_saas_price_profile_set` **intentionally denies changes
+> while any issued service bill remains unpaid**; this is a financial rule, not
+> a broken selector. An affected account receives a localized callback alert.
+> After settling debt the existing USD/RUB selector works. No SQL migration,
+> revaluation, payment-method or ledger modification is introduced.
+
+
 > **2026-11-18 — Draft service-currency navigation cleanup.**
 > Connected bot 🧾 Bill and central historical billing list now expose
 > a single **💱 Service currency** selector. This replaces the old Settings
