@@ -131,6 +131,12 @@ from telegram_membership_saas.modules.owner_setup.moderators import (
     list_project_moderators,
     set_project_moderator,
 )
+from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
+    NATIVE_PERIOD_SECONDS,
+    activate_native_stars_link,
+    deactivate_native_stars_link,
+    read_native_stars_target,
+)
 from telegram_membership_saas.modules.owner_setup.network_profiles import (
     get_project_import_status,
     read_owner_network_profile,
@@ -2784,10 +2790,15 @@ def create_owner_setup_router(
                 if stars_price is not None
                 else tr("не настроено", "not configured")
             )
+            native_active = bool(
+                stars_price is not None and stars_price.native_stars_active
+            )
             name = plan_name or tr("Без названия", "Unnamed")
             lines.append(
                 "• <b>" + escape(name) + "</b> · "
                 + escape(price_label) + " · " + _status(plan_status)
+                + (" · " + tr("⭐ Баланс канала", "⭐ Channel balance")
+                   if native_active else "")
             )
             row = [_button(
                 "⚙️ " + name[:30],
@@ -2799,6 +2810,15 @@ def create_owner_setup_router(
                     "danger",
                 ))
             rows.append(row)
+            if stars_price is not None and plan_status == "active":
+                rows.append([_button(
+                    tr("↩️ Вернуть оплату боту", "↩️ Return Stars to bot")
+                    if native_active else
+                    tr("⭐ На баланс канала", "⭐ To channel balance"),
+                    ("starsnativeoff:" if native_active else "starsnative:")
+                    + plan_id.hex + ":" + str(page),
+                    "success" if not native_active else "danger",
+                )])
         nav = []
         if page:
             nav.append(_button("⬅️", "starspage:" + str(page - 1)))
@@ -6427,6 +6447,140 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     page=int(page_token),
                 )
+            elif action.startswith(("starsnative:", "starsnativeok:",
+                                    "starsnativeoff:")):
+                part, plan_hex, page_token = action.split(":", 2)
+                if not page_token.isascii() or not page_token.isdecimal():
+                    raise ValueError("Invalid Stars page")
+                page = int(page_token)
+                if not 0 <= page <= 10000:
+                    raise ValueError("Invalid Stars page")
+                plan_id = UUID(hex=plan_hex)
+                target = await read_native_stars_target(
+                    factory, actor_id=actor_id, project_id=project_id,
+                    plan_id=plan_id, bot_id=bot.id,
+                )
+                if part == "starsnative":
+                    if target.active:
+                        await show_stars_payments(
+                            bot, user_id, actor_id, project_id, page=page,
+                        )
+                    else:
+                        await bot.send_message(
+                            user_id,
+                            tr(
+                                "⭐ <b>Платная ссылка Telegram-канала</b>\n\n"
+                                "Подписка: <b>30 дней</b>, "
+                                "автоматическое продление.\n"
+                                "Цена: <b>",
+                                "⭐ <b>Telegram channel paid invitation</b>\n\n"
+                                "Subscription: <b>30 days</b>, "
+                                "automatic renewal.\n"
+                                "Price: <b>",
+                            ) + str(target.amount) + " ⭐</b>\n\n"
+                            + tr(
+                                "Звёзды получит канал, а не бот. "
+                                "Telegram управляет выдачей доступа и продлениями. "
+                                "ViMi Pay пока не видит транзакции баланса канала "
+                                "и не включает их в подтверждённую выручку и 5%.\n\n"
+                                "Подтвердить создание ссылки?",
+                                "Stars will go to the channel, not the bot. "
+                                "Telegram manages access and renewals. "
+                                "ViMi Pay cannot yet verify channel transactions "
+                                "and will not report them as confirmed 5% revenue.\n\n"
+                                "Create the paid link?",
+                            ),
+                            parse_mode="HTML",
+                            reply_markup=_markup([
+                                [_button(
+                                    tr("✅ Создать ссылку", "✅ Create link"),
+                                    "starsnativeok:" + plan_id.hex + ":" + str(page),
+                                    "success",
+                                )],
+                                [_button(
+                                    tr("⬅️ Отмена", "⬅️ Cancel"),
+                                    "starspage:" + str(page),
+                                )],
+                            ]),
+                        )
+                elif part == "starsnativeok":
+                    if target.active:
+                        await show_stars_payments(
+                            bot, user_id, actor_id, project_id, page=page,
+                        )
+                    else:
+                        chat = await bot.get_chat(target.chat_id)
+                        if getattr(chat, "type", None) != "channel":
+                            raise ValueError("Telegram target is not a channel")
+                        if getattr(chat, "username", None):
+                            raise ValueError("Telegram channel must be private")
+                        admin = await bot.get_chat_member(target.chat_id, bot.id)
+                        if (
+                            admin.status not in ("administrator", "creator")
+                            or (admin.status != "creator"
+                                and not getattr(admin, "can_invite_users", False))
+                        ):
+                            raise ValueError("Bot needs channel invite administrator rights")
+                        invite = await bot.create_chat_subscription_invite_link(
+                            chat_id=target.chat_id,
+                            name="ViMi Pay",
+                            subscription_period=NATIVE_PERIOD_SECONDS,
+                            subscription_price=target.amount,
+                        )
+                        if (
+                            invite.subscription_price != target.amount
+                            or invite.subscription_period != NATIVE_PERIOD_SECONDS
+                        ):
+                            try:
+                                await bot.revoke_chat_invite_link(
+                                    target.chat_id, invite.invite_link,
+                                )
+                            except AiogramError:
+                                logging.exception("Native channel link cleanup failed")
+                            raise ValueError("Telegram returned unexpected invite pricing")
+                        try:
+                            await activate_native_stars_link(
+                                factory, actor_id=actor_id, project_id=project_id,
+                                plan_id=plan_id, bot_id=bot.id,
+                                expected_price_id=target.price_id,
+                                invite_link=invite.invite_link,
+                            )
+                        except Exception:
+                            try:
+                                await bot.revoke_chat_invite_link(
+                                    target.chat_id, invite.invite_link,
+                                )
+                            except AiogramError:
+                                logging.exception("Native channel link cleanup failed")
+                            raise
+                        await show_stars_payments(
+                            bot, user_id, actor_id, project_id, page=page,
+                        )
+                else:
+                    old = await deactivate_native_stars_link(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        plan_id=plan_id, bot_id=bot.id,
+                    )
+                    if old is not None:
+                        chat_id, url = old
+                        try:
+                            await bot.revoke_chat_invite_link(
+                                chat_id=chat_id, invite_link=url,
+                            )
+                        except AiogramError:
+                            await bot.send_message(
+                                user_id, tr(
+                                    "⚠️ Новые продажи через ссылку в ViMi Pay выключены, "
+                                    "но Telegram не подтвердил отзыв ссылки. "
+                                    "Отзовите её вручную в канале:",
+                                    "⚠️ New link sales are disabled in ViMi Pay, "
+                                    "but Telegram did not confirm revocation. "
+                                    "Revoke this invitation manually:",
+                                ) + "\n" + escape(url), parse_mode="HTML",
+                            )
+                    await show_stars_payments(
+                        bot, user_id, actor_id, project_id, page=page,
+                    )
             elif action == "cryptopay":
                 await show_crypto_pay(bot, user_id, actor_id, project_id)
             elif action == "cryptonet":
