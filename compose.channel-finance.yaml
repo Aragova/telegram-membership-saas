@@ -12,7 +12,7 @@ services:
       --host 0.0.0.0 --port 8033 --no-proxy-headers
     restart: unless-stopped
     read_only: true
-    user: "65534:65534"
+    user: "25073:25073"
     init: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
