@@ -26,7 +26,7 @@ RPC_TIMEOUT_SECONDS = 8
 
 def _stars_decimal(value: object) -> str:
     """Latest Telegram TL StarsAmount uses amount:long and nanos:int."""
-    amount = int(getattr(value, "amount"))
+    amount = int(value.amount)
     nanos = int(getattr(value, "nanos", 0) or 0)
     if amount < 0 or not 0 <= nanos < 1_000_000_000:
         raise ValueError("Invalid Telegram revenue amount")
@@ -39,9 +39,9 @@ def normalize_telegram_revenue(
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Use *only* authenticated RPC output, never member-count estimates."""
-    current = _stars_decimal(getattr(status, "current_balance"))
-    available = _stars_decimal(getattr(status, "available_balance"))
-    withdraw = getattr(status, "withdrawal_enabled")
+    current = _stars_decimal(status.current_balance)
+    available = _stars_decimal(status.available_balance)
+    withdraw = status.withdrawal_enabled
     if type(withdraw) is not bool or Decimal(available) > Decimal(current):
         raise ValueError("Invalid Telegram withdrawal state")
     next_at = getattr(status, "next_withdrawal_at", None)
@@ -149,7 +149,7 @@ class ChannelRevenueReader:
                     peer = await self._client.get_input_entity(dialog.entity)
                     break
             if peer is None:
-                raise PermissionError("This Telegram channel is not accessible")
+                raise PermissionError("This Telegram channel is not accessible") from None
         participant = await self._client(
             functions.channels.GetParticipantRequest(
                 channel=peer, participant=types.InputPeerSelf(),
