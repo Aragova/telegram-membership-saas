@@ -9,7 +9,6 @@ import pytest
 
 from telegram_membership_saas.modules.bots.deletion_service import RetirementBlockers
 from telegram_membership_saas.modules.crypto_pay import buyer as crypto_buyer
-
 from telegram_membership_saas.modules.owner_setup import native_channel_stars as native
 from telegram_membership_saas.modules.telegram_commerce import handlers as buyer
 from telegram_membership_saas.modules.telegram_commerce import storefront
