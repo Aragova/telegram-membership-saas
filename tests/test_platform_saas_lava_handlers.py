@@ -72,13 +72,10 @@ async def test_deeplink_collects_actual_email_and_issues_one_link(
         assert (payer, 500) in lava._pending_lava
         assert balance.await_count == 1
         prompt = bot.send_message.await_args
-        assert prompt.kwargs["reply_markup"].__class__.__name__ == "ForceReply"
-        assert ("Ответьте" if language == "ru" else "Reply") in prompt.args[1]
-        reply = SimpleNamespace(
-            message_id=500, from_user=SimpleNamespace(id=bot_id),
-        )
-        incoming = _message(payer, text="buyer+pay@example.com", reply=reply)
-        assert await lava._LavaEmailReplyFilter()(incoming)
+        assert prompt.kwargs["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
+        assert ("обычным сообщением" if language == "ru" else "normal message") in prompt.args[1]
+        incoming = _message(payer, text="buyer+pay@example.com")
+        assert await lava._LavaEmailReplyFilter()(incoming, bot)
         await _handler(router, "accept_lava_email_reply")(incoming, bot)
         issued.assert_awaited_once()
         assert issued.await_args.kwargs["customer_email"] == "buyer+pay@example.com"
@@ -87,7 +84,7 @@ async def test_deeplink_collects_actual_email_and_issues_one_link(
         assert bot.send_message.await_args.kwargs[
             "reply_markup"
         ].inline_keyboard[0][0].url == "https://app.lava.top/pay/real-link"
-        assert not await lava._LavaEmailReplyFilter()(incoming)
+        assert not await lava._LavaEmailReplyFilter()(incoming, bot)
         assert len(lava._pending_lava) == 0
     finally:
         _language.reset(locale)
@@ -107,7 +104,7 @@ async def test_other_payer_and_nonprivate_chat_never_receive_invoice(monkeypatch
     assert not await lava._LavaEmailReplyFilter()(
         _message(456, text="test@example.com", reply=SimpleNamespace(
             message_id=777, from_user=SimpleNamespace(id=100),
-        ))
+        )), bot,
     )
     issue.assert_not_awaited()
 
@@ -229,3 +226,120 @@ def test_email_validation_never_sends_bad_input_to_provider(email):
     assert client.validate_lava_customer_email(
         "merchant+test@example.com"
     ) == "merchant+test@example.com"
+
+
+@pytest.mark.parametrize("code", [
+    "LAVA-HTTP-400-CURRENCY",
+    "LAVA-HTTP-401",
+    "LAVA-HTTP-404",
+    "LAVA-RESERVE",
+    "LAVA-BIND",
+])
+async def test_checkout_failure_reports_only_safe_code_and_clears_email_prompt(
+    monkeypatch, code,
+):
+    from telegram_membership_saas.modules.platform_saas_lava_client import LavaTopError
+
+    monkeypatch.setattr(lava, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        lava, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        lava, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    invoice = uuid4()
+    bot = MagicMock()
+    bot.id = 9001
+    bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 902
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=123, invoice_id=invoice,
+    )
+    issue = AsyncMock(side_effect=LavaTopError(
+        "sensitive provider error email=PRIVATE_EMAIL TOKEN_PRIVATE",
+        code=code,
+    ))
+    monkeypatch.setattr(lava, "issue_platform_lava_checkout", issue)
+    msg = _message(123, text="user@example.com")
+    router = lava.create_platform_saas_lava_router(MagicMock())
+    assert await lava._LavaEmailReplyFilter()(msg, bot)
+    await _handler(router, "accept_lava_email_reply")(msg, bot)
+    issue.assert_awaited_once()
+    assert len(lava._pending_lava) == 0
+    out = bot.send_message.await_args
+    assert code in out.args[1]
+    assert "PRIVATE_EMAIL" not in out.args[1]
+    assert "TOKEN_PRIVATE" not in out.args[1]
+    assert out.kwargs["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
+
+
+async def test_cancel_lava_email_leaves_original_invoice_untouched(monkeypatch):
+    monkeypatch.setattr(lava, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        lava, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        lava, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    issue = AsyncMock()
+    monkeypatch.setattr(lava, "issue_platform_lava_checkout", issue)
+    bot = MagicMock()
+    bot.id = 9000
+    bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 907
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=123, invoice_id=uuid4(),
+    )
+    router = lava.create_platform_saas_lava_router(MagicMock())
+    cancel = _message(123, text="/cancel")
+    assert await lava._LavaCancelFilter()(cancel, bot)
+    await _handler(router, "cancel_lava_email")(cancel, bot)
+    assert lava._pending_lava == {}
+    assert not await lava._LavaEmailReplyFilter()(
+        _message(123, text="user@example.com"), bot,
+    )
+    issue.assert_not_awaited()
+    out = bot.send_message.await_args
+    assert "отменён" in out.args[1]
+    assert out.kwargs["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
+
+
+async def test_non_lava_reply_and_unrelated_user_not_swallowed(monkeypatch):
+    monkeypatch.setattr(lava, "get_settings", lambda: _settings())
+    monkeypatch.setattr(
+        lava, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        lava, "saas_v2_invoice_balance",
+        AsyncMock(return_value={"remaining_rub": "150.00"}),
+    )
+    bot = MagicMock()
+    bot.id = 9000
+    bot.send_message = AsyncMock()
+    bot.send_message.return_value.message_id = 907
+    await lava.send_platform_lava_email_prompt(
+        bot, MagicMock(), payer_telegram_id=123, invoice_id=uuid4(),
+    )
+    checker = lava._LavaEmailReplyFilter()
+    assert not await checker(_message(321, text="user@example.com"), bot)
+    assert not await checker(_message(123, text="/menu"), bot)
+    assert not await checker(
+        _message(123, text="user@example.com", chat_type="group"), bot,
+    )
+    assert not await checker(
+        _message(123, text="user@example.com", reply=SimpleNamespace(
+            message_id=300, from_user=SimpleNamespace(id=9000),
+        )), bot,
+    )
+    assert not await checker(
+        _message(123, text="user@example.com", reply=SimpleNamespace(
+            message_id=907, from_user=SimpleNamespace(id=77),
+        )), bot,
+    )
+    assert await checker(
+        _message(123, text="user@example.com", reply=SimpleNamespace(
+            message_id=907, from_user=SimpleNamespace(id=9000),
+        )), bot,
+    )
