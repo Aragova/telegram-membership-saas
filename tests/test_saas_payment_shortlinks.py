@@ -123,8 +123,8 @@ def test_api_deploy_validates_canonical_network_mapping() -> None:
     source = (
         REPO / "ops/deploy/vimi-api-root-deploy.sh.example"
     ).read_text(encoding="utf-8")
-    begin = source.index("import json, sys\\nconf = json.load(sys.stdin)")
-    end = source.index("\\n'\\ndocker compose", begin)
+    begin = source.index("import json, sys\nconf = json.load(sys.stdin)")
+    end = source.index("\n'\ndocker compose", begin)
     validate = source[begin:end]
     expected = {
         "services": {
