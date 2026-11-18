@@ -78,14 +78,6 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
-from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
-    DashboardFinances,
-    read_dashboard_finances,
-)
-from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
-    classic_dashboard,
-    rich_dashboard,
-)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     archive_owner_connection,
     get_connection_disposition,
@@ -113,6 +105,14 @@ from telegram_membership_saas.modules.owner_setup.currencies import (
 )
 from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
     parse_customer_command,
+)
+from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
+    DashboardFinances,
+    read_dashboard_finances,
+)
+from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
+    classic_dashboard,
+    rich_dashboard,
 )
 from telegram_membership_saas.modules.owner_setup.error_locale import owner_error
 from telegram_membership_saas.modules.owner_setup.labels import (
