@@ -40,12 +40,12 @@ def test_new_price_in_both_owner_languages() -> None:
         encoding="utf-8",
     )
     # Price is still 150 RUB / USD 5; navigation belongs to Bill, not Settings.
-    assert "🇷🇺 150 ₽" in ui
-    assert "🇺🇸 $5" in ui
+    assert "🇷🇺 RUB · 150 ₽" in ui
+    assert "🇺🇸 USD · $5" in ui
     assert '"saasprice:USD"' in ui
     assert '"saasprice:RUB"' in ui
     assert "💱 Валюта обслуживания" in ui
-    assert "ViMi Pay service currency" in ui
+    assert "Service currency" in ui
     assert '"saasinvoices:0"' in ui
 
 
