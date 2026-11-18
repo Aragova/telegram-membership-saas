@@ -73,6 +73,25 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator(
+        "saas_lava_top_api_key", "saas_crypto_pay_api_token", mode="before",
+    )
+    @classmethod
+    def normalize_empty_platform_payment_token(cls, value: object) -> object:
+        # Compose substitutes an empty string when staging secrets are unset.
+        # An empty SecretStr must not start false provider reconciliation.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("saas_lava_top_offer_id", mode="before")
+    @classmethod
+    def normalize_empty_platform_lava_offer(cls, value: object) -> object:
+        # An unset UUID must not prevent the entire central bot from starting.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("telegram_project_id", mode="before")
     @classmethod
     def normalize_empty_telegram_project_id(cls, value: object) -> object:
