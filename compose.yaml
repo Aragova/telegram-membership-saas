@@ -42,6 +42,14 @@ services:
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
       TMS_RICH_MESSAGES_ENABLED: ${TMS_RICH_MESSAGES_ENABLED:-true}
       TMS_PLATFORM_OWNER_TELEGRAM_ID: ${TMS_PLATFORM_OWNER_TELEGRAM_ID:-}
+      # CENTRAL platform SaaS payment credentials. Never forward these to
+      # customer-supervisor or customer-bot (tenant-owned sales).
+      # Compose reads the gitignored host .env for interpolation; it does
+      # not automatically inject arbitrary host variables into containers.
+      TMS_SAAS_LAVA_TOP_API_KEY: ${TMS_SAAS_LAVA_TOP_API_KEY:-}
+      TMS_SAAS_LAVA_TOP_OFFER_ID: ${TMS_SAAS_LAVA_TOP_OFFER_ID:-}
+      TMS_SAAS_CRYPTO_PAY_API_TOKEN: ${TMS_SAAS_CRYPTO_PAY_API_TOKEN:-}
+      TMS_SAAS_CRYPTO_PAY_TESTNET: ${TMS_SAAS_CRYPTO_PAY_TESTNET:-false}
       TMS_PLATFORM_TIMEZONE: ${TMS_PLATFORM_TIMEZONE:-Europe/Moscow}
       TMS_PLATFORM_BACKUP_GCS_BUCKET: ${TMS_PLATFORM_BACKUP_GCS_BUCKET:-}
       TMS_TELEGRAM_BOT_TOKEN: ${TMS_TELEGRAM_BOT_TOKEN:-}
