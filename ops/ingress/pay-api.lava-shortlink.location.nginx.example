@@ -12,6 +12,11 @@ location ~ "^/p/[A-Za-z0-9_-]{22}$" {
     }
     limit_req zone=vimi_checkout burst=10 nodelay;
     access_log off;
+    # The token in /p/<token> grants access to a signed checkout link.
+    # Nginx error logs also include the full request line on limiter
+    # rejection, upstream timeout, or connect failure. Do not inherit
+    # the vhost's ordinary warn-level error log for this location.
+    error_log /dev/null crit;
     proxy_pass http://127.0.0.1:18080;
     proxy_http_version 1.1;
     proxy_set_header Host pay-api.usevimi.ru;
