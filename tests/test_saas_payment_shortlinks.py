@@ -1,6 +1,9 @@
 """Short Lava checkout links: no new money operations, bounded public redirect."""
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -113,3 +116,74 @@ def test_public_api_deployment_not_reusing_bot_secrets_or_exposing_ports() -> No
     assert "--no-access-log" in compose
     assert "external: true" in compose
     assert "TMS_DATABASE_URL:" not in compose
+
+
+def test_api_deploy_validates_canonical_network_mapping() -> None:
+    """Execute the actual Python Compose safety gate on canonical Compose JSON."""
+    source = (
+        REPO / "ops/deploy/vimi-api-root-deploy.sh.example"
+    ).read_text(encoding="utf-8")
+    begin = source.index("import json, sys\\nconf = json.load(sys.stdin)")
+    end = source.index("\\n'\\ndocker compose", begin)
+    validate = source[begin:end]
+    expected = {
+        "services": {
+            "pay-api": {
+                "ports": [{
+                    "host_ip": "127.0.0.1",
+                    "published": "18080",
+                    "target": 8000,
+                    "protocol": "tcp",
+                }],
+                "read_only": True,
+                "user": "65534:65534",
+                "cap_drop": ["ALL"],
+                "environment": {
+                    "TMS_ENVIRONMENT": "staging",
+                    "TMS_SHORTLINK_DATABASE_URL": "",
+                },
+                "networks": {"staging-db": {}},
+            }
+        },
+        "networks": {
+            "staging-db": {
+                "name": "telegram-membership-saas-staging_default",
+                "external": True,
+            },
+        },
+    }
+
+    def check(compose: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-c", validate],
+            input=json.dumps(compose), text=True,
+            capture_output=True, check=False, timeout=5,
+        )
+
+    assert check(expected).returncode == 0
+    wrong = json.loads(json.dumps(expected))
+    wrong["services"]["pay-api"]["networks"] = ["staging-db"]
+    assert check(wrong).returncode != 0
+    wrong = json.loads(json.dumps(expected))
+    wrong["services"]["pay-api"]["networks"] = {
+        "staging-db": {}, "untrusted-network": {},
+    }
+    assert check(wrong).returncode != 0
+    wrong = json.loads(json.dumps(expected))
+    wrong["networks"]["staging-db"]["name"] = "wrong_network"
+    assert check(wrong).returncode != 0
+    wrong = json.loads(json.dumps(expected))
+    wrong["services"]["pay-api"]["ports"][0]["host_ip"] = "0.0.0.0"
+    assert check(wrong).returncode != 0
+
+
+def test_shortlink_nginx_is_not_allowed_to_log_bearer_tokens() -> None:
+    ingress = (
+        REPO / "ops/ingress/pay-api.lava-shortlink.location.nginx.example"
+    ).read_text(encoding="utf-8")
+    assert 'location ~ "^/p/[A-Za-z0-9_-]{22}$"' in ingress
+    assert "limit_except GET" in ingress
+    assert "access_log off;" in ingress
+    # /dev/null also intercepts inherited error_log 'warn' for this location.
+    assert "error_log /dev/null crit;" in ingress
+    assert "proxy_pass http://127.0.0.1:18080;" in ingress
