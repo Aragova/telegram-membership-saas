@@ -18,7 +18,9 @@ from telegram_membership_saas.modules.owner_setup.channel_revenue_bridge import 
 )
 from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
     ChannelFinance,
+    ChannelOwner,
     DashboardFinances,
+    _revenue_actor_matches_creator,
 )
 from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
     classic_dashboard,
@@ -250,3 +252,19 @@ def test_reader_endpoint_never_exposes_values_without_key():
     assert allowed.status_code == 200
     assert allowed.json()["current_balance"] == "5400"
     reader.read.assert_awaited_once()
+
+
+@pytest.mark.parametrize(("actor", "creator", "deleted", "allowed"), [
+    (12345, 12345, False, True),
+    (98765, 12345, False, False),  # project owner may be channel admin
+    (None, 12345, False, False),
+    (12345, 12345, True, False),  # revoked/deleted owner is not verified
+    (12345, None, False, False),
+])
+def test_sensitive_revenue_requires_actor_telegram_id_to_match_creator(
+    actor, creator, deleted, allowed,
+):
+    owner = ChannelOwner(
+        label="@creator", deleted=deleted, user_id=creator,
+    )
+    assert _revenue_actor_matches_creator(actor, owner) is allowed
