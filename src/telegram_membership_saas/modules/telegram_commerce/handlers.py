@@ -36,12 +36,12 @@ from telegram_membership_saas.manual_checkout_ui import (
     retire_cancelled_checkout,
     send_manual_checkout,
 )
-from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
     EntitlementGrantStatus,
     EntitlementSource,
 )
+from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.platform_saas_hold_errors import CommercialHoldError
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.stars_subscription_recovery import (
