@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     rich_subscription_checkout_bot_ids: str = ""
     # Project-wide Rich UI. Set false to restore classic HTML for all bots.
     rich_messages_enabled: bool = True
+    # Optional isolated user-MTProto finance reader. NEVER configure this
+    # URL on a public ingress or pass a Telegram user session to bot workers.
+    # Both fields are absent by default, so existing dashboards stay safe.
+    channel_finance_bridge_url: str | None = None
+    channel_finance_bridge_token_file: str | None = None
     # Fail closed for local/standalone runners. The opt-in light100 release
     # overlay enables buyer checkout on the supervised staging deployment.
     # This does NOT activate platform SaaS invoices/holds, and turning it off
@@ -44,7 +49,7 @@ class Settings(BaseSettings):
     saas_crypto_pay_testnet: bool = False
     saas_lava_top_api_key: SecretStr | None = None
     saas_lava_top_offer_id: UUID | None = None
-    # Switch on only after the isolated public redirect API and HTTPS route pass smoke tests.
+    # Enable only after separate public API and /p/ HTTPS ingress are validated.
     saas_shortlinks_enabled: bool = False
     platform_timezone: str = "Europe/Moscow"
     # Explicit opt-in, only for central platform owner monitoring.

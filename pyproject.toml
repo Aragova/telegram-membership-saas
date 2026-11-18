@@ -26,6 +26,8 @@ tms-customer-bot = "telegram_membership_saas.customer_bot_main:main"
 tms-customer-supervisor = "telegram_membership_saas.customer_supervisor_main:main"
 
 [project.optional-dependencies]
+# Only the isolated owner-operated finance sidecar installs Telethon.
+channel-finance = ["telethon>=1.45,<2", "qrcode>=8,<9"]
 dev = [
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.24,<1",

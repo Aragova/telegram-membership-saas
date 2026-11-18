@@ -1,0 +1,48 @@
+# OPERATOR-OPT-IN ONLY. DO NOT include in fleet deployments by default.
+# One explicitly authorized Telegram USER session can read only listed channels.
+# Its credentials stay in THIS sidecar; bot workers see only the API access key.
+# This overlay adds a separate private service; it publishes no host ports.
+services:
+  channel-finance:
+    build:
+      context: .
+      dockerfile: Dockerfile.channel-finance
+    command: >-
+      uvicorn telegram_membership_saas.channel_finance_agent:app
+      --host 0.0.0.0 --port 8033 --no-proxy-headers
+    restart: unless-stopped
+    read_only: true
+    user: "25073:25073"
+    init: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 96
+    mem_limit: 256m
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    environment:
+      TMS_CHANNEL_FINANCE_API_ID: ${TMS_CHANNEL_FINANCE_API_ID:?Set Telegram API ID}
+      TMS_CHANNEL_FINANCE_OWNER_ID: ${TMS_CHANNEL_FINANCE_OWNER_ID:?Set owner Telegram ID}
+      TMS_CHANNEL_FINANCE_ALLOWED_CHAT_IDS: ${TMS_CHANNEL_FINANCE_ALLOWED_CHAT_IDS:?Set channels}
+      TMS_CHANNEL_FINANCE_API_HASH_FILE: /run/secrets/channel_finance_api_hash
+      TMS_CHANNEL_FINANCE_SESSION_FILE: /run/secrets/channel_finance_session
+      TMS_CHANNEL_FINANCE_ACCESS_KEY_FILE: /run/secrets/channel_finance_access_key
+    secrets:
+      - channel_finance_api_hash
+      - channel_finance_session
+      - channel_finance_access_key
+
+  customer-supervisor:
+    environment:
+      TMS_CHANNEL_FINANCE_BRIDGE_URL: http://channel-finance:8033
+      TMS_CHANNEL_FINANCE_BRIDGE_TOKEN_FILE: /run/secrets/channel_finance_access_key
+    secrets:
+      - channel_finance_access_key
+
+secrets:
+  channel_finance_api_hash:
+    file: ${CHANNEL_FINANCE_API_HASH_FILE:?Set path to secret file}
+  channel_finance_session:
+    file: ${CHANNEL_FINANCE_SESSION_FILE:?Set path to local user session file}
+  channel_finance_access_key:
+    file: ${CHANNEL_FINANCE_ACCESS_KEY_FILE:?Set path to 32-byte bearer key}
