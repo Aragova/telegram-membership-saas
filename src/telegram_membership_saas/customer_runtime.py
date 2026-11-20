@@ -31,6 +31,7 @@ from telegram_membership_saas.modules.bots import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.bots.diagnostics import (
     CustomerBotDiagnosticError,
     telegram_stage_code,
+    telegram_stage_error,
 )
 from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.bots.telegram_preflight_retry import (
@@ -95,7 +96,10 @@ async def retry_customer_preflight(
             # retry_after is already respected for short waits by the inner
             # preflight helper; larger waits receive a conservative cooldown.
             base = min(60.0, 2.0 * 2 ** min(attempt, 5))
-            delay = max(60.0, base) if exc.code.endswith("_rate_limited") else base
+            delay = (
+                max(base, exc.retry_after if exc.retry_after is not None else 60.0)
+                if exc.code.endswith("_rate_limited") else base
+            )
             await sleep(delay + uniform(0.0, min(4.0, base * 0.2)))
             attempt += 1
 
@@ -194,9 +198,7 @@ async def check_customer_bot_identity(
         # requests it again, so caching avoids a second getMe handshake.
         actual = await retry_telegram_preflight(bot.me)
     except Exception as exc:
-        raise CustomerBotDiagnosticError(
-            telegram_stage_code("identity", exc)
-        ) from None
+        raise telegram_stage_error("identity", exc) from None
     if actual.id != telegram_bot_id or not actual.is_bot:
         raise CustomerBotDiagnosticError("identity_mismatch")
 
@@ -205,9 +207,7 @@ async def check_customer_bot_identity(
     try:
         webhook = await retry_telegram_preflight(bot.get_webhook_info)
     except Exception as exc:
-        raise CustomerBotDiagnosticError(
-            telegram_stage_code("webhook", exc)
-        ) from None
+        raise telegram_stage_error("webhook", exc) from None
     if webhook.url:
         # Never expose the webhook URL to Telegram UI or runtime logs.
         raise CustomerBotDiagnosticError("webhook_active")
@@ -248,9 +248,7 @@ async def verify_resource_permissions(
             # administrator rights were revoked. On repeated failure, fail
             # closed before starting buyer polling or granting new access.
             # The next supervisor attempt rechecks the original rights.
-            raise CustomerBotDiagnosticError(
-                telegram_stage_code("resource", exc)
-            ) from None
+            raise telegram_stage_error("resource", exc) from None
         status = getattr(member.status, "value", member.status)
         if status != "creator" and (
             status != "administrator"
