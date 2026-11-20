@@ -18,6 +18,13 @@ def _money(amount: object) -> str:
     return escape(format(Decimal(str(amount)), ".2f")) + " ₽"
 
 
+def _billed_amount(bill: dict, *, native: str, book: str) -> str:
+    """USD bills display their immutable issued USD amount, not a RUB quote."""
+    if bill.get("service_currency") == "USD" and bill.get(native) is not None:
+        return "$" + escape(format(Decimal(str(bill[native])), ".2f"))
+    return _money(bill[book])
+
+
 def _native(amount: object, code: str) -> str:
     number = format(Decimal(str(amount)), "f")
     if "." in number:
@@ -145,10 +152,10 @@ def _sales(bill: dict, *, kind: str) -> tuple[list[dict], int, str]:
     rows = [r for r in bill["turnover"] if r["kind"] == kind]
     count = sum(int(r["sold"]) for r in rows)
     amount = (
-        bill["subscription_rub"]
-        if kind == "subscription" else bill["file_rub"]
+        "subscription_rub" if kind == "subscription" else "file_rub"
     )
-    return rows, count, _money(amount)
+    native = "subscription_usd" if kind == "subscription" else "file_usd"
+    return rows, count, _billed_amount(bill, native=native, book=amount)
 
 
 def _validate(bill: dict) -> None:
@@ -221,8 +228,13 @@ def unified_merchant_bill_rich(
     lines.extend([
         "<h4>" + tr("💰 Итог", "💰 Total") + "</h4>",
         "<p>" + tr("Всего начислено: ", "Total charged: ")
-        + "<b>" + _money(bill["total_rub"]) + "</b></p>",
-        "<p>" + tr("Подтверждённые оплаты: ", "Confirmed payments: ")
+        + "<b>" + _billed_amount(
+            bill, native="issued_total_usd", book="total_rub"
+        ) + "</b></p>",
+        "<p>" + tr(
+            "Подтверждённые оплаты (учёт ₽): ",
+            "Confirmed credits (RUB ledger): ",
+        )
         + _money(bill["paid_rub"]) + "</p>",
     ])
     if Decimal(str(bill.get("credit_rub", 0))) > 0:
@@ -232,7 +244,9 @@ def unified_merchant_bill_rich(
         )
     lines.append(
         "<h4>" + tr("Итого к оплате", "Amount due") + ": "
-        + _money(bill["total_due_rub"]) + "</h4>"
+        + _billed_amount(
+            bill, native="issued_due_usd", book="total_due_rub"
+        ) + "</h4>"
     )
     return "\n".join(lines)
 
@@ -282,7 +296,9 @@ def unified_merchant_bill_classic(
     lines.extend([
         "",
         tr("Всего начислено: ", "Total charged: ")
-        + "<b>" + _money(bill["total_rub"]) + "</b>",
+        + "<b>" + _billed_amount(
+            bill, native="issued_total_usd", book="total_rub"
+        ) + "</b>",
         tr("Подтверждённые оплаты: ", "Confirmed payments: ")
         + _money(bill["paid_rub"]),
     ])
@@ -290,5 +306,7 @@ def unified_merchant_bill_classic(
         lines.append(tr("Учтённые возвраты: ", "Refund credits: ")
                      + _money(bill["credit_rub"]))
     lines.append(tr("<b>Итого к оплате: ", "<b>Amount due: ")
-                 + _money(bill["total_due_rub"]) + "</b>")
+                 + _billed_amount(
+                     bill, native="issued_due_usd", book="total_due_rub"
+                 ) + "</b>")
     return "\n".join(lines)

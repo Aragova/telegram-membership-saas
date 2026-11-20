@@ -159,15 +159,15 @@ async def test_retired_service_invoice_accepts_native_stars_without_activation()
                     conn, "platform_saas_stars_create_order",
                     invoice, payer_tg, 987654321, json=True,
                 )
-                assert order["stars_amount"] == 405
-                assert Decimal(order["usd_quote"]) == 5
+                assert order["stars_amount"] == 400
+                assert Decimal(order["usd_quote"]) == Decimal("1.875")
                 assert await rpc(
                     conn, "platform_saas_stars_precheckout",
-                    order["payload"], payer_tg, 987654321, 405,
+                    order["payload"], payer_tg, 987654321, 400,
                 )
                 charge = await rpc(
                     conn, "platform_saas_stars_record_charge",
-                    order["payload"], payer_tg, 987654321, 405,
+                    order["payload"], payer_tg, 987654321, 400,
                     "retired-historical-charge-" + uuid4().hex,
                     datetime.now(UTC), json=True,
                 )

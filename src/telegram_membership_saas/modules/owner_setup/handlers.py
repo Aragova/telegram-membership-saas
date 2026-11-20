@@ -963,21 +963,41 @@ def create_owner_setup_router(
     async def show_saas_service_profile(
         bot: Bot, user_id: int, actor_id: UUID,
     ) -> None:
-        """The account-level choice affects future bills, not existing debt."""
-        data = await saas_price_profile(
-            factory, actor_id=actor_id, project_id=fixed_project_id,
-        )
+        """Connected bots select their own future service currency."""
+        try:
+            data = await saas_price_profile(
+                factory, actor_id=actor_id, project_id=fixed_project_id,
+            )
+        except DBAPIError:
+            # Delegated project managers may administer content, but cannot
+            # access or change the financial owner's service currency.
+            await bot.send_message(
+                user_id, tr(
+                    "⚠️ Валюту обслуживания может менять только владелец бота.",
+                    "⚠️ Only the bot owner can change service currency.",
+                ),
+            )
+            return
         currency = str(data["currency"])
         label = (
             tr("🇺🇸 USD · $5/мес.", "🇺🇸 USD · $5/month")
             if currency == "USD"
             else tr("🇷🇺 RUB · 150 ₽/мес.", "🇷🇺 RUB · 150 ₽/month")
         )
-        caption = tr(
-            "Для будущих счетов всех ботов аккаунта. "
-            "При долге смена недоступна.",
-            "For future invoices across your account. "
-            "Changes are unavailable while invoices are unpaid.",
+        caption = (
+            tr(
+                "Только будущие счета этого бота. "
+                "При долге именно по этому боту смена недоступна.",
+                "This bot's future invoices only. "
+                "Currency is locked while this bot has unpaid invoices.",
+            )
+            if fixed_project_id is not None
+            else tr(
+                "Валюта по умолчанию для новых ботов аккаунта. "
+                "Для подключённых ботов валюта настраивается отдельно.",
+                "Default currency for new bots. "
+                "Connected bots have independent service currency settings.",
+            )
         )
         keyboard = _markup([
             [
@@ -4443,9 +4463,9 @@ def create_owner_setup_router(
                         currency=chosen_price, project_id=fixed_project_id,
                     )
                 except DBAPIError as exc:
-                    # Existing account-wide billing rule: unpaid issued
-                    # invoices prohibit tariff changes. Never change the
-                    # finance policy here or expose raw database errors.
+                    # Connected-bot profile changes are locked only while
+                    # that bot owes a bill; unrelated bots never mix debts.
+                    # No raw database error is displayed to the merchant.
                     cause = str(exc.orig)
                     if (
                         getattr(exc.orig, "sqlstate", None) == "23514"

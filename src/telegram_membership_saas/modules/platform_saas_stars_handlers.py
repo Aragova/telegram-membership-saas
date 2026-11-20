@@ -57,17 +57,22 @@ async def send_platform_stars_invoice(
         Decimal("1") - reserve / Decimal("100")
     )).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     reserve_label = format(reserve.normalize(), "f")
+    surcharge = Decimal(str(order.get("payment_surcharge_pct", "5.00")))
+    surcharge_label = format(surcharge.normalize(), "f")
     await bot.send_invoice(
         chat_id=payer_telegram_id,
         title=tr("ViMi Pay · обслуживание", "ViMi Pay · service"),
         description=tr(
-            "ViMi Pay: не менее ${usd} после резерва {reserve}% на вывод. "
-            "Оплата {stars} ⭐ погашает исходный счёт.",
-            "ViMi Pay: at least ${usd} after a {reserve}% withdrawal reserve. "
-            "{stars} ⭐ settles the original invoice.",
+            "ViMi Pay: к оплате {stars} ⭐. Надбавка за Stars {surcharge}%, "
+            "резерв вывода {reserve}%. Доход после резерва: от ${usd}. "
+            "Оплата погашает исходный счёт одного бота.",
+            "ViMi Pay: {stars} ⭐. Separate Stars surcharge {surcharge}%, "
+            "withdrawal reserve {reserve}%. At least ${usd} net. "
+            "Only this bot's original invoice is settled.",
         ).format(
             usd=format(net_usd, ".2f"),
             reserve=reserve_label,
+            surcharge=surcharge_label,
             stars=amount,
         ),
         payload=order["payload"],

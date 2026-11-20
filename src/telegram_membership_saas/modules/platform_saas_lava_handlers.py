@@ -379,21 +379,28 @@ def create_platform_saas_lava_router(
             message.chat.id,
             tr(
                 "💳 <b>Счёт Lava.top создан</b>\n"
-                "К оплате: <b>{amount:.2f} ₽</b>\n"
+                "К оплате: <b>{amount:.2f} {currency}</b>\n"
                 "После успешного платежа ViMi Pay самостоятельно "
                 "проверит его и продлит обслуживание.",
                 "💳 <b>Lava.top checkout ready</b>\n"
-                "Amount: <b>{amount:.2f} RUB</b>\n"
+                "Amount: <b>{amount:.2f} {currency}</b>\n"
                 "After payment, ViMi Pay will independently verify "
                 "settlement and renew your bot's service.",
-            ).format(amount=link.amount_rub),
+            ).format(
+                amount=link.pay_amount if link.pay_amount is not None else link.amount_rub,
+                currency=link.pay_currency,
+            ),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
                     text=tr(
-                        "💳 Оплатить {amount:.2f} ₽",
-                        "💳 Pay {amount:.2f} RUB",
-                    ).format(amount=link.amount_rub),
+                        "💳 Оплатить {amount:.2f} {currency}",
+                        "💳 Pay {amount:.2f} {currency}",
+                    ).format(
+                        amount=link.pay_amount if link.pay_amount is not None
+                        else link.amount_rub,
+                        currency=link.pay_currency,
+                    ),
                     url=url,
                 ),
             ]]),

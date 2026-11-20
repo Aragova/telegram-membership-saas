@@ -30,6 +30,8 @@ class PlatformCryptoInvoice:
     bot_invoice_url: str
     rub_amount: Decimal
     original_payload: str
+    pay_currency: str = "RUB"
+    pay_amount: Decimal | None = None
 
 
 def _validate_platform_quote(*, payload: str, rub_amount: Decimal) -> None:
@@ -90,6 +92,7 @@ async def verify_platform_crypto_app(
 async def create_platform_crypto_invoice(
     settings: Settings, *,
     order_id: UUID, rub_amount: Decimal,
+    pay_currency: str = "RUB", pay_amount: Decimal | None = None,
     transport=None,
 ) -> PlatformCryptoInvoice:
     """Issue provider fiat RUB invoice for an already-reserved local order.
@@ -99,14 +102,20 @@ async def create_platform_crypto_invoice(
     """
     payload=SaaS_CRYPTO_PREFIX + str(order_id)
     _validate_platform_quote(payload=payload, rub_amount=rub_amount)
+    payment = rub_amount if pay_amount is None else pay_amount
+    if (pay_currency not in {"RUB", "USD"}
+            or not isinstance(payment, Decimal)
+            or not payment.is_finite() or payment <= 0
+            or payment != payment.quantize(RUB_UNIT)):
+        raise ValueError("Invalid immutable platform Crypto Pay fiat price")
     async with _platform_client(settings, transport=transport) as provider:
         data = await provider.create_invoice(
-            currency="RUB", amount=rub_amount, payload=payload,
+            currency=pay_currency, amount=payment, payload=payload,
             description="ViMi Pay · bot service", expires_in=1800,
         )
     identity, link = verify_created_invoice_snapshot(
-        data, payload=payload, amount=rub_amount,
-        currency_code="RUB", currency_type="fiat",
+        data, payload=payload, amount=payment,
+        currency_code=pay_currency, currency_type="fiat",
         testnet=settings.saas_crypto_pay_testnet,
     )
     if link is None:
@@ -114,13 +123,16 @@ async def create_platform_crypto_invoice(
     return PlatformCryptoInvoice(
         provider_invoice_id=identity, bot_invoice_url=link,
         rub_amount=rub_amount, original_payload=payload,
+        pay_currency=pay_currency, pay_amount=payment,
     )
 
 
 async def lookup_platform_crypto_payment(
     settings: Settings, *,
     provider_invoice_id: int, original_payload: str,
-    rub_amount: Decimal, transport=None,
+    rub_amount: Decimal,
+    pay_currency: str = "RUB", pay_amount: Decimal | None = None,
+    transport=None,
 ) -> CryptoPayInvoiceReceipt | None:
     """Only exact, originally reserved provider invoice can settle the order.
 
@@ -130,6 +142,11 @@ async def lookup_platform_crypto_payment(
     _validate_platform_quote(
         payload=original_payload, rub_amount=rub_amount,
     )
+    payment = rub_amount if pay_amount is None else pay_amount
+    if (pay_currency not in {"RUB", "USD"}
+            or not isinstance(payment, Decimal) or not payment.is_finite()
+            or payment <= 0 or payment != payment.quantize(RUB_UNIT)):
+        raise ValueError("Invalid frozen provider fiat quote")
     if type(provider_invoice_id) is not int or provider_invoice_id <= 0:
         raise ValueError("Invalid provider invoice ID")
     async with _platform_client(settings, transport=transport) as provider:
@@ -141,6 +158,6 @@ async def lookup_platform_crypto_payment(
         return None
     return verify_paid_invoice(
         data, invoice_id=provider_invoice_id,
-        payload=original_payload, amount=rub_amount,
-        currency_code="RUB", currency_type="fiat",
+        payload=original_payload, amount=payment,
+        currency_code=pay_currency, currency_type="fiat",
     )

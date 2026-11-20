@@ -45,12 +45,15 @@ async def send_platform_crypto_checkout(
         payer_telegram_id,
         tr(
             "💎 <b>Crypto Pay · счёт ViMi Pay</b>\n"
-            "К оплате: <b>{amount:.2f} ₽</b>\n"
+            "К оплате: <b>{amount:.2f} {currency}</b>\n"
             "Зачисление производится автоматически после проверки платежа.",
             "💎 <b>Crypto Pay · ViMi Pay invoice</b>\n"
-            "Amount: <b>{amount:.2f} RUB</b>\n"
+            "Amount: <b>{amount:.2f} {currency}</b>\n"
             "Settlement follows automatic provider verification.",
-        ).format(amount=link.amount_rub),
+        ).format(
+            amount=link.pay_amount if link.pay_amount is not None else link.amount_rub,
+            currency=link.pay_currency,
+        ),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text=tr("💎 Открыть оплату", "💎 Open payment"),
@@ -117,13 +120,15 @@ def create_platform_saas_gateway_router(
         ):
             return
         fields = (message.text or "").split()
-        if len(fields) != 6 or fields[5] != "VERIFIED":
+        if len(fields) not in (6, 7) or fields[-1] != "VERIFIED":
             await bot.send_message(
                 message.chat.id,
                 tr(
                     "↩️ Сначала проверьте фактический возврат в кабинете "
                     "Lava.top или Crypto Pay. Для записи в финансовый журнал:\n"
-                    "/saasrefund crypto <invoice_id> <refund_id> 150 VERIFIED\n"
+                    "/saasrefund crypto <provider_invoice_id> <refund_id> 150 VERIFIED\n"
+                    "USD-платёж: /saasrefund crypto "
+                    "<provider_invoice_id> <refund_id> 1.50 USD VERIFIED\n"
                     "Это НЕ отправляет деньги клиенту.",
                     "↩️ First verify the actual refund in your Lava.top or "
                     "Crypto Pay provider account. Then record the evidence:\n"
@@ -135,19 +140,23 @@ def create_platform_saas_gateway_router(
         try:
             provider, provider_id, refund_id = fields[1:4]
             amount = Decimal(fields[4])
+            currency = fields[5] if len(fields) == 7 else "RUB"
+            if currency not in ("RUB", "USD"):
+                raise ValueError("Unsupported provider refund currency")
             result = await record_operator_verified_gateway_refund(
                 factory, settings=settings, provider=provider,
                 provider_invoice_id=provider_id,
                 provider_refund_id=refund_id, amount_rub=amount,
+                currency=currency,
             )
         except (InvalidOperation, ValueError):
             await bot.send_message(
                 message.chat.id,
                 tr(
                     "⚠️ Неверные реквизиты возврата. Проверьте провайдера, "
-                    "ID и точную сумму в ₽.",
+                    "ID, валюту (RUB/USD) и точную сумму возврата.",
                     "⚠️ Invalid refund evidence. Verify provider, IDs "
-                    "and exact RUB amount.",
+                    "and exact native RUB/USD refund amount.",
                 ),
             )
             return
@@ -167,13 +176,14 @@ def create_platform_saas_gateway_router(
             message.chat.id,
             tr(
                 "✅ Возврат зарегистрирован в финансовом журнале. "
-                "Подтверждённый возврат: {amount} ₽, "
+                "Подтверждённый возврат: {amount} {currency}, "
                 "возврат кредита по счёту: {credit} ₽.",
                 "✅ Verified refund recorded in the financial ledger. "
-                "Actual refunded: {amount} RUB; invoice credit reversed: "
+                "Actual refunded: {amount} {currency}; invoice credit reversed: "
                 "{credit} RUB.",
             ).format(
-                amount=result["amount_rub"],
+                amount=result.get("amount_native", result["amount_rub"]),
+                currency=result.get("currency", "RUB"),
                 credit=result["credit_reversed_rub"],
             ) if result["recorded"] else tr(
                 "↩️ Этот возврат уже был зарегистрирован ранее.",

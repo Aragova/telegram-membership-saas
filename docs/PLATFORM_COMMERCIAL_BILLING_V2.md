@@ -1,3 +1,51 @@
+> **2026-11-20 — PR #199: exact per-bot service obligation and native provider quote.**
+>
+> One bot = one separately issued invoice and cash ledger. A parent owning
+> 12 bots has **12 independently payable invoices**, never one pooled bill.
+> Future service currency belongs to the particular registered bot's
+> project: 150 RUB or 5 USD. An issued unpaid bill locks **that bot's**
+> prospective currency, not another bot's. The central owner-level service
+> currency becomes a default for new bots; existing per-bot preferences win.
+> The issued bot-fee line is immutable and *always* controls the currency
+> on payment; changing payment method must not recalculate or alter debt.
+>
+> Month one: service fee only. Next months: next service fee plus 5% of
+> prior period's verified subscriptions and files **of the same bot**,
+> reconciling native revenue at immutable sale-day FX into book RUB.
+> No extra 5% of sales is applied when changing payment rails.
+>
+> **⭐ Stars**: USD equivalent of the **whole outstanding RUB bill** using
+> a verified current/fallback CBR USD rate (at most 14 days old), or the
+> original immutable USD service fee plus the commission converted at the
+> USD fee line's **frozen invoice-issue CBR rate**, never the payment-date
+> rate, for a USD bill; historical USD3 service bills remain USD3.
+> Additional Stars-specific platform markup **5%** and independent operator
+> payout reserve (default 5%) lead to:
+> `max(400,ceil((due_usd*1.05)/(usd_per_star*(1-reserve_pct/100))))`.
+> 400 Stars is **payment minimum**, NOT a change in the invoice's
+> 150 RUB / 5 USD service price; only the original single bot invoice
+> is credited after authenticated Telegram Stars charge.
+>
+> **💳 Lava.top** and **💎 Crypto Pay**: freeze the **native** provider
+> price on the order: RUB when the original issued bot-fee line is RUB,
+> USD when the original line is USD. USD invoices preserve their native
+> USD service fee, and convert the extra book-RUB commission at the
+> immutable **invoice-issue** FX already stored in that fee line;
+> a payment cannot change an issued USD debt. USD amounts are rounded **up**
+> to cents, preserving the original book-RUB credit in the existing
+> provider ledger. Lava minimum (RUB 50 / USD 5) is enforced without
+> silently increasing an invoice. The provider GET confirms exactly the
+> frozen currency+amount+original provider invoice ID before applying
+> the *original book RUB* liability; refunds and historical receipts remain
+> append-only and independently auditable.
+>
+> **🏦 Manual**: existing verified conversion and receipt approval on
+> each separate bot invoice, unchanged. No test-only buttons or second
+> financial ledger. The migrations do not enable any payment method or
+> change existing provider credentials; no live payments are executed.
+>
+---
+
 > **2026-11-20 — USD-based ViMi Pay Stars platform checkout (PR draft).**
 > This supersedes the historical 0092 **RUB/Star operator quote** below for
 > all **new** central-bot ViMi Pay Stars orders. The platform reward baseline

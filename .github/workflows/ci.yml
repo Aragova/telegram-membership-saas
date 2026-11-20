@@ -213,6 +213,8 @@ jobs:
                       "platform_saas_catalog_for_invoice(uuid)",
                       "platform_saas_v3_create_attempt(uuid,numeric,text,uuid)",
                       "platform_saas_merchant_bill_summary(date,uuid)",
+                      "platform_saas_bot_price_profile_read(uuid)",
+                      "platform_saas_bot_price_profile_set(uuid,text)",
                       "platform_saas_stars_set_rate(numeric)",
                       "platform_saas_stars_rate()",
                       "platform_saas_stars_usd_policy_read()",
@@ -228,6 +230,7 @@ jobs:
                       "platform_saas_gateway_record_charge(uuid,text,text,numeric,timestamptz)",
                       "platform_saas_gateway_record_refund(uuid,text,text,text,numeric,timestamptz)",
                       "platform_saas_gateway_operator_refund(text,text,text,numeric)",
+                      "platform_saas_gateway_operator_refund_native(text,text,text,numeric,text)",
                       "subscription_owner_end_times(uuid,uuid)",
                   ):
                       await connection.execute(
@@ -254,6 +257,7 @@ jobs:
                       "public.platform_saas_payment_proofs_v2, "
                       "public.platform_saas_payment_allocations_v2, "
                       "public.platform_saas_payment_rejections_v2, "
+                      "public.platform_saas_bot_price_profiles, "
                       "public.platform_saas_stars_pricing, "
                       "public.platform_saas_stars_usd_policy, "
                       "public.platform_saas_stars_orders, "

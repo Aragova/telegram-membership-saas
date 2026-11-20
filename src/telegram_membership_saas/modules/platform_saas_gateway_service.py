@@ -42,6 +42,8 @@ class GatewayLink:
     order_id: UUID
     invoice_url: str
     amount_rub: Decimal
+    pay_currency: str = "RUB"
+    pay_amount: Decimal | None = None
 
 
 async def _rpc(
@@ -59,6 +61,8 @@ async def _rpc(
             ("order", "provider", "provider_id", "amount", "paid_at"),
         "platform_saas_gateway_operator_refund":
             ("provider", "provider_id", "refund_id", "amount"),
+        "platform_saas_gateway_operator_refund_native":
+            ("provider", "provider_id", "refund_id", "amount", "currency"),
     }
     sig = signatures.get(name)
     if sig is None or set(values) != set(sig) or telegram_id <= 0:
@@ -112,6 +116,8 @@ async def _reserve(
         or not isinstance(result.get("id"), str)
         or result.get("status") not in ("issued", "reserved")
         or Decimal(str(result.get("amount_rub", "0"))) <= 0
+        or result.get("pay_currency") not in ("RUB", "USD")
+        or Decimal(str(result.get("pay_amount", "0"))) <= 0
     ):
         raise RuntimeError("Invalid platform gateway reservation")
     return result
@@ -149,6 +155,8 @@ async def issue_platform_crypto_checkout(
     )
     order_id = UUID(str(reservation["id"]))
     amount = Decimal(str(reservation["amount_rub"]))
+    pay_currency = str(reservation["pay_currency"])
+    pay_amount = Decimal(str(reservation["pay_amount"]))
     if reservation["status"] == "issued":
         url = reservation.get("url")
         if not isinstance(url, str):
@@ -156,10 +164,11 @@ async def issue_platform_crypto_checkout(
         return GatewayLink(
             "crypto", order_id,
             _invoice_link(url, testnet=settings.saas_crypto_pay_testnet),
-            amount,
+            amount, pay_currency, pay_amount,
         )
     provider = await create_platform_crypto_invoice(
         settings, order_id=order_id, rub_amount=amount,
+        pay_currency=pay_currency, pay_amount=pay_amount,
     )
     await _bind(
         factory, settings=settings, order_id=order_id,
@@ -168,7 +177,10 @@ async def issue_platform_crypto_checkout(
         provider_id=str(provider.provider_invoice_id),
         url=provider.bot_invoice_url,
     )
-    return GatewayLink("crypto", order_id, provider.bot_invoice_url, amount)
+    return GatewayLink(
+        "crypto", order_id, provider.bot_invoice_url,
+        amount, pay_currency, pay_amount,
+    )
 
 
 async def issue_platform_lava_checkout(
@@ -196,16 +208,19 @@ async def issue_platform_lava_checkout(
         ) from None
     order_id = UUID(str(reservation["id"]))
     amount = Decimal(str(reservation["amount_rub"]))
+    pay_currency = str(reservation["pay_currency"])
+    pay_amount = Decimal(str(reservation["pay_amount"]))
     if reservation["status"] == "issued":
         url = reservation.get("url")
         return GatewayLink(
-            "lava", order_id, _checkout_link(url), amount,
+            "lava", order_id, _checkout_link(url),
+            amount, pay_currency, pay_amount,
         )
     try:
         async with LavaTopClient(api_key.get_secret_value()) as provider:
             created = await provider.create_dynamic_invoice(
                 email=customer_email, offer_id=offer,
-                amount=amount, currency="RUB",
+                amount=pay_amount, currency=pay_currency,
             )
     except LavaTopError:
         raise
@@ -227,7 +242,10 @@ async def issue_platform_lava_checkout(
         raise LavaTopError(
             "Lava.top provider invoice binding failed", code="LAVA-BIND",
         ) from None
-    return GatewayLink("lava", order_id, created.payment_url, amount)
+    return GatewayLink(
+        "lava", order_id, created.payment_url,
+        amount, pay_currency, pay_amount,
+    )
 
 
 async def list_platform_pending_gateway_orders(
@@ -251,6 +269,11 @@ async def verify_and_record_platform_gateway_payment(
     """Provider GET on platform-owned token precedes all SQL money effects."""
     provider_name = pending.get("provider")
     frozen_amount = Decimal(str(pending["amount_rub"]))
+    pay_currency = str(pending["pay_currency"])
+    pay_amount = Decimal(str(pending["pay_amount"]))
+    if (pay_currency not in ("RUB", "USD") or not pay_amount.is_finite()
+            or pay_amount <= 0 or pay_amount != pay_amount.quantize(Decimal("0.01"))):
+        raise ValueError("Invalid immutable gateway payment quote")
     provider_id = str(pending["provider_invoice_id"])
     order_id = UUID(str(pending["id"]))
     payload = str(pending["invoice_payload"])
@@ -260,6 +283,7 @@ async def verify_and_record_platform_gateway_payment(
         paid = await lookup_platform_crypto_payment(
             settings, provider_invoice_id=int(provider_id),
             original_payload=payload, rub_amount=frozen_amount,
+            pay_currency=pay_currency, pay_amount=pay_amount,
         )
         if paid is None:
             return None
@@ -277,7 +301,7 @@ async def verify_and_record_platform_gateway_payment(
             return None
         verify_lava_paid_invoice(
             snapshot, expected_id=UUID(provider_id),
-            expected_currency="RUB", expected_amount=frozen_amount,
+            expected_currency=pay_currency, expected_amount=pay_amount,
         )
         stamp = datetime.now(UTC)
     else:
@@ -301,6 +325,7 @@ async def record_operator_verified_gateway_refund(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings, provider: str, provider_invoice_id: str,
     provider_refund_id: str, amount_rub: Decimal,
+    currency: str = "RUB",
 ) -> dict:
     """Log a verified outbound refund using the central OWNER identity.
 
@@ -309,8 +334,8 @@ async def record_operator_verified_gateway_refund(
     issuance, payment discovery or an unsourced claim that money was returned.
     Both Python and SECURITY DEFINER SQL require the platform owner.
     """
-    if provider not in ("lava", "crypto"):
-        raise ValueError("Unsupported provider for verified refund")
+    if provider not in ("lava", "crypto") or currency not in ("RUB", "USD"):
+        raise ValueError("Unsupported provider or native refund currency")
     if (
         not isinstance(provider_invoice_id, str)
         or not 1 <= len(provider_invoice_id) <= 128
@@ -323,19 +348,30 @@ async def record_operator_verified_gateway_refund(
         or amount_rub != amount_rub.quantize(Decimal("0.01"))
     ):
         raise ValueError("Invalid externally verified refund evidence")
+    operation = (
+        "platform_saas_gateway_operator_refund_native"
+        if currency == "USD"
+        else "platform_saas_gateway_operator_refund"
+    )
+    values = {
+        "provider": provider, "provider_id": provider_invoice_id,
+        "refund_id": provider_refund_id, "amount": amount_rub,
+    }
+    if currency == "USD":
+        values["currency"] = currency
     result = await _rpc(
         factory, telegram_id=_platform_operator(settings),
-        name="platform_saas_gateway_operator_refund",
-        values={
-            "provider": provider, "provider_id": provider_invoice_id,
-            "refund_id": provider_refund_id, "amount": amount_rub,
-        }, as_json=True,
+        name=operation, values=values, as_json=True,
     )
     if (
         not isinstance(result, dict)
         or not isinstance(result.get("recorded"), bool)
         or not isinstance(result.get("amount_rub"), str)
         or not isinstance(result.get("credit_reversed_rub"), str)
+        or (currency == "USD" and (
+            result.get("currency") != "USD"
+            or not isinstance(result.get("amount_native"), str)
+        ))
     ):
         raise RuntimeError("Provider refund ledger acknowledgement invalid")
     return result
