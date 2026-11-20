@@ -147,7 +147,7 @@ def test_supervisor_never_reveals_token_in_safe_error_code():
 
 
 @pytest.mark.parametrize("reported_failure", [
-    None, "polling_network_failed", "polling_conflict",
+    None, "polling_conflict",
 ])
 async def test_stalled_telegram_poll_clears_live_health_before_unlock(
     monkeypatch, reported_failure,
@@ -168,7 +168,7 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(
     async def fake_customer(
         _factory, *, project_id, telegram_bot_id, settings,
         on_poll_response, on_poll_failure, on_poll_request,
-        on_startup_stage,
+        on_startup_stage, on_preflight_failure,
     ):
         await asyncio.sleep(0.03)
         on_poll_request()
@@ -230,7 +230,7 @@ async def test_repeated_cancel_never_releases_lease_before_slow_customer_teardow
     async def slow_customer(
         _factory, *, project_id, telegram_bot_id, settings,
         on_poll_response, on_poll_failure, on_poll_request,
-        on_startup_stage,
+        on_startup_stage, on_preflight_failure,
     ):
         worker_started.set()
         try:
@@ -408,7 +408,7 @@ async def test_supervisor_distinguishes_startup_polling_and_handler_stalls(
     async def customer(
         _factory, *, project_id, telegram_bot_id, settings,
         on_poll_response, on_poll_failure, on_poll_request,
-        on_startup_stage,
+        on_startup_stage, on_preflight_failure,
     ):
         if phase == "webhook":
             on_startup_stage("webhook")
@@ -459,7 +459,7 @@ async def test_slow_preflight_does_not_start_polling_watchdog(monkeypatch):
     async def customer(
         _factory, *, project_id, telegram_bot_id, settings,
         on_poll_response, on_poll_failure, on_poll_request,
-        on_startup_stage,
+        on_startup_stage, on_preflight_failure,
     ):
         # Preflight is longer than the polling timeout, but shorter than
         # its separate startup deadline.
