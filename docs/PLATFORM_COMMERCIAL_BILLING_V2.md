@@ -3,11 +3,17 @@
 > all **new** central-bot ViMi Pay Stars orders. The platform reward baseline
 > is USD 0.013 per ⭐, with a separately stated **5% operator-chosen reserve**
 > for withdrawal/exchange expenses (NOT a verified universal Fragment fee).
+> The reserve is held back from gross payout: Star quantity is
+> `ceil(net_usd/(usd_per_star*(1-reserve_pct/100)))`, not a flat
+> `net_usd*(1+reserve_pct/100)` markup. Native checkout states the
+> intended minimum net USD after that reserve.
 > A full $5 service-only invoice costs **405 ⭐**, independent of the RUB150
 > bookkeeping balance. Original USD $3 service invoices remain $3 in this
 > quote; invoices with 5% sales commissions include the commission's
-> USD-equivalent at the immutable invoice issue-day CBR USD rate. Partial
-> prior payments proportionately reduce the new USD quote.
+> USD-equivalent using the latest verified CBR USD snapshot effective
+> on the invoice issue day (no future FX, maximum 14-day lookback).
+> Without qualifying verified history the new Stars quote fails closed.
+> Partial prior payments proportionately reduce the new USD quote.
 >
 > PostgreSQL computes and freezes USD quote/rate/reserve/Star amount per
 > new order; original outstanding RUB ledger credit, Telegram authenticated
