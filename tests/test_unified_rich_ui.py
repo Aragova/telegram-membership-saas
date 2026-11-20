@@ -117,10 +117,11 @@ async def test_rich_send_keeps_exact_inline_callbacks_and_prices(monkeypatch):
         )
         assert result == "rich result"
         assert send_rich.await_count == 1
-        assert send_rich.await_args.kwargs["reply_markup"].inline_keyboard[
-            0
-        ][0].callback_data == "buy:abc:def"
-        assert "<h3>" in send_rich.await_args.kwargs["rich_message"].html
+        assert "reply_markup" not in send_rich.await_args.kwargs
+        inline_html = send_rich.await_args.kwargs["rich_message"].html
+        assert '<tg-button-row>' in inline_html
+        assert 'data="buy:abc:def"' in inline_html
+        assert "<h3>" in inline_html
         legacy.assert_not_awaited()
     finally:
         await bot.session.close()
@@ -145,7 +146,8 @@ async def test_rich_edit_updates_single_message_and_preserves_keyboard(monkeypat
         assert isinstance(payload, EditMessageText)
         assert payload.message_id == 77
         assert payload.rich_message.html.startswith("<h3>")
-        assert payload.reply_markup is keyboard
+        assert payload.reply_markup is None
+        assert 'data="buy:abc:def"' in payload.rich_message.html
         assert payload.text is None
         legacy.assert_not_awaited()
     finally:
