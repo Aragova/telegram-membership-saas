@@ -16,6 +16,7 @@ from uuid import UUID
 
 from aiogram import Bot
 from aiogram.methods import GetUpdates
+from aiogram.utils.backoff import BackoffConfig
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -52,6 +53,12 @@ from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
 CUSTOMER_COMMAND_INSTALL_TIMEOUT_SECONDS = 12.0
+# Shared VM may poll 50+ independent Telegram bots. Avoid a synchronized
+# getUpdates retry storm during a Telegram-side 502/429 wave while still
+# recovering far faster than a full worker teardown and startup.
+TELEGRAM_POLL_BACKOFF = BackoffConfig(
+    min_delay=1.0, max_delay=20.0, factor=1.6, jitter=0.3,
+)
 
 # Only network, server 5xx and rate limits are safe for a long-lived
 # preflight retry. Invalid tokens, wrong Bot ID, webhook conflicts and lost
@@ -354,6 +361,7 @@ async def run_customer_bot_instance(
                 handle_signals=False,
                 close_bot_session=False,
                 handle_as_tasks=False,
+                backoff_config=TELEGRAM_POLL_BACKOFF,
             )
         )
         # Never propagate cancellation to aiogram's start_polling task directly.
