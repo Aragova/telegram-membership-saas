@@ -211,8 +211,8 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                 await _actor(admin, merchant)
                 choice = (await admin.execute(text(
                     "SELECT public.platform_saas_bot_price_profile_set("
-                    ":project,'RUB')"
-                ), {"project": project})).scalar_one()
+                    ":project,'RUB') AS profile"
+                ).columns(profile=JSONB), {"project": project})).scalar_one()
                 assert choice["currency"] == "RUB"
                 await _actor(admin, operator)
                 invoice = (await admin.execute(text(
