@@ -114,8 +114,12 @@ async def test_currency_picker_is_bill_only_and_uses_existing_profile_rpc(
         await handler(picker, bot)
         first = bot.send_message.await_args
         assert "150 ₽" in first.args[1]
-        assert ("Для будущих счетов" if lang == "ru" else
-                "For future invoices") in first.args[1]
+        assert (
+            ("Только будущие счета" if lang == "ru" else
+             "This bot's future invoices") if project_scoped
+            else ("Валюта по умолчанию" if lang == "ru" else
+                  "Default currency")
+        ) in first.args[1]
         actions = [
             b.callback_data for row in first.kwargs["reply_markup"].inline_keyboard
             for b in row
