@@ -100,7 +100,12 @@ BEGIN
    owner_user_id=excluded.owner_user_id,
    currency_code=excluded.currency_code,
    updated_at=clock_timestamp();
- RETURN public.platform_saas_bot_price_profile_read(p_project);
+ -- Return the freshly written value (a STABLE reader may see the
+ -- pre-write statement snapshot inside a setter transaction).
+ RETURN jsonb_build_object(
+   'currency',p_currency,'bot_id',bot_id,
+   'monthly_amount',CASE WHEN p_currency='USD' THEN '5.00'
+                         ELSE '150.00' END);
 EXCEPTION WHEN NO_DATA_FOUND OR TOO_MANY_ROWS THEN
  RAISE EXCEPTION 'Exactly one registered bot owned in project is required'
   USING ERRCODE='42501';
