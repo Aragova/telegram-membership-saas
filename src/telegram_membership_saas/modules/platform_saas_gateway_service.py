@@ -61,6 +61,8 @@ async def _rpc(
             ("order", "provider", "provider_id", "amount", "paid_at"),
         "platform_saas_gateway_operator_refund":
             ("provider", "provider_id", "refund_id", "amount"),
+        "platform_saas_gateway_operator_refund_native":
+            ("provider", "provider_id", "refund_id", "amount", "currency"),
     }
     sig = signatures.get(name)
     if sig is None or set(values) != set(sig) or telegram_id <= 0:
@@ -323,6 +325,7 @@ async def record_operator_verified_gateway_refund(
     factory: async_sessionmaker[AsyncSession], *,
     settings: Settings, provider: str, provider_invoice_id: str,
     provider_refund_id: str, amount_rub: Decimal,
+    currency: str = "RUB",
 ) -> dict:
     """Log a verified outbound refund using the central OWNER identity.
 
@@ -331,8 +334,8 @@ async def record_operator_verified_gateway_refund(
     issuance, payment discovery or an unsourced claim that money was returned.
     Both Python and SECURITY DEFINER SQL require the platform owner.
     """
-    if provider not in ("lava", "crypto"):
-        raise ValueError("Unsupported provider for verified refund")
+    if provider not in ("lava", "crypto") or currency not in ("RUB", "USD"):
+        raise ValueError("Unsupported provider or native refund currency")
     if (
         not isinstance(provider_invoice_id, str)
         or not 1 <= len(provider_invoice_id) <= 128
@@ -345,19 +348,30 @@ async def record_operator_verified_gateway_refund(
         or amount_rub != amount_rub.quantize(Decimal("0.01"))
     ):
         raise ValueError("Invalid externally verified refund evidence")
+    operation = (
+        "platform_saas_gateway_operator_refund_native"
+        if currency == "USD"
+        else "platform_saas_gateway_operator_refund"
+    )
+    values = {
+        "provider": provider, "provider_id": provider_invoice_id,
+        "refund_id": provider_refund_id, "amount": amount_rub,
+    }
+    if currency == "USD":
+        values["currency"] = currency
     result = await _rpc(
         factory, telegram_id=_platform_operator(settings),
-        name="platform_saas_gateway_operator_refund",
-        values={
-            "provider": provider, "provider_id": provider_invoice_id,
-            "refund_id": provider_refund_id, "amount": amount_rub,
-        }, as_json=True,
+        name=operation, values=values, as_json=True,
     )
     if (
         not isinstance(result, dict)
         or not isinstance(result.get("recorded"), bool)
         or not isinstance(result.get("amount_rub"), str)
         or not isinstance(result.get("credit_reversed_rub"), str)
+        or (currency == "USD" and (
+            result.get("currency") != "USD"
+            or not isinstance(result.get("amount_native"), str)
+        ))
     ):
         raise RuntimeError("Provider refund ledger acknowledgement invalid")
     return result
