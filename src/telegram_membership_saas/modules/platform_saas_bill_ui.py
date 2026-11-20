@@ -264,9 +264,6 @@ def unified_merchant_bill_rich(
         ) + "</h4>"
     )
     if future_profile_currency is not None:
-        lines.append("<h4>" + tr(
-            "💱 Тариф следующих счетов", "💱 Future invoice tariff",
-        ) + "</h4>")
         lines.append(service_currency_hint(future_profile_currency, rich=True))
         note = _old_invoice_currency_note(bill, future_profile_currency)
         if note:
@@ -333,12 +330,7 @@ def unified_merchant_bill_classic(
                      bill, native="issued_due_usd", book="total_due_rub"
                  ) + "</b>")
     if future_profile_currency is not None:
-        lines.extend([
-            "",
-            tr("💱 <b>Тариф следующих счетов</b>",
-               "💱 <b>Future invoice tariff</b>"),
-            service_currency_hint(future_profile_currency),
-        ])
+        lines.extend(["", service_currency_hint(future_profile_currency)])
         note = _old_invoice_currency_note(bill, future_profile_currency)
         if note:
             lines.append(note)
