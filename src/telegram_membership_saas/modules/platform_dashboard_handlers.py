@@ -294,8 +294,12 @@ _ERROR_TEXT = {
         "getMe returned another bot ID; check the connected token",
     ),
     "identity_network_failed": (
-        "Сетевая ошибка при getMe: соединение с Telegram прервано",
-        "Network error during getMe: Telegram connection interrupted",
+        "Сетевая ошибка при getMe: Telegram временно недоступен",
+        "Network failure during getMe: Telegram temporarily unavailable",
+    ),
+    "identity_server_failed": (
+        "Серверная ошибка Telegram при getMe: повторяем проверку",
+        "Telegram server error during getMe; retrying",
     ),
     "identity_api_failed": (
         "Telegram API отклонил проверку getMe",
@@ -312,6 +316,10 @@ _ERROR_TEXT = {
     "webhook_network_failed": (
         "Сетевая ошибка при getWebhookInfo: Telegram не ответил",
         "Network error during getWebhookInfo: Telegram did not respond",
+    ),
+    "webhook_server_failed": (
+        "Серверная ошибка Telegram при проверке webhook: повторяем",
+        "Telegram server error checking webhook; retrying",
     ),
     "webhook_api_failed": (
         "Telegram API отклонил проверку getWebhookInfo",
@@ -388,6 +396,10 @@ _ERROR_TEXT = {
     "resource_network_failed": (
         "Сетевая ошибка Telegram при проверке прав бота в канале",
         "Telegram network error while verifying bot channel permissions",
+    ),
+    "resource_server_failed": (
+        "Серверная ошибка Telegram при проверке прав канала: повторяем",
+        "Telegram server error checking channel permissions; retrying",
     ),
     "resource_api_failed": (
         "Telegram API не завершил проверку прав бота в канале",
