@@ -19,6 +19,9 @@ from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
 )
+from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_price_profile,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
@@ -58,6 +61,13 @@ async def test_two_owned_bots_have_independent_price_and_unpaid_lock():
                 token_ciphertext="fixture-not-a-real-token", status="registered",
             ))
             await session.flush()
+        # Exercise the actual Python/RPC path as well as SQL so a reader
+        # missing from the closed allowlist cannot silently bypass the wizard.
+        pending = await saas_price_profile(
+            factory, actor_id=owner, project_id=project2,
+        )
+        assert pending["currency_selected"] is False
+        assert pending["currency"] == "RUB"
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
