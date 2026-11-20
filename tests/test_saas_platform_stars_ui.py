@@ -365,3 +365,74 @@ async def test_usd_stars_operator_command_rejects_stranger(monkeypatch):
     await handler(router, "configure_platform_stars_rate")(msg, bot)
     save.assert_not_awaited()
     bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize("language", ("ru", "en"))
+async def test_fractional_stars_invoice_never_overpromises_net_usd(
+    monkeypatch, language,
+):
+    """270 Stars guarantee $3.3345 net, not the rounded-up $3.34."""
+    monkeypatch.setattr(
+        stars_ui, "create_platform_stars_order",
+        AsyncMock(return_value={
+            "payload": "vps:" + str(uuid4()),
+            "stars_amount": 270, "rub_amount": "100.00",
+            "usd_quote": "3.33333333", "usd_per_star": "0.01300000",
+            "withdrawal_reserve_pct": "5.00",
+        }),
+    )
+    bot = MagicMock()
+    bot.id = 12345
+    bot.send_invoice = AsyncMock()
+    loc = _language.set(language)
+    try:
+        await stars_ui.send_platform_stars_invoice(
+            bot, MagicMock(), payer_telegram_id=787878, invoice_id=uuid4(),
+        )
+    finally:
+        _language.reset(loc)
+    detail = bot.send_invoice.await_args.kwargs["description"]
+    assert "$3.33" in detail
+    assert "$3.34" not in detail
+    assert "270 ⭐" in detail
+
+
+@pytest.mark.parametrize("language", ("ru", "en"))
+async def test_crypto_provider_outage_is_not_an_invalid_app(monkeypatch, language):
+    cfg = Settings(
+        _env_file=None, telegram_central_access_enabled=False,
+        platform_owner_telegram_id=737373,
+        saas_crypto_pay_api_token="FAKE_PRIVATE_TOKEN_DO_NOT_PRINT",
+    )
+    monkeypatch.setattr(stars_ui, "get_settings", lambda: cfg)
+    monkeypatch.setattr(
+        stars_ui, "platform_stars_usd_policy",
+        AsyncMock(return_value={
+            "enabled": False, "example_stars": 405,
+            "usd_per_star": "0.013", "withdrawal_reserve_pct": "5",
+        }),
+    )
+    monkeypatch.setattr(
+        stars_ui, "verify_platform_crypto_app",
+        AsyncMock(side_effect=TimeoutError("provider offline")),
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=737373),
+        from_user=SimpleNamespace(id=737373),
+        text="/saasrails",
+    )
+    router = stars_ui.create_platform_saas_stars_router(MagicMock())
+    loc = _language.set(language)
+    try:
+        await handler(router, "platform_rails_readiness")(message, bot)
+    finally:
+        _language.reset(loc)
+    detail = bot.send_message.await_args.args[1]
+    if language == "ru":
+        assert "Проверка Crypto Pay временно недоступна" in detail
+    else:
+        assert "readiness check is temporarily unavailable" in detail
+    assert "FAKE_PRIVATE_TOKEN" not in detail
+    assert "provider offline" not in detail
