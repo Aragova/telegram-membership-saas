@@ -1,3 +1,35 @@
+> **2026-11-20 — USD-based ViMi Pay Stars platform checkout (PR draft).**
+> This supersedes the historical 0092 **RUB/Star operator quote** below for
+> all **new** central-bot ViMi Pay Stars orders. The platform reward baseline
+> is USD 0.013 per ⭐, with a separately stated **5% operator-chosen reserve**
+> for withdrawal/exchange expenses (NOT a verified universal Fragment fee).
+> A full $5 service-only invoice costs **405 ⭐**, independent of the RUB150
+> bookkeeping balance. Original USD $3 service invoices remain $3 in this
+> quote; invoices with 5% sales commissions include the commission's
+> USD-equivalent at the immutable invoice issue-day CBR USD rate. Partial
+> prior payments proportionately reduce the new USD quote.
+>
+> PostgreSQL computes and freezes USD quote/rate/reserve/Star amount per
+> new order; original outstanding RUB ledger credit, Telegram authenticated
+> payment, idempotency, reversal, original owner and bot-activation semantics
+> remain untouched. Old orders and confirmed charges remain unchanged.
+> A new USD policy defaults **DISABLED** until the central platform owner
+> runs `/saasstarsrate 0.013 5`. The operator may inspect via
+> `/saasstarsrate` or suspend via `/saasstarsrate off`; an emergency
+> suspension blocks precheckout for new USD quotes. `/saasrails` shows
+> the real configured Stars gate and checks the platform-owned Crypto Pay
+> token with read-only provider `getMe` when configured.
+>
+> **Crypto Pay:** its frozen RUB invoice and provider-verified/ledger
+> settlement code remains unchanged; still requires its own platform
+> application token `TMS_SAAS_CRYPTO_PAY_API_TOKEN` in the **central**
+> staging environment, separate from every tenant bot token.
+> Check mainnet/testnet consistency. No API token, money, or invoice is
+> created by this PR. Do not claim live payment acceptance without
+> provider test and actual paid settlement reconciliation.
+>
+---
+
 > **2026-11-18 — New opt-in Lava checkout shortlinks (Draft).** The short
 > URL is only a clean redirect to the existing frozen 150 RUB Lava gateway
 > order. It does not change the invoice currency, pricing, commissions,
