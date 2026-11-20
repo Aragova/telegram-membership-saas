@@ -237,15 +237,26 @@ async def run_target(
             last_poll_failure_at: float | None = None
             poll_inflight = False
             startup_stage: str | None = None
+            startup_failure: str | None = None
+            startup_failure_at: float | None = None
 
             def observed_startup_stage(stage: str) -> None:
-                nonlocal startup_stage
+                nonlocal startup_stage, startup_failure, startup_failure_at
                 # Only fixed internal labels. No Telegram error text or tokens.
                 if stage in {
                     "initializing", "identity", "webhook", "resource",
                     "commands", "polling",
                 }:
                     startup_stage = stage
+                    if stage in {"commands", "polling"}:
+                        startup_failure = None
+                        startup_failure_at = None
+
+            def observed_preflight_failure(code: str) -> None:
+                nonlocal startup_failure, startup_failure_at
+                # The runtime reports only validated, fixed error codes.
+                startup_failure = code
+                startup_failure_at = monotonic()
 
             def observed_poll_request() -> None:
                 nonlocal first_poll_request_at, poll_inflight
@@ -279,9 +290,19 @@ async def run_target(
                     first_request = first_poll_request_at
                     last_ok = last_poll_response
                     if first_request is None:
-                        # Do not count getMe, webhook, channel checks or
-                        # command installation against the polling deadline.
-                        if now_at - booted_at > STARTUP_STALE_SECONDS:
+                        # A current safe preflight error means the bot is
+                        # actively retrying Telegram. It is not a dead
+                        # worker, and creating a new worker would intensify
+                        # the same getMe outage.
+                        startup_retrying = (
+                            startup_failure is not None
+                            and startup_failure_at is not None
+                            and now_at - startup_failure_at <= STARTUP_STALE_SECONDS
+                        )
+                        if (
+                            now_at - booted_at > STARTUP_STALE_SECONDS
+                            and not startup_retrying
+                        ):
                             code = (
                                 f"startup_{startup_stage}_stalled"
                                 if startup_stage is not None else "startup_stalled"
@@ -314,18 +335,26 @@ async def run_target(
                                 else "polling_handler_stalled"
                             )
                             raise CustomerBotDiagnosticError(code)
-                    degraded = (
+                    degraded_polling = (
                         last_poll_failure in TRANSIENT_POLLING_CODES
                         and last_poll_failure_at is not None
+                    )
+                    degraded_startup = (
+                        first_request is None and startup_failure is not None
+                        and startup_failure_at is not None
+                        and now_at - startup_failure_at <= STARTUP_STALE_SECONDS
                     )
                     await write_bot_health(
                         factory, project_id=project_id, bot_id=bot_id,
                         instance_id=instance_id,
                         state=(
-                            "degraded" if degraded
+                            "degraded" if degraded_polling or degraded_startup
                             else "running" if last_ok is not None else "starting"
                         ),
-                        error_code=last_poll_failure if degraded else None,
+                        error_code=(
+                            last_poll_failure if degraded_polling else
+                            startup_failure if degraded_startup else None
+                        ),
                     )
 
             customer = asyncio.create_task(run_customer_bot_instance(
@@ -334,6 +363,7 @@ async def run_target(
                 on_poll_failure=observed_poll_failure,
                 on_poll_request=observed_poll_request,
                 on_startup_stage=observed_startup_stage,
+                on_preflight_failure=observed_preflight_failure,
             ))
             guard = asyncio.create_task(heartbeat())
             try:
