@@ -18,14 +18,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.localization import tr
-from telegram_membership_saas.modules.platform_saas_crypto_client import verify_platform_crypto_app
+from telegram_membership_saas.modules.platform_saas_crypto_client import (
+    verify_platform_crypto_app,
+)
 from telegram_membership_saas.modules.platform_saas_stars_service import (
+    configure_platform_stars_usd_policy,
     confirm_platform_stars_charge,
     create_platform_stars_order,
     platform_stars_precheckout,
     platform_stars_usd_policy,
     record_platform_stars_refund,
-    configure_platform_stars_usd_policy,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid
 
