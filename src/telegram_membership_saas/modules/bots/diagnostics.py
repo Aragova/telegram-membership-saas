@@ -12,6 +12,7 @@ from aiogram.exceptions import (
     TelegramNetworkError,
     TelegramNotFound,
     TelegramRetryAfter,
+    TelegramServerError,
     TelegramUnauthorizedError,
 )
 
