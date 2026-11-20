@@ -800,6 +800,9 @@ def create_owner_setup_router(
             connected = next(
                 (username for _, username, status in data.bot_instances
                  if status == "registered"), None,
+            ) or next(
+                (username for username, status in data.bots
+                 if status == "registered"), None,
             )
             runtime = owner_runtime_label(data.bot_runtime_label)
             if connected:
