@@ -228,7 +228,7 @@ async def test_owner_only_rail_readiness_is_configuration_not_charge(
         assert "$5 → 405 ⭐" in content
         crypto_verify.assert_awaited_once()
         assert ("тестовая сеть" if language == "ru" else "testnet") in content
-        assert ("проверка настроек" if language == "ru" else "Configuration only") in content
+        assert ("не создаёт счета" if language == "ru" else "does not create invoices") in content
         assert "SECRET_LAVA" not in content
         assert "SECRET_CRYPTO" not in content
         assert bot.send_message.await_args.kwargs["parse_mode"] == "HTML"
@@ -295,7 +295,7 @@ async def test_rail_readiness_fails_closed_on_unknown_stars_rate_and_testnet(
         _language.reset(locale)
     text = bot.send_message.await_args.args[1]
     assert "Не удалось проверить USD-котировку" in text
-    assert "Нет подходящего API-токена" in text
+    assert "Testnet запрещён в production" in text
     assert "private DB failure" not in text
     assert "SECRET_TESTNET" not in text
 
