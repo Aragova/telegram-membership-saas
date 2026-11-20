@@ -232,17 +232,40 @@ def rich_buttons_html(markup: InlineKeyboardMarkup) -> str | None:
     return "\n".join(rows)
 
 
+def rich_row_marker(index: int) -> str:
+    """Stable placement marker for one complete keyboard row."""
+    return "__VIMI_RICH_ROW_" + str(index) + "__"
+
+
+def strip_rich_action_markers(html: str) -> str:
+    """Never leak presentation markers to unsupported clients."""
+    return re.sub(r"__VIMI_RICH_(?:ACTIONS|ROW_\\d+)__", "", html)
+
+
 def rich_with_inline_actions(
     html: str, markup: InlineKeyboardMarkup,
 ) -> str | None:
-    """Place the buttons within the Rich message, never below its bubble."""
+    """Move buttons into their contextual section or the end of the card."""
     buttons = rich_buttons_html(markup)
     if buttons is None:
         return None
-    if RICH_ACTIONS_MARKER in html:
-        result = html.replace(RICH_ACTIONS_MARKER, buttons)
+    remaining: list[str] = []
+    result = html
+    for index, row in enumerate(markup.inline_keyboard):
+        marker = rich_row_marker(index)
+        piece = rich_buttons_html(InlineKeyboardMarkup(inline_keyboard=[row]))
+        if piece is None:
+            return None
+        if marker in result:
+            result = result.replace(marker, piece)
+        else:
+            remaining.append(piece)
+    tail = "\n".join(remaining)
+    if RICH_ACTIONS_MARKER in result:
+        result = result.replace(RICH_ACTIONS_MARKER, tail)
     else:
-        result = html + "\n" + buttons
+        result = result + ("\n" + tail if tail else "")
+    result = strip_rich_action_markers(result)
     if len(result.encode("utf-8")) >= 32768:
         return None
     return result
