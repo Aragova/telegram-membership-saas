@@ -152,6 +152,10 @@ from telegram_membership_saas.modules.owner_setup.network_profiles import (
     save_owner_network_profile,
     set_network_auto_apply,
 )
+from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
+    owner_setup_step_classic,
+    owner_setup_step_rich,
+)
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -999,6 +1003,7 @@ def create_owner_setup_router(
             # a settled invoice or a zero debt.
             currency = None
             debt_label = None
+            profile = None
             try:
                 profile = await saas_price_profile(
                     factory, actor_id=actor_id, project_id=project_id,
@@ -1033,6 +1038,46 @@ def create_owner_setup_router(
                         debt_label = format(outstanding, ".2f") + " ₽"
                 except (TypeError, ValueError, KeyError):
                     pass
+            # Existing bots are grandfathered in by migration 0102.
+            # Newly registered bots get a real 4-step wizard instead of the
+            # dense dashboard; all actions reuse established handlers.
+            if profile is not None and profile.get("currency_selected") is False:
+                if next_step is None:
+                    next_step = (
+                        tr("💱 4/4 · Валюта обслуживания",
+                           "💱 4/4 · Service currency"),
+                        "saasprofile",
+                    )
+                label, action = next_step
+                bot_name = (
+                    data.live_bot_username
+                    or next((username for username, status in data.bots
+                             if status == "registered"), "")
+                    or data.project_name
+                )
+                wizard_rows = [
+                    [
+                        _button(label, action, "success"),
+                        _button(tr("❔ Помощь", "❔ Help"), "help", "primary"),
+                    ],
+                    [InlineKeyboardButton(
+                        text="🌐 Language / Язык",
+                        callback_data="lng:menu", style="primary",
+                    )],
+                ]
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=owner_setup_step_rich(
+                        bot_name=bot_name, timezone=data.timezone,
+                        action=action,
+                    ),
+                    classic_html=owner_setup_step_classic(
+                        bot_name=bot_name, timezone=data.timezone,
+                        action=action,
+                    ),
+                    reply_markup=_markup(wizard_rows),
+                )
+                return
             view = {
                 "bot_status": owner_runtime_label(data.bot_runtime_label),
                 "channels_count": sum(
@@ -1148,6 +1193,7 @@ def create_owner_setup_router(
             )
             return
         currency = str(data["currency"])
+        first_choice = data.get("currency_selected") is False
         label = (
             tr("🇺🇸 USD · $5/мес.", "🇺🇸 USD · $5/month")
             if currency == "USD"
@@ -1171,21 +1217,29 @@ def create_owner_setup_router(
         keyboard = _markup([
             [
                 _button(
-                    ("✅ " if currency == "RUB" else "") + "🇷🇺 RUB · 150 ₽",
+                    ("✅ " if currency == "RUB" and not first_choice else "")
+                    + "🇷🇺 RUB · 150 ₽",
                     "saasprice:RUB",
                     "success" if currency == "RUB" else "primary",
                 ),
                 _button(
-                    ("✅ " if currency == "USD" else "") + "🇺🇸 USD · $5",
+                    ("✅ " if currency == "USD" and not first_choice else "")
+                    + "🇺🇸 USD · $5",
                     "saasprice:USD",
                     "success" if currency == "USD" else "primary",
                 ),
             ],
-            [_button(tr("⬅️ К счёту", "⬅️ Back to bill"), "saasinvoices:0")],
+            [_button(
+                tr("⬅️ К настройке", "⬅️ Back to setup") if first_choice
+                else tr("⬅️ К счёту", "⬅️ Back to bill"),
+                "dashboard" if first_choice else "saasinvoices:0",
+            )],
         ])
         heading = tr(
-            "💱 Валюта обслуживания",
-            "💱 Service currency",
+            "💱 4/4 · Выберите валюту обслуживания" if first_choice
+            else "💱 Валюта обслуживания",
+            "💱 4/4 · Choose service currency" if first_choice
+            else "💱 Service currency",
         )
         await send_owner_rich(
             bot, chat_id=user_id,
@@ -4638,6 +4692,10 @@ def create_owner_setup_router(
                 chosen_price = action.split(":", 1)[1]
                 if chosen_price not in ("RUB", "USD"):
                     raise ValueError("Invalid service billing profile")
+                previous_profile = await saas_price_profile(
+                    factory, actor_id=actor_id, project_id=fixed_project_id,
+                )
+                was_initial = previous_profile.get("currency_selected") is False
                 try:
                     changed = await saas_price_profile(
                         factory, actor_id=actor_id,
@@ -4662,8 +4720,16 @@ def create_owner_setup_router(
                     raise
                 if str(changed["currency"]) != chosen_price:
                     raise RuntimeError("Future ViMi Pay tariff did not persist")
-                await show_saas_service_profile(bot, user_id, actor_id)
+                if was_initial:
+                    await show_dashboard(
+                        bot, user_id, actor_id, fixed_project_id,
+                    )
+                else:
+                    await show_saas_service_profile(bot, user_id, actor_id)
                 await query.answer(tr(
+                    "✅ Валюта обслуживания выбрана.",
+                    "✅ Service currency selected.",
+                ) if was_initial else tr(
                     "✅ Валюта будущих счетов изменена.",
                     "✅ Future invoice currency updated.",
                 ))
