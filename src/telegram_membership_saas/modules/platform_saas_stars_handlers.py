@@ -18,13 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.modules.platform_saas_crypto_client import verify_platform_crypto_app
 from telegram_membership_saas.modules.platform_saas_stars_service import (
     confirm_platform_stars_charge,
     create_platform_stars_order,
     platform_stars_precheckout,
-    platform_stars_rate,
+    platform_stars_usd_policy,
     record_platform_stars_refund,
-    set_platform_stars_rate,
+    configure_platform_stars_usd_policy,
 )
 from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid
 
@@ -211,60 +212,74 @@ def create_platform_saas_stars_router(
             )
 
     @router.message(Command("saasrails"))
-    async def platform_rails_readiness(
-        message: Message, bot: Bot,
-    ) -> None:
-        """Owner-only configuration check; never contact or charge providers.
-
-        Useful before real acceptance testing of the three platform rails.
-        No credential, offer identifier, invoice or payout amount leaks to
-        merchant accounts, logs or other chats.
-        """
+    async def platform_rails_readiness(message: Message, bot: Bot) -> None:
+        """Only the platform owner may inspect read-only rail readiness."""
         settings = get_settings()
         actor = message.from_user
         if (
             settings.telegram_central_access_enabled
             or settings.platform_owner_telegram_id is None
             or actor is None
-            or message.chat.type != "private"
-            or message.chat.id != actor.id
+            or message.chat.type != "private" or message.chat.id != actor.id
             or actor.id != settings.platform_owner_telegram_id
         ):
             return
 
         def has_secret(value: object) -> bool:
-            return bool(
-                value is not None and value.get_secret_value().strip()
-            )
+            return bool(value is not None and value.get_secret_value().strip())
 
         lava_ready = (
             has_secret(settings.saas_lava_top_api_key)
             and settings.saas_lava_top_offer_id is not None
         )
-        crypto_ready = has_secret(settings.saas_crypto_pay_api_token)
-        if settings.environment == "production" and settings.saas_crypto_pay_testnet:
-            # The provider adapter itself rejects production testnet checkout.
-            crypto_ready = False
-
         try:
-            rate = await platform_stars_rate(
+            policy = await platform_stars_usd_policy(
                 factory, operator_telegram_id=actor.id,
             )
         except Exception:
-            LOG.warning("Platform Stars rail readiness could not be checked")
-            stars_status = tr(
-                "⚠️ Проверка ставки недоступна",
-                "⚠️ Payout-rate check unavailable",
-            )
+            LOG.warning("Platform USD Stars quote readiness unavailable")
+            stars_status = tr("⚠️ Не удалось проверить USD-котировку",
+                              "⚠️ USD quote check unavailable")
         else:
+            quote = (
+                "$5 → " + str(policy["example_stars"]) + " ⭐ ("
+                + str(policy["usd_per_star"]) + " USD/⭐, "
+                + str(policy["withdrawal_reserve_pct"]) + "% "
+                + tr("резерв на вывод)", "withdrawal reserve)")
+            )
             stars_status = (
-                tr("✅ Ставка задана: ", "✅ Rate configured: ")
-                + f"{rate} ₽ / ⭐"
-                if rate is not None
-                else tr(
-                    "⚪ Ставка не задана. Команда: /saasstarsrate",
-                    "⚪ Rate not set. Use /saasstarsrate",
+                "✅ " + quote if policy["enabled"]
+                else tr("⚪ Выключено. Включить: /saasstarsrate 0.013 5. ",
+                        "⚪ Disabled. Enable: /saasstarsrate 0.013 5. ") + quote
+            )
+
+        crypto_ready = has_secret(settings.saas_crypto_pay_api_token)
+        if (
+            crypto_ready and settings.environment == "production"
+            and settings.saas_crypto_pay_testnet
+        ):
+            crypto_status = tr("⛔ Testnet запрещён в production",
+                               "⛔ Testnet is prohibited in production")
+        elif crypto_ready:
+            try:
+                verified = await verify_platform_crypto_app(settings)
+            except Exception:
+                LOG.warning("Crypto Pay platform app getMe check unavailable")
+                verified = False
+            crypto_status = (
+                tr("✅ API-токен подтверждён Crypto Pay",
+                   "✅ Crypto Pay confirmed the API token")
+                if verified else tr(
+                    "⚠️ Токен задан, но провайдер не подтвердил приложение",
+                    "⚠️ Token configured; provider app verification failed",
                 )
+            )
+            if settings.saas_crypto_pay_testnet:
+                crypto_status += " (testnet)"
+        else:
+            crypto_status = tr(
+                "⚪ Нет отдельного API-токена платформы",
+                "⚪ Separate platform API token is missing",
             )
 
         lava_status = (
@@ -274,33 +289,17 @@ def create_platform_saas_stars_router(
                 "⚪ API key and offer are needed",
             )
         )
-        crypto_status = (
-            tr("✅ API-токен задан", "✅ API token configured")
-            if crypto_ready else tr(
-                "⚪ Нет подходящего API-токена",
-                "⚪ Valid-environment API token not configured",
-            )
-        )
-        if crypto_ready and settings.saas_crypto_pay_testnet:
-            crypto_status += tr(
-                " (тестовая сеть)", " (testnet)",
-            )
-
         await bot.send_message(
             actor.id,
-            tr(
-                "🔎 <b>Готовность оплаты счетов ViMi Pay</b>",
-                "🔎 <b>ViMi Pay invoice rail readiness</b>",
-            )
+            tr("🔎 <b>Готовность оплаты счетов ViMi Pay</b>",
+               "🔎 <b>ViMi Pay invoice rail readiness</b>")
             + "\n\n💳 Lava.top: " + lava_status
             + "\n⭐ Telegram Stars: " + stars_status
             + "\n💎 Crypto Pay: " + crypto_status
             + "\n\n"
             + tr(
-                "Это проверка настроек, НЕ подтверждение работы провайдеров. "
-                "Счета, деньги и подписки не изменены.",
-                "Configuration only, NOT proof of live provider availability. "
-                "Invoices, funds and subscriptions are unchanged.",
+                "Проверка не создаёт счета и не подтверждает платежи.",
+                "This does not create invoices or confirm any payment.",
             ),
             parse_mode="HTML",
         )
@@ -309,61 +308,70 @@ def create_platform_saas_stars_router(
     async def configure_platform_stars_rate(
         message: Message, bot: Bot,
     ) -> None:
+        """Set a USD payout reward and withdrawal reserve; never RUB/Star."""
+        settings = get_settings()
         if (
-            message.chat.type != "private" or message.from_user is None
+            settings.telegram_central_access_enabled
+            or settings.platform_owner_telegram_id is None
+            or message.chat.type != "private"
+            or message.from_user is None
             or message.from_user.id != message.chat.id
+            or message.from_user.id != settings.platform_owner_telegram_id
         ):
             return
-        args = (message.text or "").split(maxsplit=1)
+        args = (message.text or "").split()
         try:
-            if len(args) == 2:
-                rate = Decimal(args[1].replace(",", "."))
-                value = await set_platform_stars_rate(
+            if len(args) == 1:
+                policy = await platform_stars_usd_policy(
                     factory, operator_telegram_id=message.from_user.id,
-                    rub_per_star=rate,
+                )
+            elif len(args) == 2 and args[1].lower() == "off":
+                current = await platform_stars_usd_policy(
+                    factory, operator_telegram_id=message.from_user.id,
+                )
+                policy = await configure_platform_stars_usd_policy(
+                    factory, operator_telegram_id=message.from_user.id,
+                    usd_per_star=Decimal(current["usd_per_star"]),
+                    reserve_percent=Decimal(current["withdrawal_reserve_pct"]),
+                    enabled=False,
+                )
+            elif len(args) == 3:
+                policy = await configure_platform_stars_usd_policy(
+                    factory, operator_telegram_id=message.from_user.id,
+                    usd_per_star=Decimal(args[1].replace(",", ".")),
+                    reserve_percent=Decimal(args[2].replace(",", ".")),
+                    enabled=True,
                 )
             else:
-                value = await platform_stars_rate(
-                    factory, operator_telegram_id=message.from_user.id,
-                )
+                raise ValueError("Expected USD reward and reserve")
         except (InvalidOperation, ValueError):
             await bot.send_message(
                 message.chat.id,
-                tr(
-                    "Укажите проверенный доход платформы в ₽ за 1 ⭐: "
-                    "/saasstarsrate 2.50",
-                    "Enter the verified platform RUB payout per 1 ⭐: "
-                    "/saasstarsrate 2.50",
-                ),
+                tr("Укажите USD за ⭐ и резерв вывода в %: "
+                   "/saasstarsrate 0.013 5. Выключить: /saasstarsrate off",
+                   "Enter USD per ⭐ and withdrawal reserve %: "
+                   "/saasstarsrate 0.013 5. Disable: /saasstarsrate off"),
             )
-            return
-        except PermissionError:
-            # Never reveal the operator's rate to ordinary merchant accounts.
             return
         except Exception:
-            LOG.warning("Platform Stars operator pricing unavailable")
+            LOG.warning("Platform USD Stars policy unavailable")
             await bot.send_message(
                 message.chat.id,
-                tr(
-                    "⚠️ Курс ⭐ Telegram Stars пока недоступен.",
-                    "⚠️ ⭐ Telegram Stars payout rate is unavailable.",
-                ),
+                tr("⚠️ USD-котировка Stars сейчас недоступна.",
+                   "⚠️ Stars USD quotation is unavailable."),
             )
             return
-        if value is None:
-            await bot.send_message(
-                message.chat.id,
-                tr(
-                    "⭐ Курс выплат ещё не задан. Оплата Stars закрыта.",
-                    "⭐ Payout rate not set yet. Stars checkout is disabled.",
-                ),
-            )
-        else:
-            await bot.send_message(
-                message.chat.id,
-                tr("⭐ Курс выплат платформы: ", "⭐ Platform payout quote: ")
-                + f"{value} ₽ / ⭐",
-            )
+        await bot.send_message(
+            message.chat.id,
+            ("✅ " if policy["enabled"] else "⏸️ ")
+            + tr("USD-котировка ⭐ Telegram Stars: ",
+                 "⭐ Telegram Stars USD quote: ")
+            + "$5 → " + str(policy["example_stars"]) + " ⭐\n"
+            + str(policy["usd_per_star"]) + " USD/⭐, "
+            + str(policy["withdrawal_reserve_pct"]) + "% "
+            + tr("резерв на вывод. Только новые счета.",
+                 "withdrawal reserve. New checkout quotes only."),
+        )
 
     @router.message(Command("paysupport"))
     async def platform_stars_pay_support(
