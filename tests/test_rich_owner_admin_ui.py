@@ -207,8 +207,11 @@ async def test_rich_send_preserves_exact_keyboard_and_avoids_double_send(monkeyp
     )
     kwargs = bot.send_rich_message.await_args.kwargs
     assert kwargs["chat_id"] == 123
-    assert kwargs["rich_message"].html == "<h3>Rich</h3>"
-    assert kwargs["reply_markup"] is keyboard
+    assert kwargs["rich_message"].html.startswith("<h3>Rich</h3>")
+    assert '<tg-button-row>' in kwargs["rich_message"].html
+    assert 'data="own:subactivate:abc"' in kwargs["rich_message"].html
+    assert 'data="own:subcancel:abc"' in kwargs["rich_message"].html
+    assert "reply_markup" not in kwargs
     bot.send_message.assert_not_awaited()
 
     bot.send_rich_message.side_effect = ConnectionError("timeout after delivery")

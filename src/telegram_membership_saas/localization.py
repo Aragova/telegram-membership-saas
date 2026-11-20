@@ -54,6 +54,24 @@ def _language_keyboard() -> InlineKeyboardMarkup:
     ]])
 
 
+async def has_explicit_language_choice(
+    factory: async_sessionmaker[AsyncSession], telegram_id: int,
+) -> bool:
+    """Never show first-run language questions again after explicit selection."""
+    try:
+        async with factory() as session:
+            preferred = await session.scalar(
+                select(TelegramUser.preferred_language).where(
+                    TelegramUser.telegram_user_id == telegram_id,
+                )
+            )
+        return preferred in {"ru", "en"}
+    except Exception:
+        # A temporary language read failure must not block first-run bot setup.
+        logger.warning("Could not read explicit onboarding language selection")
+        return False
+
+
 async def read_language(
     factory: async_sessionmaker[AsyncSession],
     telegram_id: int,

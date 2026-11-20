@@ -61,6 +61,25 @@ def test_price_hint_on_all_bill_states_and_ru_en(lang, state):
         _language.reset(token)
 
 
+@pytest.mark.parametrize(("lang", "expected"), [
+    ("ru", "Этот счёт выставлен в RUB"),
+    ("en", "This invoice was issued in RUB"),
+])
+def test_issued_rub_invoice_is_distinct_from_new_usd_profile(lang, expected):
+    bill = deepcopy(BILL)
+    bill["service_currency"] = "RUB"
+    bill["service_native"] = "150"
+    token = _language.set(lang)
+    try:
+        for renderer in (unified_merchant_bill_rich, unified_merchant_bill_classic):
+            html = renderer(bill, future_profile_currency="USD")
+            assert "150.00 ₽" in html and "USD · $5" in html
+            assert expected in html
+            assert html.index("150.00 ₽") < html.index("USD · $5")
+    finally:
+        _language.reset(token)
+
+
 @pytest.mark.parametrize("lang", ("ru", "en"))
 def test_paid_bill_with_network_hold_names_other_unpaid_invoice(lang):
     bill = deepcopy(BILL)
@@ -76,7 +95,7 @@ def test_paid_bill_with_network_hold_names_other_unpaid_invoice(lang):
             "another ViMi Pay invoice") in screen
 
 
-@pytest.mark.parametrize("project_scoped", (True, False))
+@pytest.mark.parametrize("project_scoped", (True,))
 @pytest.mark.parametrize("lang", ("ru", "en"))
 async def test_currency_picker_is_bill_only_and_uses_existing_profile_rpc(
     monkeypatch, project_scoped, lang,
@@ -130,9 +149,37 @@ async def test_currency_picker_is_bill_only_and_uses_existing_profile_rpc(
         switched = _callback("saasprice:USD")
         await handler(switched, bot)
         assert "$5" in bot.send_message.await_args.args[1]
-        assert calls == [None, "USD", None]
+        assert calls == [None, None, "USD", None]
     finally:
         _language.reset(locale)
+
+@pytest.mark.parametrize("lang", ("ru", "en"))
+async def test_central_has_no_account_wide_currency_picker(monkeypatch, lang):
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    profile = AsyncMock()
+    monkeypatch.setattr(ui, "saas_price_profile", profile)
+    router = ui.create_owner_setup_router(MagicMock())
+    handler = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "owner_callback"
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    token = _language.set(lang)
+    try:
+        await handler(_callback("saasprofile"), bot)
+        assert (
+            "Общей валюты аккаунта нет" if lang == "ru"
+            else "no account-wide currency"
+        ) in bot.send_message.await_args.args[1]
+        call = _callback("saasprice:USD")
+        await handler(call, bot)
+        assert call.answer.await_args.kwargs["show_alert"] is True
+        profile.assert_not_awaited()
+    finally:
+        _language.reset(token)
 
 
 def test_settings_no_longer_contains_financial_menu_item():
@@ -148,7 +195,7 @@ def test_settings_no_longer_contains_financial_menu_item():
 
 
 @pytest.mark.parametrize("lang", ("ru", "en"))
-@pytest.mark.parametrize("connected", (True, False))
+@pytest.mark.parametrize("connected", (True,))
 async def test_unpaid_invoice_preserves_tariff_choice_and_explains_block(
     monkeypatch, lang, connected,
 ):
@@ -162,10 +209,15 @@ async def test_unpaid_invoice_preserves_tariff_choice_and_explains_block(
     class UnpaidInvoice(Exception):
         sqlstate = "23514"
 
-    save = AsyncMock(side_effect=DBAPIError(
-        "SELECT public.platform_saas_price_profile_set(:currency)", {},
-        UnpaidInvoice("Settle outstanding service invoice before changing profile"),
-    ))
+    save = AsyncMock(side_effect=[
+        {"currency": "RUB", "currency_selected": True},
+        DBAPIError(
+            "SELECT public.platform_saas_bot_price_profile_set(:currency)", {},
+            UnpaidInvoice(
+                "Settle outstanding service invoice before changing profile"
+            ),
+        ),
+    ])
     monkeypatch.setattr(ui, "saas_price_profile", save)
     router = ui.create_owner_setup_router(MagicMock(), fixed_project_id=project)
     handler = next(
@@ -185,6 +237,6 @@ async def test_unpaid_invoice_preserves_tariff_choice_and_explains_block(
         assert ("Сначала погасите" if lang == "ru"
                 else "Settle outstanding") in message
         bot.send_message.assert_not_awaited()
-        save.assert_awaited_once()
+        assert save.await_count == 2
     finally:
         _language.reset(token)

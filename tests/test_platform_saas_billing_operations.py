@@ -194,6 +194,27 @@ async def test_opt_in_owner_bot_invoice_receipt_idempotent_and_self_exempt():
                 assert own is None
                 assert own_merchant != merchant_id
                 assert own_project != project
+                # Newly registered commercial bots must make an explicit
+                # RUB/USD choice before any new service bill is immutable.
+                with pytest.raises(DBAPIError) as unconfirmed:
+                    async with admin.begin_nested():
+                        await admin.execute(text(
+                            "SELECT public.platform_saas_issue_bot_invoice("
+                            ":bot,:start,:end)"
+                        ), {
+                            "bot": bot, "start": start, "end": end,
+                        })
+                assert getattr(unconfirmed.value.orig, "sqlstate", None) == "42501"
+                assert "Confirm bot service currency" in str(
+                    unconfirmed.value.orig
+                )
+                await _actor(admin, merchant)
+                choice = (await admin.execute(text(
+                    "SELECT public.platform_saas_bot_price_profile_set("
+                    ":project,'RUB') AS profile"
+                ).columns(profile=JSONB), {"project": project})).scalar_one()
+                assert choice["currency"] == "RUB"
+                await _actor(admin, operator)
                 invoice = (await admin.execute(text(
                     "SELECT public.platform_saas_issue_bot_invoice("
                     ":bot,:start,:end)"

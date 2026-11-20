@@ -99,9 +99,10 @@ async def test_first_start_has_direct_bot_connection_button(monkeypatch):
         button.text for row in sent.kwargs["reply_markup"].inline_keyboard
         for button in row
     ]
-    assert "✨ Создать бота" in buttons
-    assert "🔑 Через BotFather" in buttons
-    assert any("Language" in text for text in buttons)
+    assert "🔐 Платные подписки" in buttons
+    assert "🇷🇺 Русский" in buttons
+    assert "🇬🇧 English" in buttons
+    assert "✨ Создать бота" not in buttons
 
 
 async def test_central_start_shows_connection_registry_without_raw_uuids(monkeypatch):
@@ -124,6 +125,82 @@ async def test_central_start_shows_connection_registry_without_raw_uuids(monkeyp
     assert project_id.hex not in sent.args[1]
     assert str(project_id) not in sent.args[1]
     assert "runtime" not in sent.args[1]
+
+
+async def test_central_connected_menu_has_rich_card_and_colored_two_column_actions(
+    monkeypatch,
+):
+    """A working connection must not show first-time onboarding instructions."""
+    project = uuid4()
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(
+        ui, "owner_home",
+        AsyncMock(return_value=OwnerHome(((project, "My Premium"),), project)),
+    )
+    monkeypatch.setattr(
+        ui, "setup_overview", AsyncMock(return_value=_overview(project)),
+    )
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
+    bot = _bot()
+    await _handler("home_message")(_message(text="/menu"), bot)
+    args = bot.send_message.await_args
+    screen = args.args[1]
+    rows = args.kwargs["reply_markup"].inline_keyboard
+    assert "Ваши подключения" in screen
+    assert "my_owner_bot" in screen
+    assert "Подключите бота и продолжите" not in screen
+    assert [len(row) for row in rows[:3]] == [2, 2, 2]
+    assert [[b.style for b in row] for row in rows[:3]] == [
+        ["success", "success"], ["primary", "primary"],
+        ["success", "success"],
+    ]
+    assert rows[0][0].url == "https://t.me/my_owner_bot"
+    assert rows[0][1].callback_data == "own:bots"
+    assert [b.callback_data for b in rows[1]] == [
+        "own:projects", "own:saasinvoices:0",
+    ]
+    assert [b.callback_data for b in rows[2]] == [
+        "own:help", "lng:menu",
+    ]
+
+
+def test_central_connected_card_rich_and_classic_agree_on_navigation():
+    from telegram_membership_saas.localization import _language
+    from telegram_membership_saas.modules.owner_setup.premium_welcome import (
+        central_connection_classic,
+        central_connection_rich,
+    )
+
+    token = _language.set("ru")
+    try:
+        rich = central_connection_rich(
+            project_name="My <Premium>", bot_username="my_owner_bot",
+            runtime_label="🟢 Работает",
+        )
+        classic = central_connection_classic(
+            project_name="My <Premium>", bot_username="my_owner_bot",
+            runtime_label="🟢 Работает",
+        )
+        assert "<table bordered compact>" in rich
+        assert "My &lt;Premium&gt;" in rich and "My &lt;Premium&gt;" in classic
+        assert "https://" not in rich
+        assert "тарифы и продажи" in rich
+        assert "Подключите бота и продолжите" not in classic
+    finally:
+        _language.reset(token)
+
+    token = _language.set("en")
+    try:
+        card = central_connection_rich(
+            project_name="My Premium", bot_username=None,
+            runtime_label="⚪ Pending",
+        )
+        assert "Your connections" in card and "Bot not connected" in card
+        assert "Connect a bot and finish setup" not in card
+    finally:
+        _language.reset(token)
 
 
 async def test_token_is_deleted_before_registering(monkeypatch):

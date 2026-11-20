@@ -77,7 +77,10 @@ async def test_bot_invoice_has_single_pay_and_home(monkeypatch, lang):
     assert buttons[1].callback_data == "own:saasprofile"
     assert buttons[2].callback_data == "own:dashboard"
     rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
-    assert [len(row) for row in rows] == [1, 1, 1]
+    # Payment remains a prominent green single action; navigation is a
+    # compact blue/green two-column row, no duplicate Pay button.
+    assert [len(row) for row in rows] == [1, 2]
+    assert [b.style for b in rows[1]] == ["primary", "success"]
     assert ("Новые счета" if lang == "ru" else
             "Future bills") in body
     assert "150" in body
@@ -155,10 +158,10 @@ async def test_unissued_bot_bill_still_offers_service_currency(monkeypatch):
     bot.send_message = AsyncMock()
     await _handler(project)(_callback("saasinvoices:0"), bot)
     rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
-    assert len(rows) == 2
-    assert [row[0].callback_data for row in rows] == [
+    assert len(rows) == 1
+    assert [b.callback_data for b in rows[0]] == [
         "own:saasprofile", "own:dashboard",
     ]
-    assert all(len(row) == 1 for row in rows)
+    assert [b.style for b in rows[0]] == ["primary", "success"]
     body = bot.send_message.await_args.args[1]
     assert "USD" in body and "$5" in body

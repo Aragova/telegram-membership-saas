@@ -38,7 +38,12 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
-from telegram_membership_saas.localization import current_language, recipient_language, tr
+from telegram_membership_saas.localization import (
+    current_language,
+    has_explicit_language_choice,
+    recipient_language,
+    tr,
+)
 from telegram_membership_saas.modules import platform_saas_gateway_handlers as gateway_ui
 from telegram_membership_saas.modules import platform_saas_lava_handlers as lava_ui
 from telegram_membership_saas.modules import platform_saas_stars_handlers as stars_ui
@@ -164,6 +169,10 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
     retry_owner_access,
     revoke_owner_grant,
 )
+from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
+    owner_setup_step_classic,
+    owner_setup_step_rich,
+)
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     archive_owner_plan,
     delete_unused_owner_plan,
@@ -172,6 +181,8 @@ from telegram_membership_saas.modules.owner_setup.plan_management import (
     rename_owner_plan,
 )
 from telegram_membership_saas.modules.owner_setup.premium_welcome import (
+    central_connection_classic,
+    central_connection_rich,
     central_welcome_classic,
     central_welcome_rich,
     trial_status_classic,
@@ -762,10 +773,32 @@ def create_owner_setup_router(
             lines.append(tr("Выберите проект для управления:", "Select a connection to manage:"))
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
-        rows.append([
-            _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
-            _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
-        ])
+        # First-run language is asked only until the explicit preference
+        # exists. The callback returns to /menu in the chosen language.
+        language_selected = (
+            await has_explicit_language_choice(factory, user_id)
+            if fixed_project_id is None and not home.projects else True
+        )
+        if not language_selected:
+            rows.append([
+                InlineKeyboardButton(
+                    text="🇷🇺 Русский", callback_data="lng:set:ru",
+                    style="success",
+                ),
+                InlineKeyboardButton(
+                    text="🇬🇧 English", callback_data="lng:set:en",
+                    style="primary",
+                ),
+            ])
+        rows.append([_button(
+            tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
+            "substart", "success",
+        )])
+        if language_selected:
+            rows.append([InlineKeyboardButton(
+                text="🌐 Language / Язык", callback_data="lng:menu",
+                style="primary",
+            )])
         # Account-level bills remain reachable even with zero connections.
         rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
                      "saasinvoices:0")])
@@ -775,8 +808,12 @@ def create_owner_setup_router(
         if not home.projects:
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html=central_welcome_rich(),
-                classic_html=central_welcome_classic(),
+                rich_html=central_welcome_rich(
+                    language_selected=language_selected,
+                ),
+                classic_html=central_welcome_classic(
+                    language_selected=language_selected,
+                ),
                 reply_markup=_markup(rows),
             )
         else:
@@ -785,6 +822,53 @@ def create_owner_setup_router(
                 parse_mode="HTML", reply_markup=_markup(rows),
             )
 
+    async def show_subscription_start(bot: Bot, user_id: int) -> None:
+        """Future-proof product choice; only supported subscriptions are shown."""
+        rows = [
+            [
+                _button(
+                    tr("✨ Создать бота", "✨ Create bot"),
+                    "newmanaged", "success",
+                ),
+                _button(
+                    tr("🔑 Через BotFather", "🔑 Via BotFather"),
+                    "new", "primary",
+                ),
+            ],
+            [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
+        ]
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=(
+                "<h3>" + tr("🔐 Платные подписки", "🔐 Paid subscriptions")
+                + "</h3><p>" + tr(
+                    "Продавайте доступ к закрытым каналам и группам, "
+                    "автоматически управляйте тарифами, платежами и сроками.",
+                    "Sell access to private channels and groups and manage "
+                    "plans, payments and access periods automatically.",
+                ) + "</p><p><b>" + tr(
+                    "Как создадим вашего бота?",
+                    "How should we create your bot?",
+                ) + "</b></p><p>" + tr(
+                    "✨ Автоматически через Telegram или 🔑 вручную через "
+                    "@BotFather. Для существующего бота выберите BotFather.",
+                    "✨ Automatically through Telegram or 🔑 manually using "
+                    "@BotFather. Select BotFather for an existing bot.",
+                ) + "</p>"
+            ),
+            classic_html=(
+                tr("🔐 <b>Платные подписки</b>", "🔐 <b>Paid subscriptions</b>")
+                + "\n\n" + tr(
+                    "Создайте бота для продажи доступа к каналам и группам. "
+                    "✨ Автоматическое создание или 🔑 подключение "
+                    "через BotFather.",
+                    "Create a bot to sell access to channels and groups. "
+                    "✨ Automatic creation or 🔑 connect through BotFather.",
+                )
+            ),
+            reply_markup=_markup(rows),
+        )
+
     async def show_dashboard(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
     ) -> None:
@@ -792,25 +876,76 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
         )
         if fixed_project_id is None:
-            # Central is a connection manager, not a tenant sales console.
-            text = (
-                tr("✦ <b>ViMi Pay</b>\n<i>Ваши подключения</i>\n\n",
-                   "✦ <b>ViMi Pay</b>\n<i>Your connections</i>\n\n") +
-                f"🤖 <b>{escape(data.project_name)}</b>\n"
-                f"{escape(owner_runtime_label(data.bot_runtime_label))}\n\n"
-                + tr("Подключите бота и продолжите настройку внутри него.",
-                     "Connect a bot and finish setup inside that bot.")
+            # Central is a connection control panel, not a tenant sales console.
+            # Actions use existing callbacks; the bot link opens the real
+            # connected tenant admin rather than another central submenu.
+            connected = next(
+                (username for _, username, status in data.bot_instances
+                 if status == "registered"), None,
+            ) or next(
+                (username for username, status in data.bots
+                 if status == "registered"), None,
             )
-            rows = [
-                [_button("🤖 Управление ботом", "bots", "success")],
-                [_button("📁 Все подключения", "projects")],
-                [_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-                     "saasinvoices:0")],
-                [_button("❔ Как это работает", "help")],
-                [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
-            ]
+            runtime = owner_runtime_label(data.bot_runtime_label)
+            if connected:
+                rows = [[
+                    InlineKeyboardButton(
+                        text=tr("🚀 Открыть бота", "🚀 Open bot"),
+                        url="https://t.me/" + connected,
+                        style="success",
+                    ),
+                    _button(
+                        tr("⚙️ Управление", "⚙️ Manage"), "bots", "success",
+                    ),
+                ]]
+            else:
+                rows = [[
+                    _button(
+                        tr("⚙️ Подключить бота", "⚙️ Connect bot"),
+                        "bots", "success",
+                    ),
+                    _button(
+                        tr("✨ Создать бота", "✨ Create bot"),
+                        "newmanaged", "success",
+                    ),
+                ]]
+            # Alternating green/blue rows, always two actions per row.
+            rows.extend([
+                [
+                    _button(
+                        tr("📁 Все подключения", "📁 All connections"),
+                        "projects", "primary",
+                    ),
+                    _button(
+                        tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay bills"),
+                        "saasinvoices:0", "primary",
+                    ),
+                ],
+                [
+                    _button(
+                        tr("❔ Как это работает", "❔ How it works"),
+                        "help", "success",
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 Language / Язык",
+                        callback_data="lng:menu", style="success",
+                    ),
+                ],
+            ])
             if platform_navigation(user_id):
                 rows.append(platform_navigation(user_id))
+            await send_owner_rich(
+                bot, chat_id=user_id,
+                rich_html=central_connection_rich(
+                    project_name=data.project_name, bot_username=connected,
+                    runtime_label=runtime,
+                ),
+                classic_html=central_connection_classic(
+                    project_name=data.project_name, bot_username=connected,
+                    runtime_label=runtime,
+                ),
+                reply_markup=_markup(rows),
+            )
         else:
             next_step = _next_setup_step(data)
             # Delegated project admins can manage the bot but do not own
@@ -842,11 +977,12 @@ def create_owner_setup_router(
                 trial_status_classic(trial, timezone=data.timezone)
                 if trial is not None else ""
             )
+            service_summary = None
             if trial is not None and trial.get("state") == "ended":
                 # Trial eligibility never resets on payment. Consult the
                 # existing authenticated invoice report for ACTIVE service.
                 try:
-                    service = await merchant_saas_bill_summary(
+                    service_summary = await merchant_saas_bill_summary(
                         factory, actor_user_id=actor_id,
                         month=datetime.now(
                             ZoneInfo("Europe/Moscow")
@@ -855,7 +991,7 @@ def create_owner_setup_router(
                     )
                     trial_banner = (
                         _paid_service_status_text(
-                            service, timezone=data.timezone,
+                            service_summary, timezone=data.timezone,
                         ) or trial_banner
                     )
                 except Exception:
@@ -880,8 +1016,112 @@ def create_owner_setup_router(
                 finances = DashboardFinances(
                     bot_stars=None, channels=(), available=False,
                 )
+            # The connected bot owns this profile; no central/global
+            # currency is involved. Failure to read finances never fabricates
+            # a settled invoice or a zero debt.
+            currency = None
+            debt_label = None
+            profile = None
+            try:
+                profile = await saas_price_profile(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                currency = str(profile["currency"])
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "ViMi Pay per-bot service currency unavailable",
+                )
+            if service_summary is None:
+                try:
+                    service_summary = await merchant_saas_bill_summary(
+                        factory, actor_user_id=actor_id,
+                        month=datetime.now(
+                            ZoneInfo("Europe/Moscow")
+                        ).date().replace(day=1),
+                        project_id=project_id,
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ViMi Pay per-bot invoice summary unavailable",
+                    )
+            if service_summary is not None:
+                try:
+                    outstanding = Decimal(str(service_summary["total_due_rub"]))
+                    if (service_summary.get("service_currency") == "USD"
+                            and service_summary.get("issued_due_usd") is not None):
+                        debt_label = "$" + format(Decimal(str(
+                            service_summary["issued_due_usd"],
+                        )), ".2f")
+                    else:
+                        debt_label = format(outstanding, ".2f") + " ₽"
+                except (TypeError, ValueError, KeyError):
+                    pass
+            # Existing bots are grandfathered in by migration 0102.
+            # Newly registered bots get a real 4-step wizard instead of the
+            # dense dashboard; all actions reuse established handlers.
+            if profile is not None and profile.get("currency_selected") is False:
+                if next_step is None:
+                    next_step = (
+                        tr("💱 4/4 · Валюта обслуживания",
+                           "💱 4/4 · Service currency"),
+                        "saasprofile",
+                    )
+                label, action = next_step
+                bot_name = (
+                    data.live_bot_username
+                    or next((username for username, status in data.bots
+                             if status == "registered"), "")
+                    or data.project_name
+                )
+                wizard_rows = [
+                    [
+                        _button(label, action, "success"),
+                        _button(tr("❔ Помощь", "❔ Help"), "help", "primary"),
+                    ],
+                    [InlineKeyboardButton(
+                        text="🌐 Language / Язык",
+                        callback_data="lng:menu", style="primary",
+                    )],
+                ]
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=owner_setup_step_rich(
+                        bot_name=bot_name, timezone=data.timezone,
+                        action=action,
+                    ),
+                    classic_html=owner_setup_step_classic(
+                        bot_name=bot_name, timezone=data.timezone,
+                        action=action,
+                    ),
+                    reply_markup=_markup(wizard_rows),
+                )
+                return
             view = {
-                "project_name": data.project_name,
+                "bot_status": (
+                    tr("🟢 Работает", "🟢 Running")
+                    if data.bot_running else
+                    owner_runtime_label(data.bot_runtime_label)
+                ),
+                "channels_count": sum(
+                    status == "active" for _, _, status in data.resources
+                ),
+                "active_plans_count": sum(
+                    status == "active" for _, _, status in data.plans
+                ),
+                "payment_ready": bool(data.sales_configured),
+                "service_currency": currency,
+                "service_debt": debt_label,
+                "project_name": (
+                    "@" + str(
+                        data.live_bot_username
+                        or next((username for username, status in data.bots
+                                 if status == "registered"), "")
+                    ).lstrip("@")
+                    if (data.live_bot_username or any(
+                        status == "registered" for _, status in data.bots
+                    ))
+                    else data.project_name
+                ),
                 "timezone": data.timezone,
                 "trial_banner": trial_banner,
                 "readiness": _readiness_steps(
@@ -926,11 +1166,7 @@ def create_owner_setup_router(
                     ),
                 ],
             ])
-        if fixed_project_id is None:
-            await bot.send_message(
-                user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
-            )
-        else:
+        if fixed_project_id is not None:
             await send_owner_rich(
                 bot, chat_id=user_id, rich_html=rich_html,
                 classic_html=text, reply_markup=_markup(rows),
@@ -963,7 +1199,17 @@ def create_owner_setup_router(
     async def show_saas_service_profile(
         bot: Bot, user_id: int, actor_id: UUID,
     ) -> None:
-        """Connected bots select their own future service currency."""
+        """Only each connected bot selects its own future service currency."""
+        if fixed_project_id is None:
+            await bot.send_message(
+                user_id, tr(
+                    "💱 Валюта обслуживания выбирается в разделе «🧾 Счёт» "
+                    "соответствующего бота. Общей валюты аккаунта нет.",
+                    "💱 Set the service currency in each bot's 🧾 Bill "
+                    "section. There is no account-wide currency.",
+                ),
+            )
+            return
         try:
             data = await saas_price_profile(
                 factory, actor_id=actor_id, project_id=fixed_project_id,
@@ -979,6 +1225,7 @@ def create_owner_setup_router(
             )
             return
         currency = str(data["currency"])
+        first_choice = data.get("currency_selected") is False
         label = (
             tr("🇺🇸 USD · $5/мес.", "🇺🇸 USD · $5/month")
             if currency == "USD"
@@ -986,6 +1233,16 @@ def create_owner_setup_router(
         )
         caption = (
             tr(
+                "Последний шаг настройки. Выберите валюту счёта именно "
+                "этого бота: 150 ₽ или $5 в месяц. Первый счёт содержит "
+                "только абонплату; далее +5% подтверждённых продаж. "
+                "Показанная сейчас валюта пока не подтверждена.",
+                "Final setup step. Choose this bot's service invoice currency: "
+                "RUB 150 or USD 5 monthly. The first invoice is service-only; "
+                "later invoices add 5% of confirmed sales. The suggested "
+                "currency has not yet been confirmed.",
+            )
+            if first_choice else tr(
                 "Только будущие счета этого бота. "
                 "При долге именно по этому боту смена недоступна.",
                 "This bot's future invoices only. "
@@ -1002,34 +1259,44 @@ def create_owner_setup_router(
         keyboard = _markup([
             [
                 _button(
-                    ("✅ " if currency == "RUB" else "") + "🇷🇺 RUB · 150 ₽",
+                    ("✅ " if currency == "RUB" and not first_choice else "")
+                    + "🇷🇺 RUB · 150 ₽",
                     "saasprice:RUB",
-                    "success" if currency == "RUB" else "primary",
+                    "success" if currency == "RUB" and not first_choice else "primary",
                 ),
                 _button(
-                    ("✅ " if currency == "USD" else "") + "🇺🇸 USD · $5",
+                    ("✅ " if currency == "USD" and not first_choice else "")
+                    + "🇺🇸 USD · $5",
                     "saasprice:USD",
-                    "success" if currency == "USD" else "primary",
+                    "success" if currency == "USD" and not first_choice else "primary",
                 ),
             ],
-            [_button(tr("⬅️ К счёту", "⬅️ Back to bill"), "saasinvoices:0")],
+            [_button(
+                tr("⬅️ К настройке", "⬅️ Back to setup") if first_choice
+                else tr("⬅️ К счёту", "⬅️ Back to bill"),
+                "dashboard" if first_choice else "saasinvoices:0",
+            )],
         ])
         heading = tr(
-            "💱 Валюта обслуживания",
-            "💱 Service currency",
+            "💱 4/4 · Выберите валюту обслуживания" if first_choice
+            else "💱 Валюта обслуживания",
+            "💱 4/4 · Choose service currency" if first_choice
+            else "💱 Service currency",
         )
         await send_owner_rich(
             bot, chat_id=user_id,
             rich_html=(
                 "<h3>" + heading + "</h3>"
                 "<table bordered compact>"
-                "<tr><th>" + tr("Сейчас", "Current") + "</th><td><b>"
+                "<tr><th>" + (tr("Предложено", "Suggested") if first_choice
+                    else tr("Сейчас", "Current")) + "</th><td><b>"
                 + label + "</b></td></tr></table>"
                 "<p>" + caption + "</p>"
             ),
             classic_html=(
                 "<b>" + heading + "</b>\n\n"
-                + tr("Сейчас: ", "Current: ") + "<b>" + label + "</b>"
+                + (tr("Предложено: ", "Suggested: ") if first_choice
+                    else tr("Сейчас: ", "Current: ")) + "<b>" + label + "</b>"
                 + "\n\n" + caption
             ),
             reply_markup=keyboard,
@@ -1045,9 +1312,6 @@ def create_owner_setup_router(
             # Current per-bot statements are opened INSIDE each connected bot.
             report = await merchant_saas_statements(
                 factory, actor_user_id=actor_id, page=page,
-            )
-            profile = await saas_price_profile(
-                factory, actor_id=actor_id, project_id=None,
             )
             rows: list[list[InlineKeyboardButton]] = []
             for item in report.invoices:
@@ -1079,15 +1343,10 @@ def create_owner_setup_router(
             if nav:
                 rows.append(nav)
             rows.append([_button(
-                tr("💱 Валюта обслуживания", "💱 Service currency"),
-                "saasprofile",
-            )])
-            rows.append([_button(
                 tr("🏠 Главное меню", "🏠 Main menu"), "projects",
             )])
             amount = format(report.outstanding_rub, ".2f") + " ₽"
             count = str(report.unpaid)
-            future = service_currency_hint(str(profile["currency"]), rich=True)
             title = tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices")
             table = (
                 "<table bordered compact><tr><th>"
@@ -1096,11 +1355,19 @@ def create_owner_setup_router(
             )
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html="<h3>" + title + "</h3>" + table + future,
+                rich_html="<h3>" + title + "</h3>" + table + "<p>" + tr(
+                    "Каждый бот имеет собственный счёт и валюту. Изменить валюту "
+                    "можно в разделе «🧾 Счёт» соответствующего бота.",
+                    "Every bot has its own invoice and currency. Change it from "
+                    "that bot's 🧾 Bill section.",
+                ) + "</p>",
                 classic_html=(
                     "<b>" + title + "</b>\n\n"
                     + tr("Неоплачено: ", "Unpaid: ") + count + " · " + amount
-                    + "\n\n" + service_currency_hint(str(profile["currency"]))
+                    + "\n\n" + tr(
+                        "Валюта выбирается отдельно в каждом боте.",
+                        "Set the currency separately in each bot.",
+                    )
                 ),
                 reply_markup=_markup(rows),
             )
@@ -1124,14 +1391,16 @@ def create_owner_setup_router(
                 "spm:" + encode_uuid(UUID(str(invoice_id))) + ":RUB:0",
                 "success",
             )])
-        rows.append([_button(
-            tr("💱 Валюта обслуживания", "💱 Service currency"),
-            "saasprofile",
-        )])
-        rows.append([_button(
-            tr("🏠 Главное меню", "🏠 Main menu"),
-            "dashboard",
-        )])
+        rows.append([
+            _button(
+                tr("💱 Валюта обслуживания", "💱 Service currency"),
+                "saasprofile", "primary",
+            ),
+            _button(
+                tr("🏠 Главное меню", "🏠 Main menu"),
+                "dashboard", "success",
+            ),
+        ])
         await send_owner_rich(
             bot, chat_id=user_id,
             rich_html=unified_merchant_bill_rich(
@@ -3759,7 +4028,7 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "newmanaged", "projects", "archives", "dashboard",
+                "new", "newmanaged", "substart", "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
@@ -3781,7 +4050,7 @@ def create_owner_setup_router(
                 return
         else:
             if action in {
-                "new", "newmanaged", "projects", "archives", "bots",
+                "new", "newmanaged", "substart", "projects", "archives", "bots",
                 "connect", "oblist",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
@@ -3798,6 +4067,10 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action == "substart":
+                await show_subscription_start(bot, user_id)
+                await query.answer()
+                return
             if action == "newmanaged":
                 if get_settings().bot_token_encryption_key is None:
                     raise ValueError(tr(
@@ -4454,9 +4727,19 @@ def create_owner_setup_router(
                 await query.answer()
                 return
             if action.startswith("saasprice:"):
+                if fixed_project_id is None:
+                    await query.answer(tr(
+                        "Откройте 🧾 Счёт своего бота",
+                        "Open your bot's 🧾 Bill",
+                    ), show_alert=True)
+                    return
                 chosen_price = action.split(":", 1)[1]
                 if chosen_price not in ("RUB", "USD"):
                     raise ValueError("Invalid service billing profile")
+                previous_profile = await saas_price_profile(
+                    factory, actor_id=actor_id, project_id=fixed_project_id,
+                )
+                was_initial = previous_profile.get("currency_selected") is False
                 try:
                     changed = await saas_price_profile(
                         factory, actor_id=actor_id,
@@ -4481,8 +4764,16 @@ def create_owner_setup_router(
                     raise
                 if str(changed["currency"]) != chosen_price:
                     raise RuntimeError("Future ViMi Pay tariff did not persist")
-                await show_saas_service_profile(bot, user_id, actor_id)
+                if was_initial:
+                    await show_dashboard(
+                        bot, user_id, actor_id, fixed_project_id,
+                    )
+                else:
+                    await show_saas_service_profile(bot, user_id, actor_id)
                 await query.answer(tr(
+                    "✅ Валюта обслуживания выбрана.",
+                    "✅ Service currency selected.",
+                ) if was_initial else tr(
                     "✅ Валюта будущих счетов изменена.",
                     "✅ Future invoice currency updated.",
                 ))

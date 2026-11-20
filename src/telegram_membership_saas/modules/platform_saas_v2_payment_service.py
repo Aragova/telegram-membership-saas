@@ -49,6 +49,7 @@ async def _rpc(
         "platform_saas_price_profile_read": (),
         "platform_saas_price_profile_set": ("currency",),
         "platform_saas_bot_price_profile_read": ("project",),
+        "platform_saas_bot_price_profile_read_v2": ("project",),
         "platform_saas_bot_price_profile_set": ("project", "currency"),
         "platform_saas_catalog_read": (),
         "platform_saas_catalog_create": ("name","instructions","currency"),
@@ -84,6 +85,7 @@ async def _rpc(
         "platform_saas_price_profile_read",
         "platform_saas_price_profile_set",
         "platform_saas_bot_price_profile_read",
+        "platform_saas_bot_price_profile_read_v2",
         "platform_saas_bot_price_profile_set",
         "platform_saas_catalog_read",
         "platform_saas_catalog_for_invoice",
@@ -107,7 +109,7 @@ async def saas_price_profile(
     bot_scoped = project_id is not None
     if bot_scoped:
         name = ("platform_saas_bot_price_profile_set" if currency is not None
-                else "platform_saas_bot_price_profile_read")
+                else "platform_saas_bot_price_profile_read_v2")
         arguments = {"project": project_id}
         if currency is not None:
             arguments["currency"] = currency

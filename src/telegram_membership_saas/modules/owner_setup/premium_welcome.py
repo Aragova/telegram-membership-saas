@@ -11,7 +11,7 @@ from telegram_membership_saas.localization import tr
 from telegram_membership_saas.telegram_dates import native_telegram_time
 
 
-def central_welcome_rich() -> str:
+def central_welcome_rich(*, language_selected: bool = False) -> str:
     """One compact Telegram Rich card with the existing connection actions."""
     return "\n".join([
         "<h3>✨ ViMi Pay</h3>",
@@ -36,14 +36,29 @@ def central_welcome_rich() -> str:
         + tr("5% с подтверждённых покупок после пробного периода",
              "5% of verified purchases after your trial") + "</td></tr>",
         "</table>",
-        "<p>👇 " + tr(
-            "Создайте бота или подключите существующего через BotFather.",
-            "Create a bot or connect an existing one via BotFather.",
+        "<h4>" + (
+            tr("🔐 Что будем создавать?", "🔐 What will you create?")
+            if language_selected else
+            tr("🌐 Выберите язык", "🌐 Choose your language")
+        ) + "</h4>",
+        "<p>" + (
+            tr(
+                "Выберите «🔐 Платные подписки». Затем покажем оба "
+                "способа подключения Telegram-бота.",
+                "Select 🔐 Paid subscriptions. We will explain both "
+                "Telegram bot creation methods.",
+            ) if language_selected else tr(
+                "Сначала выберите русский или английский язык. Далее "
+                "перейдите к платным подпискам.",
+                "First choose Russian or English. Then continue "
+                "to paid subscriptions.",
+            )
         ) + "</p>",
+        "__VIMI_RICH_ACTIONS__",
     ])
 
 
-def central_welcome_classic() -> str:
+def central_welcome_classic(*, language_selected: bool = False) -> str:
     return "\n".join([
         "✨ <b>ViMi Pay</b>",
         "<b>" + tr(
@@ -65,11 +80,82 @@ def central_welcome_classic() -> str:
             "Подключите бота, настройте тарифы, платежи и продажу файлов.",
             "Connect a bot, set up plans, payments and file sales.",
         ),
-        "👇 " + tr(
-            "Выберите способ подключения ниже.",
-            "Choose a connection method below.",
-        ),
+        ("🔐 " + tr(
+            "Перейдите к платным подпискам.",
+            "Continue to paid subscriptions.",
+        )) if language_selected else ("🌐 " + tr(
+            "Выберите язык, затем «🔐 Платные подписки».",
+            "Choose a language, then 🔐 Paid subscriptions.",
+        )),
     ])
+
+
+
+def central_connection_rich(
+    *, project_name: str, bot_username: str | None, runtime_label: str,
+) -> str:
+    """Compact connection control panel, not a second tenant admin menu."""
+    label = (
+        "@" + escape(bot_username, quote=True)
+        if bot_username else tr("Бот ещё не подключён", "Bot not connected yet")
+    )
+    status = escape(runtime_label, quote=True)
+    description = (
+        tr(
+            "🚀 <b>Открыть бота</b> — тарифы и продажи. "
+            "⚙️ <b>Управление</b> — подключение и токен. "
+            "🧾 <b>Счета</b> — оплата ViMi Pay.",
+            "🚀 <b>Open bot</b> — plans and sales. "
+            "⚙️ <b>Manage</b> — connection and token. "
+            "🧾 <b>Invoices</b> — ViMi Pay service payments.",
+        ) if bot_username else tr(
+            "⚙️ Откройте управление подключением, чтобы добавить "
+            "Telegram-бота. Счета доступны отдельно.",
+            "⚙️ Open connection management to attach a Telegram bot. "
+            "Invoices remain available separately.",
+        )
+    )
+    return "\n".join([
+        "<h3>✦ ViMi Pay · " + tr("Ваши подключения", "Your connections") + "</h3>",
+        "<p><b>" + escape(project_name, quote=True) + "</b></p>",
+        "<table bordered compact>",
+        "<tr><th>" + tr("🤖 Бот", "🤖 Bot") + "</th><td><b>"
+        + label + "</b></td></tr>",
+        "<tr><th>" + tr("Состояние", "Status") + "</th><td>"
+        + status + "</td></tr>",
+        "</table>",
+        "<p>" + description + "</p>",
+    ])
+
+
+def central_connection_classic(
+    *, project_name: str, bot_username: str | None, runtime_label: str,
+) -> str:
+    """HTML fallback with the same truthful state and no duplicate actions."""
+    label = (
+        "@" + escape(bot_username, quote=True)
+        if bot_username else tr("Бот ещё не подключён", "Bot not connected yet")
+    )
+    return (
+        "✦ <b>ViMi Pay · "
+        + tr("Ваши подключения", "Your connections") + "</b>\n"
+        + "📁 <b>" + escape(project_name, quote=True) + "</b>\n"
+        + "🤖 " + label + "\n"
+        + escape(runtime_label, quote=True) + "\n\n"
+        + (
+            tr(
+                "🚀 Откройте бота для тарифов и продаж. "
+                "⚙️ Управление — для подключения. "
+                "🧾 Счета — для оплаты ViMi Pay.",
+                "🚀 Open the bot for plans and sales. "
+                "⚙️ Manage — for the connection. "
+                "🧾 Invoices — for ViMi Pay payments.",
+            ) if bot_username else tr(
+                "⚙️ Подключите Telegram-бота через управление.",
+                "⚙️ Connect your Telegram bot through management.",
+            )
+        )
+    )
 
 
 def _trial_ends_html(value: object, timezone: str) -> str:

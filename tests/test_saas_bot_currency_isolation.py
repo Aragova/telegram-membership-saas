@@ -19,6 +19,9 @@ from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
 )
+from telegram_membership_saas.modules.platform_saas_v2_payment_service import (
+    saas_price_profile,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
@@ -58,19 +61,61 @@ async def test_two_owned_bots_have_independent_price_and_unpaid_lock():
                 token_ciphertext="fixture-not-a-real-token", status="registered",
             ))
             await session.flush()
+        # Exercise the actual Python/RPC path as well as SQL so a reader
+        # missing from the closed allowlist cannot silently bypass the wizard.
+        pending = await saas_price_profile(
+            factory, actor_id=owner, project_id=project2,
+        )
+        assert pending["currency_selected"] is False
+        assert pending["currency"] == "RUB"
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
+                # Canonical platform billing must gate invoices at SQL-level,
+                # not just hide the dashboard until the owner chooses currency.
+                issuer_sql = (await conn.execute(text(
+                    "SELECT pg_get_functiondef(" 
+                    "'public.platform_saas_issue_bot_invoice("
+                    "uuid,timestamptz,timestamptz)'::regprocedure)"
+                ))).scalar_one()
+                assert "currency_selected" in issuer_sql
+                assert issuer_sql.index("pg_advisory_xact_lock") < (
+                    issuer_sql.index("currency_selected")
+                )
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:actor,true)"
                 ), {"actor": str(owner)})
+                # Newly registered bots inherit a safe provisional RUB
+                # profile, but do not count it as the owner's choice.
+                initial1 = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project1,
+                )
+                initial2 = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project2,
+                )
+                assert initial1["currency_selected"] is False
+                assert initial2["currency_selected"] is False
                 a = await rpc(
                     conn, "platform_saas_bot_price_profile_set", project1, "USD",
                 )
                 b = await rpc(
-                    conn, "platform_saas_bot_price_profile_read", project2,
+                    conn, "platform_saas_bot_price_profile_read_v2", project2,
                 )
+                assert b["currency_selected"] is False
+                # Explicitly accepting the suggested same RUB value
+                # must still finish the final onboarding stage.
+                await rpc(
+                    conn, "platform_saas_bot_price_profile_set", project2, "RUB",
+                )
+                selected = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project2,
+                )
+                assert selected["currency_selected"] is True
+                selected1 = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project1,
+                )
+                assert selected1["currency_selected"] is True
                 assert a["currency"] == "USD" and a["monthly_amount"] == "5.00"
                 assert b["currency"] == "RUB" and b["monthly_amount"] == "150.00"
                 await conn.execute(text("RESET ROLE"))

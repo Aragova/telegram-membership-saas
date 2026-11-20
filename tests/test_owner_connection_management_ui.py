@@ -305,7 +305,10 @@ async def test_central_main_menu_has_invoice_entry_without_connections(monkeypat
         for b in row if b.callback_data
     ]
     assert actions.count("own:saasinvoices:0") == 1
-    assert "own:newmanaged" in actions
+    # New users choose a language and product category before bot creation.
+    assert "own:substart" in actions
+    assert "lng:set:ru" in actions and "lng:set:en" in actions
+    assert "own:newmanaged" not in actions
 
 
 async def test_central_selected_connection_dashboard_has_invoice_entry(

@@ -82,110 +82,152 @@ def _channel_rows(channel: ChannelFinance) -> tuple[tuple[str, str], ...]:
     )
 
 
+
+def _panel_data(
+    *, readiness: tuple[tuple[str, bool], ...],
+    channels_count: int | None, active_plans_count: int | None,
+    bot_status: str | None, payment_ready: bool | None,
+) -> tuple[tuple[str, str], ...]:
+    """Four actual read-only checks, never the legacy ON/OFF indicators."""
+    channel = (
+        channels_count if channels_count is not None
+        else int(bool(readiness and readiness[0][1]))
+    )
+    plans = (
+        active_plans_count if active_plans_count is not None
+        else int(len(readiness) > 1 and readiness[1][1])
+    )
+    payment = (
+        payment_ready if payment_ready is not None
+        else bool(len(readiness) > 2 and readiness[2][1])
+    )
+    status = bot_status or (
+        tr("🟢 Работает", "🟢 Running")
+        if len(readiness) > 3 and readiness[3][1]
+        else tr("⚪ Не запущен", "⚪ Not running")
+    )
+    return (
+        (tr("Состояние", "Status"), status),
+        (tr("Каналы", "Channels"), tr(
+            f"{channel} подключён" if channel == 1 else f"{channel} подключено",
+            f"{channel} connected",
+        )),
+        (tr("Активные тарифы", "Active plans"), str(plans)),
+        (tr("Оплата покупателей", "Buyer payments"),
+         tr("✅ Настроена", "✅ Configured") if payment else
+         tr("⚪ Не настроена", "⚪ Not configured")),
+    )
+
+
+def _service_data(
+    service_currency: str | None, service_debt: str | None,
+) -> tuple[str, str]:
+    rate = {
+        "RUB": tr("🇷🇺 150 ₽/мес. + 5%", "🇷🇺 RUB 150/month + 5%"),
+        "USD": tr("🇺🇸 $5/мес. + 5%", "🇺🇸 USD 5/month + 5%"),
+    }.get(service_currency, tr("Не определена", "Not set"))
+    return rate, service_debt or tr("Недоступна", "Unavailable")
+
+
 def classic_dashboard(
     *, project_name: str, timezone: str, trial_banner: str,
     readiness: tuple[tuple[str, bool], ...], sales_status: str,
     finances: DashboardFinances, exempt: bool = False,
+    channels_count: int | None = None,
+    active_plans_count: int | None = None,
+    bot_status: str | None = None,
+    payment_ready: bool | None = None,
+    service_currency: str | None = None,
+    service_debt: str | None = None,
 ) -> str:
-    statuses = "\n".join(
-        "  ·  ".join(
-            _status_text(label, ready) + EMOJI_GAP
-            + ("🟢" if ready else "⚪") + EMOJI_GAP
-            + ("ON" if ready else "OFF")
-            for label, ready in group
-        )
-        for group in (readiness[:2], readiness[2:4])
+    rows = _panel_data(
+        readiness=readiness, channels_count=channels_count,
+        active_plans_count=active_plans_count, bot_status=bot_status,
+        payment_ready=payment_ready,
     )
-    items = [
+    rate, debt = _service_data(service_currency, service_debt)
+    lines = [
         tr("✦ <b>Панель администратора</b>", "✦ <b>Admin dashboard</b>")
         + (" · 👑 ViMi Pay PRO" if exempt else ""),
-        "<b>" + escape(project_name) + "</b>"
-        + EMOJI_GAP + "🌍" + EMOJI_GAP + escape(timezone),
+        "<b>" + escape(project_name) + "</b> 🌍 " + escape(timezone),
+        "",
     ]
-    if trial_banner:
-        items.extend(["", trial_banner])
-    items.extend(["", statuses, "", sales_status, ""])
-    items.extend([
+    lines.extend(escape(k) + ": <b>" + escape(v) + "</b>" for k, v in rows)
+    if sales_status and not sales_status.startswith(("✅ Продажи", "✅ Sales")):
+        lines.append(sales_status)
+    lines.extend([
+        "",
+        tr("🧾 <b>Обслуживание ViMi Pay</b>", "🧾 <b>ViMi Pay service</b>"),
+        trial_banner or tr("⏳ Проверяется", "⏳ Checking status"),
+        tr("Тариф: ", "Service rate: ") + escape(rate),
+        tr("Задолженность: ", "Amount due: ") + escape(debt),
+        "",
         tr("⭐ <b>Финансы Telegram</b>", "⭐ <b>Telegram finances</b>"),
-        tr("🤖 Баланс бота: ", "🤖 Bot balance: ")
-        + (escape(finances.bot_stars) + " ⭐" if finances.bot_stars is not None
-           else tr("Недоступен", "Unavailable")),
+        tr("🤖 Баланс бота: ", "🤖 Bot balance: ") + (
+            escape(finances.bot_stars) + " ⭐" if finances.bot_stars is not None
+            else tr("Недоступен", "Unavailable")
+        ),
     ])
-    if not finances.available:
-        items.append(tr("📢 Данные каналов временно недоступны",
-                        "📢 Channel data temporarily unavailable"))
-    for channel in finances.channels:
-        if len(finances.channels) > 1 or finances.extra_channels:
-            items.append("📢 <b>" + escape(channel.name) + "</b>")
-        items.extend(
-            escape(label) + ": " + value
-            for label, value in _channel_rows(channel)
-        )
-    if not finances.channels and finances.available:
-        items.append(tr("📢 Нет подключённых каналов",
-                        "📢 No connected channels"))
-    if finances.extra_channels:
-        items.append(tr(
-            f"📢 Ещё каналов: {finances.extra_channels} · откройте «Каналы».",
-            f"📢 {finances.extra_channels} more channels · open Channels.",
-        ))
-    return "\n".join(items)
+    return "\n".join(lines)
 
 
 def rich_dashboard(
     *, project_name: str, timezone: str, trial_banner: str,
     readiness: tuple[tuple[str, bool], ...], sales_status: str,
     finances: DashboardFinances, exempt: bool = False,
+    channels_count: int | None = None,
+    active_plans_count: int | None = None,
+    bot_status: str | None = None,
+    payment_ready: bool | None = None,
+    service_currency: str | None = None,
+    service_debt: str | None = None,
 ) -> str:
-    """Use native Rich HTML tables without custom CSS or unsupported badges."""
+    """Approved 4-row panel, ViMi Pay service, bot Stars, embedded 12 actions."""
+    rows = _panel_data(
+        readiness=readiness, channels_count=channels_count,
+        active_plans_count=active_plans_count, bot_status=bot_status,
+        payment_ready=payment_ready,
+    )
+    rate, debt = _service_data(service_currency, service_debt)
     parts = [
         "<h3>" + tr("✦ Панель администратора", "✦ Admin dashboard")
         + (" · 👑 ViMi Pay PRO" if exempt else "") + "</h3>",
-        "<p><b>" + escape(project_name) + "</b>" + EMOJI_GAP
-        + "🌍" + EMOJI_GAP + escape(timezone) + "</p>",
+        "<p><b>" + escape(project_name) + "</b> 🌍 "
+        + escape(timezone) + "</p>",
+        "<table bordered compact>",
     ]
-    if trial_banner:
-        parts.append("<p><b>" + trial_banner.replace("\n", "<br>") + "</b></p>")
-    # Exactly two rows of two actionable readiness checks, RU and EN alike.
-    for group in (readiness[:2], readiness[2:4]):
-        parts.append("<table bordered compact><tr>")
-        parts.extend(_status_cell(label, ready) for label, ready in group)
-        parts.append("</tr></table>")
+    for label, value in rows:
+        parts.append("<tr><th>" + escape(label) + "</th><td><b>"
+                     + escape(value) + "</b></td></tr>")
+    parts.append("</table>")
+    if sales_status and not sales_status.startswith(("✅ Продажи", "✅ Sales")):
+        parts.append("<p>" + escape(sales_status) + "</p>")
     parts.extend([
-        "<p>" + sales_status.replace("\n", "<br>") + "</p>",
+        "<h4>" + tr("🧾 Обслуживание ViMi Pay", "🧾 ViMi Pay service") + "</h4>",
+        # The banner is produced by trusted trial_status_classic(), which
+        # contains native <tg-time> markup for real billing/trial deadlines.
+        # Escaping it would print the tags verbatim in Telegram.
+        "<p><b>" + (
+            trial_banner.replace("\n", "<br>")
+            if trial_banner else tr("⏳ Проверяется", "⏳ Checking status")
+        ) + "</b></p>",
+        "<table bordered compact>",
+        "<tr><th>" + tr("Тариф", "Service rate")
+        + "</th><td><b>" + escape(rate) + "</b></td></tr>",
+        "<tr><th>" + tr("Задолженность", "Amount due")
+        + "</th><td><b>" + escape(debt) + "</b></td></tr>",
+        "</table>",
         "<h4>" + tr("⭐ Финансы Telegram", "⭐ Telegram finances") + "</h4>",
         "<table bordered compact>",
         "<tr><th>" + tr("🤖 Баланс бота", "🤖 Bot balance")
-        + "</th><td><b>"
-        + (escape(finances.bot_stars) + " ⭐" if finances.bot_stars is not None
-           else tr("Недоступен", "Unavailable"))
-        + "</b></td></tr>",
+        + "</th><td><b>" + (
+            escape(finances.bot_stars) + " ⭐" if finances.bot_stars is not None
+            else tr("Недоступен", "Unavailable")
+        ) + "</b></td></tr>",
         "</table>",
     ])
-    if not finances.available:
-        parts.append("<p>" + tr(
-            "📢 Данные каналов временно недоступны",
-            "📢 Channel data temporarily unavailable",
-        ) + "</p>")
-    if not finances.channels and finances.available:
-        parts.append("<p>" + tr(
-            "📢 Подключённых каналов нет",
-            "📢 No connected channels",
-        ) + "</p>")
-    for channel in finances.channels:
-        if len(finances.channels) > 1 or finances.extra_channels:
-            parts.append("<p><b>📢" + EMOJI_GAP + escape(channel.name)
-                         + "</b></p>")
-        parts.append("<table bordered compact>")
-        for label, value in _channel_rows(channel):
-            parts.append(
-                "<tr><th>" + escape(label) + "</th><td>"
-                + value + "</td></tr>"
-            )
-        parts.append("</table>")
-    if finances.extra_channels:
-        parts.append("<p>" + tr(
-            f"Ещё {finances.extra_channels} канал(ов). Откройте «Каналы».",
-            f"{finances.extra_channels} additional channel(s). Open Channels.",
-        ) + "</p>")
+    # Renderer replaces this marker with native in-message button rows.
+    from telegram_membership_saas.rich_messages import RICH_ACTIONS_MARKER
+    parts.append("<h4>" + tr("⚡ Управление ботом", "⚡ Bot management") + "</h4>")
+    parts.append(RICH_ACTIONS_MARKER)
     return "\n".join(parts)
