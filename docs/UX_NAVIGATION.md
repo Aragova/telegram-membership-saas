@@ -1,3 +1,12 @@
+## 2026-11-20 — Compact Rich central connection panel and billing context
+
+- For an already selected connected bot, `/menu` and `/start` show one compact RU/EN Rich connection status card (with classic HTML fallback). A live bot is never described as needing to be connected again; the card distinguishes opening the tenant bot for actual plans/sales from managing the connection in central.
+- The central inline menu uses three two-column rows: green Open bot/Manage, blue All connections/ViMi Pay invoices, green Help/Language. Each action reuses the existing callback or authenticated `t.me/<bot_username>` link; platform-owner navigation remains permission-scoped. No new menus, payment actions, callbacks, Telegram API routes, or DB migrations.
+- A connected-bot ViMi Pay invoice displays its original fixed service price and current balance **before** the prospective currency selector. If the fixed current bill is RUB150 but the next bill profile is USD5, the card explicitly explains that the new currency applies only to future invoices. The two non-payment buttons share one compact row; Pay is kept singular and prominent when due.
+- UI-only change; the immutable invoice, 5% platform sales commission, owner-wide hold, provider quote and runtime payment rules remain unchanged.
+
+---
+
 # ViMi Pay — Premium Telegram UX and navigation contract
 
 Status: adopted UX direction; rollout in coherent slices. The initial inventory
