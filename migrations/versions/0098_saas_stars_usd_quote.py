@@ -121,6 +121,29 @@ BEGIN
   );
 END; $f$
     """)
+    # Internal-only verified historical FX selector. Never grant a
+    # direct runtime EXECUTE; only the authenticated SECURITY DEFINER order
+    # creator calls this helper under the migration-owner role.
+    op.execute("""
+CREATE FUNCTION public.platform_saas_stars_verified_usd_fx(p_issue_day date)
+RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+  SELECT rub_per_unit
+  FROM public.platform_saas_daily_fx_rates
+  WHERE p_issue_day IS NOT NULL
+    AND currency_code='USD' AND source_name='CBR'
+    AND rate_date<=p_issue_day
+    AND rate_date>=p_issue_day-interval '14 days'
+    AND source_date<=p_issue_day
+    AND source_date>=p_issue_day-interval '14 days'
+    AND source_date<=rate_date
+  ORDER BY rate_date DESC,source_date DESC LIMIT 1;
+$f$
+    """)
+    op.execute("""
+REVOKE ALL ON FUNCTION
+  public.platform_saas_stars_verified_usd_fx(date) FROM PUBLIC
+    """)
     op.execute("""
 CREATE OR REPLACE FUNCTION public.platform_saas_stars_create_order(
   p_invoice uuid,p_telegram_id bigint,p_central_bot bigint
@@ -194,21 +217,12 @@ BEGIN
     RAISE EXCEPTION 'Invalid commission allocation' USING ERRCODE='23514';
   END IF;
   IF commission_rub>0 THEN
-    -- A valid RUB service invoice may have been issued before its exact-day
-    -- CBR snapshot was published. Use the most recent *previously effective*
-    -- verified CBR rate, never future data or an unbounded stale quote.
-    -- The original immutable RUB debt is still credited in full on payment.
-    SELECT rub_per_unit INTO fx
-    FROM public.platform_saas_daily_fx_rates
-    WHERE currency_code='USD' AND source_name='CBR'
-      AND rate_date<=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
-      AND rate_date>=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
-                       -interval '14 days'
-      AND source_date<=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
-      AND source_date>=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
-                         -interval '14 days'
-      AND source_date<=rate_date
-    ORDER BY rate_date DESC,source_date DESC LIMIT 1;
+    -- A RUB invoice can exist before its issue-day FX snapshot arrives.
+    -- Restrict to verified CBR history effective on its issue day; the
+    -- internal resolver refuses future and older-than-14-days data.
+    fx:=public.platform_saas_stars_verified_usd_fx(
+      (inv.created_at AT TIME ZONE 'Europe/Moscow')::date
+    );
     IF fx IS NULL OR fx<=0 THEN
       RAISE EXCEPTION 'Verified USD commission FX unavailable'
         USING ERRCODE='42501';
