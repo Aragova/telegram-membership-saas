@@ -101,25 +101,33 @@ async def test_admin_dashboard_shows_two_rows_live_star_balance_and_actual_owner
     monkeypatch.setattr(owner_ui, "send_owner_rich", send)
     await _handler(project)(_query("dashboard"), _bot())
     message = send.await_args.kwargs
-    assert "0 ⭐" in message["rich_html"]
-    assert '<a href="https://t.me/actual_owner">@actual_owner</a>' in message[
-        "rich_html"
-    ]
-    assert "ID 12345" not in message["rich_html"]
-    assert "Получатель звёзд" not in message["rich_html"]
-    assert "Баланс канала" not in message["rich_html"]
-    assert "Вывод" not in message["rich_html"]
-    assert "Доступно к выводу" not in message["rich_html"]
-    assert "ViMi Pay PRO" in message["rich_html"]
-    # Exactly two 2-cell rows: four meaningful checks, no self-bot tautology.
-    first_grid = message["rich_html"].split("<h4>")[0]
-    assert first_grid.count("<table bordered compact>") == 2
-    assert first_grid.count("<tr>") == 2
+    # Approved panel: four real metrics, service, bot Stars, then 12 actions.
+    rich = message["rich_html"]
+    assert "0 ⭐" in rich
+    assert "ViMi Pay PRO" in rich
+    first_grid = rich.split("<h4>")[0]
+    assert first_grid.count("<table bordered compact>") == 1
+    assert first_grid.count("<tr>") == 4
     assert first_grid.count("<td>") == 4
-    assert "Собственный бот" not in first_grid
-    assert "🟢" in first_grid and "ON" in first_grid
-    assert "Подключено" not in first_grid
-    assert "Продажи доступны" in message["rich_html"]
+    for label in ("Состояние", "Каналы", "Активные тарифы",
+                  "Оплата покупателей"):
+        assert label in first_grid
+    assert "1 подключён" in first_grid
+    assert "✅ Настроена" in first_grid
+    assert "🟢 Работает" in first_grid
+    assert "ON" not in first_grid and "OFF" not in first_grid
+    assert rich.index("Состояние") < rich.index("🧾 Обслуживание ViMi Pay")
+    assert rich.index("🧾 Обслуживание ViMi Pay") < rich.index(
+        "⭐ Финансы Telegram"
+    )
+    assert rich.index("⭐ Финансы Telegram") < rich.index(
+        "__VIMI_RICH_ACTIONS__"
+    )
+    # Channel creator/beneficiary details are not duplicated on home:
+    # the approved compact home financial card shows bot Stars only.
+    assert "Получатель звёзд" not in rich
+    assert "Баланс канала" not in rich
+    assert "Доступно к выводу" not in rich
     assert "Баланс бота" in message["classic_html"]
     buttons = [
         (button.text, button.callback_data)
@@ -130,6 +138,7 @@ async def test_admin_dashboard_shows_two_rows_live_star_balance_and_actual_owner
     assert ("📢 Каналы", "own:resources") in buttons
     assert any(callback == "fs:home" for _, callback in buttons)
     assert ("📊 Статистика", "own:statistics:7") in buttons
+
 
 
 async def test_dashboard_balance_unknown_is_not_zero_and_owner_deleted(monkeypatch):
@@ -158,17 +167,24 @@ async def test_dashboard_balance_unknown_is_not_zero_and_owner_deleted(monkeypat
     classic = classic_dashboard(**data)
     html = rich_dashboard(**data)
     assert "Недоступен" in classic and "Баланс бота: 0" not in classic
-    assert "Удалённый аккаунт" in classic
-    assert "Old &lt;Channel&gt;" not in html or "<VIP>" not in html
+    assert "Недоступен" in html
+    assert "Баланс бота: 0" not in classic
     assert "&lt;VIP&gt; &amp; MORE" in html
-    assert "🔒" not in html
-    assert "OFF" in html
+    assert "<VIP>" not in html
+    assert "⚪ Не настроена" in html
+    assert "OFF" not in html
     for output in (classic, html):
         assert "Баланс канала" not in output
         assert "Вывод" not in output
         assert "Channel balance" not in output
         assert "Withdrawal" not in output
+    # Telegram owner identity remains correctly resolved by the channel
+    # detail helper even though the main panel no longer displays it.
+    from telegram_membership_saas.modules.owner_setup.dashboard_ui import _owner
+    deleted_owner = _owner(data["finances"].channels[0])
+    assert "Удалённый аккаунт" in deleted_owner
     assert "Не готов" not in html
+
 
 
 async def test_bot_star_balance_live_zero_and_failed_are_distinct():
@@ -211,9 +227,20 @@ def test_owner_link_uses_real_username_not_internal_id():
         DashboardFinances,
     )
     from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
+        _channel_rows,
+        _owner,
         classic_dashboard,
         rich_dashboard,
     )
+
+    channel = ChannelFinance(
+        name="VIP", chat_id="-10011", owner_label="@kostik · ID 321",
+        owner_deleted=False, stars_recipient="channel",
+        owner_username="kostik", owner_user_id=321,
+    )
+    assert _owner(channel) == '<a href="https://t.me/kostik">@kostik</a>'
+    assert len(_channel_rows(channel)) == 1
+    assert "Получатель звёзд" not in str(_channel_rows(channel))
 
     base = dict(
         project_name="@premium0fans_bot", timezone="Europe/Moscow",
@@ -221,64 +248,53 @@ def test_owner_link_uses_real_username_not_internal_id():
         readiness=(("Канал / группа", True), ("Тариф", True),
                    ("Способ оплаты", True), ("Бот работает", False)),
     )
-    channel = ChannelFinance(
-        name="VIP", chat_id="-10011", owner_label="@kostik · ID 321",
-        owner_deleted=False, stars_recipient="channel",
-        owner_username="kostik", owner_user_id=321,
-    )
     for render in (classic_dashboard, rich_dashboard):
         html = render(**base, finances=DashboardFinances(
             bot_stars="0", channels=(channel,),
         ))
-        assert '<a href="https://t.me/kostik">@kostik</a>' in html
         assert "ID 321" not in html
         assert "Получатель звёзд" not in html
-        assert "Владелец" in html
         assert "⭐" in html
-        assert "🟢" in html and "OFF" in html
-        assert "Подключено" not in html
+        assert "🟢" not in html or "Не запущен" in html
+        assert "ON" not in html and "OFF" not in html
         assert "<b>@premium0fans_bot</b>" in html
         assert "🌍" in html and "Europe/Moscow" in html
     rich = rich_dashboard(**base, finances=DashboardFinances(
         bot_stars="0", channels=(channel,),
     ))
     assert rich.split("<h4>")[0].count("<td>") == 4
-    assert rich.split("<h4>")[0].count("<tr>") == 2
+    assert rich.split("<h4>")[0].count("<tr>") == 4
+
 
 
 def test_owner_without_username_gets_clickable_telegram_mention_and_bot_recipient():
     from telegram_membership_saas.modules.owner_setup.dashboard_finances import (
         ChannelFinance,
-        DashboardFinances,
     )
-    from telegram_membership_saas.modules.owner_setup.dashboard_ui import rich_dashboard
+    from telegram_membership_saas.modules.owner_setup.dashboard_ui import (
+        _channel_rows,
+        _owner,
+    )
 
-    def render(channel):
-        return rich_dashboard(
-            project_name="Bot", timezone="Europe/Moscow", trial_banner="",
-            readiness=(("Channel", True), ("Plan", True),
-                       ("Payment", True), ("Running", True)),
-            sales_status="", finances=DashboardFinances(
-                bot_stars="0", channels=(channel,),
-            ),
-        )
     channel = ChannelFinance(
         name="VIP", chat_id="-10011", owner_label="Анатолий · ID 321",
         owner_deleted=False, stars_recipient="bot", owner_user_id=321,
     )
-    html = render(channel)
-    assert '<a href="tg://user?id=321">Анатолий</a>' in html
-    assert "Получатель звёзд" in html
-    assert "🤖 Бот" in html
-    assert "ID 321" not in html
+    assert _owner(channel) == '<a href="tg://user?id=321">Анатолий</a>'
+    rows = _channel_rows(channel)
+    assert len(rows) == 2
+    assert "Получатель звёзд" in rows[1][0]
+    assert "🤖 Бот" in rows[1][1]
+    assert "ID 321" not in "".join(x[1] for x in rows)
 
     deleted = ChannelFinance(
         name="VIP", chat_id="-10011", owner_label="ID 321",
         owner_deleted=True, stars_recipient="channel", owner_user_id=321,
     )
-    deleted_html = render(deleted)
-    assert "Удалённый аккаунт" in deleted_html
-    assert 'href="tg://user?id=321"' not in deleted_html
+    deleted_label = _owner(deleted)
+    assert "Удалённый аккаунт" in deleted_label
+    assert 'href="tg://user?id=321"' not in deleted_label
+
 
 
 def test_running_status_reads_real_worker_heartbeat_not_invoice_configuration():
