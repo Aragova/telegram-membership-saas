@@ -411,6 +411,10 @@ BEGIN
       THEN bill_total_usd::text ELSE NULL END,
     'issued_due_usd',CASE WHEN service_currency='USD'
       THEN bill_due_usd::text ELSE NULL END,
+    'subscription_usd',CASE WHEN service_currency='USD'
+      THEN round(subscriptions_rub/service_fx,2)::text ELSE NULL END,
+    'file_usd',CASE WHEN service_currency='USD'
+      THEN round(files_rub/service_fx,2)::text ELSE NULL END,
     'subscription_rub',round(subscriptions_rub,2)::text,
     'file_rub',round(files_rub,2)::text,'total_rub',bill.total_rub::text,
     'paid_rub',received::text,
