@@ -255,6 +255,7 @@ END; $f$
 ) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $f$
 DECLARE actor uuid; ord record; inv record; moment timestamptz;
+        usd_policy_enabled boolean;
 BEGIN
   actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
   IF actor IS NULL OR p_payload IS NULL OR
@@ -272,15 +273,21 @@ BEGIN
   SELECT * INTO inv FROM public.platform_saas_invoices
     WHERE id=ord.invoice_id FOR UPDATE;
   moment:=clock_timestamp();
+  IF ord.usd_quote IS NOT NULL THEN
+    -- Serialize authorization with the operator's disabling UPDATE.
+    -- If suspension commits first, this SELECT sees the disabled row;
+    -- otherwise suspension waits until this checkout commits.
+    SELECT enabled INTO usd_policy_enabled
+    FROM public.platform_saas_stars_usd_policy
+    WHERE id=1 FOR SHARE;
+  END IF;
   IF inv.id IS NULL OR inv.status<>'issued'
      OR inv.owner_user_id IS DISTINCT FROM actor
      OR moment>ord.expires_at
-     -- Emergency suspension must also block PRECHECKOUT on new USD orders.
-     -- Older XTR quotes retain their historical precheckout semantics.
-     OR (ord.usd_quote IS NOT NULL AND NOT EXISTS(
-       SELECT 1 FROM public.platform_saas_stars_usd_policy p
-       WHERE p.id=1 AND p.enabled
-     ))
+     -- Emergency suspension blocks new USD precheckouts under a held
+     -- SHARE lock; historical XTR orders retain their prior semantics.
+     OR (ord.usd_quote IS NOT NULL
+         AND usd_policy_enabled IS DISTINCT FROM true)
      OR ord.prechecked_at IS NOT NULL
      OR EXISTS(SELECT 1 FROM public.platform_saas_stars_charges c
        WHERE c.order_id=ord.id)
