@@ -63,13 +63,30 @@ def test_pinned_python_312_runtime_matches_dev_dependency_resolutions() -> None:
 
     def load_pins(filename: str) -> dict[str, str]:
         pins = {}
+        package = None
+        hash_count = 0
         for line in (root / filename).read_text(encoding="utf-8").splitlines():
-            if not line or line[0].isspace() or line.startswith("#"):
+            if not line or line.startswith("#"):
                 continue
+            if line[0].isspace():
+                if line.strip().startswith("--hash="):
+                    assert package is not None
+                    digest = line.strip().removesuffix(" \\").removeprefix(
+                        "--hash=sha256:"
+                    )
+                    assert len(digest) == 64
+                    assert all(char in "0123456789abcdef" for char in digest)
+                    hash_count += 1
+                continue
+            if package is not None:
+                assert hash_count >= 1, f"No hash for {package}"
             package, equals, version = line.partition("==")
             assert equals and package and version, f"Unpinned dependency: {line}"
             assert package not in pins
-            pins[package] = version
+            pins[package] = version.rstrip(" \\").strip()
+            hash_count = 0
+        if package is not None:
+            assert hash_count >= 1, f"No hash for {package}"
         return pins
 
     runtime = load_pins("requirements-runtime.lock")
