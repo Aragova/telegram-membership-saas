@@ -104,6 +104,32 @@ async def test_429_honors_bounded_retry_after_and_never_retries_huge_wait():
     sleeps.assert_not_awaited()
 
 
+async def test_long_telegram_429_deadline_survives_token_safe_diagnostic():
+    bot = MagicMock()
+    bot.me = AsyncMock(side_effect=TelegramRetryAfter(
+        method=METHOD, message=SECRET, retry_after=300,
+    ))
+    with pytest.raises(CustomerBotDiagnosticError) as raised:
+        await runtime.check_customer_bot_identity(bot, 100)
+    problem = raised.value
+    assert problem.code == "identity_rate_limited"
+    assert problem.retry_after == 300
+    assert TOKEN not in str(problem) and SECRET not in str(problem)
+
+    delays = AsyncMock()
+    attempts = 0
+    async def retry():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise problem
+
+    await runtime.retry_customer_preflight(retry, sleep=delays)
+    assert attempts == 2
+    delays.assert_awaited_once()
+    assert delays.await_args.args[0] >= 300
+
+
 async def test_cancellation_is_not_swallowed_or_retried():
     read = AsyncMock(side_effect=asyncio.CancelledError())
     sleeps = AsyncMock()
