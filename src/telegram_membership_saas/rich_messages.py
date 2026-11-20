@@ -186,6 +186,68 @@ def to_rich_html(legacy_html: str) -> str:
     return "\n".join(([header] if header else []) + blocks)
 
 
+
+# Inline Rich controls were introduced in Bot API 10.3. Keep the exact
+# existing callback payloads, styles and row order from InlineKeyboardMarkup.
+# When Rich isn't supported, the same markup is sent as a classic keyboard.
+RICH_ACTIONS_MARKER = "__VIMI_RICH_ACTIONS__"
+
+
+def rich_buttons_html(markup: InlineKeyboardMarkup) -> str | None:
+    """Translate safe Telegram buttons to in-message native Rich rows.
+
+    A single unsupported action makes the conversion unavailable, preventing
+    the loss of an essential payment, login, web-app or share action.
+    """
+    rows: list[str] = []
+    for row in markup.inline_keyboard:
+        if not row or len(row) > 8:
+            return None
+        buttons: list[str] = []
+        for button in row:
+            label = escape(button.text, quote=True)
+            style = button.style or "primary"
+            if style not in {"success", "primary", "danger", "link"}:
+                return None
+            if button.callback_data is not None:
+                data = button.callback_data
+                if not 1 <= len(data.encode("utf-8")) <= 64:
+                    return None
+                attrs = (
+                    'type="callback_data" style="' + style
+                    + '" data="' + escape(data, quote=True) + '"'
+                )
+            elif button.url is not None and style != "link":
+                url = button.url
+                if not (url.startswith("https://") or
+                        url.startswith("http://") or url.startswith("tg://")):
+                    return None
+                attrs = 'type="url" style="' + style + '" url="' + escape(
+                    url, quote=True
+                ) + '"'
+            else:
+                return None
+            buttons.append("<tg-button " + attrs + ">" + label + "</tg-button>")
+        rows.append("<tg-button-row>" + "".join(buttons) + "</tg-button-row>")
+    return "\n".join(rows)
+
+
+def rich_with_inline_actions(
+    html: str, markup: InlineKeyboardMarkup,
+) -> str | None:
+    """Place the buttons within the Rich message, never below its bubble."""
+    buttons = rich_buttons_html(markup)
+    if buttons is None:
+        return None
+    if RICH_ACTIONS_MARKER in html:
+        result = html.replace(RICH_ACTIONS_MARKER, buttons)
+    else:
+        result = html + "\n" + buttons
+    if len(result.encode("utf-8")) >= 32768:
+        return None
+    return result
+
+
 def _eligible(text: str, kwargs: dict) -> bool:
     """Only convert inline *UI* messages, never receipts or text-entry prompts."""
     return (
@@ -234,12 +296,21 @@ class RichUiBot(Bot):
             }
             if not (set(kwargs) - accepted):
                 try:
+                    content = to_rich_html(
+                        text if kwargs.get("parse_mode") == "HTML" else escape(text),
+                    )
+                    markup = kwargs["reply_markup"]
+                    inside = rich_with_inline_actions(content, markup)
+                    rich_kwargs = _supported_send_arguments(kwargs)
+                    if inside is not None:
+                        # The buttons are in the Rich message itself.
+                        rich_kwargs.pop("reply_markup", None)
                     return await self.send_rich_message(
                         chat_id=chat_id,
-                        rich_message=InputRichMessage(html=to_rich_html(
-                            text if kwargs.get("parse_mode") == "HTML" else escape(text),
-                        )),
-                        **_supported_send_arguments(kwargs),
+                        rich_message=InputRichMessage(
+                            html=inside if inside is not None else content,
+                        ),
+                        **rich_kwargs,
                     )
                 except TelegramBadRequest as exc:
                     log.info("Rich UI send unsupported, using HTML: %s", exc)
@@ -260,15 +331,23 @@ class RichUiBot(Bot):
             }
             if supported and not (set(kwargs) - accepted):
                 try:
+                    content = to_rich_html(
+                        text if kwargs.get("parse_mode") == "HTML" else escape(text),
+                    )
+                    inside = rich_with_inline_actions(
+                        content, kwargs["reply_markup"],
+                    )
                     return await self(EditMessageText(
                         text=None,
-                        rich_message=InputRichMessage(html=to_rich_html(
-                            text if kwargs.get("parse_mode") == "HTML" else escape(text),
-                        )),
+                        rich_message=InputRichMessage(
+                            html=inside if inside is not None else content,
+                        ),
                         chat_id=kwargs.get("chat_id"),
                         message_id=kwargs.get("message_id"),
                         inline_message_id=kwargs.get("inline_message_id"),
-                        reply_markup=kwargs.get("reply_markup"),
+                        reply_markup=(
+                            None if inside is not None else kwargs.get("reply_markup")
+                        ),
                     ))
                 except TelegramBadRequest as exc:
                     lower = str(exc).lower()
