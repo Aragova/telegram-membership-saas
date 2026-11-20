@@ -241,13 +241,18 @@ async def run_target(
             startup_failure_at: float | None = None
 
             def observed_startup_stage(stage: str) -> None:
-                nonlocal startup_stage, startup_failure, startup_failure_at
+                nonlocal startup_stage, startup_failure, startup_failure_at, booted_at
                 # Only fixed internal labels. No Telegram error text or tokens.
                 if stage in {
                     "initializing", "identity", "webhook", "resource",
                     "commands", "polling",
                 }:
                     startup_stage = stage
+                    if stage == "commands" and startup_failure is not None:
+                        # Preflight may have been retrying Telegram for hours.
+                        # Give command installation/first getUpdates their
+                        # own bounded startup window after connectivity returns.
+                        booted_at = monotonic()
                     if stage in {"commands", "polling"}:
                         startup_failure = None
                         startup_failure_at = None
