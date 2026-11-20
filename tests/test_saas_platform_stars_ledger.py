@@ -54,6 +54,15 @@ async def prepare(factory, conn):
         "INSERT INTO platform_operators (telegram_user_id,role) "
         "VALUES (:tg,'owner')"
     ), {"tg": operator_tg})
+    # Verified quote-day CBR FX fixture. All DB mutations roll back.
+    await conn.execute(text(
+        "INSERT INTO public.platform_saas_daily_fx_rates"
+        "(rate_date,currency_code,rub_per_unit,source_name,source_date,published_by) "
+        "VALUES ((clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date,"
+        "'USD',80,'CBR',"
+        "(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date,:operator)"
+        " ON CONFLICT (rate_date,currency_code) DO NOTHING"
+    ), {"operator": operator})
     invoice = await _invoice(conn, owner, merchant, bot, total="150.00")
     await _line(conn, invoice, project, "bot_fee", bot)
     await conn.execute(text(
@@ -87,15 +96,17 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                     conn, "platform_saas_stars_create_order",
                     invoice, owner_tg, 987654321, json=True,
                 )
-                assert data["stars_amount"] == 405
-                assert Decimal(data["usd_quote"]) == Decimal("5")
+                assert data["stars_amount"] == 400
+                assert Decimal(data["usd_quote"]) == Decimal("1.875")
+                assert Decimal(data["payment_surcharge_pct"]) == 5
+                assert data["payment_minimum_stars"] == 400
                 assert Decimal(data["withdrawal_reserve_pct"]) == 5
                 assert Decimal(data["rub_amount"]) == Decimal("150")
                 payload = data["payload"]
                 assert payload.startswith("vps:")
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 9999999, 405,
+                    payload, owner_tg, 9999999, 400,
                 ), "Cannot pay a central invoice on the wrong Telegram bot"
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
@@ -112,7 +123,7 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 await set_actor(conn, owner)
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 987654321, 405,
+                    payload, owner_tg, 987654321, 400,
                 )
                 await set_actor(conn, operator)
                 await call(
@@ -122,17 +133,17 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 await set_actor(conn, owner)
                 assert await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 987654321, 405,
+                    payload, owner_tg, 987654321, 400,
                 )
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 987654321, 405,
+                    payload, owner_tg, 987654321, 400,
                 ), "Same order cannot pass pre-checkout a second time"
                 charge = "synthetic-star-charge-" + uuid4().hex
                 paid_at = datetime.now(UTC)
                 result = await call(
                     conn, "platform_saas_stars_record_charge",
-                    payload, owner_tg, 987654321, 405, charge, paid_at,
+                    payload, owner_tg, 987654321, 400, charge, paid_at,
                     json=True,
                 )
                 assert result["applied"] and not result["duplicate"]
@@ -158,7 +169,7 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 await set_actor(conn, owner)
                 replay = await call(
                     conn, "platform_saas_stars_record_charge",
-                    payload, owner_tg, 987654321, 405, charge, paid_at,
+                    payload, owner_tg, 987654321, 400, charge, paid_at,
                     json=True,
                 )
                 assert replay["applied"] and replay["duplicate"]
@@ -167,14 +178,14 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 extra = "second-star-charge-" + uuid4().hex
                 unapplied = await call(
                     conn, "platform_saas_stars_record_charge",
-                    payload, owner_tg, 987654321, 405, extra,
+                    payload, owner_tg, 987654321, 400, extra,
                     datetime.now(UTC), json=True,
                 )
                 assert not unapplied["applied"] and unapplied["requires_review"]
                 assert not unapplied["duplicate"]
                 assert await call(
                     conn, "platform_saas_stars_record_refund",
-                    payload, owner_tg, 987654321, 405,
+                    payload, owner_tg, 987654321, 400,
                     extra, datetime.now(UTC),
                 )
                 report = await call(
@@ -202,12 +213,12 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                         })
                 assert await call(
                     conn, "platform_saas_stars_record_refund",
-                    payload, owner_tg, 987654321, 405,
+                    payload, owner_tg, 987654321, 400,
                     charge, datetime.now(UTC),
                 )
                 assert not await call(
                     conn, "platform_saas_stars_record_refund",
-                    payload, owner_tg, 987654321, 405,
+                    payload, owner_tg, 987654321, 400,
                     charge, datetime.now(UTC),
                 )
                 balance = await call(
@@ -218,7 +229,7 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 assert Decimal(balance["remaining_rub"]) == 150
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 987654321, 405,
+                    payload, owner_tg, 987654321, 400,
                 ), "Refunded order must never be payable again"
             finally:
                 await outer.rollback()
@@ -309,7 +320,7 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 )
                 assert await call(
                     conn, "platform_saas_stars_precheckout",
-                    quote["payload"], owner_tg, 987654321, 405,
+                    quote["payload"], owner_tg, 987654321, 400,
                 )
                 # A verified bank payment wins the race during Telegram
                 # authorization/settlement. Do not allocate another 150 RUB.
@@ -326,7 +337,7 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 await set_actor(conn, owner)
                 result = await call(
                     conn, "platform_saas_stars_record_charge",
-                    quote["payload"], owner_tg, 987654321, 405,
+                    quote["payload"], owner_tg, 987654321, 400,
                     "tg-race-" + uuid4().hex, datetime.now(UTC), json=True,
                 )
                 assert not result["applied"]
