@@ -42,6 +42,81 @@ DO $r$ BEGIN
  END IF;
 END $r$
     """)
+    # Snapshot all existing registered bots BEFORE changing the issuer.
+    # New registration / ownership changes preserve one default per bot.
+    op.execute("""
+INSERT INTO public.platform_saas_bot_price_profiles(
+  bot_instance_id,owner_user_id,currency_code)
+SELECT b.id,p.owner_user_id,coalesce(
+ (SELECT pp.currency_code FROM public.platform_saas_price_profiles pp
+  WHERE pp.owner_user_id=p.owner_user_id),'RUB')
+FROM public.bot_instances b
+JOIN public.projects p ON p.id=b.project_id
+WHERE b.status='registered'
+ON CONFLICT(bot_instance_id) DO NOTHING
+    """)
+    op.execute("""
+CREATE FUNCTION public.platform_saas_bot_profile_on_registration()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE own uuid; cur text;
+BEGIN
+ IF NEW.status='registered'
+    AND (TG_OP='INSERT' OR OLD.status IS DISTINCT FROM NEW.status)
+ THEN
+   SELECT p.owner_user_id INTO own
+   FROM public.projects p WHERE p.id=NEW.project_id;
+   IF own IS NULL THEN
+     RAISE EXCEPTION 'Registered bot has no project owner'
+       USING ERRCODE='42501';
+   END IF;
+   SELECT coalesce(pp.currency_code,'RUB') INTO cur
+   FROM (SELECT 1) d LEFT JOIN public.platform_saas_price_profiles pp
+     ON pp.owner_user_id=own;
+   INSERT INTO public.platform_saas_bot_price_profiles(
+     bot_instance_id,owner_user_id,currency_code)
+   VALUES(NEW.id,own,cur)
+   ON CONFLICT(bot_instance_id) DO NOTHING;
+ END IF;
+ RETURN NEW;
+END; $f$
+    """)
+    op.execute("""
+CREATE TRIGGER trg_saas_bot_register_price
+AFTER INSERT OR UPDATE OF status ON public.bot_instances
+FOR EACH ROW EXECUTE FUNCTION public.platform_saas_bot_profile_on_registration()
+    """)
+    op.execute("""
+CREATE FUNCTION public.platform_saas_bot_profile_on_owner_change()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE cur text;
+BEGIN
+ IF NEW.owner_user_id IS DISTINCT FROM OLD.owner_user_id THEN
+   SELECT coalesce((SELECT pp.currency_code
+     FROM public.platform_saas_price_profiles pp
+     WHERE pp.owner_user_id=NEW.owner_user_id),'RUB')
+     INTO cur;
+   UPDATE public.platform_saas_bot_price_profiles bp
+   SET owner_user_id=NEW.owner_user_id,currency_code=cur,
+       updated_at=clock_timestamp()
+   FROM public.bot_instances b
+   WHERE bp.bot_instance_id=b.id AND b.project_id=NEW.id
+     AND b.status='registered';
+ END IF;
+ RETURN NEW;
+END; $f$
+    """)
+    op.execute("""
+CREATE TRIGGER trg_saas_bot_price_owner_changed
+AFTER UPDATE OF owner_user_id ON public.projects
+FOR EACH ROW EXECUTE FUNCTION public.platform_saas_bot_profile_on_owner_change()
+    """)
+    for sig in (
+        "platform_saas_bot_profile_on_registration()",
+        "platform_saas_bot_profile_on_owner_change()",
+    ):
+        op.execute(f"REVOKE ALL ON FUNCTION public.{sig} FROM PUBLIC")
     op.execute("""
 CREATE FUNCTION public.platform_saas_bot_price_profile_read(p_project uuid)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER
@@ -53,12 +128,13 @@ BEGIN
  FROM public.bot_instances b JOIN public.projects p ON p.id=b.project_id
  WHERE b.project_id=p_project AND b.status='registered'
    AND p.owner_user_id=actor;
- SELECT coalesce(
-   (SELECT bp.currency_code FROM public.platform_saas_bot_price_profiles bp
-    WHERE bp.bot_instance_id=bot_id AND bp.owner_user_id=actor),
-   (SELECT ap.currency_code FROM public.platform_saas_price_profiles ap
-    WHERE ap.owner_user_id=actor),'RUB'
- ) INTO cur;
+ SELECT bp.currency_code INTO cur
+ FROM public.platform_saas_bot_price_profiles bp
+ WHERE bp.bot_instance_id=bot_id AND bp.owner_user_id=actor;
+ IF cur IS NULL THEN
+   RAISE EXCEPTION 'Bot service currency was not initialized'
+     USING ERRCODE='42501';
+ END IF;
  RETURN jsonb_build_object('currency',cur,'bot_id',bot_id,
    'monthly_amount',CASE WHEN cur='USD' THEN '5.00'
                          ELSE '150.00' END);
@@ -123,6 +199,30 @@ DO $r$ BEGIN
  END IF;
 END $r$
         """)
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_price_profile_set(p_currency text)
+    RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE actor uuid;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      IF actor IS NULL OR p_currency NOT IN ('RUB','USD') THEN
+        RAISE EXCEPTION 'Invalid account price profile'
+          USING ERRCODE='42501';
+      END IF;
+      PERFORM pg_advisory_xact_lock(hashtextextended(
+        'vimi:saas:price:'||actor::text,0
+      ));
+      -- Existing bots have immutable prospective profile snapshots.
+      -- Account default affects future newly registered bots only.
+      INSERT INTO public.platform_saas_price_profiles(
+        owner_user_id,currency_code
+      ) VALUES(actor,p_currency)
+      ON CONFLICT(owner_user_id) DO UPDATE SET
+        currency_code=excluded.currency_code,updated_at=clock_timestamp();
+      RETURN public.platform_saas_price_profile_read();
+    END; $f$
+    """)
     op.execute("""
 ALTER TABLE public.platform_saas_stars_orders
   ADD COLUMN payment_surcharge_pct numeric(5,2)
@@ -282,16 +382,14 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
               USING ERRCODE='42501';
           END IF;
           issue_at:=clock_timestamp();
-          SELECT coalesce(
-            (SELECT bp.currency_code
-             FROM public.platform_saas_bot_price_profiles bp
-             WHERE bp.bot_instance_id=p_bot
-               AND bp.owner_user_id=entry.owner_user_id),
-            (SELECT ap.currency_code
-             FROM public.platform_saas_price_profiles ap
-             WHERE ap.owner_user_id=entry.owner_user_id),
-            'RUB'
-          ) INTO currency;
+          SELECT bp.currency_code INTO currency
+          FROM public.platform_saas_bot_price_profiles bp
+          WHERE bp.bot_instance_id=p_bot
+            AND bp.owner_user_id=entry.owner_user_id;
+          IF currency IS NULL THEN
+            RAISE EXCEPTION 'Uninitialized bot service price: manual review'
+              USING ERRCODE='42501';
+          END IF;
           IF currency='USD' THEN
             amount_native:=5;
             SELECT rub_per_unit INTO usd_rate
