@@ -28,7 +28,9 @@ async def test_central_deep_link_sends_native_star_invoice(
     quote = {
         "order_id": str(uuid4()),
         "payload": "vps:" + str(uuid4()),
-        "stars_amount": 60, "rub_amount": "150.00",
+        "stars_amount": 405, "rub_amount": "150.00",
+        "usd_quote": "5.00000000", "usd_per_star": "0.01300000",
+        "withdrawal_reserve_pct": "5.00",
     }
     create = AsyncMock(return_value=quote)
     monkeypatch.setattr(stars_ui, "create_platform_stars_order", create)
@@ -52,7 +54,7 @@ async def test_central_deep_link_sends_native_star_invoice(
     kwargs = bot.send_invoice.await_args.kwargs
     assert kwargs["currency"] == "XTR"
     assert kwargs["payload"] == quote["payload"]
-    assert kwargs["prices"][0].amount == 60
+    assert kwargs["prices"][0].amount == 405
     assert "Telegram Stars" in kwargs["prices"][0].label
 
 
@@ -200,8 +202,12 @@ async def test_owner_only_rail_readiness_is_configuration_not_charge(
         environment="staging",
     )
     monkeypatch.setattr(stars_ui, "get_settings", lambda: settings)
-    rate = AsyncMock(return_value=Decimal("2.50"))
-    monkeypatch.setattr(stars_ui, "platform_stars_rate", rate)
+    rate = AsyncMock(return_value={"enabled": True, "example_stars": 405,
+                       "usd_per_star": "0.01300000",
+                       "withdrawal_reserve_pct": "5.00"})
+    monkeypatch.setattr(stars_ui, "platform_stars_usd_policy", rate)
+    crypto_verify = AsyncMock(return_value=True)
+    monkeypatch.setattr(stars_ui, "verify_platform_crypto_app", crypto_verify)
     router = stars_ui.create_platform_saas_stars_router(MagicMock())
     bot = MagicMock()
     bot.send_message = AsyncMock()
@@ -219,7 +225,8 @@ async def test_owner_only_rail_readiness_is_configuration_not_charge(
         assert "Lava.top" in content
         assert "Telegram Stars" in content
         assert "Crypto Pay" in content
-        assert "2.50 ₽ / ⭐" in content
+        assert "$5 → 405 ⭐" in content
+        crypto_verify.assert_awaited_once()
         assert ("тестовая сеть" if language == "ru" else "testnet") in content
         assert ("проверка настроек" if language == "ru" else "Configuration only") in content
         assert "SECRET_LAVA" not in content
@@ -245,7 +252,7 @@ async def test_rail_readiness_never_reveals_settings_outside_central_owner(
     )
     monkeypatch.setattr(stars_ui, "get_settings", lambda: settings)
     rate = AsyncMock()
-    monkeypatch.setattr(stars_ui, "platform_stars_rate", rate)
+    monkeypatch.setattr(stars_ui, "platform_stars_usd_policy", rate)
     router = stars_ui.create_platform_saas_stars_router(MagicMock())
     bot = MagicMock()
     bot.send_message = AsyncMock()
@@ -270,7 +277,7 @@ async def test_rail_readiness_fails_closed_on_unknown_stars_rate_and_testnet(
     )
     monkeypatch.setattr(stars_ui, "get_settings", lambda: settings)
     monkeypatch.setattr(
-        stars_ui, "platform_stars_rate",
+        stars_ui, "platform_stars_usd_policy",
         AsyncMock(side_effect=RuntimeError("private DB failure")),
     )
     router = stars_ui.create_platform_saas_stars_router(MagicMock())
@@ -287,7 +294,60 @@ async def test_rail_readiness_fails_closed_on_unknown_stars_rate_and_testnet(
     finally:
         _language.reset(locale)
     text = bot.send_message.await_args.args[1]
-    assert "Проверка ставки недоступна" in text
+    assert "Не удалось проверить USD-котировку" in text
     assert "Нет подходящего API-токена" in text
     assert "private DB failure" not in text
     assert "SECRET_TESTNET" not in text
+
+
+@pytest.mark.parametrize("lang", ("ru", "en"))
+async def test_operator_can_activate_future_usd_stars_quotes(monkeypatch, lang):
+    policy = {"enabled": True, "example_stars": 405,
+              "usd_per_star": "0.01300000",
+              "withdrawal_reserve_pct": "5.00"}
+    setting = Settings(
+        _env_file=None, telegram_central_access_enabled=False,
+        platform_owner_telegram_id=737373,
+    )
+    monkeypatch.setattr(stars_ui, "get_settings", lambda: setting)
+    save = AsyncMock(return_value=policy)
+    monkeypatch.setattr(stars_ui, "configure_platform_stars_usd_policy", save)
+    router = stars_ui.create_platform_saas_stars_router(MagicMock())
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    msg = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=737373),
+        from_user=SimpleNamespace(id=737373),
+        text="/saasstarsrate 0.013 5",
+    )
+    loc = _language.set(lang)
+    try:
+        await handler(router, "configure_platform_stars_rate")(msg, bot)
+    finally:
+        _language.reset(loc)
+    assert save.await_args.kwargs["usd_per_star"] == Decimal("0.013")
+    assert save.await_args.kwargs["reserve_percent"] == Decimal("5")
+    assert save.await_args.kwargs["enabled"] is True
+    sent = bot.send_message.await_args.args[1]
+    assert "$5 → 405 ⭐" in sent
+    assert "150" not in sent
+
+
+async def test_usd_stars_operator_command_rejects_stranger(monkeypatch):
+    settings = Settings(
+        _env_file=None, telegram_central_access_enabled=False,
+        platform_owner_telegram_id=737373,
+    )
+    monkeypatch.setattr(stars_ui, "get_settings", lambda: settings)
+    save = AsyncMock()
+    monkeypatch.setattr(stars_ui, "configure_platform_stars_usd_policy", save)
+    router = stars_ui.create_platform_saas_stars_router(MagicMock())
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    msg = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=9999),
+        from_user=SimpleNamespace(id=9999), text="/saasstarsrate 0.013 5",
+    )
+    await handler(router, "configure_platform_stars_rate")(msg, bot)
+    save.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
