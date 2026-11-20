@@ -232,6 +232,16 @@ def test_operator_sees_yellow_for_retrying_and_red_for_critical():
     )
     assert "🟡" in alert and "🔴" not in alert
     assert "123456" not in alert and "api.telegram.org" not in alert
+    # If Supervisor itself stopped heartbeating, an old degraded state
+    # must not claim that getUpdates retries are still running.
+    stale_alert = _alert_text(
+        "problem", username="testbot", status="degraded",
+        error_code="polling_server_failed",
+        heartbeat=moment - timedelta(minutes=5), since=moment,
+        timezone="Europe/Moscow", now=moment,
+    )
+    assert "🔴" in stale_alert and "🟡" not in stale_alert
+    assert "Нет свежего сигнала Supervisor" in stale_alert
     assert _bot_list_button_label({
         **observation, "username": "demo_bot",
         "plans": 1, "subscriptions": 1, "payments_period": 0,
