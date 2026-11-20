@@ -239,9 +239,11 @@ async def run_target(
             startup_stage: str | None = None
             startup_failure: str | None = None
             startup_failure_at: float | None = None
+            startup_retry_wait = 0.0
 
             def observed_startup_stage(stage: str) -> None:
-                nonlocal startup_stage, startup_failure, startup_failure_at, booted_at
+                nonlocal startup_stage, startup_failure, startup_failure_at
+                nonlocal startup_retry_wait, booted_at
                 # Only fixed internal labels. No Telegram error text or tokens.
                 if stage in {
                     "initializing", "identity", "webhook", "resource",
@@ -256,12 +258,17 @@ async def run_target(
                     if stage in {"commands", "polling"}:
                         startup_failure = None
                         startup_failure_at = None
+                        startup_retry_wait = 0.0
 
-            def observed_preflight_failure(code: str) -> None:
-                nonlocal startup_failure, startup_failure_at
-                # The runtime reports only validated, fixed error codes.
+            def observed_preflight_failure(
+                code: str, retry_wait: float = 0.0,
+            ) -> None:
+                nonlocal startup_failure, startup_failure_at, startup_retry_wait
+                # Only a whitelisted code and numeric planned delay; no
+                # Telegram exceptions or token-bearing messages.
                 startup_failure = code
                 startup_failure_at = monotonic()
+                startup_retry_wait = max(0.0, retry_wait)
 
             def observed_poll_request() -> None:
                 nonlocal first_poll_request_at, poll_inflight
@@ -302,7 +309,8 @@ async def run_target(
                         startup_retrying = (
                             startup_failure is not None
                             and startup_failure_at is not None
-                            and now_at - startup_failure_at <= STARTUP_STALE_SECONDS
+                            and now_at - startup_failure_at
+                            <= STARTUP_STALE_SECONDS + startup_retry_wait
                         )
                         if (
                             now_at - booted_at > STARTUP_STALE_SECONDS
@@ -347,7 +355,8 @@ async def run_target(
                     degraded_startup = (
                         first_request is None and startup_failure is not None
                         and startup_failure_at is not None
-                        and now_at - startup_failure_at <= STARTUP_STALE_SECONDS
+                        and now_at - startup_failure_at
+                        <= STARTUP_STALE_SECONDS + startup_retry_wait
                     )
                     await write_bot_health(
                         factory, project_id=project_id, bot_id=bot_id,
