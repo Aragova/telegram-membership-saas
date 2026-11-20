@@ -11,7 +11,7 @@ from telegram_membership_saas.localization import tr
 from telegram_membership_saas.telegram_dates import native_telegram_time
 
 
-def central_welcome_rich() -> str:
+def central_welcome_rich(*, language_selected: bool = False) -> str:
     """One compact Telegram Rich card with the existing connection actions."""
     return "\n".join([
         "<h3>✨ ViMi Pay</h3>",
@@ -36,18 +36,29 @@ def central_welcome_rich() -> str:
         + tr("5% с подтверждённых покупок после пробного периода",
              "5% of verified purchases after your trial") + "</td></tr>",
         "</table>",
-        "<h4>🌐 " + tr("Выберите язык", "Choose your language") + "</h4>",
-        "<p>" + tr(
-            "После выбора языка нажмите «🔐 Платные подписки». "
-            "На следующем экране объясним оба способа создания бота.",
-            "After choosing a language, select 🔐 Paid subscriptions. "
-            "The next screen explains both bot creation methods.",
+        "<h4>" + (
+            tr("🔐 Что будем создавать?", "🔐 What will you create?")
+            if language_selected else
+            tr("🌐 Выберите язык", "🌐 Choose your language")
+        ) + "</h4>",
+        "<p>" + (
+            tr(
+                "Выберите «🔐 Платные подписки». Затем покажем оба "
+                "способа подключения Telegram-бота.",
+                "Select 🔐 Paid subscriptions. We will explain both "
+                "Telegram bot creation methods.",
+            ) if language_selected else tr(
+                "Сначала выберите русский или английский язык. Далее "
+                "перейдите к платным подпискам.",
+                "First choose Russian or English. Then continue "
+                "to paid subscriptions.",
+            )
         ) + "</p>",
         "__VIMI_RICH_ACTIONS__",
     ])
 
 
-def central_welcome_classic() -> str:
+def central_welcome_classic(*, language_selected: bool = False) -> str:
     return "\n".join([
         "✨ <b>ViMi Pay</b>",
         "<b>" + tr(
@@ -69,10 +80,13 @@ def central_welcome_classic() -> str:
             "Подключите бота, настройте тарифы, платежи и продажу файлов.",
             "Connect a bot, set up plans, payments and file sales.",
         ),
-        "🌐 " + tr(
+        ("🔐 " + tr(
+            "Перейдите к платным подпискам.",
+            "Continue to paid subscriptions.",
+        )) if language_selected else ("🌐 " + tr(
             "Выберите язык, затем «🔐 Платные подписки».",
             "Choose a language, then 🔐 Paid subscriptions.",
-        ),
+        )),
     ])
 
 
