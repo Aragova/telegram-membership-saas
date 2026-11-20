@@ -9,7 +9,7 @@ COPY pyproject.toml README.md requirements-runtime.lock ./
 COPY src ./src
 # Install the exact Python 3.12 versions already tested in GitHub CI.
 # The local, trusted project itself installs without resolving dependencies.
-RUN python -m pip install --no-cache-dir --only-binary=:all: -r requirements-runtime.lock \
+RUN python -m pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements-runtime.lock \
     && python -m pip install --no-cache-dir --no-deps --only-binary=:all: .
 
 # The application, Telegram pollers and API need no root privileges.
