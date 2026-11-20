@@ -979,11 +979,7 @@ def create_owner_setup_router(
                     ),
                 ],
             ])
-        if fixed_project_id is None:
-            await bot.send_message(
-                user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
-            )
-        else:
+        if fixed_project_id is not None:
             await send_owner_rich(
                 bot, chat_id=user_id, rich_html=rich_html,
                 classic_html=text, reply_markup=_markup(rows),
