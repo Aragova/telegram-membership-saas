@@ -48,7 +48,9 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+          python -m pip install --no-build-isolation --no-deps --only-binary=:all: -e .
 
       - name: Lint
         run: ruff check .
@@ -301,3 +303,13 @@ jobs:
 
       - name: Build container
         run: docker build -t telegram-membership-saas:ci .
+
+      # This is the exact image used for bot/supervisor/API deployment.
+      # Verify that the non-root UID can import all three production entrypoints.
+      - name: Rootless container and bot entrypoint smoke
+        run: |
+          docker run --rm --entrypoint python telegram-membership-saas:ci \
+            -c "import os; assert os.geteuid() != 0; \
+            import telegram_membership_saas.bot_main; \
+            import telegram_membership_saas.customer_bot_main; \
+            import telegram_membership_saas.customer_supervisor_main"

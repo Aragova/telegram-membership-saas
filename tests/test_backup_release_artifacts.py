@@ -85,6 +85,23 @@ def test_uploader_does_not_accept_arbitrary_endpoints() -> None:
     assert validate_session_url(
         "https://storage.googleapis.com/upload/storage/v1/b/example/o?upload_id=secret"
     ).hostname == "storage.googleapis.com"
+    with pytest.raises(ValueError):
+        validate_session_url(
+            "https://storage.googleapis.com/upload/storage/v1/b/example/"
+            "o?upload_id=secret#fragment"
+        )
+
+
+def test_private_broker_iam_token_is_never_forwarded_to_redirects() -> None:
+    request = urllib.request.Request(
+        "https://vimi-backup-123-ew.a.run.app/session",
+        headers={"Authorization": "Bearer private-token"},
+    )
+    handler = uploader._NoBrokerRedirect()
+    assert handler.redirect_request(
+        request, None, 302, "Found", {"Location": "https://example.com/steal"},
+        "https://example.com/steal",
+    ) is None
 
 
 def test_backup_script_is_independent_of_vm_gcs_oauth_scopes() -> None:
@@ -154,6 +171,7 @@ def test_vm_requests_id_token_for_real_broker_audience(monkeypatch) -> None:
         return FakeHTTPResponse(json.dumps({"upload_url": session}).encode())
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(uploader, "_open_private_broker", fake_urlopen)
     got = request_session(
         broker,
         "20261116T123000Z-12345678-1234-1234-1234-123456789abc",

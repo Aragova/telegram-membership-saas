@@ -40,7 +40,6 @@ _NATIVE_REPLY_MARKERS = (
     "✍️ ViMi Pay · Reply to admin",
 )
 _HEADING = re.compile(r"^\s*.{1,120}$")
-_ROW = re.compile(r"^([^:\n]{2,65}?):\s+(.+)$")
 _STATISTICS = (
     "ViMi Pay · Платформа", "ViMi Pay · Platform",
     "Статистика · ViMi Pay", "Statistics · ViMi Pay",
@@ -50,6 +49,26 @@ _STATISTICS = (
     "ViMi Pay · Реквизиты", "ViMi Pay · Payment instructions",
     "Мониторинг · ViMi Pay", "Monitoring · ViMi Pay",
 )
+
+
+def _metric_parts(line: str) -> tuple[str, str] | None:
+    """Parse a first-party label/value line in linear time.
+
+    The former regex allowed expensive backtracking on a long sequence of
+    whitespace. Preserve its grouping and whitespace semantics without it.
+    Input lines are already split on newlines by to_rich_html.
+    """
+    label, separator, tail = line.partition(":")
+    if not separator or not 2 <= len(label) <= 65:
+        return None
+    if len(tail) < 2 or not tail[0].isspace():
+        return None
+    index = 0
+    # Preserve a final whitespace character as the value when there are
+    # only spaces after the colon, matching the old regex's last backtrack.
+    while index < len(tail) - 1 and tail[index].isspace():
+        index += 1
+    return label, tail[index:]
 
 
 def _tableize_metrics(lines: list[str]) -> list[str]:
@@ -63,10 +82,10 @@ def _tableize_metrics(lines: list[str]) -> list[str]:
             # They are display lines, not label/value metric rows.
             if lines[i].lstrip().startswith(("• ", "- ", "· ")):
                 break
-            match = _ROW.fullmatch(lines[i])
-            if match is None:
+            row = _metric_parts(lines[i])
+            if row is None:
                 break
-            group.append((match.group(1), match.group(2)))
+            group.append(row)
             i += 1
         if len(group) >= 2:
             result.append("<table bordered compact>")
