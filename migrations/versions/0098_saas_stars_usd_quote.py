@@ -226,8 +226,61 @@ BEGIN
   );
 END; $f$
     """)
-    # Do not change old charge, pre-checkout, refund or activation RPCs.
-    # Existing quotes carry their historical immutable RUB/Star snapshots.
+    # Preserve original charge/refund/activation evidence logic. Existing
+    # XTR orders preserve their previous precheckout semantics.
+    op.execute("""\nCREATE OR REPLACE FUNCTION public.platform_saas_stars_precheckout(
+  p_payload text,p_telegram_id bigint,p_bot_id bigint,p_amount integer
+) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $f$
+DECLARE actor uuid; ord record; inv record; moment timestamptz;
+BEGIN
+  actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+  IF actor IS NULL OR p_payload IS NULL OR
+     p_telegram_id IS NULL OR p_bot_id IS NULL OR
+     p_amount IS NULL OR p_amount<1 THEN RETURN false; END IF;
+  SELECT * INTO ord FROM public.platform_saas_stars_orders
+    WHERE invoice_payload=p_payload FOR UPDATE;
+  IF ord.id IS NULL OR ord.owner_user_id IS DISTINCT FROM actor
+     OR ord.payer_telegram_id<>p_telegram_id
+     OR ord.central_bot_id<>p_bot_id OR ord.stars_amount<>p_amount
+     OR NOT EXISTS(SELECT 1 FROM public.telegram_users u
+       WHERE u.id=actor AND u.telegram_user_id=p_telegram_id) THEN
+    RETURN false;
+  END IF;
+  SELECT * INTO inv FROM public.platform_saas_invoices
+    WHERE id=ord.invoice_id FOR UPDATE;
+  moment:=clock_timestamp();
+  IF inv.id IS NULL OR inv.status<>'issued'
+     OR inv.owner_user_id IS DISTINCT FROM actor
+     OR moment>ord.expires_at
+     -- Emergency suspension must also block PRECHECKOUT on new USD orders.
+     -- Older XTR quotes retain their historical precheckout semantics.
+     OR (ord.usd_quote IS NOT NULL AND NOT EXISTS(
+       SELECT 1 FROM public.platform_saas_stars_usd_policy p
+       WHERE p.id=1 AND p.enabled
+     ))
+     OR ord.prechecked_at IS NOT NULL
+     OR EXISTS(SELECT 1 FROM public.platform_saas_stars_charges c
+       WHERE c.order_id=ord.id)
+     OR EXISTS(SELECT 1 FROM public.platform_saas_stars_refunds r
+       WHERE r.order_id=ord.id)
+     OR public.platform_saas_v2_remaining(inv.id)<>ord.rub_amount
+     OR (inv.bot_instance_id IS NOT NULL AND NOT EXISTS(
+       SELECT 1 FROM public.bot_instances b
+       JOIN public.projects p ON p.id=b.project_id
+       WHERE b.id=inv.bot_instance_id AND p.owner_user_id=actor
+     ))
+     OR EXISTS(SELECT 1 FROM public.platform_saas_stars_orders other
+       WHERE other.invoice_id=inv.id AND other.id<>ord.id
+         AND other.prechecked_at>moment-interval '24 hours'
+         AND NOT EXISTS(SELECT 1 FROM public.platform_saas_stars_charges c
+           WHERE c.order_id=other.id))
+  THEN RETURN false; END IF;
+  UPDATE public.platform_saas_stars_orders SET prechecked_at=moment
+  WHERE id=ord.id;
+  RETURN true;
+END; $f$\n    """)
+
     for sig in (
         "platform_saas_stars_usd_policy_read()",
         "platform_saas_stars_usd_policy_set(numeric,numeric,boolean)",
