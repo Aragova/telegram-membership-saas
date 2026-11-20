@@ -1,6 +1,6 @@
 """Immutable native USD refund evidence for platform provider settlements.
 
-Revision ID: 0101_saas_native_provider_refunds
+Revision ID: 0101_saas_provider_refunds
 Revises: 0100_saas_native_gateway
 
 A verified provider refund in USD is translated into the exact corresponding
@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0101_saas_native_provider_refunds"
+revision: str = "0101_saas_provider_refunds"
 down_revision: str | None = "0100_saas_native_gateway"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
