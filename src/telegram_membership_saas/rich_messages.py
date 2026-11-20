@@ -239,7 +239,7 @@ def rich_row_marker(index: int) -> str:
 
 def strip_rich_action_markers(html: str) -> str:
     """Never leak presentation markers to unsupported clients."""
-    return re.sub(r"__VIMI_RICH_(?:ACTIONS|ROW_\\d+)__", "", html)
+    return re.sub(r"__VIMI_RICH_(?:ACTIONS|ROW_\d+)__", "", html)
 
 
 def rich_with_inline_actions(
