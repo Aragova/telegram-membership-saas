@@ -63,7 +63,7 @@ async def send_platform_stars_invoice(
         chat_id=payer_telegram_id,
         title=tr("ViMi Pay · обслуживание", "ViMi Pay · service"),
         description=tr(
-            "ViMi Pay: минимум {stars} ⭐. Надбавка за Stars {surcharge}%, "
+            "ViMi Pay: к оплате {stars} ⭐. Надбавка за Stars {surcharge}%, "
             "резерв вывода {reserve}%. Доход после резерва: от ${usd}. "
             "Оплата погашает исходный счёт одного бота.",
             "ViMi Pay: {stars} ⭐. Separate Stars surcharge {surcharge}%, "
