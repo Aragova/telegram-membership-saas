@@ -8,6 +8,7 @@ book-RUB liability under the same invoice/charge lock and recorded separately
 in immutable native evidence. Operator command is NOT a refund API.
 """
 from collections.abc import Sequence
+
 from alembic import op
 
 revision: str = "0101_saas_native_provider_refunds"
