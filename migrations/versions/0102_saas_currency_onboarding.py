@@ -67,17 +67,6 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
           PERFORM pg_advisory_xact_lock(
             hashtextextended('saas:bot:'||p_bot::text,0)
           );
-          -- Newly registered bots must explicitly choose their own future
-          -- service currency before the first immutable invoice is issued.
-          -- The check is under the same canonical per-bot advisory lock.
-          IF NOT EXISTS (
-            SELECT 1 FROM public.platform_saas_bot_price_profiles bp
-            WHERE bp.bot_instance_id=p_bot
-              AND bp.currency_selected
-          ) THEN
-            RAISE EXCEPTION 'Confirm bot service currency before billing'
-              USING ERRCODE='42501';
-          END IF;
           SELECT b.project_id, p.merchant_id, p.owner_user_id,
                  b.created_at AS connected_at
           INTO entry FROM public.bot_instances b
@@ -200,6 +189,18 @@ CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
           FROM public.platform_saas_bot_price_profiles bp
           WHERE bp.bot_instance_id=p_bot
             AND bp.owner_user_id=entry.owner_user_id;
+
+          -- Newly registered bots must explicitly choose their own future
+          -- service currency before the first immutable invoice is issued.
+          -- The check is under the same canonical per-bot advisory lock.
+          IF NOT EXISTS (
+            SELECT 1 FROM public.platform_saas_bot_price_profiles bp
+            WHERE bp.bot_instance_id=p_bot
+              AND bp.currency_selected
+          ) THEN
+            RAISE EXCEPTION 'Confirm bot service currency before billing'
+              USING ERRCODE='42501';
+          END IF;
           IF currency IS NULL THEN
             RAISE EXCEPTION 'Uninitialized bot service price: manual review'
               USING ERRCODE='42501';
