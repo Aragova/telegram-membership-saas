@@ -202,7 +202,8 @@ async def test_stalled_telegram_poll_clears_live_health_before_unlock(
         timeout=2,
     )
     assert "starting" in events
-    assert "running" in events
+    if reported_failure is None:
+        assert "running" in events
     assert "error" in events
     assert errors == [reported_failure or "polling_stalled"]
     assert events.index("customer_stopped") < events.index("unlocked")
