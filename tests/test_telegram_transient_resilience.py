@@ -5,7 +5,7 @@ its project lease for the entire degraded/recovery cycle.
 """
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -247,7 +247,6 @@ def test_operator_sees_yellow_for_retrying_and_red_for_critical():
         "plans": 1, "subscriptions": 1, "payments_period": 0,
     }).startswith("🟡 ")
     # A stale supervisor heartbeat is NOT evidence that retry continues.
-    from datetime import timedelta
     old = {**observation, "last_heartbeat": (
         moment - timedelta(minutes=5)
     ).isoformat(), "username": "demo_bot", "plans": 1,
