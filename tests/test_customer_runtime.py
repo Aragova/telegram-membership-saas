@@ -321,6 +321,8 @@ async def test_cancel_drains_aiogram_before_access_worker_exits(monkeypatch):
         settings=_settings(),
     ))
     await asyncio.wait_for(polling_started.wait(), timeout=2)
+    assert runtime.TELEGRAM_POLL_BACKOFF.max_delay == 20.0
+    assert runtime.TELEGRAM_POLL_BACKOFF.jitter > 0
     task.cancel()
     result = await asyncio.gather(task, return_exceptions=True)
     assert isinstance(result[0], asyncio.CancelledError)
