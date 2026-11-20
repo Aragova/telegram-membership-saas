@@ -153,7 +153,8 @@ def create_broadcast_router(
                 ]),
             )
         except asyncio.CancelledError:
-            return
+            # A discarded/replaced album must remain a cancelled task.
+            raise
 
     async def identify(user) -> UUID:
         return await ensure_telegram_actor(
