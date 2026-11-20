@@ -172,6 +172,8 @@ from telegram_membership_saas.modules.owner_setup.plan_management import (
     rename_owner_plan,
 )
 from telegram_membership_saas.modules.owner_setup.premium_welcome import (
+    central_connection_classic,
+    central_connection_rich,
     central_welcome_classic,
     central_welcome_rich,
     trial_status_classic,
@@ -792,25 +794,73 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
         )
         if fixed_project_id is None:
-            # Central is a connection manager, not a tenant sales console.
-            text = (
-                tr("✦ <b>ViMi Pay</b>\n<i>Ваши подключения</i>\n\n",
-                   "✦ <b>ViMi Pay</b>\n<i>Your connections</i>\n\n") +
-                f"🤖 <b>{escape(data.project_name)}</b>\n"
-                f"{escape(owner_runtime_label(data.bot_runtime_label))}\n\n"
-                + tr("Подключите бота и продолжите настройку внутри него.",
-                     "Connect a bot and finish setup inside that bot.")
+            # Central is a connection control panel, not a tenant sales console.
+            # Actions use existing callbacks; the bot link opens the real
+            # connected tenant admin rather than another central submenu.
+            connected = next(
+                (username for _, username, status in data.bot_instances
+                 if status == "registered"), None,
             )
-            rows = [
-                [_button("🤖 Управление ботом", "bots", "success")],
-                [_button("📁 Все подключения", "projects")],
-                [_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-                     "saasinvoices:0")],
-                [_button("❔ Как это работает", "help")],
-                [InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")],
-            ]
+            runtime = owner_runtime_label(data.bot_runtime_label)
+            if connected:
+                rows = [[
+                    InlineKeyboardButton(
+                        text=tr("🚀 Открыть бота", "🚀 Open bot"),
+                        url="https://t.me/" + connected,
+                        style="success",
+                    ),
+                    _button(
+                        tr("⚙️ Управление", "⚙️ Manage"), "bots", "success",
+                    ),
+                ]]
+            else:
+                rows = [[
+                    _button(
+                        tr("⚙️ Подключить бота", "⚙️ Connect bot"),
+                        "bots", "success",
+                    ),
+                    _button(
+                        tr("✨ Создать бота", "✨ Create bot"),
+                        "newmanaged", "success",
+                    ),
+                ]]
+            # Alternating green/blue rows, always two actions per row.
+            rows.extend([
+                [
+                    _button(
+                        tr("📁 Все подключения", "📁 All connections"),
+                        "projects", "primary",
+                    ),
+                    _button(
+                        tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay bills"),
+                        "saasinvoices:0", "primary",
+                    ),
+                ],
+                [
+                    _button(
+                        tr("❔ Как это работает", "❔ How it works"),
+                        "help", "success",
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 Language / Язык",
+                        callback_data="lng:menu", style="success",
+                    ),
+                ],
+            ])
             if platform_navigation(user_id):
                 rows.append(platform_navigation(user_id))
+            await send_owner_rich(
+                bot, chat_id=user_id,
+                rich_html=central_connection_rich(
+                    project_name=data.project_name, bot_username=connected,
+                    runtime_label=runtime,
+                ),
+                classic_html=central_connection_classic(
+                    project_name=data.project_name, bot_username=connected,
+                    runtime_label=runtime,
+                ),
+                reply_markup=_markup(rows),
+            )
         else:
             next_step = _next_setup_step(data)
             # Delegated project admins can manage the bot but do not own
