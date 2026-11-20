@@ -29,7 +29,10 @@ from telegram_membership_saas.db import (
 from telegram_membership_saas.modules.bots.deletion_service import (
     finalize_bot_retirement,
 )
-from telegram_membership_saas.modules.bots.diagnostics import CustomerBotDiagnosticError
+from telegram_membership_saas.modules.bots.diagnostics import (
+    TRANSIENT_POLLING_CODES,
+    CustomerBotDiagnosticError,
+)
 from telegram_membership_saas.modules.bots.health_service import (
     claim_bot_health,
     write_bot_health,
@@ -231,6 +234,7 @@ async def run_target(
             first_poll_request_at: float | None = None
             last_poll_response: float | None = None
             last_poll_failure: str | None = None
+            last_poll_failure_at: float | None = None
             poll_inflight = False
             startup_stage: str | None = None
 
@@ -250,15 +254,18 @@ async def run_target(
                 poll_inflight = True
 
             def observed_poll_response() -> None:
-                nonlocal last_poll_response, last_poll_failure, poll_inflight
+                nonlocal last_poll_response, last_poll_failure
+                nonlocal last_poll_failure_at, poll_inflight
                 last_poll_response = monotonic()
                 last_poll_failure = None
+                last_poll_failure_at = None
                 poll_inflight = False
 
             def observed_poll_failure(code: str) -> None:
-                nonlocal last_poll_failure, poll_inflight
+                nonlocal last_poll_failure, last_poll_failure_at, poll_inflight
                 # The observer only produces fixed codes, never raw errors.
                 last_poll_failure = code
+                last_poll_failure_at = monotonic()
                 poll_inflight = False
 
             async def heartbeat() -> None:
@@ -284,20 +291,41 @@ async def run_target(
                         silence = now_at - (
                             last_ok if last_ok is not None else first_request
                         )
-                        if silence > POLLING_STALE_SECONDS:
-                            if last_poll_failure is not None:
-                                code = last_poll_failure
-                            elif poll_inflight:
-                                code = "polling_stalled"
-                            else:
-                                # With handle_as_tasks=False, a blocked
-                                # incoming handler can pause getUpdates.
-                                code = "polling_handler_stalled"
+                        # aiogram retries transport/5xx/429 errors internally.
+                        # Restarting it every 90s forces new getMe handshakes
+                        # and prolongs a Telegram-side outage. The lease and
+                        # worker stay alive, but health is explicitly NOT green.
+                        transient = last_poll_failure in TRANSIENT_POLLING_CODES
+                        recent_failure = (
+                            last_poll_failure_at is not None
+                            and now_at - last_poll_failure_at <= POLLING_STALE_SECONDS
+                        )
+                        if last_poll_failure is not None and not transient:
+                            # A second poller, revoked token or unknown API
+                            # failure is not a transient connectivity issue.
+                            raise CustomerBotDiagnosticError(last_poll_failure)
+                        if silence > POLLING_STALE_SECONDS and not (
+                            transient and recent_failure
+                        ):
+                            # A silent/disconnected poller must still be killed
+                            # safely so the lease is never held forever.
+                            code = (
+                                "polling_stalled" if poll_inflight or transient
+                                else "polling_handler_stalled"
+                            )
                             raise CustomerBotDiagnosticError(code)
+                    degraded = (
+                        last_poll_failure in TRANSIENT_POLLING_CODES
+                        and last_poll_failure_at is not None
+                    )
                     await write_bot_health(
                         factory, project_id=project_id, bot_id=bot_id,
                         instance_id=instance_id,
-                        state="running" if last_ok is not None else "starting",
+                        state=(
+                            "degraded" if degraded
+                            else "running" if last_ok is not None else "starting"
+                        ),
+                        error_code=last_poll_failure if degraded else None,
                     )
 
             customer = asyncio.create_task(run_customer_bot_instance(
