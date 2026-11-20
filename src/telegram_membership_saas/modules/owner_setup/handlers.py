@@ -1062,7 +1062,17 @@ def create_owner_setup_router(
     async def show_saas_service_profile(
         bot: Bot, user_id: int, actor_id: UUID,
     ) -> None:
-        """Connected bots select their own future service currency."""
+        """Only each connected bot selects its own future service currency."""
+        if fixed_project_id is None:
+            await bot.send_message(
+                user_id, tr(
+                    "💱 Валюта обслуживания выбирается в разделе «🧾 Счёт» "
+                    "соответствующего бота. Общей валюты аккаунта нет.",
+                    "💱 Set the service currency in each bot's 🧾 Bill "
+                    "section. There is no account-wide currency.",
+                ),
+            )
+            return
         try:
             data = await saas_price_profile(
                 factory, actor_id=actor_id, project_id=fixed_project_id,
@@ -1145,9 +1155,6 @@ def create_owner_setup_router(
             report = await merchant_saas_statements(
                 factory, actor_user_id=actor_id, page=page,
             )
-            profile = await saas_price_profile(
-                factory, actor_id=actor_id, project_id=None,
-            )
             rows: list[list[InlineKeyboardButton]] = []
             for item in report.invoices:
                 # Issued debt remains payable after physical bot retirement.
@@ -1178,15 +1185,10 @@ def create_owner_setup_router(
             if nav:
                 rows.append(nav)
             rows.append([_button(
-                tr("💱 Валюта обслуживания", "💱 Service currency"),
-                "saasprofile",
-            )])
-            rows.append([_button(
                 tr("🏠 Главное меню", "🏠 Main menu"), "projects",
             )])
             amount = format(report.outstanding_rub, ".2f") + " ₽"
             count = str(report.unpaid)
-            future = service_currency_hint(str(profile["currency"]), rich=True)
             title = tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices")
             table = (
                 "<table bordered compact><tr><th>"
@@ -1195,11 +1197,19 @@ def create_owner_setup_router(
             )
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html="<h3>" + title + "</h3>" + table + future,
+                rich_html="<h3>" + title + "</h3>" + table + "<p>" + tr(
+                    "Каждый бот имеет собственный счёт и валюту. Изменить валюту "
+                    "можно в разделе «🧾 Счёт» соответствующего бота.",
+                    "Every bot has its own invoice and currency. Change it from "
+                    "that bot's 🧾 Bill section.",
+                ) + "</p>",
                 classic_html=(
                     "<b>" + title + "</b>\n\n"
                     + tr("Неоплачено: ", "Unpaid: ") + count + " · " + amount
-                    + "\n\n" + service_currency_hint(str(profile["currency"]))
+                    + "\n\n" + tr(
+                        "Валюта выбирается отдельно в каждом боте.",
+                        "Set the currency separately in each bot.",
+                    )
                 ),
                 reply_markup=_markup(rows),
             )
@@ -4555,6 +4565,12 @@ def create_owner_setup_router(
                 await query.answer()
                 return
             if action.startswith("saasprice:"):
+                if fixed_project_id is None:
+                    await query.answer(tr(
+                        "Откройте 🧾 Счёт своего бота",
+                        "Open your bot's 🧾 Bill",
+                    ), show_alert=True)
+                    return
                 chosen_price = action.split(":", 1)[1]
                 if chosen_price not in ("RUB", "USD"):
                     raise ValueError("Invalid service billing profile")
