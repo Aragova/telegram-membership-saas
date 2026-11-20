@@ -118,9 +118,9 @@ BEGIN
   RAISE EXCEPTION 'Invalid native USD refund evidence'
    USING ERRCODE='22023';
  END IF;
- SELECT o.* INTO o FROM public.platform_saas_gateway_orders o
- WHERE o.provider=p_provider
-   AND o.provider_invoice_id=p_provider_invoice_id;
+ SELECT ord.* INTO o FROM public.platform_saas_gateway_orders ord
+ WHERE ord.provider=p_provider
+   AND ord.provider_invoice_id=p_provider_invoice_id;
  IF o.id IS NULL OR o.pay_currency<>'USD' THEN
   RAISE EXCEPTION 'Original USD paid provider order required'
    USING ERRCODE='42501';
@@ -129,9 +129,9 @@ BEGIN
  -- record_refund. This serializes with other refund evidence.
  PERFORM 1 FROM public.platform_saas_invoices i
  WHERE i.id=o.invoice_id FOR UPDATE;
- SELECT * INTO c FROM public.platform_saas_gateway_charges c
- WHERE c.order_id=o.id AND c.provider=p_provider
-   AND c.provider_invoice_id=p_provider_invoice_id FOR UPDATE;
+ SELECT charge.* INTO c FROM public.platform_saas_gateway_charges charge
+ WHERE charge.order_id=o.id AND charge.provider=p_provider
+   AND charge.provider_invoice_id=p_provider_invoice_id FOR UPDATE;
  IF c.id IS NULL THEN
   RAISE EXCEPTION 'Original paid provider receipt required'
    USING ERRCODE='42501';
