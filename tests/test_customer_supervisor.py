@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from cryptography.fernet import Fernet
@@ -43,8 +43,9 @@ def _settings(**kwargs):
 
 
 def test_project_lock_key_is_stable_and_project_specific():
-    a, b = uuid4(), uuid4()
-    assert project_lock_key(a) == project_lock_key(a)
+    a, b = UUID("00000000-0000-0000-0000-000000000001"), uuid4()
+    # Pinned known output detects accidental changes to persisted lock mapping.
+    assert project_lock_key(a) == 2981706383853238330
     assert project_lock_key(a) != project_lock_key(b)
     assert -(2**63) <= project_lock_key(a) < 2**63
 
