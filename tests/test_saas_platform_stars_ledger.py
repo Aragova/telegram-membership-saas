@@ -342,3 +342,38 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 await outer.rollback()
     finally:
         await admin.dispose()
+
+
+async def test_precheckout_policy_row_share_lock_blocks_concurrent_disable():
+    """PostgreSQL guarantee behind the USD precheckout/suspend serialization.
+
+    The real precheckout function holds FOR SHARE on this singleton row,
+    so /saasstarsrate off cannot complete before that transaction finishes.
+    Both synthetic transactions roll back without changing the singleton.
+    """
+    cfg = Settings()
+    engine = create_async_engine(cfg.migration_database_url)
+    try:
+        async with engine.connect() as checking, engine.connect() as disabling:
+            first = await checking.begin()
+            second = await disabling.begin()
+            try:
+                row = (await checking.execute(text(
+                    "SELECT id FROM public.platform_saas_stars_usd_policy "
+                    "WHERE id=1 FOR SHARE"
+                ))).scalar_one()
+                assert row == 1
+                await disabling.execute(text(
+                    "SET LOCAL lock_timeout = '150ms'"
+                ))
+                with pytest.raises(DBAPIError) as blocked:
+                    await disabling.execute(text(
+                        "UPDATE public.platform_saas_stars_usd_policy "
+                        "SET enabled=false WHERE id=1"
+                    ))
+                assert getattr(blocked.value.orig, "sqlstate", None) == "55P03"
+            finally:
+                await second.rollback()
+                await first.rollback()
+    finally:
+        await engine.dispose()
