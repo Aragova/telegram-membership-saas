@@ -209,6 +209,167 @@ REVOKE ALL ON FUNCTION
  public.platform_saas_gateway_quote_immutable() FROM PUBLIC
     """)
 
+    # Existing native USD invoices cannot drift with later CBR updates even
+    # when paid through the manually reviewed bank payment catalog.
+    op.execute("""
+CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
+      p_invoice uuid,p_requested_rub numeric,p_currency text,p_method uuid
+    ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path=pg_catalog,public AS $f$
+    DECLARE
+      actor uuid;
+      item record;
+      paid numeric;
+      due numeric;
+      rate numeric;
+      fx_day date;
+      day date;
+      bank text;
+      method_label text;
+      converted numeric;
+      snapped_rub numeric;
+      attempt uuid;
+      deadline timestamptz;
+      native_usd numeric;
+      base_service_rub numeric;
+      remaining_service_rub numeric;
+      remaining_other_rub numeric;
+      remaining_native_usd numeric;
+      usd_rate_today numeric;
+      issue_usd_fx numeric;
+    BEGIN
+      actor:=NULLIF(current_setting('app.current_user_id',true),'')::uuid;
+      IF actor IS NULL OR p_invoice IS NULL
+         OR p_currency NOT IN ('RUB','USD','EUR','UAH','BYN')
+         OR p_requested_rub IS NULL OR p_requested_rub<=0
+         OR p_requested_rub<>round(p_requested_rub,2) THEN
+        RAISE EXCEPTION 'Invalid payment amount/currency'
+          USING ERRCODE='22023';
+      END IF;
+      PERFORM public.platform_saas_reconcile_verified_refunds(actor);
+      SELECT * INTO item FROM public.platform_saas_invoices
+        WHERE id=p_invoice FOR UPDATE;
+      IF item.id IS NULL OR item.status<>'issued'
+         OR item.owner_user_id IS DISTINCT FROM actor THEN
+        RAISE EXCEPTION 'Account invoice is not payable'
+          USING ERRCODE='42501';
+      END IF;
+      SELECT coalesce(sum(amount_rub),0) INTO paid
+      FROM public.platform_saas_receipts WHERE invoice_id=p_invoice;
+      SELECT paid+coalesce(sum(allocated_rub),0) INTO paid
+      FROM public.platform_saas_payment_allocations_v2
+      WHERE invoice_id=p_invoice;
+      due:=public.platform_saas_v2_remaining(item.id);
+      IF p_requested_rub<>due THEN
+        RAISE EXCEPTION 'Only full remaining invoice payment is supported'
+          USING ERRCODE='23514';
+      END IF;
+      -- The chosen method and currency must still be active, and the
+      -- immutable attempt snapshots the exact central method instructions.
+      SELECT m.instructions,m.name INTO bank,method_label
+      FROM public.platform_saas_payment_catalog_methods m
+      JOIN public.platform_saas_payment_catalog_currencies c
+        ON c.method_id=m.id AND c.currency_code=p_currency
+      WHERE m.id=p_method AND m.enabled AND m.removed_at IS NULL
+      FOR SHARE OF m;
+      IF bank IS NULL THEN
+        RAISE EXCEPTION 'Platform bank details not published'
+          USING ERRCODE='42501';
+      END IF;
+      day:=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
+      IF p_currency='RUB' THEN rate:=1;fx_day:=NULL;
+      ELSE
+        SELECT rub_per_unit,source_date INTO rate,fx_day
+        FROM public.platform_saas_daily_fx_rates
+        WHERE rate_date=day AND currency_code=p_currency
+          AND source_name='CBR' AND source_date<=day
+          AND source_date>=day-interval '14 days';
+      END IF;
+      IF rate IS NULL OR rate<=0 THEN
+        RAISE EXCEPTION 'Verified bank currency conversion unavailable'
+          USING ERRCODE='42501';
+      END IF;
+      -- Foreign currency is paid in 2 decimal places. A rounded bank
+      -- transfer can differ slightly from the RUB obligation. Preserve the
+      -- exact RUB amount requested; the platform absorbs that bounded FX
+      -- rounding difference rather than creating an unpayable residual.
+      -- Preserve the original $3 service obligation across FX dates.
+      -- RUB allocations remain at their immutable issue-day book value;
+      -- only the actual bank transfer quote uses the current rate.
+      SELECT l.original_amount,l.charge_rub,l.rub_per_unit
+      INTO native_usd,base_service_rub,issue_usd_fx
+      FROM public.platform_saas_invoice_lines l
+      WHERE l.invoice_id=item.id AND l.source_kind='bot_fee'
+        AND l.original_currency='USD'
+      LIMIT 1;
+      IF native_usd IS NOT NULL THEN
+        -- Confirmed bank receipts reduce the native $3 service portion
+        -- first at its original book value. Verified provider refunds are
+        -- separate RUB credits, not bank cash; they reduce the remaining
+        -- invoice balance. Clamp the service portion to that balance so
+        -- carried credits cannot cause an overcharge or negative quote.
+        IF base_service_rub IS NULL OR base_service_rub<=0
+           OR native_usd<=0 OR issue_usd_fx IS NULL
+           OR issue_usd_fx<=0 THEN
+          RAISE EXCEPTION 'Invalid original USD service snapshot'
+            USING ERRCODE='23514';
+        END IF;
+        remaining_service_rub:=greatest(0,least(
+          due,base_service_rub,
+          base_service_rub-paid
+        ));
+        remaining_other_rub:=greatest(0,due-remaining_service_rub);
+        remaining_native_usd:=native_usd*remaining_service_rub/base_service_rub;
+      END IF;
+      IF native_usd IS NULL THEN
+        converted:=round(p_requested_rub/rate,2);
+      ELSIF p_currency='USD' THEN
+        -- The issued USD invoice has ONE immutable USD total, even if
+        -- the payer uses the manual rail days after its issuance.
+        converted:=round(
+          remaining_native_usd+remaining_other_rub/issue_usd_fx,2
+        );
+      ELSE
+        SELECT rub_per_unit INTO usd_rate_today
+        FROM public.platform_saas_daily_fx_rates
+        WHERE rate_date=day AND currency_code='USD'
+          AND source_name='CBR' AND source_date<=day
+          AND source_date>=day-interval '14 days';
+        IF usd_rate_today IS NULL OR usd_rate_today<=0 THEN
+          RAISE EXCEPTION 'Current USD service quote unavailable'
+            USING ERRCODE='42501';
+        END IF;
+        converted:=round(
+          (remaining_native_usd*usd_rate_today+remaining_other_rub)/rate,2
+        );
+      END IF;
+      snapped_rub:=p_requested_rub;
+      IF converted<=0 OR snapped_rub>due
+         OR (native_usd IS NULL AND
+             abs(converted*rate-snapped_rub)>rate*0.005+0.005) THEN
+        RAISE EXCEPTION 'Converted payment amount outside remaining debt'
+          USING ERRCODE='23514';
+      END IF;
+      deadline:=clock_timestamp()+interval '48 hours';
+      attempt:=gen_random_uuid();
+      INSERT INTO public.platform_saas_payment_attempts_v2(
+        id,invoice_id,owner_user_id,amount_rub,currency_code,
+        rub_per_unit,amount_currency,quote_date,source_date,
+        instructions_snapshot,expires_at,method_id
+      ) VALUES(
+        attempt,item.id,actor,snapped_rub,p_currency,rate,
+        converted,day,fx_day,bank,deadline,p_method
+      );
+      RETURN jsonb_build_object(
+        'id',attempt,'invoice_id',item.id,'amount_rub',snapped_rub::text,
+        'currency',p_currency,'amount',converted::text,
+        'rub_per_unit',rate::text,'quote_date',day,
+        'source_date',fx_day,'expires_at',deadline,
+        'instructions',bank,'method_name',method_label,
+        'method_id',p_method,'remaining_before',due::text
+      );
+    END; $f$
+    """)
 
 def downgrade() -> None:
     raise RuntimeError("Provider payment evidence and immutable quotes cannot be reverted")
