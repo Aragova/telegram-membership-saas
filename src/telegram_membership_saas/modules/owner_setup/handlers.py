@@ -1177,14 +1177,16 @@ def create_owner_setup_router(
                 "spm:" + encode_uuid(UUID(str(invoice_id))) + ":RUB:0",
                 "success",
             )])
-        rows.append([_button(
-            tr("💱 Валюта обслуживания", "💱 Service currency"),
-            "saasprofile",
-        )])
-        rows.append([_button(
-            tr("🏠 Главное меню", "🏠 Main menu"),
-            "dashboard",
-        )])
+        rows.append([
+            _button(
+                tr("💱 Валюта обслуживания", "💱 Service currency"),
+                "saasprofile", "primary",
+            ),
+            _button(
+                tr("🏠 Главное меню", "🏠 Main menu"),
+                "dashboard", "success",
+            ),
+        ])
         await send_owner_rich(
             bot, chat_id=user_id,
             rich_html=unified_merchant_bill_rich(
