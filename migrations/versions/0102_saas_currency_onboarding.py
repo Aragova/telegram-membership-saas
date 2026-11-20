@@ -19,8 +19,20 @@ depends_on: str | Sequence[str] | None = None
 # Keep the existing canonical billing function intact except for the
 # currency-confirmation guard immediately after its bot advisory lock.
 # Downgrade restores the exact pre-0102 definition (no invoice mutations).
-_ISSUER_CURRENCY_GUARD = "\n          -- Newly registered bots must explicitly choose their own future\n          -- service currency before the first immutable invoice is issued.\n          -- The check is under the same canonical per-bot advisory lock.\n          IF NOT EXISTS (\n            SELECT 1 FROM public.platform_saas_bot_price_profiles bp\n            WHERE bp.bot_instance_id=p_bot\n              AND bp.currency_selected\n          ) THEN\n            RAISE EXCEPTION 'Confirm bot service currency before billing'\n              USING ERRCODE='42501';\n          END IF;"
-_ISSUER_CURRENCY_CONFIRMED_SQL = """CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
+_ISSUER_CURRENCY_GUARD = """
+          -- Newly registered bots must explicitly choose their own future
+          -- service currency before the first immutable invoice is issued.
+          -- The check is under the same canonical per-bot advisory lock.
+          IF NOT EXISTS (
+            SELECT 1 FROM public.platform_saas_bot_price_profiles bp
+            WHERE bp.bot_instance_id=p_bot
+              AND bp.currency_selected
+          ) THEN
+            RAISE EXCEPTION 'Confirm bot service currency before billing'
+              USING ERRCODE='42501';
+          END IF;"""
+_ISSUER_CURRENCY_CONFIRMED_SQL = """
+CREATE OR REPLACE FUNCTION public.platform_saas_issue_bot_invoice(
             p_bot uuid, p_start timestamptz, p_end timestamptz
         ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER
         SET search_path = pg_catalog, public
