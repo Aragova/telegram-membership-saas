@@ -110,7 +110,15 @@ BEGIN
       withdrawal_reserve_pct=p_withdrawal_reserve_pct,
       enabled=p_enabled,updated_by=actor,updated_at=clock_timestamp()
   WHERE id=1;
-  RETURN public.platform_saas_stars_usd_policy_read();
+  -- Return the committed target values, not an earlier STABLE snapshot.
+  RETURN jsonb_build_object(
+    'enabled',p_enabled,
+    'usd_per_star',p_usd_per_star::text,
+    'withdrawal_reserve_pct',p_withdrawal_reserve_pct::text,
+    'example_usd','5.00',
+    'example_stars',ceil(5/(p_usd_per_star*
+      (1-p_withdrawal_reserve_pct/100)))::integer
+  );
 END; $f$
     """)
     op.execute("""
