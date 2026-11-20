@@ -312,3 +312,49 @@ jobs:
             import telegram_membership_saas.bot_main; \
             import telegram_membership_saas.customer_bot_main; \
             import telegram_membership_saas.customer_supervisor_main"
+
+      # Temporary PR diagnostic: read the public SonarCloud findings by PR.
+      # Remove before final review; this never changes the Sonar project.
+      - name: Diagnose Sonar PR findings
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          query = urllib.parse.urlencode({
+              "componentKeys": "Aragova_telegram-membership-saas",
+              "pullRequest": "197",
+              "ps": 100,
+          })
+          url = "https://sonarcloud.io/api/issues/search?" + query
+          try:
+              with urllib.request.urlopen(url, timeout=30) as response:
+                  result = json.load(response)
+              print("SONAR_197_ISSUES_BEGIN")
+              for finding in result.get("issues", []):
+                  print(json.dumps({field: finding.get(field) for field in (
+                      "key", "rule", "severity", "component", "line",
+                      "message", "impacts", "status",
+                  )}, ensure_ascii=False))
+              print("SONAR_197_ISSUES_END")
+              print("SONAR_197_TOTAL", result.get("total"))
+          except urllib.error.HTTPError as exc:
+              print("SONAR_197_FETCH_STATUS", exc.code)
+          except Exception as exc:
+              print("SONAR_197_FETCH_ERROR", type(exc).__name__)
+          PY
+
+      # Temporary candidate export for Qodo's wheel-hash recommendation.
+      - name: Export hashed lockfile candidates
+        run: |
+          python -m pip install --only-binary=:all: pip-tools
+          pip-compile --quiet --generate-hashes --resolver=backtracking -o /tmp/vimi-runtime-hashes.lock pyproject.toml
+          pip-compile --quiet --generate-hashes --resolver=backtracking --extra dev -o /tmp/vimi-dev-hashes.lock pyproject.toml
+          printf 'HASH_RUNTIME_BEGIN\n'
+          cat /tmp/vimi-runtime-hashes.lock
+          printf 'HASH_RUNTIME_END\n'
+          printf 'HASH_DEV_BEGIN\n'
+          cat /tmp/vimi-dev-hashes.lock
+          printf 'HASH_DEV_END\n'
