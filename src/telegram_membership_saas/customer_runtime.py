@@ -73,7 +73,7 @@ TRANSIENT_PREFLIGHT_CODES = frozenset(
 
 async def retry_customer_preflight(
     operation: Callable[[], Awaitable[None]],
-    *, on_failure: Callable[[str], None] | None = None,
+    *, on_failure: Callable[[str, float], None] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """Keep the same bot/lease alive across Telegram transport outages.
@@ -90,17 +90,18 @@ async def retry_customer_preflight(
         except CustomerBotDiagnosticError as exc:
             if exc.code not in TRANSIENT_PREFLIGHT_CODES:
                 raise
-            if on_failure is not None:
-                on_failure(exc.code)
-            # A rate limit must NOT cause rapid repeated handshakes. Exact
-            # retry_after is already respected for short waits by the inner
-            # preflight helper; larger waits receive a conservative cooldown.
+            # Never lose Telegram's explicit provider deadline. The
+            # supervisor receives the planned numeric cooldown as well, so
+            # its startup watchdog cannot cancel a required 300s wait.
             base = min(60.0, 2.0 * 2 ** min(attempt, 5))
             delay = (
                 max(base, exc.retry_after if exc.retry_after is not None else 60.0)
                 if exc.code.endswith("_rate_limited") else base
             )
-            await sleep(delay + uniform(0.0, min(4.0, base * 0.2)))
+            pause = delay + uniform(0.0, min(4.0, base * 0.2))
+            if on_failure is not None:
+                on_failure(exc.code, pause)
+            await sleep(pause)
             attempt += 1
 
 
@@ -269,7 +270,7 @@ async def run_customer_bot_instance(
     on_poll_failure: Callable[[str], None] | None = None,
     on_poll_request: Callable[[], None] | None = None,
     on_startup_stage: Callable[[str], None] | None = None,
-    on_preflight_failure: Callable[[str], None] | None = None,
+    on_preflight_failure: Callable[[str, float], None] | None = None,
 ) -> None:
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
