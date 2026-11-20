@@ -71,6 +71,22 @@ def _platform_client(
     )
 
 
+async def verify_platform_crypto_app(
+    settings: Settings, *, transport=None,
+) -> bool:
+    """Read-only provider getMe readiness on the PLATFORM token only.
+
+    No invoice is created, no balance modified, no token or app identity
+    included in the owner-facing diagnostic.
+    """
+    async with _platform_client(settings, transport=transport) as provider:
+        identity = await provider.get_me()
+    return bool(
+        isinstance(identity.get("app_id"), int)
+        and identity["app_id"] > 0
+    )
+
+
 async def create_platform_crypto_invoice(
     settings: Settings, *,
     order_id: UUID, rub_amount: Decimal,
