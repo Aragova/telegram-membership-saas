@@ -107,7 +107,7 @@ async def saas_price_profile(
     bot_scoped = project_id is not None
     if bot_scoped:
         name = ("platform_saas_bot_price_profile_set" if currency is not None
-                else "platform_saas_bot_price_profile_read")
+                else "platform_saas_bot_price_profile_read_v2")
         arguments = {"project": project_id}
         if currency is not None:
             arguments["currency"] = currency
