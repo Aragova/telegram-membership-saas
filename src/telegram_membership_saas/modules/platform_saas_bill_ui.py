@@ -11,6 +11,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from telegram_membership_saas.currency_display import display_currency
+from telegram_membership_saas.rich_messages import rich_row_marker
 from telegram_membership_saas.localization import tr
 
 
@@ -227,6 +228,7 @@ def unified_merchant_bill_rich(
             "⏳ No invoice issued yet.",
         )]
         lines.extend("<p>" + entry + "</p>" for entry in status)
+        lines.append(rich_row_marker(0))
         return "\n".join(lines)
     lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
     lines.extend([
@@ -263,11 +265,17 @@ def unified_merchant_bill_rich(
             bill, native="issued_due_usd", book="total_due_rub"
         ) + "</h4>"
     )
+    if Decimal(str(bill.get("total_due_rub", 0))) > 0:
+        # The only Pay button sits immediately below this actual debt.
+        lines.append(rich_row_marker(0))
     if future_profile_currency is not None:
         lines.append(service_currency_hint(future_profile_currency, rich=True))
         note = _old_invoice_currency_note(bill, future_profile_currency)
         if note:
             lines.append("<p>" + note + "</p>")
+    lines.append(rich_row_marker(
+        1 if Decimal(str(bill.get("total_due_rub", 0))) > 0 else 0
+    ))
     return "\n".join(lines)
 
 
