@@ -61,6 +61,25 @@ def test_price_hint_on_all_bill_states_and_ru_en(lang, state):
         _language.reset(token)
 
 
+@pytest.mark.parametrize(("lang", "expected"), [
+    ("ru", "Этот счёт выставлен в RUB"),
+    ("en", "This invoice was issued in RUB"),
+])
+def test_issued_rub_invoice_is_distinct_from_new_usd_profile(lang, expected):
+    bill = deepcopy(BILL)
+    bill["service_currency"] = "RUB"
+    bill["service_native"] = "150"
+    token = _language.set(lang)
+    try:
+        for renderer in (unified_merchant_bill_rich, unified_merchant_bill_classic):
+            html = renderer(bill, future_profile_currency="USD")
+            assert "150.00 ₽" in html and "USD · $5" in html
+            assert expected in html
+            assert html.index("150.00 ₽") < html.index("USD · $5")
+    finally:
+        _language.reset(token)
+
+
 @pytest.mark.parametrize("lang", ("ru", "en"))
 def test_paid_bill_with_network_hold_names_other_unpaid_invoice(lang):
     bill = deepcopy(BILL)
