@@ -56,6 +56,20 @@ async def test_central_deep_link_sends_native_star_invoice(
     assert kwargs["payload"] == quote["payload"]
     assert kwargs["prices"][0].amount == 405
     assert "Telegram Stars" in kwargs["prices"][0].label
+    # Net payout quote and gross-up reserve must be clearly and accurately
+    # described, never as raw $5.00000000 or a misleading +5% surcharge.
+    detail = kwargs["description"]
+    assert "$5.00" in detail
+    assert "5%" in detail
+    assert "405 ⭐" in detail
+    assert "$5.00000000" not in detail
+    assert "5.00%" not in detail
+    assert "+ 5%" not in detail
+    if language == "ru":
+        assert "после резерва" in detail
+    else:
+        assert "after a" in detail
+
 
 
 @pytest.mark.parametrize("language", ("ru", "en"))
