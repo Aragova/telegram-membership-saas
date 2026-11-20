@@ -170,6 +170,59 @@ async def test_repeated_safe_preflight_failures_do_not_evict_lease(monkeypatch):
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def test_provider_cooldown_is_observed_by_startup_watchdog(monkeypatch):
+    """Scaled 300s rate limit: never cancel sleep at the old 120s deadline."""
+    states = []
+    ready = asyncio.Event()
+    stop = asyncio.Event()
+    target = supervisor.BotTarget(uuid4(), 123456, datetime.now(UTC))
+
+    @asynccontextmanager
+    async def lease(_engine, _project):
+        yield MagicMock()
+
+    async def customer(
+        _factory, *, project_id, telegram_bot_id, settings,
+        on_poll_response, on_poll_failure, on_poll_request,
+        on_startup_stage, on_preflight_failure,
+    ):
+        on_startup_stage("identity")
+        on_preflight_failure("identity_rate_limited", 0.22)
+        await asyncio.sleep(0.15)
+        on_startup_stage("commands")
+        await asyncio.sleep(0.02)
+        on_poll_request()
+        on_poll_response()
+        ready.set()
+        await stop.wait()
+
+    async def health(*_args, **kwargs):
+        states.append((kwargs["state"], kwargs.get("error_code")))
+
+    monkeypatch.setattr(supervisor, "project_worker_lock", lease)
+    monkeypatch.setattr(supervisor, "claim_bot_health", AsyncMock())
+    monkeypatch.setattr(supervisor, "confirm_project_lock", AsyncMock())
+    monkeypatch.setattr(supervisor, "run_customer_bot_instance", customer)
+    monkeypatch.setattr(supervisor, "write_bot_health", health)
+    monkeypatch.setattr(supervisor, "HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(supervisor, "STARTUP_STALE_SECONDS", 0.05)
+
+    task = asyncio.create_task(supervisor.run_target(
+        MagicMock(), MagicMock(), target, settings=_SETTINGS,
+    ))
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=2)
+        await asyncio.sleep(0.025)
+        assert not task.done()
+        assert ("degraded", "identity_rate_limited") in states
+        assert states[-1] == ("running", None)
+        assert all(state != "error" for state, _ in states)
+    finally:
+        task.cancel()
+        stop.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def test_outer_preflight_retries_only_transient_and_respects_cancellation():
     results = [
         CustomerBotDiagnosticError("identity_server_failed"),
@@ -187,7 +240,8 @@ async def test_outer_preflight_retries_only_transient_and_respects_cancellation(
     async def no_wait(seconds):
         delays.append(seconds)
     await runtime.retry_customer_preflight(
-        read, on_failure=notices.append, sleep=no_wait,
+        read, on_failure=lambda code, pause: notices.append(code),
+        sleep=no_wait,
     )
     assert len(calls) == 3
     assert notices == ["identity_server_failed", "identity_network_failed"]
