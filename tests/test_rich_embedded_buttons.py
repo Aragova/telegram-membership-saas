@@ -142,3 +142,25 @@ def test_first_time_wizard_is_bilingual_and_uses_only_existing_actions():
         assert label in card
         assert RICH_ACTIONS_MARKER in card
         assert "150" in card and "5" in card
+
+
+
+def test_rich_dashboard_preserves_trusted_trial_time_and_line_breaks():
+    token = _language.set("ru")
+    try:
+        rich = rich_dashboard(
+            project_name="@vimi_test2bot", timezone="Europe/Moscow",
+            trial_banner=(
+                '🎁 Пробный период: 2 дн.\n🗓️ До: '
+                '<tg-time unix="1795200000" format="d">20.11.2026</tg-time>'
+            ),
+            readiness=(("Канал", False), ("Тариф", False),
+                       ("Оплата", False), ("Бот", True)),
+            sales_status="⚠️ Требуется настройка",
+            finances=DashboardFinances(bot_stars=None, channels=()),
+        )
+    finally:
+        _language.reset(token)
+    assert '<tg-time unix="1795200000" format="d">' in rich
+    assert "<br>" in rich
+    assert "&lt;tg-time" not in rich
