@@ -426,8 +426,13 @@ def _alert_text(
         if heartbeat is not None else tr("Нет данных", "No data")
     )
     return (
-        tr("🔴 <b>ViMi Pay · Устойчивая проблема</b>",
-           "🔴 <b>ViMi Pay · Persistent bot issue</b>")
+        (
+            tr("🟡 <b>ViMi Pay · Telegram временно недоступен</b>",
+               "🟡 <b>ViMi Pay · Telegram temporarily unavailable</b>")
+            if status == "degraded" else
+            tr("🔴 <b>ViMi Pay · Устойчивая проблема</b>",
+               "🔴 <b>ViMi Pay · Persistent bot issue</b>")
+        )
         + "\n🤖 <b>" + name + "</b>\n"
         + tr("Состояние: ", "Runtime: ") + escape(status) + "\n"
         + tr("Причина: ", "Reason: ") + escape(reason) + "\n"
