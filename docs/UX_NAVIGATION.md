@@ -1,9 +1,63 @@
-## 2026-11-20 — Compact Rich central connection panel and billing context
+# ViMi Pay 2.0 — Native Rich buttons and per-bot onboarding (PR #200)
 
-- For an already selected connected bot, `/menu` and `/start` show one compact RU/EN Rich connection status card (with classic HTML fallback). A live bot is never described as needing to be connected again; the card distinguishes opening the tenant bot for actual plans/sales from managing the connection in central.
-- The central inline menu uses three two-column rows: green Open bot/Manage, blue All connections/ViMi Pay invoices, green Help/Language. Each action reuses the existing callback or authenticated `t.me/<bot_username>` link; platform-owner navigation remains permission-scoped. No new menus, payment actions, callbacks, Telegram API routes, or DB migrations.
-- A connected-bot ViMi Pay invoice displays its original fixed service price and current balance **before** the prospective currency selector. If the fixed current bill is RUB150 but the next bill profile is USD5, the card explicitly explains that the new currency applies only to future invoices. The two non-payment buttons share one compact row; Pay is kept singular and prominent when due.
-- UI-only change; the immutable invoice, 5% platform sales commission, owner-wide hold, provider quote and runtime payment rules remain unchanged.
+Status: implementation in review. Do not merge/deploy before CI, security review
+and owner acceptance on real connected test bots.
+
+## Approved interface contract
+
+1. Telegram Bot API 10.3 `<tg-button-row>` places native blue/green/red
+   buttons **within** the Rich message. Preserve the original callback_data,
+   authentication and row layout; do not attach the same keyboard below the
+   message. All classic clients still receive the previous InlineKeyboardMarkup
+   unchanged. Unsupported payment/login/web-app button types use the old
+   keyboard rather than disappearing. No duplicate transport sends.
+2. New user in `@vimipay_bot`: compact bilingual welcome, direct RU/EN choice,
+   "🔐 Paid subscriptions" as the only currently supported product category,
+   followed by the TWO pre-existing bot creation methods (managed bot,
+   BotFather). No compulsory free-form project/connection name.
+3. New connected bot: step 1 channel/group with real permissions, step 2
+   buyer payment method, step 3 first published plan, step 4 **explicit**
+   per-bot ViMi Pay service currency. The wizard is resumed from live saved
+   setup state; no new mock/test buttons. Active older bots retain their setup
+   and currency without being forced through the wizard.
+4. Migration 0102 adds a `currency_selected` bit for NEW bot profiles and
+   backfills TRUE for existing bots. The current project-scoped setter marks
+   selection even when the owner explicitly chooses the suggested RUB.
+   A new authenticated reader exposes this fact without leaking direct RLS
+   table access. Legacy currency and invoice evidence are never modified.
+5. Central `@vimipay_bot` never provides a global service-currency selector.
+   Per-bot currency may be changed later **only** under the connected bot's
+   `🧾 Счёт`, respecting the existing outstanding-bill SQL guard. Account-wide
+   historical invoices remain accessible even if the related bot was removed.
+6. Connected admin dashboard must contain, in order: one-line @bot and time
+   zone; FOUR exact indicators **Состояние / Каналы / Активные тарифы /
+   Оплата покупателей** with real counts/status (not ON/OFF); ViMi Pay
+   service status/rate/debt; bot-only Telegram Stars balance (Unavailable
+   when unknown); TWELVE unchanged existing menu actions, alternating
+   green and blue in six two-column rows *inside the Rich message*.
+7. Bill card places its only Pay action next to the real outstanding debt and
+   currency/back navigation under the future tariff. Historical RUB150 bill
+   and prospective USD5 tariff must never be represented as the same invoice.
+8. Never delete immutable payment receipts, owner-submitted instructions or
+   access/evidence records to create a "clean" message history. Navigation
+   should reuse/edit safe current UI messages where possible; legacy buttons
+   are guarded from stale activation. Full RU/EN fallback is mandatory.
+
+## Technical notes
+
+- Native buttons are derived from existing `InlineKeyboardMarkup` by
+  `rich_with_inline_actions` and `rich_row_marker`, never from user-authored
+  HTML. All labels, callback data and URLs are escaped; only callback and safe
+  HTTP(S)/tg:// URL buttons are embedded. Any unsupported action retains the
+  entire classic keyboard.
+- The shared `RichUiBot` covers normal `send_message` and
+  `edit_message_text`. `send_owner_rich` covers explicitly rendered
+  owner dashboards, service invoices and cards. Rich failures retry with the
+  original HTML/keyboard only on Telegram parsing/method errors, NOT
+  transport timeouts that may have already delivered a message.
+- There is no financial re-pricing. Platform fees, trial claims, 5% sales
+  commission, Stars surcharge, network holds, provider settlements and
+  pre-existing invoices keep their existing accounting rules.
 
 ---
 
