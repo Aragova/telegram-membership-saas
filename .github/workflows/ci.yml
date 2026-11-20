@@ -213,6 +213,8 @@ jobs:
                       "platform_saas_catalog_for_invoice(uuid)",
                       "platform_saas_v3_create_attempt(uuid,numeric,text,uuid)",
                       "platform_saas_merchant_bill_summary(date,uuid)",
+                      "platform_saas_bot_price_profile_read(uuid)",
+                      "platform_saas_bot_price_profile_set(uuid,text)",
                       "platform_saas_stars_set_rate(numeric)",
                       "platform_saas_stars_rate()",
                       "platform_saas_stars_usd_policy_read()",
@@ -254,6 +256,7 @@ jobs:
                       "public.platform_saas_payment_proofs_v2, "
                       "public.platform_saas_payment_allocations_v2, "
                       "public.platform_saas_payment_rejections_v2, "
+                      "public.platform_saas_bot_price_profiles, "
                       "public.platform_saas_stars_pricing, "
                       "public.platform_saas_stars_usd_policy, "
                       "public.platform_saas_stars_orders, "
