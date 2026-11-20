@@ -964,9 +964,20 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
     ) -> None:
         """Connected bots select their own future service currency."""
-        data = await saas_price_profile(
-            factory, actor_id=actor_id, project_id=fixed_project_id,
-        )
+        try:
+            data = await saas_price_profile(
+                factory, actor_id=actor_id, project_id=fixed_project_id,
+            )
+        except DBAPIError:
+            # Delegated project managers may administer content, but cannot
+            # access or change the financial owner's service currency.
+            await bot.send_message(
+                user_id, tr(
+                    "⚠️ Валюту обслуживания может менять только владелец бота.",
+                    "⚠️ Only the bot owner can change service currency.",
+                ),
+            )
+            return
         currency = str(data["currency"])
         label = (
             tr("🇺🇸 USD · $5/мес.", "🇺🇸 USD · $5/month")
