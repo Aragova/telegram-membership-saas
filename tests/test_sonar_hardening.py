@@ -1,5 +1,6 @@
 """Regression contracts for Sonar-driven changes that must not change bot UX."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from sqlalchemy.engine import make_url
@@ -55,3 +56,24 @@ def test_dashboard_intentionally_has_one_or_two_finance_rows() -> None:
     assert len(two_rows) == 2
     assert "@kostik" in two_rows[0][1]
     assert "🤖" in two_rows[1][1]
+
+
+def test_pinned_python_312_runtime_matches_dev_dependency_resolutions() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    def load_pins(filename: str) -> dict[str, str]:
+        pins = {}
+        for line in (root / filename).read_text(encoding="utf-8").splitlines():
+            if not line or line[0].isspace() or line.startswith("#"):
+                continue
+            package, equals, version = line.partition("==")
+            assert equals and package and version, f"Unpinned dependency: {line}"
+            assert package not in pins
+            pins[package] = version
+        return pins
+
+    runtime = load_pins("requirements-runtime.lock")
+    dev = load_pins("requirements-dev.lock")
+    assert len(runtime) >= 30
+    assert all(dev.get(name) == version for name, version in runtime.items())
+    assert {"aiogram", "asyncpg", "fastapi", "cryptography"} <= set(runtime)
