@@ -124,6 +124,7 @@ def _status_label(value: str) -> str:
     states = {
         "registered": ("зарегистрирован", "registered"),
         "running": ("работает", "running"),
+        "degraded": ("Telegram недоступен", "Telegram unavailable"),
         "stale": ("нет сигнала", "stale"),
         "stopped": ("остановлен", "stopped"),
         "disabled": ("отключён", "disabled"),
@@ -259,6 +260,7 @@ def _summary_text(snapshot) -> str:
 
 _RUNTIME_ICONS = {
     "running": "🟢",
+    "degraded": "🟡",
     "starting": "🟡",
     "queued": "🟡",
     "setup_needed": "🟡",
@@ -292,8 +294,12 @@ _ERROR_TEXT = {
         "getMe returned another bot ID; check the connected token",
     ),
     "identity_network_failed": (
-        "Сетевая ошибка при getMe: соединение с Telegram прервано",
-        "Network error during getMe: Telegram connection interrupted",
+        "Сетевая ошибка при getMe: Telegram временно недоступен",
+        "Network failure during getMe: Telegram temporarily unavailable",
+    ),
+    "identity_server_failed": (
+        "Серверная ошибка Telegram при getMe: повторяем проверку",
+        "Telegram server error during getMe; retrying",
     ),
     "identity_api_failed": (
         "Telegram API отклонил проверку getMe",
@@ -310,6 +316,10 @@ _ERROR_TEXT = {
     "webhook_network_failed": (
         "Сетевая ошибка при getWebhookInfo: Telegram не ответил",
         "Network error during getWebhookInfo: Telegram did not respond",
+    ),
+    "webhook_server_failed": (
+        "Серверная ошибка Telegram при проверке webhook: повторяем",
+        "Telegram server error checking webhook; retrying",
     ),
     "webhook_api_failed": (
         "Telegram API отклонил проверку getWebhookInfo",
@@ -352,8 +362,16 @@ _ERROR_TEXT = {
         "An update handler has blocked the next getUpdates for over 90 seconds",
     ),
     "polling_network_failed": (
-        "Сеть обрывается при getUpdates: нет успешных ответов 90 секунд",
-        "Network failures during getUpdates: no successful poll for 90 seconds",
+        "Соединение getUpdates с Telegram прервано, выполняется повторный запрос",
+        "Telegram getUpdates network interrupted; retrying",
+    ),
+    "polling_server_failed": (
+        "Telegram вернул временную серверную ошибку (5xx); повторяем getUpdates",
+        "Telegram returned temporary server error (5xx); retrying getUpdates",
+    ),
+    "polling_rate_limited": (
+        "Telegram ограничил частоту getUpdates (429); повторяем с задержкой",
+        "Telegram rate-limited getUpdates (429); retrying with backoff",
     ),
     "polling_api_failed": (
         "Ошибка Telegram API при getUpdates: нет успешных ответов 45 секунд",
@@ -378,6 +396,10 @@ _ERROR_TEXT = {
     "resource_network_failed": (
         "Сетевая ошибка Telegram при проверке прав бота в канале",
         "Telegram network error while verifying bot channel permissions",
+    ),
+    "resource_server_failed": (
+        "Серверная ошибка Telegram при проверке прав канала: повторяем",
+        "Telegram server error checking channel permissions; retrying",
     ),
     "resource_api_failed": (
         "Telegram API не завершил проверку прав бота в канале",
@@ -453,6 +475,24 @@ def _monitoring_diagnosis(
     if runtime == "running" and elapsed is not None and elapsed <= timedelta(seconds=120):
         return (tr("🟢 Работает", "🟢 Running"),
                 tr("Последний записанный статус: работает", "Latest recorded state: running"))
+    if runtime == "degraded":
+        code = str(bot.get("error_code") or "")
+        if elapsed is None or elapsed > timedelta(seconds=120):
+            return (
+                tr("🟠 Нет свежего сигнала Supervisor",
+                   "🟠 No recent supervisor heartbeat"),
+                tr("Невозможно подтвердить процесс восстановления. Проверьте Supervisor.",
+                   "Recovery process is not confirmed. Check Supervisor."),
+            )
+        return (
+            tr("🟡 Telegram временно недоступен",
+               "🟡 Telegram temporarily unavailable"),
+            tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
+            tr("Supervisor работает и повторяет запросы. "
+               "Получение обновлений не подтверждено.",
+               "Supervisor is alive and retrying. "
+               "Telegram update delivery is not confirmed."),
+        )
     if runtime in {"starting", "queued", "setup_needed"}:
         return (
             "🟡 " + _status_label(runtime),
@@ -519,6 +559,13 @@ def _bot_list_button_label(bot: dict) -> str:
     state = bot["runtime_state"]
     marker = _RUNTIME_ICONS.get(state, "⚪")
     heartbeat = _heartbeat_time(bot)
+    # A disconnected Supervisor is not actively retrying Telegram even if
+    # the last persisted state was "degraded".
+    if state == "degraded" and (
+        heartbeat is None
+        or datetime.now(UTC) - heartbeat > timedelta(seconds=120)
+    ):
+        marker = "🟠"
     if heartbeat is not None and datetime.now(UTC) - heartbeat <= _STARTUP_GRACE:
         if state == "stopped" or (
             state == "error"

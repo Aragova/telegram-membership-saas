@@ -167,7 +167,7 @@ async def test_customer_bot_does_not_guess_between_bot_instances(monkeypatch, id
 
 async def test_mismatched_telegram_get_me_denies_start_without_secret_leak():
     bot = MagicMock()
-    bot.get_me = AsyncMock(return_value=SimpleNamespace(id=999, is_bot=True))
+    bot.me = AsyncMock(return_value=SimpleNamespace(id=999, is_bot=True))
     bot.get_webhook_info = AsyncMock()
     with pytest.raises(RuntimeError, match="identity") as exc:
         await check_customer_bot_identity(bot, 123456)
@@ -177,7 +177,7 @@ async def test_mismatched_telegram_get_me_denies_start_without_secret_leak():
 
 async def test_existing_webhook_fails_closed_without_modifying_it():
     bot = MagicMock()
-    bot.get_me = AsyncMock(return_value=SimpleNamespace(id=123456, is_bot=True))
+    bot.me = AsyncMock(return_value=SimpleNamespace(id=123456, is_bot=True))
     bot.get_webhook_info = AsyncMock(
         return_value=SimpleNamespace(url="https://example.invalid/another-service")
     )
@@ -189,7 +189,7 @@ async def test_existing_webhook_fails_closed_without_modifying_it():
 
 async def test_valid_telegram_identity_without_webhook_passes():
     bot = MagicMock()
-    bot.get_me = AsyncMock(return_value=SimpleNamespace(id=123456, is_bot=True))
+    bot.me = AsyncMock(return_value=SimpleNamespace(id=123456, is_bot=True))
     bot.get_webhook_info = AsyncMock(return_value=SimpleNamespace(url=""))
     await check_customer_bot_identity(bot, 123456)
 
@@ -321,6 +321,8 @@ async def test_cancel_drains_aiogram_before_access_worker_exits(monkeypatch):
         settings=_settings(),
     ))
     await asyncio.wait_for(polling_started.wait(), timeout=2)
+    assert runtime.TELEGRAM_POLL_BACKOFF.max_delay == 20.0
+    assert runtime.TELEGRAM_POLL_BACKOFF.jitter > 0
     task.cancel()
     result = await asyncio.gather(task, return_exceptions=True)
     assert isinstance(result[0], asyncio.CancelledError)

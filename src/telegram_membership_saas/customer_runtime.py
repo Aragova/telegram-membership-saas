@@ -11,10 +11,12 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from random import uniform
 from uuid import UUID
 
 from aiogram import Bot
 from aiogram.methods import GetUpdates
+from aiogram.utils.backoff import BackoffConfig
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -29,6 +31,7 @@ from telegram_membership_saas.modules.bots import BotInstance, BotInstanceStatus
 from telegram_membership_saas.modules.bots.diagnostics import (
     CustomerBotDiagnosticError,
     telegram_stage_code,
+    telegram_stage_error,
 )
 from telegram_membership_saas.modules.bots.service import decrypt_token
 from telegram_membership_saas.modules.bots.telegram_preflight_retry import (
@@ -51,6 +54,55 @@ from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
 CUSTOMER_COMMAND_INSTALL_TIMEOUT_SECONDS = 12.0
+# Shared VM may poll 50+ independent Telegram bots. Avoid a synchronized
+# getUpdates retry storm during a Telegram-side 502/429 wave while still
+# recovering far faster than a full worker teardown and startup.
+TELEGRAM_POLL_BACKOFF = BackoffConfig(
+    min_delay=1.0, max_delay=20.0, factor=1.6, jitter=0.3,
+)
+
+# Only network, server 5xx and rate limits are safe for a long-lived
+# preflight retry. Invalid tokens, wrong Bot ID, webhook conflicts and lost
+# channel permissions ALWAYS fail closed and release the lease.
+TRANSIENT_PREFLIGHT_CODES = frozenset(
+    f"{stage}_{kind}"
+    for stage in ("identity", "webhook", "resource")
+    for kind in ("network_failed", "server_failed", "rate_limited")
+)
+
+
+async def retry_customer_preflight(
+    operation: Callable[[], Awaitable[None]],
+    *, on_failure: Callable[[str, float], None] | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Keep the same bot/lease alive across Telegram transport outages.
+
+    A new worker is not launched for each 502, so it does not repeat the
+    entire setup and synchronized getMe handshake on every retry. The
+    existing per-call bounded retry and timeouts remain in effect.
+    """
+    attempt = 0
+    while True:
+        try:
+            await operation()
+            return
+        except CustomerBotDiagnosticError as exc:
+            if exc.code not in TRANSIENT_PREFLIGHT_CODES:
+                raise
+            # Never lose Telegram's explicit provider deadline. The
+            # supervisor receives the planned numeric cooldown as well, so
+            # its startup watchdog cannot cancel a required 300s wait.
+            base = min(60.0, 2.0 * 2 ** min(attempt, 5))
+            delay = (
+                max(base, exc.retry_after if exc.retry_after is not None else 60.0)
+                if exc.code.endswith("_rate_limited") else base
+            )
+            pause = delay + uniform(0.0, min(4.0, base * 0.2))
+            if on_failure is not None:
+                on_failure(exc.code, pause)
+            await sleep(pause)
+            attempt += 1
 
 
 class ObservedCustomerBot(RichUiBot):
@@ -143,11 +195,11 @@ async def check_customer_bot_identity(
     if on_startup_stage is not None:
         on_startup_stage("identity")
     try:
-        actual = await retry_telegram_preflight(bot.get_me)
+        # aiogram's Bot.me() caches the verified result. start_polling()
+        # requests it again, so caching avoids a second getMe handshake.
+        actual = await retry_telegram_preflight(bot.me)
     except Exception as exc:
-        raise CustomerBotDiagnosticError(
-            telegram_stage_code("identity", exc)
-        ) from None
+        raise telegram_stage_error("identity", exc) from None
     if actual.id != telegram_bot_id or not actual.is_bot:
         raise CustomerBotDiagnosticError("identity_mismatch")
 
@@ -156,9 +208,7 @@ async def check_customer_bot_identity(
     try:
         webhook = await retry_telegram_preflight(bot.get_webhook_info)
     except Exception as exc:
-        raise CustomerBotDiagnosticError(
-            telegram_stage_code("webhook", exc)
-        ) from None
+        raise telegram_stage_error("webhook", exc) from None
     if webhook.url:
         # Never expose the webhook URL to Telegram UI or runtime logs.
         raise CustomerBotDiagnosticError("webhook_active")
@@ -199,9 +249,7 @@ async def verify_resource_permissions(
             # administrator rights were revoked. On repeated failure, fail
             # closed before starting buyer polling or granting new access.
             # The next supervisor attempt rechecks the original rights.
-            raise CustomerBotDiagnosticError(
-                telegram_stage_code("resource", exc)
-            ) from None
+            raise telegram_stage_error("resource", exc) from None
         status = getattr(member.status, "value", member.status)
         if status != "creator" and (
             status != "administrator"
@@ -222,6 +270,7 @@ async def run_customer_bot_instance(
     on_poll_failure: Callable[[str], None] | None = None,
     on_poll_request: Callable[[], None] | None = None,
     on_startup_stage: Callable[[str], None] | None = None,
+    on_preflight_failure: Callable[[str, float], None] | None = None,
 ) -> None:
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
@@ -249,12 +298,18 @@ async def run_customer_bot_instance(
         except Exception:
             raise RuntimeError("Customer bot credential is invalid") from None
 
-        await check_customer_bot_identity(
-            bot, config.telegram_bot_id, on_startup_stage=on_startup_stage,
+        await retry_customer_preflight(
+            lambda: check_customer_bot_identity(
+                bot, config.telegram_bot_id, on_startup_stage=on_startup_stage,
+            ),
+            on_failure=on_preflight_failure,
         )
-        await verify_resource_permissions(
-            session_factory, project_id=project_id, bot=bot,
-            on_startup_stage=on_startup_stage,
+        await retry_customer_preflight(
+            lambda: verify_resource_permissions(
+                session_factory, project_id=project_id, bot=bot,
+                on_startup_stage=on_startup_stage,
+            ),
+            on_failure=on_preflight_failure,
         )
         dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
         if on_startup_stage is not None:
@@ -305,6 +360,7 @@ async def run_customer_bot_instance(
                 handle_signals=False,
                 close_bot_session=False,
                 handle_as_tasks=False,
+                backoff_config=TELEGRAM_POLL_BACKOFF,
             )
         )
         # Never propagate cancellation to aiogram's start_polling task directly.

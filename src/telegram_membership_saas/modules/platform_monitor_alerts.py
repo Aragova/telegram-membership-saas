@@ -400,7 +400,7 @@ async def _finish_event(
 def _alert_text(
     kind: str, *, username: str, status: str,
     error_code: str | None, heartbeat: datetime | None,
-    since: datetime, timezone: str,
+    since: datetime, timezone: str, now: datetime | None = None,
 ) -> str:
     from telegram_membership_saas.modules.platform_dashboard_handlers import (
         _ERROR_TEXT,
@@ -415,7 +415,18 @@ def _alert_text(
             + tr("Бот снова отвечает, восстановление подтверждено повторной проверкой.",
                  "The bot is responding again; recovery was verified by repeat checks.")
         )
+    moment = now or datetime.now(UTC)
+    active_retry = (
+        status == "degraded" and heartbeat is not None
+        and timedelta(seconds=-60) <= moment - heartbeat <= HEARTBEAT_MAX_AGE
+    )
+    stale_retry = status == "degraded" and not active_retry
     reason = (
+        tr("Нет свежего сигнала Supervisor: повторное подключение "
+           "к Telegram сейчас не подтверждено.",
+           "No fresh Supervisor heartbeat: active Telegram retry "
+           "is not confirmed.")
+        if stale_retry else
         tr(*_ERROR_TEXT[error_code])
         if error_code in _ERROR_TEXT else
         tr("Supervisor длительно не подтверждает работу",
@@ -426,8 +437,13 @@ def _alert_text(
         if heartbeat is not None else tr("Нет данных", "No data")
     )
     return (
-        tr("🔴 <b>ViMi Pay · Устойчивая проблема</b>",
-           "🔴 <b>ViMi Pay · Persistent bot issue</b>")
+        (
+            tr("🟡 <b>ViMi Pay · Telegram временно недоступен</b>",
+               "🟡 <b>ViMi Pay · Telegram temporarily unavailable</b>")
+            if active_retry else
+            tr("🔴 <b>ViMi Pay · Устойчивая проблема</b>",
+               "🔴 <b>ViMi Pay · Persistent bot issue</b>")
+        )
         + "\n🤖 <b>" + name + "</b>\n"
         + tr("Состояние: ", "Runtime: ") + escape(status) + "\n"
         + tr("Причина: ", "Reason: ") + escape(reason) + "\n"
@@ -460,7 +476,7 @@ async def deliver_platform_monitor_event(
             message = _alert_text(
                 kind, username=username, status=state,
                 error_code=code, heartbeat=heartbeat, since=since,
-                timezone=timezone,
+                timezone=timezone, now=moment,
             )
             await bot.send_message(
                 owner_telegram_id, message, parse_mode="HTML",

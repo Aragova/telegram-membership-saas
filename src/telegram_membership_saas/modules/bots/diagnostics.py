@@ -5,6 +5,8 @@ request payloads or bot tokens. Only these fixed literals are observable.
 """
 from __future__ import annotations
 
+from math import isfinite
+
 from aiogram.exceptions import (
     TelegramAPIError,
     TelegramConflictError,
@@ -12,6 +14,7 @@ from aiogram.exceptions import (
     TelegramNetworkError,
     TelegramNotFound,
     TelegramRetryAfter,
+    TelegramServerError,
     TelegramUnauthorizedError,
 )
 
@@ -23,7 +26,9 @@ HEALTH_ERROR_CODES = frozenset({
     "identity_api_failed", "identity_check_failed",
     "webhook_active", "webhook_network_failed",
     "webhook_api_failed", "webhook_check_failed",
-    "polling_network_failed", "polling_api_failed",
+    "polling_network_failed", "polling_api_failed", "polling_server_failed",
+    "polling_rate_limited", "identity_server_failed",
+    "webhook_server_failed", "resource_server_failed",
     "polling_conflict", "polling_stalled", "polling_handler_stalled",
     "polling_check_failed",
     "identity_rate_limited", "webhook_rate_limited",
@@ -36,13 +41,29 @@ HEALTH_ERROR_CODES = frozenset({
 })
 
 
+# Transient failures are retried by aiogram's polling loop. A healthy
+# supervisor/lease MUST NOT kill that loop solely due to these errors.
+TRANSIENT_POLLING_CODES = frozenset({
+    "polling_network_failed", "polling_server_failed", "polling_rate_limited",
+})
+
+
 class CustomerBotDiagnosticError(RuntimeError):
     """Explicit failure stage + safe code, without retaining an exception."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(
+        self, code: str, *, retry_after: float | None = None,
+    ) -> None:
         if code not in HEALTH_ERROR_CODES:
             raise ValueError("Unsupported customer-bot diagnostic code")
+        if retry_after is not None and (
+            not isfinite(retry_after) or retry_after < 0
+        ):
+            raise ValueError("Invalid Telegram retry deadline")
         self.code = code
+        # Numeric provider wait only. NEVER retain a raw exception/message;
+        # aiogram exceptions may contain token-bearing request URLs.
+        self.retry_after = retry_after
         super().__init__(code)
 
 
@@ -65,9 +86,21 @@ def telegram_stage_code(stage: str, exc: Exception) -> str:
         # This is a permissions/configuration issue, not a network failure.
         return "resource_access_denied"
     if isinstance(exc, TelegramRetryAfter):
-        return f"{stage}_rate_limited" if stage != "polling" else "polling_api_failed"
+        return f"{stage}_rate_limited"
+    if isinstance(exc, TelegramServerError):
+        return f"{stage}_server_failed"
     if isinstance(exc, (TelegramNetworkError, OSError, TimeoutError)):
         return f"{stage}_network_failed"
     if isinstance(exc, TelegramAPIError):
         return f"{stage}_api_failed"
     return f"{stage}_check_failed"
+
+
+def telegram_stage_error(stage: str, exc: Exception) -> CustomerBotDiagnosticError:
+    """Keep only a fixed error code and safe numeric 429 retry interval."""
+    return CustomerBotDiagnosticError(
+        telegram_stage_code(stage, exc),
+        retry_after=(
+            float(exc.retry_after) if isinstance(exc, TelegramRetryAfter) else None
+        ),
+    )

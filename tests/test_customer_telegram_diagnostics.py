@@ -72,7 +72,7 @@ def test_unknown_exception_never_leaks_sensitive_error_text():
 
 async def test_getme_network_error_carries_only_safe_stage():
     bot = MagicMock()
-    bot.get_me = AsyncMock(side_effect=_network())
+    bot.me = AsyncMock(side_effect=_network())
     bot.get_webhook_info = AsyncMock()
     with pytest.raises(CustomerBotDiagnosticError) as raised:
         await check_customer_bot_identity(bot, 123)
@@ -83,7 +83,7 @@ async def test_getme_network_error_carries_only_safe_stage():
 
 async def test_getme_unauthorized_is_invalid_credentials():
     bot = MagicMock()
-    bot.get_me = AsyncMock(side_effect=TelegramUnauthorizedError(
+    bot.me = AsyncMock(side_effect=TelegramUnauthorizedError(
         method=GetUpdates(timeout=1), message=SECRET_URL,
     ))
     with pytest.raises(CustomerBotDiagnosticError) as raised:
@@ -93,7 +93,7 @@ async def test_getme_unauthorized_is_invalid_credentials():
 
 async def test_webhook_network_error_stays_distinct_from_active_webhook():
     bot = MagicMock()
-    bot.get_me = AsyncMock(return_value=SimpleNamespace(id=123, is_bot=True))
+    bot.me = AsyncMock(return_value=SimpleNamespace(id=123, is_bot=True))
     bot.get_webhook_info = AsyncMock(side_effect=_network())
     with pytest.raises(CustomerBotDiagnosticError) as raised:
         await check_customer_bot_identity(bot, 123)
