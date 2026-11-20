@@ -13,7 +13,9 @@ from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 
-STATES = frozenset({"setup_needed", "queued", "starting", "running", "stopped", "error"})
+STATES = frozenset({
+    "setup_needed", "queued", "starting", "running", "degraded", "stopped", "error",
+})
 ERROR_CODES = HEALTH_ERROR_CODES
 
 
@@ -135,6 +137,8 @@ def public_health_label(
         return "⚪ Нет связи с ботом", False
     if health.state == "running":
         return "🟢 Работает", True
+    if health.state == "degraded":
+        return "🟡 Telegram временно недоступен — переподключение", False
     if health.state == "starting":
         return "🟡 Запускается", False
     if health.state == "queued":
