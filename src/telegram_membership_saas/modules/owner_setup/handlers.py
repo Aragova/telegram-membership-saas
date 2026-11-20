@@ -895,11 +895,12 @@ def create_owner_setup_router(
                 trial_status_classic(trial, timezone=data.timezone)
                 if trial is not None else ""
             )
+            service_summary = None
             if trial is not None and trial.get("state") == "ended":
                 # Trial eligibility never resets on payment. Consult the
                 # existing authenticated invoice report for ACTIVE service.
                 try:
-                    service = await merchant_saas_bill_summary(
+                    service_summary = await merchant_saas_bill_summary(
                         factory, actor_user_id=actor_id,
                         month=datetime.now(
                             ZoneInfo("Europe/Moscow")
@@ -908,7 +909,7 @@ def create_owner_setup_router(
                     )
                     trial_banner = (
                         _paid_service_status_text(
-                            service, timezone=data.timezone,
+                            service_summary, timezone=data.timezone,
                         ) or trial_banner
                     )
                 except Exception:
@@ -933,7 +934,56 @@ def create_owner_setup_router(
                 finances = DashboardFinances(
                     bot_stars=None, channels=(), available=False,
                 )
+            # The connected bot owns this profile; no central/global
+            # currency is involved. Failure to read finances never fabricates
+            # a settled invoice or a zero debt.
+            currency = None
+            debt_label = None
+            try:
+                profile = await saas_price_profile(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                currency = str(profile["currency"])
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "ViMi Pay per-bot service currency unavailable",
+                )
+            if service_summary is None:
+                try:
+                    service_summary = await merchant_saas_bill_summary(
+                        factory, actor_user_id=actor_id,
+                        month=datetime.now(
+                            ZoneInfo("Europe/Moscow")
+                        ).date().replace(day=1),
+                        project_id=project_id,
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        "ViMi Pay per-bot invoice summary unavailable",
+                    )
+            if service_summary is not None:
+                try:
+                    outstanding = Decimal(str(service_summary["total_due_rub"]))
+                    if (service_summary.get("service_currency") == "USD"
+                            and service_summary.get("issued_due_usd") is not None):
+                        debt_label = "$" + format(Decimal(str(
+                            service_summary["issued_due_usd"],
+                        )), ".2f")
+                    else:
+                        debt_label = format(outstanding, ".2f") + " ₽"
+                except (TypeError, ValueError, KeyError):
+                    pass
             view = {
+                "bot_status": owner_runtime_label(data.bot_runtime_label),
+                "channels_count": sum(
+                    status == "active" for _, _, status in data.resources
+                ),
+                "active_plans_count": sum(
+                    status == "active" for _, _, status in data.plans
+                ),
+                "payment_ready": bool(data.sales_configured),
+                "service_currency": currency,
+                "service_debt": debt_label,
                 "project_name": data.project_name,
                 "timezone": data.timezone,
                 "trial_banner": trial_banner,
