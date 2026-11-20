@@ -74,37 +74,23 @@ BEGIN
   END IF;
   -- Original issued bot fee is the ONLY authority for payment currency.
   -- RUB debts remain RUB. USD debts retain their original native service.
-  SELECT original_currency,original_amount,charge_rub
-  INTO fee_ccy,fee_native,fee_rub
+  SELECT original_currency,original_amount,charge_rub,rub_per_unit
+  INTO fee_ccy,fee_native,fee_rub,usd_rate
   FROM public.platform_saas_invoice_lines
   WHERE invoice_id=i.id AND source_kind='bot_fee' LIMIT 1;
   currency:=CASE WHEN fee_ccy='USD' THEN 'USD' ELSE 'RUB' END;
   pay_amount:=due;
   IF currency='USD' THEN
     IF fee_native IS NULL OR fee_native<=0 OR fee_rub IS NULL
-       OR fee_rub<=0 THEN
+       OR fee_rub<=0 OR usd_rate IS NULL OR usd_rate<=0 THEN
       RAISE EXCEPTION 'Invalid frozen service line'
         USING ERRCODE='23514';
     END IF;
     already_paid:=i.total_rub-due;
     still_service:=greatest(0,least(due,fee_rub-already_paid));
     other_rub:=greatest(0,due-still_service);
-    IF other_rub>0 THEN
-      payment_day:=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
-      SELECT rub_per_unit INTO usd_rate
-      FROM public.platform_saas_daily_fx_rates
-      WHERE currency_code='USD' AND source_name='CBR'
-        AND rate_date<=payment_day
-        AND rate_date>=payment_day-interval '14 days'
-        AND source_date<=payment_day
-        AND source_date>=payment_day-interval '14 days'
-        AND source_date<=rate_date
-      ORDER BY rate_date DESC,source_date DESC LIMIT 1;
-      IF usd_rate IS NULL OR usd_rate<=0 THEN
-        RAISE EXCEPTION 'Verified checkout USD conversion unavailable'
-          USING ERRCODE='42501';
-      END IF;
-    END IF;
+    -- The original USD invoice included its sales commission valued
+    -- at the CBR rate frozen on ISSUE. Paying later cannot reprice it.
     pay_amount:=ceil((
       fee_native*still_service/fee_rub
       + CASE WHEN other_rub>0 THEN other_rub/usd_rate ELSE 0 END
