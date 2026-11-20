@@ -48,6 +48,8 @@ async def _rpc(
         "platform_saas_pending_proof_source": ("attempt",),
         "platform_saas_price_profile_read": (),
         "platform_saas_price_profile_set": ("currency",),
+        "platform_saas_bot_price_profile_read": ("project",),
+        "platform_saas_bot_price_profile_set": ("project", "currency"),
         "platform_saas_catalog_read": (),
         "platform_saas_catalog_create": ("name","instructions","currency"),
         "platform_saas_catalog_update": ("id","name","instructions"),
@@ -81,6 +83,8 @@ async def _rpc(
         "platform_saas_pending_proof_source",
         "platform_saas_price_profile_read",
         "platform_saas_price_profile_set",
+        "platform_saas_bot_price_profile_read",
+        "platform_saas_bot_price_profile_set",
         "platform_saas_catalog_read",
         "platform_saas_catalog_for_invoice",
         "platform_saas_v3_create_attempt",
@@ -97,14 +101,23 @@ async def saas_price_profile(
     actor_id: UUID, currency: str | None = None,
     project_id: UUID | None = None,
 ) -> dict:
-    """Owner's real RUB 150 or USD 5 prospective service plan, no simulation."""
+    """Bot-specific RUB150 or USD5 plan; central has account default only."""
     if currency is not None and currency not in {"RUB", "USD"}:
         raise ValueError("Unknown ViMi Pay monthly service price")
+    bot_scoped = project_id is not None
+    if bot_scoped:
+        name = ("platform_saas_bot_price_profile_set" if currency is not None
+                else "platform_saas_bot_price_profile_read")
+        arguments = {"project": project_id}
+        if currency is not None:
+            arguments["currency"] = currency
+    else:
+        name = ("platform_saas_price_profile_set" if currency is not None
+                else "platform_saas_price_profile_read")
+        arguments = {"currency": currency} if currency is not None else {}
     result = await _rpc(
         factory, actor_id=actor_id, project_id=project_id,
-        name=("platform_saas_price_profile_set" if currency is not None
-              else "platform_saas_price_profile_read"),
-        arguments=({"currency": currency} if currency is not None else {}),
+        name=name, arguments=arguments,
     )
     if not isinstance(result, dict) or result.get("currency") not in ("RUB", "USD"):
         raise RuntimeError("Invalid ViMi Pay service price")
