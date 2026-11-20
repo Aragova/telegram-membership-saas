@@ -342,8 +342,14 @@ CREATE OR REPLACE FUNCTION public.platform_saas_v3_create_attempt(
           RAISE EXCEPTION 'Current USD service quote unavailable'
             USING ERRCODE='42501';
         END IF;
+        -- All components of an issued USD invoice are frozen in USD.
+        -- Convert the ENTIRE remaining native USD obligation to the
+        -- chosen payment currency at payment-day verified CBR rates.
+        -- Applying today's USD rate only to service and leaving the
+        -- RUB-booked commission unchanged would under/overcharge.
         converted:=round(
-          (remaining_native_usd*usd_rate_today+remaining_other_rub)/rate,2
+          (remaining_native_usd+remaining_other_rub/issue_usd_fx)
+            *usd_rate_today/rate,2
         );
       END IF;
       snapped_rub:=p_requested_rub;
