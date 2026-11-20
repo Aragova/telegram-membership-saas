@@ -128,10 +128,37 @@ async def test_five_usd_invoice_stays_usd_in_both_gateway_quotes():
                 assert Decimal(balance["remaining_rub"]) == 0
                 # A second provider can never allocate the same bot debt.
                 await conn.execute(text("RESET ROLE"))
-                await conn.execute(text(
+                count = (await conn.execute(text(
                     "SELECT count(*) FROM public.platform_saas_gateway_charges "
                     "WHERE invoice_id=:invoice"
-                ), {"invoice": invoice})
+                ), {"invoice": invoice})).scalar_one()
+                assert count == 1
+                # Native USD refund must resolve SQL aliases separately from
+                # the PL/pgSQL row records and reopen the exact RUB book debt.
+                await conn.execute(text("SET LOCAL ROLE membership_runtime"))
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(operator)})
+                refund_id = "native-usd-refund-" + uuid4().hex
+                refunded = await rpc(
+                    conn, "platform_saas_gateway_operator_refund_native",
+                    "lava", ref, refund_id, Decimal("2.00"), "USD",
+                )
+                assert refunded["recorded"]
+                assert Decimal(refunded["amount_native"]) == Decimal("2.00")
+                assert Decimal(refunded["amount_rub"]) == Decimal("160.00")
+                replay = await rpc(
+                    conn, "platform_saas_gateway_operator_refund_native",
+                    "lava", ref, refund_id, Decimal("2.00"), "USD",
+                )
+                assert not replay["recorded"]
+                await conn.execute(text(
+                    "SELECT set_config('app.current_user_id',:actor,true)"
+                ), {"actor": str(owner)})
+                reopened = await rpc(
+                    conn, "platform_saas_v2_invoice_balance", invoice,
+                )
+                assert Decimal(reopened["remaining_rub"]) == Decimal("160.00")
             finally:
                 await outer.rollback()
     finally:
