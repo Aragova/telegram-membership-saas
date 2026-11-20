@@ -364,6 +364,7 @@ CREATE OR REPLACE FUNCTION public.platform_saas_stars_create_order(
 SET search_path=pg_catalog,public AS $f$
 DECLARE actor uuid; inv record; p record; due numeric;
         fee_count integer; fee_ccy text; fee_native numeric; fee_rub numeric;
+        fee_fx numeric;
         fee_usd numeric:=0; commission_rub numeric; fx numeric;
         payment_day date;
         total_usd numeric; due_usd numeric; qty numeric;
@@ -405,8 +406,8 @@ BEGIN
     RAISE EXCEPTION 'Invoice already settled' USING ERRCODE='23514';
   END IF;
   SELECT count(*),max(original_currency),max(original_amount),
-         max(charge_rub)
-    INTO fee_count,fee_ccy,fee_native,fee_rub
+         max(charge_rub),max(rub_per_unit)
+    INTO fee_count,fee_ccy,fee_native,fee_rub,fee_fx
   FROM public.platform_saas_invoice_lines
   WHERE invoice_id=inv.id AND source_kind='bot_fee';
   IF fee_count>1 THEN
@@ -430,8 +431,14 @@ BEGIN
   IF commission_rub<0 THEN
     RAISE EXCEPTION 'Invalid commission allocation' USING ERRCODE='23514';
   END IF;
+  -- USD fee and its commission stay priced at the original issued
+  -- invoice FX. Changing payment date must NOT reprice a USD invoice.
+  IF fee_ccy='USD' AND (fee_fx IS NULL OR fee_fx<=0) THEN
+    RAISE EXCEPTION 'Invalid frozen USD service exchange rate'
+      USING ERRCODE='23514';
+  END IF;
   payment_day:=(clock_timestamp() AT TIME ZONE 'Europe/Moscow')::date;
-  IF fee_ccy IS DISTINCT FROM 'USD' OR commission_rub>0 THEN
+  IF fee_ccy IS DISTINCT FROM 'USD' THEN
     SELECT rub_per_unit INTO fx
     FROM public.platform_saas_daily_fx_rates
     WHERE currency_code='USD' AND source_name='CBR'
@@ -447,8 +454,7 @@ BEGIN
     END IF;
   END IF;
   IF fee_ccy='USD' THEN
-    total_usd:=fee_usd+
-      CASE WHEN commission_rub>0 THEN commission_rub/fx ELSE 0 END;
+    total_usd:=fee_usd+commission_rub/fee_fx;
   ELSE
     -- This includes old commission-only invoices and full RUB bot bills.
     total_usd:=inv.total_rub/fx;
