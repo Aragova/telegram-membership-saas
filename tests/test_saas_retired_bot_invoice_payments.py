@@ -149,20 +149,25 @@ async def test_retired_service_invoice_accepts_native_stars_without_activation()
                 await retired_invoice(conn, invoice)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
-                await rpc(conn, "platform_saas_stars_set_rate", Decimal("2.50"))
+                policy = await rpc(
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), True, json=True,
+                )
+                assert policy["enabled"] is True
                 await set_actor(conn, payer)
                 order = await rpc(
                     conn, "platform_saas_stars_create_order",
                     invoice, payer_tg, 987654321, json=True,
                 )
-                assert order["stars_amount"] == 60
+                assert order["stars_amount"] == 405
+                assert Decimal(order["usd_quote"]) == 5
                 assert await rpc(
                     conn, "platform_saas_stars_precheckout",
-                    order["payload"], payer_tg, 987654321, 60,
+                    order["payload"], payer_tg, 987654321, 405,
                 )
                 charge = await rpc(
                     conn, "platform_saas_stars_record_charge",
-                    order["payload"], payer_tg, 987654321, 60,
+                    order["payload"], payer_tg, 987654321, 405,
                     "retired-historical-charge-" + uuid4().hex,
                     datetime.now(UTC), json=True,
                 )
