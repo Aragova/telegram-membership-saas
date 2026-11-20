@@ -45,12 +45,15 @@ async def send_platform_crypto_checkout(
         payer_telegram_id,
         tr(
             "💎 <b>Crypto Pay · счёт ViMi Pay</b>\n"
-            "К оплате: <b>{amount:.2f} ₽</b>\n"
+            "К оплате: <b>{amount:.2f} {currency}</b>\n"
             "Зачисление производится автоматически после проверки платежа.",
             "💎 <b>Crypto Pay · ViMi Pay invoice</b>\n"
-            "Amount: <b>{amount:.2f} RUB</b>\n"
+            "Amount: <b>{amount:.2f} {currency}</b>\n"
             "Settlement follows automatic provider verification.",
-        ).format(amount=link.amount_rub),
+        ).format(
+            amount=link.pay_amount if link.pay_amount is not None else link.amount_rub,
+            currency=link.pay_currency,
+        ),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(
                 text=tr("💎 Открыть оплату", "💎 Open payment"),
