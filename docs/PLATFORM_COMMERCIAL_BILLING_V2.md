@@ -16,8 +16,9 @@
 >
 > **⭐ Stars**: USD equivalent of the **whole outstanding RUB bill** using
 > a verified current/fallback CBR USD rate (at most 14 days old), or the
-> original immutable USD service fee plus commission converted at quote-day
-> CBR for a USD bill; historical USD3 service bills remain USD3.
+> original immutable USD service fee plus the commission converted at the
+> USD fee line's **frozen invoice-issue CBR rate**, never the payment-date
+> rate, for a USD bill; historical USD3 service bills remain USD3.
 > Additional Stars-specific platform markup **5%** and independent operator
 > payout reserve (default 5%) lead to:
 > `max(400,ceil((due_usd*1.05)/(usd_per_star*(1-reserve_pct/100))))`.
@@ -28,8 +29,9 @@
 > **💳 Lava.top** and **💎 Crypto Pay**: freeze the **native** provider
 > price on the order: RUB when the original issued bot-fee line is RUB,
 > USD when the original line is USD. USD invoices preserve their native
-> USD service fee, and convert only the extra book-RUB commission at a
-> verified payment-date CBR USD rate. USD amounts are rounded **up**
+> USD service fee, and convert the extra book-RUB commission at the
+> immutable **invoice-issue** FX already stored in that fee line;
+> a payment cannot change an issued USD debt. USD amounts are rounded **up**
 > to cents, preserving the original book-RUB credit in the existing
 > provider ledger. Lava minimum (RUB 50 / USD 5) is enforced without
 > silently increasing an invoice. The provider GET confirms exactly the
