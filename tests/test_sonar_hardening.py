@@ -91,6 +91,16 @@ def test_pinned_python_312_runtime_matches_dev_dependency_resolutions() -> None:
 
     runtime = load_pins("requirements-runtime.lock")
     dev = load_pins("requirements-dev.lock")
+    build = load_pins("requirements-build.lock")
     assert len(runtime) >= 30
     assert all(dev.get(name) == version for name, version in runtime.items())
     assert {"aiogram", "asyncpg", "fastapi", "cryptography"} <= set(runtime)
+    assert {"setuptools", "wheel", "packaging"} <= set(build)
+    assert dev["packaging"] == build["packaging"]
+    # Isolated builds can re-download unlocked setuptools/wheel. Disable
+    # isolation so the preinstalled, SHA256-verified build lock is enforced.
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    for manifest in (dockerfile, workflow):
+        assert "requirements-build.lock" in manifest
+        assert "--no-build-isolation" in manifest
