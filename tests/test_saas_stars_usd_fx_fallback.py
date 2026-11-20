@@ -73,7 +73,7 @@ async def test_stars_usd_fx_missing_exact_day_uses_recent_verified_history():
                 # A long gap cannot silently use a stale quotation.
                 assert (await conn.execute(
                     query(), {"issue_day": date(2026, 3, 10)},
-                )).scalar_one() is None
+                )).scalar_one_or_none() is None
                 # Direct runtime access to the FX table is blocked; the
                 # owner-authorized Stars checkout RPC alone reads it.
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
