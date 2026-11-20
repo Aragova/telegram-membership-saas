@@ -1097,7 +1097,11 @@ def create_owner_setup_router(
                 )
                 return
             view = {
-                "bot_status": owner_runtime_label(data.bot_runtime_label),
+                "bot_status": (
+                    tr("🟢 Работает", "🟢 Running")
+                    if data.bot_running else
+                    owner_runtime_label(data.bot_runtime_label)
+                ),
                 "channels_count": sum(
                     status == "active" for _, _, status in data.resources
                 ),
