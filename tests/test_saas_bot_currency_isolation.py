@@ -65,12 +65,36 @@ async def test_two_owned_bots_have_independent_price_and_unpaid_lock():
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:actor,true)"
                 ), {"actor": str(owner)})
+                # Newly registered bots inherit a safe provisional RUB
+                # profile, but do not count it as the owner's choice.
+                initial1 = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project1,
+                )
+                initial2 = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project2,
+                )
+                assert initial1["currency_selected"] is False
+                assert initial2["currency_selected"] is False
                 a = await rpc(
                     conn, "platform_saas_bot_price_profile_set", project1, "USD",
                 )
                 b = await rpc(
-                    conn, "platform_saas_bot_price_profile_read", project2,
+                    conn, "platform_saas_bot_price_profile_read_v2", project2,
                 )
+                assert b["currency_selected"] is False
+                # Explicitly accepting the suggested same RUB value
+                # must still finish the final onboarding stage.
+                await rpc(
+                    conn, "platform_saas_bot_price_profile_set", project2, "RUB",
+                )
+                selected = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project2,
+                )
+                assert selected["currency_selected"] is True
+                selected1 = await rpc(
+                    conn, "platform_saas_bot_price_profile_read_v2", project1,
+                )
+                assert selected1["currency_selected"] is True
                 assert a["currency"] == "USD" and a["monthly_amount"] == "5.00"
                 assert b["currency"] == "RUB" and b["monthly_amount"] == "150.00"
                 await conn.execute(text("RESET ROLE"))
