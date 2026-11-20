@@ -76,40 +76,63 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 owner_tg, owner, operator, invoice, project = await prepare(factory, conn)
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
-                assert await call(
-                    conn, "platform_saas_stars_set_rate",
-                    Decimal("2.50"),
-                ) == Decimal("2.50")
+                policy = await call(
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), True, json=True,
+                )
+                assert policy["enabled"] is True
+                assert policy["example_stars"] == 405
                 await set_actor(conn, owner)
                 data = await call(
                     conn, "platform_saas_stars_create_order",
                     invoice, owner_tg, 987654321, json=True,
                 )
-                assert data["stars_amount"] == 60
+                assert data["stars_amount"] == 405
+                assert Decimal(data["usd_quote"]) == Decimal("5")
+                assert Decimal(data["withdrawal_reserve_pct"]) == 5
                 assert Decimal(data["rub_amount"]) == Decimal("150")
                 payload = data["payload"]
                 assert payload.startswith("vps:")
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 9999999, 60,
+                    payload, owner_tg, 9999999, 405,
                 ), "Cannot pay a central invoice on the wrong Telegram bot"
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
                     payload, owner_tg, 987654321, 59,
                 )
+                # A suspended USD payout policy must block authorization
+                # even if the payer created an order while it was active.
+                await set_actor(conn, operator)
+                suspended = await call(
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), False, json=True,
+                )
+                assert suspended["enabled"] is False
+                await set_actor(conn, owner)
+                assert not await call(
+                    conn, "platform_saas_stars_precheckout",
+                    payload, owner_tg, 987654321, 405,
+                )
+                await set_actor(conn, operator)
+                await call(
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), True, json=True,
+                )
+                await set_actor(conn, owner)
                 assert await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 987654321, 60,
+                    payload, owner_tg, 987654321, 405,
                 )
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 987654321, 60,
+                    payload, owner_tg, 987654321, 405,
                 ), "Same order cannot pass pre-checkout a second time"
                 charge = "synthetic-star-charge-" + uuid4().hex
                 paid_at = datetime.now(UTC)
                 result = await call(
                     conn, "platform_saas_stars_record_charge",
-                    payload, owner_tg, 987654321, 60, charge, paid_at,
+                    payload, owner_tg, 987654321, 405, charge, paid_at,
                     json=True,
                 )
                 assert result["applied"] and not result["duplicate"]
@@ -135,7 +158,7 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 await set_actor(conn, owner)
                 replay = await call(
                     conn, "platform_saas_stars_record_charge",
-                    payload, owner_tg, 987654321, 60, charge, paid_at,
+                    payload, owner_tg, 987654321, 405, charge, paid_at,
                     json=True,
                 )
                 assert replay["applied"] and replay["duplicate"]
@@ -144,14 +167,14 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 extra = "second-star-charge-" + uuid4().hex
                 unapplied = await call(
                     conn, "platform_saas_stars_record_charge",
-                    payload, owner_tg, 987654321, 60, extra,
+                    payload, owner_tg, 987654321, 405, extra,
                     datetime.now(UTC), json=True,
                 )
                 assert not unapplied["applied"] and unapplied["requires_review"]
                 assert not unapplied["duplicate"]
                 assert await call(
                     conn, "platform_saas_stars_record_refund",
-                    payload, owner_tg, 987654321, 60,
+                    payload, owner_tg, 987654321, 405,
                     extra, datetime.now(UTC),
                 )
                 report = await call(
@@ -179,12 +202,12 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                         })
                 assert await call(
                     conn, "platform_saas_stars_record_refund",
-                    payload, owner_tg, 987654321, 60,
+                    payload, owner_tg, 987654321, 405,
                     charge, datetime.now(UTC),
                 )
                 assert not await call(
                     conn, "platform_saas_stars_record_refund",
-                    payload, owner_tg, 987654321, 60,
+                    payload, owner_tg, 987654321, 405,
                     charge, datetime.now(UTC),
                 )
                 balance = await call(
@@ -195,7 +218,7 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 assert Decimal(balance["remaining_rub"]) == 150
                 assert not await call(
                     conn, "platform_saas_stars_precheckout",
-                    payload, owner_tg, 987654321, 60,
+                    payload, owner_tg, 987654321, 405,
                 ), "Refunded order must never be payable again"
             finally:
                 await outer.rollback()
@@ -231,20 +254,22 @@ async def test_stars_price_is_disabled_until_operator_sets_it_and_owned_bills_on
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await call(
-                            conn, "platform_saas_stars_set_rate",
-                            Decimal("0.01"),
+                            conn, "platform_saas_stars_usd_policy_set",
+                            Decimal("0.013"), Decimal("5"), True, json=True,
                         )
                 await set_actor(conn, operator)
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
                         await call(
-                            conn, "platform_saas_stars_set_rate",
-                            Decimal("0.001"),
+                            conn, "platform_saas_stars_usd_policy_set",
+                            Decimal("0.001"), Decimal("5"), True, json=True,
                         )
-                assert await call(
-                    conn, "platform_saas_stars_set_rate",
-                    Decimal("2.50"),
-                ) == Decimal("2.50")
+                policy = await call(
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), True, json=True,
+                )
+                assert policy["enabled"] is True
+                assert policy["example_stars"] == 405
                 await set_actor(conn, stranger)
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
@@ -274,7 +299,8 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await set_actor(conn, operator)
                 await call(
-                    conn, "platform_saas_stars_set_rate", Decimal("2.50"),
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), True, json=True,
                 )
                 await set_actor(conn, owner)
                 quote = await call(
@@ -283,7 +309,7 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 )
                 assert await call(
                     conn, "platform_saas_stars_precheckout",
-                    quote["payload"], owner_tg, 987654321, 60,
+                    quote["payload"], owner_tg, 987654321, 405,
                 )
                 # A verified bank payment wins the race during Telegram
                 # authorization/settlement. Do not allocate another 150 RUB.
@@ -300,7 +326,7 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 await set_actor(conn, owner)
                 result = await call(
                     conn, "platform_saas_stars_record_charge",
-                    quote["payload"], owner_tg, 987654321, 60,
+                    quote["payload"], owner_tg, 987654321, 405,
                     "tg-race-" + uuid4().hex, datetime.now(UTC), json=True,
                 )
                 assert not result["applied"]
@@ -316,3 +342,38 @@ async def test_bank_clears_invoice_after_precheckout_stars_charge_is_not_credite
                 await outer.rollback()
     finally:
         await admin.dispose()
+
+
+async def test_precheckout_policy_row_share_lock_blocks_concurrent_disable():
+    """PostgreSQL guarantee behind the USD precheckout/suspend serialization.
+
+    The real precheckout function holds FOR SHARE on this singleton row,
+    so /saasstarsrate off cannot complete before that transaction finishes.
+    Both synthetic transactions roll back without changing the singleton.
+    """
+    cfg = Settings()
+    engine = create_async_engine(cfg.migration_database_url)
+    try:
+        async with engine.connect() as checking, engine.connect() as disabling:
+            first = await checking.begin()
+            second = await disabling.begin()
+            try:
+                row = (await checking.execute(text(
+                    "SELECT id FROM public.platform_saas_stars_usd_policy "
+                    "WHERE id=1 FOR SHARE"
+                ))).scalar_one()
+                assert row == 1
+                await disabling.execute(text(
+                    "SET LOCAL lock_timeout = '150ms'"
+                ))
+                with pytest.raises(DBAPIError) as blocked:
+                    await disabling.execute(text(
+                        "UPDATE public.platform_saas_stars_usd_policy "
+                        "SET enabled=false WHERE id=1"
+                    ))
+                assert getattr(blocked.value.orig, "sqlstate", None) == "55P03"
+            finally:
+                await second.rollback()
+                await first.rollback()
+    finally:
+        await engine.dispose()
