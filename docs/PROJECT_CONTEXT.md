@@ -1,3 +1,30 @@
+## 2026-11-20 — USD platform Stars price + Crypto Pay readiness (draft)
+
+The operator approved pricing a ViMi Pay Stars service payment at **USD 5**
+plus a **5% reserve for payout/exchange costs**, not at RUB150 or a manual
+RUB/Star quote. Reward baseline is USD 0.013/⭐ (Telegram developer terms);
+the reserve is a configured business assumption, **not a claimed official
+Fragment charge**. Default service-only USD5 → **405 ⭐**. The SQL new-order
+quote also supports immutable historical USD3 invoices, USD-equivalent sales
+commission and partial balances without reducing the original booked
+invoice; existing 0092 payments/refunds stay unchanged. A new USD pricing
+policy defaults OFF until explicitly enabled by the central platform owner.
+
+Crypto Pay provider integration already existed: it uses an independent
+central operator app, fiat RUB frozen invoice, provider GET and exact-once
+SQL settlement. No new Crypto payment system or second token is created.
+This milestone adds a *read-only actual provider getMe check* to the existing
+owner `/saasrails` diagnostic (only when the platform token is configured).
+Owner must create a Crypto Pay app outside ChatGPT and install its token
+locally on the VM; credentials are never put in Git or chat.
+
+No real money was paid or returned in this PR; full provider settlement
+acceptance is a separate explicit release gate. Preserve Lava links, bot
+subscriptions, 50+ connected bots, buyer fulfillment and all existing bills.
+No merge/deploy without explicit approval.
+
+---
+
 ## 2026-11-18 — Remove channel-finance MTProto prototype and unsupported UI rows
 
 Owner decision: do not require merchant Telegram USER sessions or local Python/
