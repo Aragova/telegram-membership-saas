@@ -124,6 +124,7 @@ def _status_label(value: str) -> str:
     states = {
         "registered": ("зарегистрирован", "registered"),
         "running": ("работает", "running"),
+        "degraded": ("Telegram недоступен", "Telegram unavailable"),
         "stale": ("нет сигнала", "stale"),
         "stopped": ("остановлен", "stopped"),
         "disabled": ("отключён", "disabled"),
@@ -259,6 +260,7 @@ def _summary_text(snapshot) -> str:
 
 _RUNTIME_ICONS = {
     "running": "🟢",
+    "degraded": "🟡",
     "starting": "🟡",
     "queued": "🟡",
     "setup_needed": "🟡",
@@ -352,8 +354,16 @@ _ERROR_TEXT = {
         "An update handler has blocked the next getUpdates for over 90 seconds",
     ),
     "polling_network_failed": (
-        "Сеть обрывается при getUpdates: нет успешных ответов 90 секунд",
-        "Network failures during getUpdates: no successful poll for 90 seconds",
+        "Соединение getUpdates с Telegram прервано, выполняется повторный запрос",
+        "Telegram getUpdates network interrupted; retrying",
+    ),
+    "polling_server_failed": (
+        "Telegram вернул временную серверную ошибку (5xx); повторяем getUpdates",
+        "Telegram returned temporary server error (5xx); retrying getUpdates",
+    ),
+    "polling_rate_limited": (
+        "Telegram ограничил частоту getUpdates (429); повторяем с задержкой",
+        "Telegram rate-limited getUpdates (429); retrying with backoff",
     ),
     "polling_api_failed": (
         "Ошибка Telegram API при getUpdates: нет успешных ответов 45 секунд",
@@ -453,6 +463,24 @@ def _monitoring_diagnosis(
     if runtime == "running" and elapsed is not None and elapsed <= timedelta(seconds=120):
         return (tr("🟢 Работает", "🟢 Running"),
                 tr("Последний записанный статус: работает", "Latest recorded state: running"))
+    if runtime == "degraded":
+        code = str(bot.get("error_code") or "")
+        if elapsed is None or elapsed > timedelta(seconds=120):
+            return (
+                tr("🟠 Нет свежего сигнала Supervisor",
+                   "🟠 No recent supervisor heartbeat"),
+                tr("Невозможно подтвердить процесс восстановления. Проверьте Supervisor.",
+                   "Recovery process is not confirmed. Check Supervisor."),
+            )
+        return (
+            tr("🟡 Telegram временно недоступен",
+               "🟡 Telegram temporarily unavailable"),
+            tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
+            tr("Supervisor работает и повторяет запросы. "
+               "Получение обновлений не подтверждено.",
+               "Supervisor is alive and retrying. "
+               "Telegram update delivery is not confirmed."),
+        )
     if runtime in {"starting", "queued", "setup_needed"}:
         return (
             "🟡 " + _status_label(runtime),
