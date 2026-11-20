@@ -132,6 +132,10 @@ async def test_repeated_safe_preflight_failures_do_not_evict_lease(monkeypatch):
             on_preflight_failure("identity_server_failed")
             await asyncio.sleep(0.022)
         on_startup_stage("commands")
+        # The first command install occurs AFTER a long Telegram outage.
+        # It must get a fresh startup deadline, not inherit the exhausted
+        # getMe/preflight deadline.
+        await asyncio.sleep(0.035)
         on_poll_request()
         on_poll_response()
         ready.set()
