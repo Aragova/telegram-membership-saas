@@ -51,8 +51,13 @@ async def send_platform_stars_invoice(
         chat_id=payer_telegram_id,
         title=tr("ViMi Pay · обслуживание", "ViMi Pay · service"),
         description=tr(
-            "Оплата выставленного счёта за обслуживание бота.",
-            "Payment of the issued bot service invoice.",
+            "Счёт ViMi Pay: ${usd} USD + резерв на вывод {reserve}%. "
+            "Оплата ⭐ Telegram Stars закрывает исходный долг.",
+            "ViMi Pay invoice: ${usd} USD + {reserve}% withdrawal reserve. "
+            "Paying with ⭐ Telegram Stars settles the original bill.",
+        ).format(
+            usd=order["usd_quote"],
+            reserve=order["withdrawal_reserve_pct"],
         ),
         payload=order["payload"],
         currency="XTR",  # Telegram Bot API's Stars currency wire value.
