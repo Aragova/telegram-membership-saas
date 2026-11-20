@@ -1089,7 +1089,17 @@ def create_owner_setup_router(
                 "payment_ready": bool(data.sales_configured),
                 "service_currency": currency,
                 "service_debt": debt_label,
-                "project_name": data.project_name,
+                "project_name": (
+                    "@" + str(
+                        data.live_bot_username
+                        or next((username for username, status in data.bots
+                                 if status == "registered"), "")
+                    ).lstrip("@")
+                    if (data.live_bot_username or any(
+                        status == "registered" for _, status in data.bots
+                    ))
+                    else data.project_name
+                ),
                 "timezone": data.timezone,
                 "trial_banner": trial_banner,
                 "readiness": _readiness_steps(
