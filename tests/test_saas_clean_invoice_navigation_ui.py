@@ -158,10 +158,10 @@ async def test_unissued_bot_bill_still_offers_service_currency(monkeypatch):
     bot.send_message = AsyncMock()
     await _handler(project)(_callback("saasinvoices:0"), bot)
     rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
-    assert len(rows) == 2
-    assert [row[0].callback_data for row in rows] == [
+    assert len(rows) == 1
+    assert [b.callback_data for b in rows[0]] == [
         "own:saasprofile", "own:dashboard",
     ]
-    assert all(len(row) == 1 for row in rows)
+    assert [b.style for b in rows[0]] == ["primary", "success"]
     body = bot.send_message.await_args.args[1]
     assert "USD" in body and "$5" in body
