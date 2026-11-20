@@ -31,6 +31,7 @@ async def test_central_deep_link_sends_native_star_invoice(
         "stars_amount": 405, "rub_amount": "150.00",
         "usd_quote": "5.00000000", "usd_per_star": "0.01300000",
         "withdrawal_reserve_pct": "5.00",
+        "payment_surcharge_pct": "5.00",
     }
     create = AsyncMock(return_value=quote)
     monkeypatch.setattr(stars_ui, "create_platform_stars_order", create)
@@ -61,14 +62,15 @@ async def test_central_deep_link_sends_native_star_invoice(
     detail = kwargs["description"]
     assert "$5.00" in detail
     assert "5%" in detail
+    assert ("Надбавка за Stars" if language == "ru" else "Stars surcharge") in detail
     assert "405 ⭐" in detail
     assert "$5.00000000" not in detail
     assert "5.00%" not in detail
     assert "+ 5%" not in detail
     if language == "ru":
-        assert "после резерва" in detail
+        assert "резерв вывода" in detail
     else:
-        assert "after a" in detail
+        assert "withdrawal reserve" in detail
 
 
 
