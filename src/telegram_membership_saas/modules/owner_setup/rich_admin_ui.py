@@ -27,6 +27,7 @@ from telegram_membership_saas.rich_messages import (
     InputRichMessage,
     classic_messages,
     rich_enabled,
+    rich_with_inline_actions,
 )
 from telegram_membership_saas.telegram_dates import native_telegram_time
 
@@ -351,9 +352,13 @@ async def send_owner_rich(
         and len(rich_html.encode("utf-8")) < 32768
     ):
         try:
+            inside = rich_with_inline_actions(rich_html, reply_markup)
             await sender(
-                chat_id=chat_id, rich_message=InputRichMessage(html=rich_html),
-                reply_markup=reply_markup,
+                chat_id=chat_id,
+                rich_message=InputRichMessage(
+                    html=inside if inside is not None else rich_html,
+                ),
+                **({} if inside is not None else {"reply_markup": reply_markup}),
             )
             return
         except TelegramBadRequest as exc:
