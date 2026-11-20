@@ -28,6 +28,7 @@ from telegram_membership_saas.rich_messages import (
     classic_messages,
     rich_enabled,
     rich_with_inline_actions,
+    strip_rich_action_markers,
 )
 from telegram_membership_saas.telegram_dates import native_telegram_time
 
@@ -356,7 +357,7 @@ async def send_owner_rich(
             await sender(
                 chat_id=chat_id,
                 rich_message=InputRichMessage(
-                    html=inside if inside is not None else rich_html,
+                    html=inside if inside is not None else strip_rich_action_markers(rich_html),
                 ),
                 **({} if inside is not None else {"reply_markup": reply_markup}),
             )
