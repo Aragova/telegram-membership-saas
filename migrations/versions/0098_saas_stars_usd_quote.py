@@ -194,10 +194,21 @@ BEGIN
     RAISE EXCEPTION 'Invalid commission allocation' USING ERRCODE='23514';
   END IF;
   IF commission_rub>0 THEN
+    -- A valid RUB service invoice may have been issued before its exact-day
+    -- CBR snapshot was published. Use the most recent *previously effective*
+    -- verified CBR rate, never future data or an unbounded stale quote.
+    -- The original immutable RUB debt is still credited in full on payment.
     SELECT rub_per_unit INTO fx
     FROM public.platform_saas_daily_fx_rates
     WHERE currency_code='USD' AND source_name='CBR'
-      AND rate_date=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date;
+      AND rate_date<=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
+      AND rate_date>=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
+                       -interval '14 days'
+      AND source_date<=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
+      AND source_date>=(inv.created_at AT TIME ZONE 'Europe/Moscow')::date
+                         -interval '14 days'
+      AND source_date<=rate_date
+    ORDER BY rate_date DESC,source_date DESC LIMIT 1;
     IF fx IS NULL OR fx<=0 THEN
       RAISE EXCEPTION 'Verified USD commission FX unavailable'
         USING ERRCODE='42501';
