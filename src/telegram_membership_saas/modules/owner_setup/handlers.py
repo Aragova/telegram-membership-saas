@@ -38,7 +38,12 @@ from telegram_membership_saas.db import (
     system_project_session_scope,
     tenant_session_scope,
 )
-from telegram_membership_saas.localization import current_language, recipient_language, tr
+from telegram_membership_saas.localization import (
+    current_language,
+    has_explicit_language_choice,
+    recipient_language,
+    tr,
+)
 from telegram_membership_saas.modules import platform_saas_gateway_handlers as gateway_ui
 from telegram_membership_saas.modules import platform_saas_lava_handlers as lava_ui
 from telegram_membership_saas.modules import platform_saas_stars_handlers as stars_ui
@@ -768,9 +773,14 @@ def create_owner_setup_router(
             lines.append(tr("Выберите проект для управления:", "Select a connection to manage:"))
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
-        # First-run language is a direct choice. No second "project name".
-        rows.extend([
-            [
+        # First-run language is asked only until the explicit preference
+        # exists. The callback returns to /menu in the chosen language.
+        language_selected = (
+            await has_explicit_language_choice(factory, user_id)
+            if fixed_project_id is None and not home.projects else True
+        )
+        if not language_selected:
+            rows.append([
                 InlineKeyboardButton(
                     text="🇷🇺 Русский", callback_data="lng:set:ru",
                     style="success",
@@ -779,12 +789,16 @@ def create_owner_setup_router(
                     text="🇬🇧 English", callback_data="lng:set:en",
                     style="primary",
                 ),
-            ],
-            [_button(
-                tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
-                "substart", "success",
-            )],
-        ])
+            ])
+        rows.append([_button(
+            tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
+            "substart", "success",
+        )])
+        if language_selected:
+            rows.append([InlineKeyboardButton(
+                text="🌐 Language / Язык", callback_data="lng:menu",
+                style="primary",
+            )])
         # Account-level bills remain reachable even with zero connections.
         rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
                      "saasinvoices:0")])
@@ -794,8 +808,12 @@ def create_owner_setup_router(
         if not home.projects:
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html=central_welcome_rich(),
-                classic_html=central_welcome_classic(),
+                rich_html=central_welcome_rich(
+                    language_selected=language_selected,
+                ),
+                classic_html=central_welcome_classic(
+                    language_selected=language_selected,
+                ),
                 reply_markup=_markup(rows),
             )
         else:
