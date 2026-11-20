@@ -23,7 +23,9 @@ HEALTH_ERROR_CODES = frozenset({
     "identity_api_failed", "identity_check_failed",
     "webhook_active", "webhook_network_failed",
     "webhook_api_failed", "webhook_check_failed",
-    "polling_network_failed", "polling_api_failed",
+    "polling_network_failed", "polling_api_failed", "polling_server_failed",
+    "polling_rate_limited", "identity_server_failed",
+    "webhook_server_failed", "resource_server_failed",
     "polling_conflict", "polling_stalled", "polling_handler_stalled",
     "polling_check_failed",
     "identity_rate_limited", "webhook_rate_limited",
@@ -33,6 +35,13 @@ HEALTH_ERROR_CODES = frozenset({
     "startup_initializing_stalled", "startup_identity_stalled",
     "startup_webhook_stalled", "startup_resource_stalled",
     "startup_commands_stalled", "startup_polling_stalled",
+})
+
+
+# Transient failures are retried by aiogram's polling loop. A healthy
+# supervisor/lease MUST NOT kill that loop solely due to these errors.
+TRANSIENT_POLLING_CODES = frozenset({
+    "polling_network_failed", "polling_server_failed", "polling_rate_limited",
 })
 
 
@@ -65,7 +74,9 @@ def telegram_stage_code(stage: str, exc: Exception) -> str:
         # This is a permissions/configuration issue, not a network failure.
         return "resource_access_denied"
     if isinstance(exc, TelegramRetryAfter):
-        return f"{stage}_rate_limited" if stage != "polling" else "polling_api_failed"
+        return f"{stage}_rate_limited"
+    if isinstance(exc, TelegramServerError):
+        return f"{stage}_server_failed"
     if isinstance(exc, (TelegramNetworkError, OSError, TimeoutError)):
         return f"{stage}_network_failed"
     if isinstance(exc, TelegramAPIError):
