@@ -188,8 +188,8 @@ async def test_outer_preflight_retries_only_transient_and_respects_cancellation(
 
     for code in ("invalid_credentials", "identity_mismatch", "webhook_active",
                  "missing_admin_rights", "resource_access_denied"):
-        async def hard_failure():
-            raise CustomerBotDiagnosticError(code)
+        async def hard_failure(error_code=code):
+            raise CustomerBotDiagnosticError(error_code)
         pauses = AsyncMock()
         with pytest.raises(CustomerBotDiagnosticError) as raised:
             await runtime.retry_customer_preflight(hard_failure, sleep=pauses)
