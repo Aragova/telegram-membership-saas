@@ -154,10 +154,15 @@ BEGIN
  IF actor IS NULL OR p_currency NOT IN ('RUB','USD') THEN
   RAISE EXCEPTION 'Invalid bot service currency' USING ERRCODE='42501';
  END IF;
+ -- Lock the project ownership row before authorizing currency changes.
+ -- Transfers UPDATE this same project row before their price-profile
+ -- trigger. Holding FOR SHARE serializes setter vs transfer; neither
+ -- the former owner nor a stale actor can overwrite a new owner.
+ -- Lock order: project -> bot advisory -> bot price profile.
  SELECT b.id INTO STRICT bot_id
- FROM public.bot_instances b JOIN public.projects p ON p.id=b.project_id
- WHERE b.project_id=p_project AND b.status='registered'
-   AND p.owner_user_id=actor;
+ FROM public.projects p JOIN public.bot_instances b ON b.project_id=p.id
+ WHERE p.id=p_project AND b.status='registered'
+   AND p.owner_user_id=actor FOR SHARE OF p;
  PERFORM pg_advisory_xact_lock(
    hashtextextended('saas:bot:'||bot_id::text,0));
  IF EXISTS(
