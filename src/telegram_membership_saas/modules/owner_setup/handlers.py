@@ -764,9 +764,22 @@ def create_owner_setup_router(
             lines.append(tr("Выберите проект для управления:", "Select a connection to manage:"))
             for project_id, name in home.projects[:20]:
                 rows.append([_button("🤖 " + name[:45], "select:" + project_id.hex)])
-        rows.append([
-            _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
-            _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
+        # First-run language is a direct choice. No second "project name".
+        rows.extend([
+            [
+                InlineKeyboardButton(
+                    text="🇷🇺 Русский", callback_data="lng:set:ru",
+                    style="success",
+                ),
+                InlineKeyboardButton(
+                    text="🇬🇧 English", callback_data="lng:set:en",
+                    style="primary",
+                ),
+            ],
+            [_button(
+                tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
+                "substart", "success",
+            )],
         ])
         # Account-level bills remain reachable even with zero connections.
         rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
@@ -786,6 +799,53 @@ def create_owner_setup_router(
                 user_id, "\n".join(lines),
                 parse_mode="HTML", reply_markup=_markup(rows),
             )
+
+    async def show_subscription_start(bot: Bot, user_id: int) -> None:
+        """Future-proof product choice; only supported subscriptions are shown."""
+        rows = [
+            [
+                _button(
+                    tr("✨ Создать бота", "✨ Create bot"),
+                    "newmanaged", "success",
+                ),
+                _button(
+                    tr("🔑 Через BotFather", "🔑 Via BotFather"),
+                    "new", "primary",
+                ),
+            ],
+            [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
+        ]
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=(
+                "<h3>" + tr("🔐 Платные подписки", "🔐 Paid subscriptions")
+                + "</h3><p>" + tr(
+                    "Продавайте доступ к закрытым каналам и группам, "
+                    "автоматически управляйте тарифами, платежами и сроками.",
+                    "Sell access to private channels and groups and manage "
+                    "plans, payments and access periods automatically.",
+                ) + "</p><p><b>" + tr(
+                    "Как создадим вашего бота?",
+                    "How should we create your bot?",
+                ) + "</b></p><p>" + tr(
+                    "✨ Автоматически через Telegram или 🔑 вручную через "
+                    "@BotFather. Для существующего бота выберите BotFather.",
+                    "✨ Automatically through Telegram or 🔑 manually using "
+                    "@BotFather. Select BotFather for an existing bot.",
+                ) + "</p>"
+            ),
+            classic_html=(
+                tr("🔐 <b>Платные подписки</b>", "🔐 <b>Paid subscriptions</b>")
+                + "\n\n" + tr(
+                    "Создайте бота для продажи доступа к каналам и группам. "
+                    "✨ Автоматическое создание или 🔑 подключение "
+                    "через BotFather.",
+                    "Create a bot to sell access to channels and groups. "
+                    "✨ Automatic creation or 🔑 connect through BotFather.",
+                )
+            ),
+            reply_markup=_markup(rows),
+        )
 
     async def show_dashboard(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -3870,7 +3930,7 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "newmanaged", "projects", "archives", "dashboard",
+                "new", "newmanaged", "substart", "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
@@ -3892,7 +3952,7 @@ def create_owner_setup_router(
                 return
         else:
             if action in {
-                "new", "newmanaged", "projects", "archives", "bots",
+                "new", "newmanaged", "substart", "projects", "archives", "bots",
                 "connect", "oblist",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
@@ -3909,6 +3969,10 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action == "substart":
+                await show_subscription_start(bot, user_id)
+                await query.answer()
+                return
             if action == "newmanaged":
                 if get_settings().bot_token_encryption_key is None:
                     raise ValueError(tr(
