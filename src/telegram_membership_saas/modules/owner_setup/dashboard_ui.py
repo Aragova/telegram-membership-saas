@@ -204,9 +204,13 @@ def rich_dashboard(
         parts.append("<p>" + escape(sales_status) + "</p>")
     parts.extend([
         "<h4>" + tr("🧾 Обслуживание ViMi Pay", "🧾 ViMi Pay service") + "</h4>",
-        "<p><b>" + escape(trial_banner or tr(
-            "⏳ Проверяется", "⏳ Checking status",
-        )) + "</b></p>",
+        # The banner is produced by trusted trial_status_classic(), which
+        # contains native <tg-time> markup for real billing/trial deadlines.
+        # Escaping it would print the tags verbatim in Telegram.
+        "<p><b>" + (
+            trial_banner.replace("\n", "<br>")
+            if trial_banner else tr("⏳ Проверяется", "⏳ Checking status")
+        ) + "</b></p>",
         "<table bordered compact>",
         "<tr><th>" + tr("Тариф", "Service rate")
         + "</th><td><b>" + escape(rate) + "</b></td></tr>",
