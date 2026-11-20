@@ -72,6 +72,32 @@ BEGIN
     RAISE EXCEPTION 'No outstanding original invoice balance'
       USING ERRCODE='22023';
   END IF;
+  -- Existing unexpired provider orders must be honoured at their frozen
+  -- original native price, even for historical USD3 Lava invoices that
+  -- cannot meet today's USD5 new-payment minimum.
+  SELECT * INTO prior FROM public.platform_saas_gateway_orders o
+  WHERE o.invoice_id=i.id AND o.provider=p_provider
+    AND o.owner_user_id=actor AND o.expires_at>clock_timestamp()
+    -- A charged order is immutable financial evidence, never a new
+    -- payment link. Full or partial refund reopens the original debt.
+    AND NOT EXISTS(
+      SELECT 1 FROM public.platform_saas_gateway_charges c
+      WHERE c.order_id=o.id
+    )
+  ORDER BY o.created_at DESC FOR UPDATE LIMIT 1;
+  IF prior.id IS NOT NULL THEN
+    IF prior.amount_rub<>due THEN
+      RAISE EXCEPTION 'Older gateway checkout must expire before new quote'
+        USING ERRCODE='P6723';
+    END IF;
+    RETURN jsonb_build_object(
+      'id',prior.id,'payload',prior.invoice_payload,
+      'status',prior.status,'amount_rub',prior.amount_rub::text,
+      'pay_currency',prior.pay_currency,'pay_amount',prior.pay_amount::text,
+      'provider_invoice_id',prior.provider_invoice_id,
+      'url',prior.provider_invoice_url,'expires_at',prior.expires_at
+    );
+  END IF;
   -- Original issued bot fee is the ONLY authority for payment currency.
   -- RUB debts remain RUB. USD debts retain their original native service.
   SELECT original_currency,original_amount,charge_rub,rub_per_unit
@@ -102,29 +128,6 @@ BEGIN
     OR (currency='RUB' AND pay_amount<50))) THEN
     RAISE EXCEPTION 'Outstanding balance below provider minimum'
       USING ERRCODE='22023';
-  END IF;
-  SELECT * INTO prior FROM public.platform_saas_gateway_orders o
-  WHERE o.invoice_id=i.id AND o.provider=p_provider
-    AND o.owner_user_id=actor AND o.expires_at>clock_timestamp()
-    -- A charged order is immutable financial evidence, never a new
-    -- payment link. Full or partial refund reopens the original debt.
-    AND NOT EXISTS(
-      SELECT 1 FROM public.platform_saas_gateway_charges c
-      WHERE c.order_id=o.id
-    )
-  ORDER BY o.created_at DESC FOR UPDATE LIMIT 1;
-  IF prior.id IS NOT NULL THEN
-    IF prior.amount_rub<>due THEN
-      RAISE EXCEPTION 'Older gateway checkout must expire before new quote'
-        USING ERRCODE='P6723';
-    END IF;
-    RETURN jsonb_build_object(
-      'id',prior.id,'payload',prior.invoice_payload,
-      'status',prior.status,'amount_rub',prior.amount_rub::text,
-      'pay_currency',prior.pay_currency,'pay_amount',prior.pay_amount::text,
-      'provider_invoice_id',prior.provider_invoice_id,
-      'url',prior.provider_invoice_url,'expires_at',prior.expires_at
-    );
   END IF;
   created:=gen_random_uuid();
   payload:=(CASE p_provider WHEN 'crypto' THEN 'vpc:'
