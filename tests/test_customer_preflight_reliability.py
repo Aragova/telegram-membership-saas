@@ -38,7 +38,7 @@ def no_backoff_wait(monkeypatch):
 
 async def test_transient_getme_and_webhook_recover_without_process_restart():
     bot = MagicMock()
-    bot.get_me = AsyncMock(side_effect=[
+    bot.me = AsyncMock(side_effect=[
         failure(TelegramNetworkError), failure(TelegramServerError),
         SimpleNamespace(id=100, is_bot=True),
     ])
@@ -54,7 +54,7 @@ async def test_transient_getme_and_webhook_recover_without_process_restart():
         await runtime.check_customer_bot_identity(bot, 100)
     finally:
         runtime.retry_telegram_preflight = original
-    assert bot.get_me.await_count == 3
+    assert bot.me.await_count == 3
     assert bot.get_webhook_info.await_count == 2
 
 
@@ -207,7 +207,7 @@ async def test_hanging_preflight_has_bounded_attempts_and_safe_network_code():
 
 async def test_identity_reports_exact_startup_stage_without_token_data(monkeypatch):
     bot = MagicMock()
-    bot.get_me = AsyncMock(return_value=SimpleNamespace(id=100, is_bot=True))
+    bot.me = AsyncMock(return_value=SimpleNamespace(id=100, is_bot=True))
     bot.get_webhook_info = AsyncMock(return_value=SimpleNamespace(url=""))
     phases = []
 
