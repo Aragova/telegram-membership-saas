@@ -11,6 +11,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from random import uniform
 from uuid import UUID
 
 from aiogram import Bot
@@ -51,6 +52,45 @@ from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
 CUSTOMER_COMMAND_INSTALL_TIMEOUT_SECONDS = 12.0
+
+# Only network, server 5xx and rate limits are safe for a long-lived
+# preflight retry. Invalid tokens, wrong Bot ID, webhook conflicts and lost
+# channel permissions ALWAYS fail closed and release the lease.
+TRANSIENT_PREFLIGHT_CODES = frozenset(
+    f"{stage}_{kind}"
+    for stage in ("identity", "webhook", "resource")
+    for kind in ("network_failed", "server_failed", "rate_limited")
+)
+
+
+async def retry_customer_preflight(
+    operation: Callable[[], Awaitable[None]],
+    *, on_failure: Callable[[str], None] | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Keep the same bot/lease alive across Telegram transport outages.
+
+    A new worker is not launched for each 502, so it does not repeat the
+    entire setup and synchronized getMe handshake on every retry. The
+    existing per-call bounded retry and timeouts remain in effect.
+    """
+    attempt = 0
+    while True:
+        try:
+            await operation()
+            return
+        except CustomerBotDiagnosticError as exc:
+            if exc.code not in TRANSIENT_PREFLIGHT_CODES:
+                raise
+            if on_failure is not None:
+                on_failure(exc.code)
+            # A rate limit must NOT cause rapid repeated handshakes. Exact
+            # retry_after is already respected for short waits by the inner
+            # preflight helper; larger waits receive a conservative cooldown.
+            base = min(60.0, 2.0 * 2 ** min(attempt, 5))
+            delay = max(60.0, base) if exc.code.endswith("_rate_limited") else base
+            await sleep(delay + uniform(0.0, min(4.0, base * 0.2)))
+            attempt += 1
 
 
 class ObservedCustomerBot(RichUiBot):
@@ -143,7 +183,9 @@ async def check_customer_bot_identity(
     if on_startup_stage is not None:
         on_startup_stage("identity")
     try:
-        actual = await retry_telegram_preflight(bot.get_me)
+        # aiogram's Bot.me() caches the verified result. start_polling()
+        # requests it again, so caching avoids a second getMe handshake.
+        actual = await retry_telegram_preflight(bot.me)
     except Exception as exc:
         raise CustomerBotDiagnosticError(
             telegram_stage_code("identity", exc)
@@ -222,6 +264,7 @@ async def run_customer_bot_instance(
     on_poll_failure: Callable[[str], None] | None = None,
     on_poll_request: Callable[[], None] | None = None,
     on_startup_stage: Callable[[str], None] | None = None,
+    on_preflight_failure: Callable[[str], None] | None = None,
 ) -> None:
     """Start exactly one verified buyer-only poller within an acquired project lease."""
     bot: Bot | None = None
@@ -249,12 +292,18 @@ async def run_customer_bot_instance(
         except Exception:
             raise RuntimeError("Customer bot credential is invalid") from None
 
-        await check_customer_bot_identity(
-            bot, config.telegram_bot_id, on_startup_stage=on_startup_stage,
+        await retry_customer_preflight(
+            lambda: check_customer_bot_identity(
+                bot, config.telegram_bot_id, on_startup_stage=on_startup_stage,
+            ),
+            on_failure=on_preflight_failure,
         )
-        await verify_resource_permissions(
-            session_factory, project_id=project_id, bot=bot,
-            on_startup_stage=on_startup_stage,
+        await retry_customer_preflight(
+            lambda: verify_resource_permissions(
+                session_factory, project_id=project_id, bot=bot,
+                on_startup_stage=on_startup_stage,
+            ),
+            on_failure=on_preflight_failure,
         )
         dispatcher = create_customer_dispatcher(session_factory, project_id=project_id)
         if on_startup_stage is not None:
