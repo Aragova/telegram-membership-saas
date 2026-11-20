@@ -127,7 +127,8 @@ def create_platform_saas_gateway_router(
                     "↩️ Сначала проверьте фактический возврат в кабинете "
                     "Lava.top или Crypto Pay. Для записи в финансовый журнал:\n"
                     "/saasrefund crypto <provider_invoice_id> <refund_id> 150 VERIFIED\n"
-                    "USD-платёж: /saasrefund crypto <provider_invoice_id> <refund_id> 1.50 USD VERIFIED\n"
+                    "USD-платёж: /saasrefund crypto "
+                    "<provider_invoice_id> <refund_id> 1.50 USD VERIFIED\n"
                     "Это НЕ отправляет деньги клиенту.",
                     "↩️ First verify the actual refund in your Lava.top or "
                     "Crypto Pay provider account. Then record the evidence:\n"
