@@ -11,8 +11,8 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from telegram_membership_saas.currency_display import display_currency
-from telegram_membership_saas.rich_messages import rich_row_marker
 from telegram_membership_saas.localization import tr
+from telegram_membership_saas.rich_messages import rich_row_marker
 
 
 def _money(amount: object) -> str:
