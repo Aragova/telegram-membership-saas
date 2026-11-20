@@ -101,6 +101,25 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                     conn, "platform_saas_stars_precheckout",
                     payload, owner_tg, 987654321, 59,
                 )
+                # A suspended USD payout policy must block authorization
+                # even if the payer created an order while it was active.
+                await set_actor(conn, operator)
+                suspended = await call(
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), False, json=True,
+                )
+                assert suspended["enabled"] is False
+                await set_actor(conn, owner)
+                assert not await call(
+                    conn, "platform_saas_stars_precheckout",
+                    payload, owner_tg, 987654321, 405,
+                )
+                await set_actor(conn, operator)
+                await call(
+                    conn, "platform_saas_stars_usd_policy_set",
+                    Decimal("0.013"), Decimal("5"), True, json=True,
+                )
+                await set_actor(conn, owner)
                 assert await call(
                     conn, "platform_saas_stars_precheckout",
                     payload, owner_tg, 987654321, 405,
