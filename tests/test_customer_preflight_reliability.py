@@ -124,10 +124,15 @@ async def test_long_telegram_429_deadline_survives_token_safe_diagnostic():
         if attempts == 1:
             raise problem
 
-    await runtime.retry_customer_preflight(retry, sleep=delays)
+    planned = []
+    await runtime.retry_customer_preflight(
+        retry, sleep=delays,
+        on_failure=lambda code, duration: planned.append((code, duration)),
+    )
     assert attempts == 2
     delays.assert_awaited_once()
     assert delays.await_args.args[0] >= 300
+    assert planned == [("identity_rate_limited", delays.await_args.args[0])]
 
 
 async def test_cancellation_is_not_swallowed_or_retried():
