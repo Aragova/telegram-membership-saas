@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     app_name: str = "Telegram Membership SaaS"
     environment: Literal["development", "test", "staging", "production"] = "development"
     log_level: str = "INFO"
-    database_url: str = "postgresql+asyncpg://membership:membership@localhost:5432/membership"
+    # Credentials must come from TMS_DATABASE_URL (or a private .env), not source code.
+    # Local tests can still instantiate Settings without opening a database connection.
+    database_url: str = "postgresql+asyncpg://localhost/membership"
     migration_database_url: str | None = None
     telegram_bot_token: SecretStr | None = None
     bot_token_encryption_key: SecretStr | None = None
