@@ -99,9 +99,10 @@ async def test_first_start_has_direct_bot_connection_button(monkeypatch):
         button.text for row in sent.kwargs["reply_markup"].inline_keyboard
         for button in row
     ]
-    assert "✨ Создать бота" in buttons
-    assert "🔑 Через BotFather" in buttons
-    assert any("Language" in text for text in buttons)
+    assert "🔐 Платные подписки" in buttons
+    assert "🇷🇺 Русский" in buttons
+    assert "🇬🇧 English" in buttons
+    assert "✨ Создать бота" not in buttons
 
 
 async def test_central_start_shows_connection_registry_without_raw_uuids(monkeypatch):
