@@ -22,7 +22,10 @@ from telegram_membership_saas.modules.bots.diagnostics import (
 )
 from telegram_membership_saas.modules.bots.health_service import public_health_label
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
-from telegram_membership_saas.modules.platform_dashboard_handlers import _monitoring_diagnosis
+from telegram_membership_saas.modules.platform_dashboard_handlers import (
+    _bot_list_button_label,
+    _monitoring_diagnosis,
+)
 from telegram_membership_saas.modules.platform_monitor_alerts import _alert_text
 
 METHOD = GetUpdates(timeout=1)
@@ -229,6 +232,17 @@ def test_operator_sees_yellow_for_retrying_and_red_for_critical():
     )
     assert "🟡" in alert and "🔴" not in alert
     assert "123456" not in alert and "api.telegram.org" not in alert
+    assert _bot_list_button_label({
+        **observation, "username": "demo_bot",
+        "plans": 1, "subscriptions": 1, "payments_period": 0,
+    }).startswith("🟡 ")
+    # A stale supervisor heartbeat is NOT evidence that retry continues.
+    from datetime import timedelta
+    old = {**observation, "last_heartbeat": (
+        moment - timedelta(minutes=5)
+    ).isoformat(), "username": "demo_bot", "plans": 1,
+        "subscriptions": 1, "payments_period": 0}
+    assert _bot_list_button_label(old).startswith("🟠 ")
     critical = _alert_text(
         "problem", username="testbot", status="error",
         error_code="invalid_credentials", heartbeat=moment,
