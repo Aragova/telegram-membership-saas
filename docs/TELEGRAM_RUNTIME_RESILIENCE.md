@@ -32,7 +32,11 @@ The fix is valuable in all three cases: do not amplify an upstream outage.
   only as **read-only preflights** within the same worker with bounded
   increasing jitter. Verification is never bypassed, even if it takes hours.
   The startup watchdog resets after a successful preflight so command
-  registration does not inherit an expired getMe recovery deadline.
+  registration does not inherit an expired getMe recovery deadline. A Telegram
+  429 `retry_after` of 300 seconds is preserved as **numeric-only** metadata
+  without retaining the token-bearing Telegram exception; the startup
+  watchdog respects that intentional cooldown plus a bounded request window
+  while continuing to verify the project advisory lease.
 - A revoked token, identity mismatch, active foreign webhook, refused channel
   permissions, polling conflict, lost lease or real stuck poller still fails
   closed, cleans up the dispatcher and releases the lease only AFTER cleanup.
