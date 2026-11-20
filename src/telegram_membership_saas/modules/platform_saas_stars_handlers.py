@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from decimal import ROUND_UP, Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from uuid import UUID
 
 from aiogram import Bot, F, Router
@@ -49,10 +49,13 @@ async def send_platform_stars_invoice(
     amount = int(order["stars_amount"])
     # Payout reserve is a deduction from the proceeds, not a flat
     # percentage surcharge on the quoted USD obligation.
-    net_usd = Decimal(str(order["usd_quote"])).quantize(
-        Decimal("0.01"), rounding=ROUND_UP,
-    )
     reserve = Decimal(str(order["withdrawal_reserve_pct"]))
+    usd_per_star = Decimal(str(order["usd_per_star"]))
+    # Never promise a net USD amount above the actual Stars proceeds after
+    # the frozen reserve; partial balances can have fractional-cent quotes.
+    net_usd = (Decimal(amount) * usd_per_star * (
+        Decimal("1") - reserve / Decimal("100")
+    )).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     reserve_label = format(reserve.normalize(), "f")
     await bot.send_invoice(
         chat_id=payer_telegram_id,
@@ -279,16 +282,23 @@ def create_platform_saas_stars_router(
             try:
                 verified = await verify_platform_crypto_app(settings)
             except Exception:
-                LOG.warning("Crypto Pay platform app getMe check unavailable")
-                verified = False
-            crypto_status = (
-                tr("✅ API-токен подтверждён Crypto Pay",
-                   "✅ Crypto Pay confirmed the API token")
-                if verified else tr(
-                    "⚠️ Токен задан, но провайдер не подтвердил приложение",
-                    "⚠️ Token configured; provider app verification failed",
+                # The adapter sanitizes API credentials before raising.
+                # Keep provider details out of Telegram; retain traceback
+                # in private application logs for operator diagnostics.
+                LOG.exception("Platform Crypto Pay getMe readiness failed")
+                crypto_status = tr(
+                    "⚠️ Проверка Crypto Pay временно недоступна",
+                    "⚠️ Crypto Pay readiness check is temporarily unavailable",
                 )
-            )
+            else:
+                crypto_status = (
+                    tr("✅ API-токен подтверждён Crypto Pay",
+                       "✅ Crypto Pay confirmed the API token")
+                    if verified else tr(
+                        "⚠️ Токен задан, но провайдер не подтвердил приложение",
+                        "⚠️ Token configured; provider app identity not confirmed",
+                    )
+                )
             if settings.saas_crypto_pay_testnet:
                 crypto_status += tr(" (тестовая сеть)", " (testnet)")
         else:
