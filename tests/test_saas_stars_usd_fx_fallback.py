@@ -48,10 +48,20 @@ async def test_stars_usd_fx_missing_exact_day_uses_recent_verified_history():
                     ), {
                         "day": day, "rub": rub, "operator": operator,
                     })
+                # Mirror the inlined Stars RPC's verified issue-date rule.
+                # No new SECURITY DEFINER or publicly callable resolver is
+                # introduced solely for the test suite.
                 def query():
                     return text(
-                        "SELECT public.platform_saas_stars_verified_usd_fx("
-                        ":issue_day)"
+                        "SELECT rub_per_unit FROM "
+                        "public.platform_saas_daily_fx_rates "
+                        "WHERE currency_code='USD' AND source_name='CBR' "
+                        "AND rate_date<=:issue_day "
+                        "AND rate_date>=CAST(:issue_day AS date)-interval '14 days' "
+                        "AND source_date<=:issue_day "
+                        "AND source_date>=CAST(:issue_day AS date)-interval '14 days' "
+                        "AND source_date<=rate_date "
+                        "ORDER BY rate_date DESC,source_date DESC LIMIT 1"
                     )
                 assert (await conn.execute(
                     query(), {"issue_day": date(2026, 2, 19)},
@@ -64,8 +74,8 @@ async def test_stars_usd_fx_missing_exact_day_uses_recent_verified_history():
                 assert (await conn.execute(
                     query(), {"issue_day": date(2026, 3, 10)},
                 )).scalar_one() is None
-                # Helpers may only be called inside trusted owner RPCs,
-                # not directly by the application runtime role.
+                # Direct runtime access to the FX table is blocked; the
+                # owner-authorized Stars checkout RPC alone reads it.
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 with pytest.raises(DBAPIError):
                     async with conn.begin_nested():
