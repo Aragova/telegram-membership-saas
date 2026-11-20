@@ -5,6 +5,8 @@ request payloads or bot tokens. Only these fixed literals are observable.
 """
 from __future__ import annotations
 
+from math import isfinite
+
 from aiogram.exceptions import (
     TelegramAPIError,
     TelegramConflictError,
@@ -49,10 +51,19 @@ TRANSIENT_POLLING_CODES = frozenset({
 class CustomerBotDiagnosticError(RuntimeError):
     """Explicit failure stage + safe code, without retaining an exception."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(
+        self, code: str, *, retry_after: float | None = None,
+    ) -> None:
         if code not in HEALTH_ERROR_CODES:
             raise ValueError("Unsupported customer-bot diagnostic code")
+        if retry_after is not None and (
+            not isfinite(retry_after) or retry_after < 0
+        ):
+            raise ValueError("Invalid Telegram retry deadline")
         self.code = code
+        # Numeric provider wait only. NEVER retain a raw exception/message;
+        # aiogram exceptions may contain token-bearing request URLs.
+        self.retry_after = retry_after
         super().__init__(code)
 
 
@@ -83,3 +94,13 @@ def telegram_stage_code(stage: str, exc: Exception) -> str:
     if isinstance(exc, TelegramAPIError):
         return f"{stage}_api_failed"
     return f"{stage}_check_failed"
+
+
+def telegram_stage_error(stage: str, exc: Exception) -> CustomerBotDiagnosticError:
+    """Keep only a fixed error code and safe numeric 429 retry interval."""
+    return CustomerBotDiagnosticError(
+        telegram_stage_code(stage, exc),
+        retry_after=(
+            float(exc.retry_after) if isinstance(exc, TelegramRetryAfter) else None
+        ),
+    )
