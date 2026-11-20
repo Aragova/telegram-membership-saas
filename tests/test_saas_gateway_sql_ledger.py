@@ -356,11 +356,12 @@ async def test_gateway_pending_rotates_beyond_one_hundred_unpaid_invoices():
                     INSERT INTO public.platform_saas_gateway_orders(
                       id,invoice_id,owner_user_id,payer_telegram_id,
                       central_bot_id,provider,invoice_payload,amount_rub,
+                      pay_currency,pay_amount,
                       status,provider_invoice_id,provider_invoice_url,
                       expires_at
                     ) VALUES (
                       :id,:invoice,:owner,:payer,99887766,'crypto',
-                      :payload,150,'issued',:provider_id,
+                      :payload,150,'RUB',150,'issued',:provider_id,
                       'https://t.me/CryptoBot?start=test',
                       clock_timestamp()+interval '30 minutes'
                     )
