@@ -61,6 +61,17 @@ async def test_two_owned_bots_have_independent_price_and_unpaid_lock():
         async with admin.connect() as conn:
             outer = await conn.begin()
             try:
+                # Canonical platform billing must gate invoices at SQL-level,
+                # not just hide the dashboard until the owner chooses currency.
+                issuer_sql = (await conn.execute(text(
+                    "SELECT pg_get_functiondef(" 
+                    "'public.platform_saas_issue_bot_invoice("
+                    "uuid,timestamptz,timestamptz)'::regprocedure)"
+                ))).scalar_one()
+                assert "currency_selected" in issuer_sql
+                assert issuer_sql.index("pg_advisory_xact_lock") < (
+                    issuer_sql.index("currency_selected")
+                )
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:actor,true)"
