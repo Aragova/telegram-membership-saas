@@ -33,6 +33,26 @@ TOKEN_URL = "https://api.telegram.org/bot123456:" + "A" * 35
 _SETTINGS = Settings(telegram_central_access_enabled=False, _env_file=None)
 
 
+def isolate_supervisor(
+    monkeypatch, *, lease, customer, health,
+    startup_timeout=None, polling_timeout=None,
+):
+    """One shared stubbed lease/heartbeat harness for failure injection."""
+    for name, value in {
+        "project_worker_lock": lease,
+        "claim_bot_health": AsyncMock(),
+        "confirm_project_lock": AsyncMock(),
+        "run_customer_bot_instance": customer,
+        "write_bot_health": health,
+    }.items():
+        monkeypatch.setattr(supervisor, name, value)
+    monkeypatch.setattr(supervisor, "HEARTBEAT_SECONDS", 0.01)
+    if startup_timeout is not None:
+        monkeypatch.setattr(supervisor, "STARTUP_STALE_SECONDS", startup_timeout)
+    if polling_timeout is not None:
+        monkeypatch.setattr(supervisor, "POLLING_STALE_SECONDS", polling_timeout)
+
+
 @pytest.mark.parametrize(("error", "code"), [
     (TelegramServerError(method=METHOD, message=TOKEN_URL), "polling_server_failed"),
     (TelegramNetworkError(method=METHOD, message=TOKEN_URL), "polling_network_failed"),
@@ -89,13 +109,10 @@ async def test_sustained_transient_outage_recovers_without_worker_restart(
     async def health(*_args, **kwargs):
         states.append((kwargs["state"], kwargs.get("error_code")))
 
-    monkeypatch.setattr(supervisor, "project_worker_lock", lease)
-    monkeypatch.setattr(supervisor, "claim_bot_health", AsyncMock())
-    monkeypatch.setattr(supervisor, "confirm_project_lock", AsyncMock())
-    monkeypatch.setattr(supervisor, "run_customer_bot_instance", customer)
-    monkeypatch.setattr(supervisor, "write_bot_health", health)
-    monkeypatch.setattr(supervisor, "HEARTBEAT_SECONDS", 0.01)
-    monkeypatch.setattr(supervisor, "POLLING_STALE_SECONDS", 0.075)
+    isolate_supervisor(
+        monkeypatch, lease=lease, customer=customer, health=health,
+        polling_timeout=0.075,
+    )
 
     task = asyncio.create_task(supervisor.run_target(
         MagicMock(), MagicMock(), target, settings=_SETTINGS,
@@ -147,13 +164,10 @@ async def test_repeated_safe_preflight_failures_do_not_evict_lease(monkeypatch):
     async def health(*_args, **kwargs):
         states.append((kwargs["state"], kwargs.get("error_code")))
 
-    monkeypatch.setattr(supervisor, "project_worker_lock", lease)
-    monkeypatch.setattr(supervisor, "claim_bot_health", AsyncMock())
-    monkeypatch.setattr(supervisor, "confirm_project_lock", AsyncMock())
-    monkeypatch.setattr(supervisor, "run_customer_bot_instance", customer)
-    monkeypatch.setattr(supervisor, "write_bot_health", health)
-    monkeypatch.setattr(supervisor, "HEARTBEAT_SECONDS", 0.01)
-    monkeypatch.setattr(supervisor, "STARTUP_STALE_SECONDS", 0.06)
+    isolate_supervisor(
+        monkeypatch, lease=lease, customer=customer, health=health,
+        startup_timeout=0.06,
+    )
 
     task = asyncio.create_task(supervisor.run_target(
         MagicMock(), MagicMock(), target, settings=_SETTINGS,
@@ -199,13 +213,10 @@ async def test_provider_cooldown_is_observed_by_startup_watchdog(monkeypatch):
     async def health(*_args, **kwargs):
         states.append((kwargs["state"], kwargs.get("error_code")))
 
-    monkeypatch.setattr(supervisor, "project_worker_lock", lease)
-    monkeypatch.setattr(supervisor, "claim_bot_health", AsyncMock())
-    monkeypatch.setattr(supervisor, "confirm_project_lock", AsyncMock())
-    monkeypatch.setattr(supervisor, "run_customer_bot_instance", customer)
-    monkeypatch.setattr(supervisor, "write_bot_health", health)
-    monkeypatch.setattr(supervisor, "HEARTBEAT_SECONDS", 0.01)
-    monkeypatch.setattr(supervisor, "STARTUP_STALE_SECONDS", 0.05)
+    isolate_supervisor(
+        monkeypatch, lease=lease, customer=customer, health=health,
+        startup_timeout=0.05,
+    )
 
     task = asyncio.create_task(supervisor.run_target(
         MagicMock(), MagicMock(), target, settings=_SETTINGS,
