@@ -10,14 +10,14 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 from test_platform_saas_invoice_rls import _invoice, _line, _project, _tid
 
 from telegram_membership_saas.config import Settings
+from telegram_membership_saas.db import build_engine, build_session_factory
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
-    ensure_telegram_actor,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -39,9 +39,8 @@ async def test_two_owned_bots_have_independent_price_and_unpaid_lock():
     settings = Settings()
     admin = create_async_engine(settings.migration_database_url)
     try:
-        factory = async_sessionmaker(
-            create_async_engine(settings.database_url), expire_on_commit=False,
-        )
+        runtime = build_engine(settings)
+        factory = build_session_factory(runtime)
         owner, merchant, project1, bot1, _ = await _project(factory, _tid())
         # An independent second owned project has a separate registered bot.
         project2 = await create_owner_project(
@@ -112,4 +111,4 @@ async def test_two_owned_bots_have_independent_price_and_unpaid_lock():
                 await outer.rollback()
     finally:
         await admin.dispose()
-        await factory.kw["bind"].dispose()
+        await runtime.dispose()
