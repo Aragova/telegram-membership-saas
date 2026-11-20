@@ -77,7 +77,10 @@ async def test_bot_invoice_has_single_pay_and_home(monkeypatch, lang):
     assert buttons[1].callback_data == "own:saasprofile"
     assert buttons[2].callback_data == "own:dashboard"
     rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
-    assert [len(row) for row in rows] == [1, 1, 1]
+    # Payment remains a prominent green single action; navigation is a
+    # compact blue/green two-column row, no duplicate Pay button.
+    assert [len(row) for row in rows] == [1, 2]
+    assert [b.style for b in rows[1]] == ["primary", "success"]
     assert ("Новые счета" if lang == "ru" else
             "Future bills") in body
     assert "150" in body
