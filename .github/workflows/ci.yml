@@ -306,11 +306,9 @@ jobs:
       # Verify that the non-root UID can import all three production entrypoints.
       - name: Rootless container and bot entrypoint smoke
         run: |
-          docker run --rm --entrypoint python telegram-membership-saas:ci -c "
-          import os
-          assert os.geteuid() != 0
-          import telegram_membership_saas.bot_main
-          import telegram_membership_saas.customer_bot_main
-          import telegram_membership_saas.customer_supervisor_main
-          "
+          docker run --rm --entrypoint python telegram-membership-saas:ci \
+            -c "import os; assert os.geteuid() != 0; \
+            import telegram_membership_saas.bot_main; \
+            import telegram_membership_saas.customer_bot_main; \
+            import telegram_membership_saas.customer_supervisor_main"
 
