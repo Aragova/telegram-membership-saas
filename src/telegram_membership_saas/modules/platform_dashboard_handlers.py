@@ -559,6 +559,13 @@ def _bot_list_button_label(bot: dict) -> str:
     state = bot["runtime_state"]
     marker = _RUNTIME_ICONS.get(state, "⚪")
     heartbeat = _heartbeat_time(bot)
+    # A disconnected Supervisor is not actively retrying Telegram even if
+    # the last persisted state was "degraded".
+    if state == "degraded" and (
+        heartbeat is None
+        or datetime.now(UTC) - heartbeat > timedelta(seconds=120)
+    ):
+        marker = "🟠"
     if heartbeat is not None and datetime.now(UTC) - heartbeat <= _STARTUP_GRACE:
         if state == "stopped" or (
             state == "error"
