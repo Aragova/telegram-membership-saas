@@ -152,10 +152,6 @@ from telegram_membership_saas.modules.owner_setup.network_profiles import (
     save_owner_network_profile,
     set_network_auto_apply,
 )
-from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
-    owner_setup_step_classic,
-    owner_setup_step_rich,
-)
 from telegram_membership_saas.modules.owner_setup.obligation_locale import (
     obligation_error,
     obligation_message,
@@ -167,6 +163,10 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
     list_owner_obligations,
     retry_owner_access,
     revoke_owner_grant,
+)
+from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
+    owner_setup_step_classic,
+    owner_setup_step_rich,
 )
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     archive_owner_plan,
