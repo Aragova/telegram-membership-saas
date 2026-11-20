@@ -282,7 +282,7 @@ def create_platform_saas_stars_router(
                 )
             )
             if settings.saas_crypto_pay_testnet:
-                crypto_status += " (testnet)"
+                crypto_status += tr(" (тестовая сеть)", " (testnet)")
         else:
             crypto_status = tr(
                 "⚪ Нет отдельного API-токена платформы",
