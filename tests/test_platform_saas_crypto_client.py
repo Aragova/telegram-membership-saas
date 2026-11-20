@@ -12,6 +12,7 @@ from telegram_membership_saas.modules.platform_saas_crypto_client import (
     _platform_client,
     create_platform_crypto_invoice,
     lookup_platform_crypto_payment,
+    verify_platform_crypto_app,
 )
 
 
@@ -167,3 +168,46 @@ async def test_platform_crypto_bad_quote_never_requests_provider(amount):
             ),
         )
     assert not calls
+
+
+async def test_platform_crypto_getme_verifies_only_own_token_without_invoice():
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert request.url.path == "/api/getMe"
+        assert request.headers["Crypto-Pay-API-Token"] == "FAKE_PLATFORM_APP_TOKEN"
+        return httpx.Response(200, json={
+            "ok": True, "result": {"app_id": 12345, "name": "ViMi Pay"},
+        })
+
+    assert await verify_platform_crypto_app(
+        settings(), transport=httpx.MockTransport(handler),
+    )
+    assert len(calls) == 1
+
+
+async def test_platform_crypto_getme_rejects_malformed_app():
+    async def fail(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True, "result": {"name": "wrong"}})
+
+    assert not await verify_platform_crypto_app(
+        settings(), transport=httpx.MockTransport(fail),
+    )
+
+
+async def test_platform_crypto_getme_cannot_use_merchant_or_prod_testnet():
+    cfg = Settings(
+        _env_file=None, telegram_central_access_enabled=True,
+        saas_crypto_pay_api_token="MUST_NOT_USE",
+    )
+    with pytest.raises(PermissionError):
+        await verify_platform_crypto_app(cfg)
+    cfg = Settings(
+        _env_file=None, environment="production",
+        telegram_central_access_enabled=False,
+        saas_crypto_pay_api_token="MUST_NOT_USE",
+        saas_crypto_pay_testnet=True,
+    )
+    with pytest.raises(PermissionError):
+        await verify_platform_crypto_app(cfg)
