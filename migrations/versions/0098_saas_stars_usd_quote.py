@@ -145,11 +145,14 @@ BEGIN
      OR inv.owner_user_id IS DISTINCT FROM actor THEN
     RAISE EXCEPTION 'Invoice no longer payable' USING ERRCODE='42501';
   END IF;
+  -- A retired bot has no live row but keeps its original owner's debt.
+  -- Reject only a live transfer to a different owner (0094 contract).
   IF inv.bot_instance_id IS NOT NULL
-     AND NOT EXISTS(
+     AND EXISTS(
        SELECT 1 FROM public.bot_instances b
        JOIN public.projects pr ON pr.id=b.project_id
-       WHERE b.id=inv.bot_instance_id AND pr.owner_user_id=actor
+       WHERE b.id=inv.bot_instance_id
+         AND pr.owner_user_id IS DISTINCT FROM actor
      ) THEN
     RAISE EXCEPTION 'Transferred invoice requires reconciliation'
       USING ERRCODE='42501';
@@ -273,10 +276,11 @@ BEGIN
      OR EXISTS(SELECT 1 FROM public.platform_saas_stars_refunds r
        WHERE r.order_id=ord.id)
      OR public.platform_saas_v2_remaining(inv.id)<>ord.rub_amount
-     OR (inv.bot_instance_id IS NOT NULL AND NOT EXISTS(
+     OR (inv.bot_instance_id IS NOT NULL AND EXISTS(
        SELECT 1 FROM public.bot_instances b
        JOIN public.projects p ON p.id=b.project_id
-       WHERE b.id=inv.bot_instance_id AND p.owner_user_id=actor
+       WHERE b.id=inv.bot_instance_id
+         AND p.owner_user_id IS DISTINCT FROM actor
      ))
      OR EXISTS(SELECT 1 FROM public.platform_saas_stars_orders other
        WHERE other.invoice_id=inv.id AND other.id<>ord.id
