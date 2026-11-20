@@ -312,3 +312,16 @@ jobs:
             import telegram_membership_saas.customer_bot_main; \
             import telegram_membership_saas.customer_supervisor_main"
 
+      # Temporary during this draft: obtain a reproducible Python 3.12
+      # resolver output from the same CI runner as our production smoke tests.
+      - name: Export dependency lock candidates
+        run: |
+          python -m pip install --only-binary=:all: pip-tools
+          pip-compile --quiet --resolver=backtracking -o /tmp/vimi-runtime.lock pyproject.toml
+          pip-compile --quiet --resolver=backtracking --extra dev -o /tmp/vimi-dev.lock pyproject.toml
+          printf 'VIMI_RUNTIME_LOCK_BEGIN\\n'
+          cat /tmp/vimi-runtime.lock
+          printf 'VIMI_RUNTIME_LOCK_END\\n'
+          printf 'VIMI_DEV_LOCK_BEGIN\\n'
+          cat /tmp/vimi-dev.lock
+          printf 'VIMI_DEV_LOCK_END\\n'
