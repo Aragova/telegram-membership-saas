@@ -256,7 +256,8 @@ def test_owner_link_uses_real_username_not_internal_id():
         assert "Получатель звёзд" not in html
         assert "⭐" in html
         assert "🟢" not in html or "Не запущен" in html
-        assert "ON" not in html and "OFF" not in html
+        rendered_body = html.replace("__VIMI_RICH_ACTIONS__", "")
+        assert "ON" not in rendered_body and "OFF" not in rendered_body
         assert "<b>@premium0fans_bot</b>" in html
         assert "🌍" in html and "Europe/Moscow" in html
     rich = rich_dashboard(**base, finances=DashboardFinances(
