@@ -1201,6 +1201,16 @@ def create_owner_setup_router(
         )
         caption = (
             tr(
+                "Последний шаг настройки. Выберите валюту счёта именно "
+                "этого бота: 150 ₽ или $5 в месяц. Первый счёт содержит "
+                "только абонплату; далее +5% подтверждённых продаж. "
+                "Показанная сейчас валюта пока не подтверждена.",
+                "Final setup step. Choose this bot's service invoice currency: "
+                "RUB 150 or USD 5 monthly. The first invoice is service-only; "
+                "later invoices add 5% of confirmed sales. The suggested "
+                "currency has not yet been confirmed.",
+            )
+            if first_choice else tr(
                 "Только будущие счета этого бота. "
                 "При долге именно по этому боту смена недоступна.",
                 "This bot's future invoices only. "
@@ -1220,13 +1230,13 @@ def create_owner_setup_router(
                     ("✅ " if currency == "RUB" and not first_choice else "")
                     + "🇷🇺 RUB · 150 ₽",
                     "saasprice:RUB",
-                    "success" if currency == "RUB" else "primary",
+                    "success" if currency == "RUB" and not first_choice else "primary",
                 ),
                 _button(
                     ("✅ " if currency == "USD" and not first_choice else "")
                     + "🇺🇸 USD · $5",
                     "saasprice:USD",
-                    "success" if currency == "USD" else "primary",
+                    "success" if currency == "USD" and not first_choice else "primary",
                 ),
             ],
             [_button(
@@ -1246,13 +1256,15 @@ def create_owner_setup_router(
             rich_html=(
                 "<h3>" + heading + "</h3>"
                 "<table bordered compact>"
-                "<tr><th>" + tr("Сейчас", "Current") + "</th><td><b>"
+                "<tr><th>" + (tr("Предложено", "Suggested") if first_choice
+                    else tr("Сейчас", "Current")) + "</th><td><b>"
                 + label + "</b></td></tr></table>"
                 "<p>" + caption + "</p>"
             ),
             classic_html=(
                 "<b>" + heading + "</b>\n\n"
-                + tr("Сейчас: ", "Current: ") + "<b>" + label + "</b>"
+                + (tr("Предложено: ", "Suggested: ") if first_choice
+                    else tr("Сейчас: ", "Current: ")) + "<b>" + label + "</b>"
                 + "\n\n" + caption
             ),
             reply_markup=keyboard,
