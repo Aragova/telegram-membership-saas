@@ -21,6 +21,17 @@ PREFIX_RE = re.compile(
 METADATA = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity"
 
 
+class _NoBrokerRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward the Cloud Run IAM bearer token to a redirected origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open_private_broker(req: urllib.request.Request, *, timeout: int):
+    return urllib.request.build_opener(_NoBrokerRedirect()).open(req, timeout=timeout)
+
+
 def validate_service_url(raw: str) -> str:
     url = urllib.parse.urlsplit(raw)
     if (
@@ -48,6 +59,7 @@ def validate_session_url(raw: str) -> urllib.parse.SplitResult:
         or url.password is not None
         or not url.path.startswith("/upload/storage/v1/b/")
         or not url.query
+        or url.fragment
     ):
         raise ValueError("unexpected upload session origin")
     return url
@@ -73,7 +85,9 @@ def request_session(service_url: str, prefix: str, part: str, size: int) -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=40) as response:
+    # Cloud Run is the only service allowed to receive this identity token.
+    # urllib's default redirect handler can otherwise copy Authorization.
+    with _open_private_broker(req, timeout=40) as response:
         session_url = json.load(response)["upload_url"]
     validate_session_url(session_url)
     return session_url
