@@ -5,9 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements-runtime.lock ./
 COPY src ./src
-RUN python -m pip install --no-cache-dir --only-binary=:all: .
+# Install the exact Python 3.12 versions already tested in GitHub CI.
+# The local, trusted project itself installs without resolving dependencies.
+RUN python -m pip install --no-cache-dir --only-binary=:all: -r requirements-runtime.lock \
+    && python -m pip install --no-cache-dir --no-deps --only-binary=:all: .
 
 # The application, Telegram pollers and API need no root privileges.
 # All application files and installed wheels are readable by this UID.
