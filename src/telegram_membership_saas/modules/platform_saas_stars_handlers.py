@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_UP, Decimal, InvalidOperation
 from uuid import UUID
 
 from aiogram import Bot, F, Router
@@ -47,17 +47,25 @@ async def send_platform_stars_invoice(
         payer_telegram_id=payer_telegram_id, central_bot_id=bot.id,
     )
     amount = int(order["stars_amount"])
+    # Payout reserve is a deduction from the proceeds, not a flat
+    # percentage surcharge on the quoted USD obligation.
+    net_usd = Decimal(str(order["usd_quote"])).quantize(
+        Decimal("0.01"), rounding=ROUND_UP,
+    )
+    reserve = Decimal(str(order["withdrawal_reserve_pct"]))
+    reserve_label = format(reserve.normalize(), "f")
     await bot.send_invoice(
         chat_id=payer_telegram_id,
         title=tr("ViMi Pay · обслуживание", "ViMi Pay · service"),
         description=tr(
-            "Счёт ViMi Pay: ${usd} USD + резерв на вывод {reserve}%. "
-            "Оплата ⭐ Telegram Stars закрывает исходный долг.",
-            "ViMi Pay invoice: ${usd} USD + {reserve}% withdrawal reserve. "
-            "Paying with ⭐ Telegram Stars settles the original bill.",
+            "ViMi Pay: не менее ${usd} после резерва {reserve}% на вывод. "
+            "Оплата {stars} ⭐ погашает исходный счёт.",
+            "ViMi Pay: at least ${usd} after a {reserve}% withdrawal reserve. "
+            "{stars} ⭐ settles the original invoice.",
         ).format(
-            usd=order["usd_quote"],
-            reserve=order["withdrawal_reserve_pct"],
+            usd=format(net_usd, ".2f"),
+            reserve=reserve_label,
+            stars=amount,
         ),
         payload=order["payload"],
         currency="XTR",  # Telegram Bot API's Stars currency wire value.
