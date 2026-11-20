@@ -48,8 +48,9 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
           python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
-          python -m pip install --no-deps --only-binary=:all: -e .
+          python -m pip install --no-build-isolation --no-deps --only-binary=:all: -e .
 
       - name: Lint
         run: ruff check .
@@ -312,12 +313,3 @@ jobs:
             import telegram_membership_saas.bot_main; \
             import telegram_membership_saas.customer_bot_main; \
             import telegram_membership_saas.customer_supervisor_main"
-
-      # Temporary draft diagnostic: generate the build-backend wheel lock.
-      - name: Export hashed build-backend lock candidate
-        run: |
-          python -m pip install --only-binary=:all: pip-tools
-          pip-compile --quiet --generate-hashes --allow-unsafe --resolver=backtracking -o /tmp/vimi-build-hashes.lock requirements-build.in
-          printf 'BUILD_LOCK_HASH_BEGIN\n'
-          cat /tmp/vimi-build-hashes.lock
-          printf 'BUILD_LOCK_HASH_END\n'
