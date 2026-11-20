@@ -36,10 +36,14 @@ def central_welcome_rich() -> str:
         + tr("5% с подтверждённых покупок после пробного периода",
              "5% of verified purchases after your trial") + "</td></tr>",
         "</table>",
-        "<p>👇 " + tr(
-            "Создайте бота или подключите существующего через BotFather.",
-            "Create a bot or connect an existing one via BotFather.",
+        "<h4>🌐 " + tr("Выберите язык", "Choose your language") + "</h4>",
+        "<p>" + tr(
+            "После выбора языка нажмите «🔐 Платные подписки». "
+            "На следующем экране объясним оба способа создания бота.",
+            "After choosing a language, select 🔐 Paid subscriptions. "
+            "The next screen explains both bot creation methods.",
         ) + "</p>",
+        "__VIMI_RICH_ACTIONS__",
     ])
 
 
@@ -65,9 +69,9 @@ def central_welcome_classic() -> str:
             "Подключите бота, настройте тарифы, платежи и продажу файлов.",
             "Connect a bot, set up plans, payments and file sales.",
         ),
-        "👇 " + tr(
-            "Выберите способ подключения ниже.",
-            "Choose a connection method below.",
+        "🌐 " + tr(
+            "Выберите язык, затем «🔐 Платные подписки».",
+            "Choose a language, then 🔐 Paid subscriptions.",
         ),
     ])
 
