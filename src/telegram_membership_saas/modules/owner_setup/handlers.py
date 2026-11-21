@@ -88,6 +88,10 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
+from telegram_membership_saas.modules.owner_setup.connection_registry_ui import (
+    connection_registry_classic,
+    connection_registry_rich,
+)
 from telegram_membership_saas.modules.owner_setup.connection_cards import (
     connection_management_classic,
     connection_management_rich,
@@ -2114,7 +2118,7 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         *, page: int = 0, archived: bool = False,
     ) -> None:
-        """Compact, paginated central connection registry (100+ bots)."""
+        """Only a connection selector: 12 per page, stable paging for 100+ bots."""
         if archived:
             projects = await list_archived_owner_connections(
                 factory, actor_id=actor_id,
@@ -2122,7 +2126,7 @@ def create_owner_setup_router(
         else:
             home = await owner_home(factory, actor_id=actor_id)
             projects = home.projects
-        page_size = 10
+        page_size = 12
         total_pages = max(1, (len(projects) + page_size - 1) // page_size)
         page = min(max(page, 0), total_pages - 1)
         listed = projects[page * page_size:(page + 1) * page_size]
@@ -2130,6 +2134,7 @@ def create_owner_setup_router(
             [_button(
                 ("📦 " if archived else "📁 ") + name[:42],
                 ("archview:" if archived else "select:") + pid.hex,
+                "primary",
             )]
             for pid, name in listed
         ]
@@ -2137,50 +2142,46 @@ def create_owner_setup_router(
             nav = []
             verb = "archives:" if archived else "projects:"
             if page > 0:
-                nav.append(_button("◀️", verb + str(page - 1)))
-            nav.append(_button(f"{page + 1}/{total_pages}", verb + str(page)))
+                nav.append(_button("◀️", verb + str(page - 1), "primary"))
+            # The counter also refreshes the current page on demand.
+            nav.append(_button(f"📄 {page + 1}/{total_pages}",
+                               verb + str(page), "primary"))
             if page + 1 < total_pages:
-                nav.append(_button("▶️", verb + str(page + 1)))
+                nav.append(_button("▶️", verb + str(page + 1), "primary"))
             rows.append(nav)
         if archived:
             rows.append([_button(
-                tr("⬅️ Мои подключения", "⬅️ My connections"), "projects",
+                tr("⬅️ Мои подключения", "⬅️ My connections"),
+                "projects", "primary",
             )])
         else:
             rows.append([
-                _button(tr("✨ Создать бота", "✨ Create a bot"), "newmanaged", "success"),
-                _button(tr("🔑 Через BotFather", "🔑 Via BotFather"), "new"),
+                _button(tr("✨ Создать бота", "✨ Create a bot"),
+                        "newmanaged", "success"),
+                _button(tr("🔑 Через BotFather", "🔑 Via BotFather"),
+                        "new", "primary"),
             ])
             if await list_archived_owner_connections(factory, actor_id=actor_id):
                 rows.append([_button(
                     tr("📦 Архив подключений", "📦 Archived connections"),
-                    "archives",
+                    "archives", "primary",
                 )])
-        # The only entry to the existing central-account invoice ledger.
-        # It must remain visible whether the owner has active, archived,
-        # or zero bots. Do not create another invoice screen.
-        rows.append([_button(tr("🧾 Счёт аккаунта", "🧾 Account bill"),
-                     "saasinvoices:0")])
+        # The account bill belongs only to /billing and the main dashboard.
+        # The platform owner dashboard is also accessible from the main menu.
         rows.append([_button(
-            tr("🏠 Главное меню", "🏠 Main menu"), "onboardhome", "primary",
+            tr("🏠 Главное меню", "🏠 Main menu"),
+            "onboardhome", "primary",
         )])
-        if platform_navigation(user_id):
-            rows.append(platform_navigation(user_id))
-        title = tr("📁 <b>Мои подключения</b>", "📁 <b>My connections</b>")
-        if archived:
-            title = tr("📦 <b>Архив подключений</b>", "📦 <b>Archived connections</b>")
-        await bot.send_message(
-            user_id,
-            title + "\n" + (
-                tr("Пусто.", "Empty.") if not projects
-                else tr(
-                    "Выберите подключение для управления.",
-                    "Select a connection to manage.",
-                )
-            ),
-            parse_mode="HTML", reply_markup=_markup(rows),
+        content_args = dict(
+            total=len(projects), page=page,
+            total_pages=total_pages, archived=archived,
         )
-
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=connection_registry_rich(**content_args),
+            classic_html=connection_registry_classic(**content_args),
+            reply_markup=_markup(rows),
+        )
 
     async def show_archived_connection(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
