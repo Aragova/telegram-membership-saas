@@ -34,9 +34,7 @@ def _handler(router, name, *, observer="callback_query"):
     )
 
 
-async def test_native_create_button_sets_durable_intent_no_token_and_no_mtproto(
-    monkeypatch,
-):
+async def test_rich_creation_step_precedes_temporary_native_button(monkeypatch):
     actor_id = uuid4()
     flow = AsyncMock()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
@@ -46,23 +44,68 @@ async def test_native_create_button_sets_durable_intent_no_token_and_no_mtproto(
         lambda: SimpleNamespace(bot_token_encryption_key="configured"),
     )
     router = ui.create_owner_setup_router(MagicMock())
+    handler = _handler(router, "owner_callback")
     bot = _bot()
-    query = _query("newmanaged")
-    await _handler(router, "owner_callback")(query, bot)
+
+    # Screen 4 uses in-message buttons, not a sticky system keyboard.
+    first = _query("newmanaged")
+    await handler(first, bot)
+    flow.assert_not_awaited()
+    sent = bot.send_message.await_args
+    assert "Создать бота через Telegram" in sent.args[1]
+    assert "@username" in sent.args[1]
+    assert "BotFather" not in sent.args[1]
+    assert [
+        b.callback_data for row in sent.kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ] == ["own:managedlaunch", "own:substart"]
+    first.answer.assert_awaited_once()
+
+    # Only the explicit second click reveals Telegram's required reply button.
+    second = _query("managedlaunch")
+    await handler(second, bot)
     flow.assert_awaited_once()
     assert flow.await_args.kwargs["actor_id"] == actor_id
     assert flow.await_args.kwargs["step"] == "managed_bot_create"
     assert flow.await_args.kwargs["bot_scope_id"] == 0
     assert 0 < flow.await_args.kwargs["payload"]["request_id"] < 2**31
-    message = bot.send_message.await_args
-    assert message.args[0] == 123
-    assert "BotFather" not in message.args[1]
-    keyboard = message.kwargs["reply_markup"]
-    native = keyboard.keyboard[0][0].request_managed_bot
+    native_message = bot.send_message.await_args
+    assert native_message.args[0] == 123
+    native_keyboard = native_message.kwargs["reply_markup"]
+    assert native_keyboard.one_time_keyboard is True
+    native = native_keyboard.keyboard[0][0].request_managed_bot
     assert isinstance(native, KeyboardButtonRequestManagedBot)
     assert native.request_id == flow.await_args.kwargs["payload"]["request_id"]
     assert "token" not in str(flow.await_args.kwargs["payload"]).lower()
-    query.answer.assert_awaited_once()
+    second.answer.assert_awaited_once()
+
+
+async def test_rich_creation_back_returns_to_subscription_choices(monkeypatch):
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    bot = _bot()
+    handler = _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")
+    await handler(_query("newmanaged"), bot)
+    back = _query("substart")
+    await handler(back, bot)
+    buttons = [
+        b.callback_data for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert buttons == ["own:newmanaged", "own:new", "own:onboardhome"]
+
+
+async def test_native_launch_checks_management_permission_again(monkeypatch):
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(ui, "set_flow", AsyncMock())
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
+    bot = _bot(manager=False)
+    await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
+        _query("managedlaunch"), bot,
+    )
+    ui.set_flow.assert_not_awaited()
+    assert "отключён" in bot.send_message.await_args.args[1]
 
 
 async def test_botfather_fallback_when_manager_permission_is_off(monkeypatch):
