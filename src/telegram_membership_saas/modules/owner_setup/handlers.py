@@ -4324,6 +4324,7 @@ def create_owner_setup_router(
             previous = await consume_button_flow(
                 factory, actor_id=actor_id, expected_step="chat_picker",
                 bot_scope_id=bot.id, discard=True,
+                allow_expired_chat_picker=True,
             )
         except ValueError:
             await bot.send_message(message.chat.id, tr(
