@@ -82,13 +82,17 @@ async def test_rich_creation_step_precedes_temporary_native_button(monkeypatch):
 
 async def test_rich_creation_back_returns_to_subscription_choices(monkeypatch):
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
     bot = _bot()
     handler = _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")
     await handler(_query("newmanaged"), bot)
     back = _query("substart")
     await handler(back, bot)
+    keyboard = bot.send_message.await_args.kwargs["reply_markup"]
     buttons = [
-        b.callback_data for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        b.callback_data for row in keyboard.inline_keyboard
         for b in row
     ]
     assert buttons == ["own:newmanaged", "own:new", "own:onboardhome"]
