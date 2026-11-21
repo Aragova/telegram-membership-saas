@@ -1,6 +1,6 @@
 """Owner-only native-currency sales preview for all six confirmed ViMi Pay rails.
 
-Revision ID: 0104_saas_bot_native_sales_preview
+Revision ID: 0104_saas_native_sales
 Revises: 0103_telegram_degraded_runtime
 
 Presentation-only, read-only SQL. It never creates debt, converts FX,
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0104_saas_bot_native_sales_preview"
+revision: str = "0104_saas_native_sales"
 down_revision: str | None = "0103_telegram_degraded_runtime"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
