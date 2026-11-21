@@ -104,6 +104,11 @@ def wizard_primary_label(action: str, default_label: str) -> str:
     return default_label
 
 
+def wizard_primary_style(action: str) -> str:
+    """Blue connect button on step 1/4; other wizard actions unchanged."""
+    return "primary" if action == "resources" else "success"
+
+
 def owner_setup_step_rich(
     *, bot_name: str, timezone: str, action: str,
 ) -> str:
