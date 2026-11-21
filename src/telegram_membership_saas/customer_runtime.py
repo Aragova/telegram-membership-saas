@@ -49,7 +49,10 @@ from telegram_membership_saas.project_worker_lock import project_worker_lock
 from telegram_membership_saas.rich_messages import RichUiBot
 from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
-from telegram_membership_saas.telegram_menus import install_public_commands
+from telegram_membership_saas.telegram_menus import (
+    install_public_commands,
+    sync_project_owner_commands,
+)
 from telegram_membership_saas.telegram_runtime import run_project_runtime_loop
 
 logger = logging.getLogger(__name__)
@@ -326,6 +329,18 @@ async def run_customer_bot_instance(
             )
         except TimeoutError:
             logger.warning("Customer native command menu setup timed out")
+        # A deployed update must fix previously opened owner chats, not only
+        # owners who happen to send /start again. This is best-effort and
+        # cannot block the customer bot's purchases or access worker.
+        try:
+            await asyncio.wait_for(
+                sync_project_owner_commands(
+                    bot, session_factory, project_id=project_id,
+                ),
+                timeout=CUSTOMER_COMMAND_INSTALL_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.warning("Could not synchronize connected owner commands", exc_info=True)
         worker = asyncio.create_task(
             run_project_runtime_loop(
                 session_factory,
