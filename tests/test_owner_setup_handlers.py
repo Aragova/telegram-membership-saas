@@ -155,6 +155,9 @@ async def test_botfather_back_with_existing_connections_opens_registry(monkeypat
         ui, "owner_home",
         AsyncMock(return_value=OwnerHome(((project, "Existing bot"),), None)),
     )
+    monkeypatch.setattr(
+        ui, "list_archived_owner_connections", AsyncMock(return_value=[]),
+    )
     bot = _bot()
     query = SimpleNamespace(
         message=SimpleNamespace(chat=SimpleNamespace(type="private")),
