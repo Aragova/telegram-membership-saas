@@ -71,6 +71,15 @@ def _prune_expired(now: float) -> None:
             _pending_lava.pop(key, None)
 
 
+def clear_pending_lava_after_owner_navigation(
+    *, payer_id: int, central_bot_id: int,
+) -> None:
+    """Disarm email entry only AFTER owner navigation passed its own guard."""
+    for key, request in tuple(_pending_lava.items()):
+        if key[0] == payer_id and request.central_bot_id == central_bot_id:
+            _pending_lava.pop(key, None)
+
+
 async def send_platform_lava_email_prompt(
     bot: Bot,
     factory: async_sessionmaker[AsyncSession],
@@ -206,6 +215,11 @@ class ClearPendingLavaOnNavigation(BaseMiddleware):
                 (
                     isinstance(event, CallbackQuery)
                     and event.data != "lava:cancel"
+                    # The owning router must validate the prompt generation
+                    # before this input can be cleared by navigation.
+                    and not (event.data or "").startswith((
+                        "own:promptback:", "own:promptcancel:",
+                    ))
                 )
                 or (
                     isinstance(event, Message)
