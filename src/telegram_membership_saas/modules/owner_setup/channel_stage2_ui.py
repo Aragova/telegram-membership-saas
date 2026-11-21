@@ -46,7 +46,7 @@ def directory_rich(count: int) -> str:
         parts.append("<p>🔗 " + tr(
             "Выберите подключённый канал или группу для управления "
             "или добавьте новый ниже.",
-            "Choose a connected channel or group to manage, "
+            "Select a channel or group to manage, "
             "or add another below.",
         ) + "</p>")
     parts.append(RICH_ACTIONS_MARKER)
@@ -57,7 +57,7 @@ def directory_classic(count: int) -> str:
     parts = [
         tr("📢 <b>Мои каналы и группы</b>",
            "📢 <b>My channels and groups</b>"),
-        tr("Подключено: ", "Connected: ") + "<b>" + str(count) + "</b>",
+        tr("Подключено: ", "Connected: ") + str(count),
     ]
     if count == 0:
         parts += [
@@ -78,7 +78,7 @@ def directory_classic(count: int) -> str:
         parts.append("🔗 " + tr(
             "Выберите подключённый канал или группу для управления "
             "или добавьте новый ниже.",
-            "Choose a connected channel or group to manage, "
+            "Select a channel or group to manage, "
             "or add another below.",
         ))
     return "\n\n".join(parts)
