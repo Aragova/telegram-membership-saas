@@ -18,9 +18,6 @@ from test_platform_saas_invoice_rls import _project, _tid
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory
-from telegram_membership_saas.modules.platform_saas_payment_service import (
-    merchant_saas_bot_native_sales_preview,
-)
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("TMS_DATABASE_URL") or not os.getenv("TMS_MIGRATION_DATABASE_URL"),
