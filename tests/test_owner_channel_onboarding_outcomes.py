@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from aiogram.types import ReplyKeyboardRemove
 
 from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
