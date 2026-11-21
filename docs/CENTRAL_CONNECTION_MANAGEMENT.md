@@ -80,7 +80,10 @@ For each **connected bot**, the central connection-management card has
   **manual subscriptions, manual files, Stars subscriptions, Stars files,
   Crypto subscriptions and Crypto files**, without combining distinct native
   currencies or adding invoice charges. It follows the existing owner-period
-  attribution for manual payments and immutable owner evidence for Stars/Crypto.
+  attribution for manual payments and immutable owner evidence for Stars.
+  Crypto Pay native turnover comes directly from confirmed **mainnet**
+  invoices (historical owner-scoped), even when USD valuation evidence is
+  pending. Captured and uncaptured invoices are never double-counted.
   Migration 0104 adds only that SQL function and runtime execute grant:
   no tables, invoice writes, FX rates or billing calculations are changed.
 - The central account history, `/billing`, tenant bot bill, native invoice
