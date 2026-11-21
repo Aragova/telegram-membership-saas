@@ -55,8 +55,8 @@ def directory_rich(count: int) -> str:
 
 def directory_classic(count: int) -> str:
     parts = [
-        tr("📢 <b>МОИ КАНАЛЫ И ГРУППЫ</b>",
-           "📢 <b>MY CHANNELS AND GROUPS</b>"),
+        tr("📢 <b>Мои каналы и группы</b>",
+           "📢 <b>My channels and groups</b>"),
         tr("Подключено: ", "Connected: ") + "<b>" + str(count) + "</b>",
     ]
     if count == 0:
