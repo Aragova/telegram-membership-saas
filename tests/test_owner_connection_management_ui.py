@@ -514,7 +514,7 @@ async def test_central_bot_bill_uses_exact_bot_not_account_and_returns_to_it(
     mock_trial = AsyncMock(side_effect=AssertionError("Invoice is already issued"))
     monkeypatch.setattr(ui, "merchant_saas_trial_status", mock_trial)
     mock_preview = AsyncMock(side_effect=AssertionError("Issued invoice is final"))
-    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", mock_preview)
+    monkeypatch.setattr(ui, "merchant_saas_bot_native_sales_preview", mock_preview)
     from telegram_membership_saas.localization import _language
     for lang, caption in (("ru", "СЧЁТ БОТА"), ("en", "BOT BILL")):
         token = _language.set(lang)
@@ -571,21 +571,23 @@ async def test_central_bot_bill_trial_has_only_back_and_readonly_sales(
     monkeypatch.setattr(ui, "merchant_saas_trial_status", trial)
     sales = AsyncMock(return_value={
         "month": "2026-11-01",
-        "rails": [{"kind": "subscription", "sold": 4},
-                  {"kind": "file_stars", "sold": 2}],
+        "rows": [
+            {"kind": "subscription", "sold": 4,
+             "currency": "RUB", "gross": "2000"},
+            {"kind": "file_stars", "sold": 2,
+             "currency": "XTR", "gross": "250"},
+            {"kind": "file_crypto", "sold": 1,
+             "currency": "TON", "gross": "0.5"},
+        ],
     })
-    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", sales)
-    currency = AsyncMock(return_value={
-        "rows": [{"currency": "RUB", "gross": "2800"}],
-    })
-    monkeypatch.setattr(ui, "merchant_saas_project_preview", currency)
+    monkeypatch.setattr(ui, "merchant_saas_bot_native_sales_preview", sales)
     inst = bot()
     q = query("saasbotbill:" + encode_uuid(project_id))
     await cb(q, inst)
     q.answer.assert_awaited_once()
     text = inst.send_message.await_args.args[1]
     assert "ПРОБНЫЙ ПЕРИОД" in text
-    assert "2800" in text
+    assert "2000" in text and "250" in text and "TON" in text
     assert "4" in text and "2" in text
     assert "$5" in text
     assert "0 ₽" in text
@@ -599,7 +601,6 @@ async def test_central_bot_bill_trial_has_only_back_and_readonly_sales(
         for row in markup.inline_keyboard for b in row
     )
     assert sales.await_args.kwargs["project_id"] == project_id
-    assert currency.await_args.kwargs["project_id"] == project_id
     assert trial.await_args.kwargs["project_id"] == project_id
 
 
