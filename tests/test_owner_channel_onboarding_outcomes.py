@@ -151,21 +151,28 @@ async def test_native_picker_has_one_result_and_one_inline_action(
     finally:
         _language.reset(token)
     # The client already hides the one-time request_chat keyboard.
-    # The bot sends ONE Rich result with its inline action directly.
+    # One Rich card: step 3 on success, or error on failure.
     assert bot.send_message.await_count == 0
     assert bot.edit_message_reply_markup.await_count == 0
     render.assert_awaited_once()
     args = render.await_args.kwargs
-    assert ("✅" if success else "⚠️") in args["rich_html"]
-    thing = (
-        ("ГРУППА" if kind == "group" else "КАНАЛ") if language == "ru"
-        else ("GROUP" if kind == "group" else "CHANNEL")
-    )
-    assert thing in args["rich_html"]
+    assert ("3/4" if success else "⚠️") in args["rich_html"]
+    if success:
+        assert "Настройка ViMi Pay" in args["rich_html"] if language == "ru" else (
+            "ViMi Pay setup" in args["rich_html"]
+        )
+        assert "ПОДКЛЮЧЕНО" not in args["rich_html"]
+        assert "CONNECTED ·" not in args["rich_html"]
+    else:
+        thing = (
+            ("ГРУППА" if kind == "group" else "КАНАЛ") if language == "ru"
+            else ("GROUP" if kind == "group" else "CHANNEL")
+        )
+        assert thing in args["rich_html"]
     buttons = args["reply_markup"].inline_keyboard
     assert len(buttons) == 1 and len(buttons[0]) == 1
     assert buttons[0][0].callback_data == (
-        "own:dashboard" if success else "own:resources"
+        "own:methods" if success else "own:resources"
     )
     assert consumed.await_args.kwargs["discard"] is True
     assert [call.args for call in bot.delete_message.await_args_list] == [
@@ -204,10 +211,11 @@ async def test_manual_id_one_rich_result_and_correct_navigation(
     assert bot.send_message.await_count == 0
     args = render.await_args.kwargs
     assert "<h3>" in args["rich_html"]
-    assert "✅" in args["rich_html"] if success else "⚠️" in args["rich_html"]
+    assert ("3/4" if success else "⚠️") in args["rich_html"]
+    assert "ПОДКЛЮЧЕНО" not in args["rich_html"]
     assert [item.callback_data for row in
             args["reply_markup"].inline_keyboard for item in row] == [
-        "own:dashboard" if success else "own:resources",
+        "own:methods" if success else "own:resources",
     ]
 
 
@@ -308,6 +316,8 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
         monkeypatch.setattr(ui, "verify_channel_and_add", AsyncMock(
             return_value=SimpleNamespace(name="Reconnected", resource_type="telegram_channel"),
         ))
+        # The database now includes the resource saved by verify_channel_and_add.
+        ui.setup_overview.return_value = _data(project, ("Reconnected",))
         await _handler(project, "shared_chat_handler")(
             _message(chat_shared=SimpleNamespace(
                 chat_id=-1001234567890, request_id=payload["request_id"],
@@ -318,21 +328,20 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
             (345, 450), (345, 223),
         ]
         result = render.await_args.kwargs
-        assert result["reply_markup"].inline_keyboard[0][0].callback_data == (
-            "own:setupstep3"
+        assert "3/4" in result["rich_html"]
+        assert "Reconnected" not in result["rich_html"] or (
+            "ПОДКЛЮЧЕНО" not in result["rich_html"]
         )
-        assert "Reconnected" in result["rich_html"]
-        # Simulate the resource now appearing in the DB after successful add.
-        ui.setup_overview.return_value = _data(project, ("Reconnected",))
-        # The CTA MUST actually open step 3, not the finished main dashboard.
+        assert result["reply_markup"].inline_keyboard[0][0].callback_data == (
+            "own:methods"
+        )
+        # Existing older cards can still call the legacy CTA safely.
         query.data = "own:setupstep3"
         await _handler(project, "owner_callback")(query, native)
         assert render.await_count == 2
-        step = render.await_args.kwargs
-        assert "3/4" in step["rich_html"]
-        assert step["reply_markup"].inline_keyboard[0][0].callback_data == (
-            "own:methods"
-        )
+        assert render.await_args.kwargs["reply_markup"].inline_keyboard[0][
+            0
+        ].callback_data == "own:methods"
     finally:
         _language.reset(token)
 
@@ -366,11 +375,14 @@ async def test_reconnecting_by_id_carries_guided_state_without_new_messages(
             name="Reconnected", resource_type="telegram_channel",
         ),
     ))
+    # Mimic the successfully persisted channel before rendering step 3.
+    ui.setup_overview.return_value = _data(project, ("Reconnected",))
     await _handler(project, "owner_reply_handler")(
         _message(text="-1001234567890"), bot,
     )
     render.assert_awaited_once()
+    assert "3/4" in render.await_args.kwargs["rich_html"]
     assert render.await_args.kwargs["reply_markup"].inline_keyboard[0][
         0
-    ].callback_data == "own:setupstep3"
+    ].callback_data == "own:methods"
     bot.send_message.assert_not_awaited()

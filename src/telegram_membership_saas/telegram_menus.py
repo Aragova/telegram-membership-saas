@@ -26,17 +26,17 @@ logger = logging.getLogger(__name__)
 # command, Russian description, English description. Only implemented commands
 # are listed; role-specific commands remain server permission checked.
 ROLE_COMMANDS = {
-    # Exactly three commands in connected bots. Contextual actions remain
-    # available on the existing inline screens and by typing commands.
+    # Buyer-only native menu; admin commands use a per-chat role override.
+    # Contextual buyer actions remain on existing screens and via commands.
     "buyer": (
         ("menu", "🏠 Главное меню", "🏠 Main menu"),
         ("subscription", "🧾 Мои подписки", "🧾 My subscriptions"),
         ("support", "🛟 Поддержка", "🛟 Support"),
     ),
+    # In the connected bot's ADMIN chat, display only the admin entrypoint.
+    # Buyers retain their separate public commands; handlers still validate roles.
     "owner": (
-        ("menu", "🏠 Главное меню", "🏠 Main menu"),
-        ("subscription", "🧾 Мои подписки", "🧾 My subscriptions"),
-        ("support", "🛟 Поддержка", "🛟 Support"),
+        ("start", "🏠 Главное меню", "🏠 Main menu"),
     ),
     "payment_manager": (
         ("menu", "🏠 Главное меню", "🏠 Main menu"),
