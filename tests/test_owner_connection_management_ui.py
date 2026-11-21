@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from telegram_membership_saas.modules.owner_setup import handlers as ui
+from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     ConnectionDisposition,
 )
@@ -395,8 +396,8 @@ async def test_registered_connection_has_rich_explanations_and_colored_two_colum
         return_value=overview(project_id, has_bot=True),
     ))
     for lang, heading, invoices in (
-        ("ru", "УПРАВЛЕНИЕ ПОДКЛЮЧЕНИЕМ", "Счета ViMi Pay"),
-        ("en", "MANAGE CONNECTION", "ViMi Pay invoices"),
+        ("ru", "УПРАВЛЕНИЕ ПОДКЛЮЧЕНИЕМ", "Счёт бота"),
+        ("en", "MANAGE CONNECTION", "Bot bill"),
     ):
         locale = _language.set(lang)
         try:
@@ -425,7 +426,9 @@ async def test_registered_connection_has_rich_explanations_and_colored_two_colum
             assert rows[1][0].callback_data == "own:connect"
             assert rows[1][1].callback_data.startswith("own:managedsync:")
             assert rows[2][0].callback_data == "own:connrename:" + project_id.hex
-            assert rows[2][1].callback_data == "own:saasinvoices:0"
+            assert rows[2][1].callback_data == (
+                "own:saasbotbill:" + encode_uuid(project_id)
+            )
             assert rows[3][0].callback_data == "own:projects"
             assert rows[4][0].callback_data.startswith("own:drop:")
             assert project_id.hex not in screen  # No technical IDs in content.
@@ -475,3 +478,150 @@ async def test_botfather_first_connection_shows_only_success_with_manage_choice(
     assert rows[0][0].style == "success"
     assert rows[1][0].callback_data == "own:select:" + project_id.hex
     assert rows[1][0].style == "primary"
+
+
+async def test_central_bot_bill_uses_exact_bot_not_account_and_returns_to_it(
+    monkeypatch,
+):
+    project_id, other_id, invoice_id = uuid4(), uuid4(), uuid4()
+    # The currently selected project can be another one because Telegram
+    # old inline messages can be pressed after navigation.
+    cb = handler(monkeypatch, selected=other_id)
+    summary = AsyncMock(return_value={
+        "project_id": str(project_id), "invoice_id": str(invoice_id),
+        "period_start": "2026-12-16T10:00:00+03:00",
+        "period_end": "2027-01-16T10:00:00+03:00",
+        "first_period": False,
+        "turnover": [
+            {"kind": "subscription", "currency": "RUB",
+             "sold": 2, "gross": "2000"},
+            {"kind": "file", "currency": "RUB",
+             "sold": 1, "gross": "1000"},
+        ],
+        "service_rub": "150", "subscription_rub": "100",
+        "file_rub": "50", "total_rub": "300",
+        "paid_rub": "0", "credit_rub": "0", "total_due_rub": "300",
+    })
+    monkeypatch.setattr(ui, "merchant_saas_bill_summary", summary)
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(
+        return_value=overview(project_id, has_bot=True),
+    ))
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "RUB"},
+    ))
+    account = AsyncMock(side_effect=AssertionError("Account report used"))
+    monkeypatch.setattr(ui, "merchant_saas_statements", account)
+    mock_trial = AsyncMock(side_effect=AssertionError("Invoice is already issued"))
+    monkeypatch.setattr(ui, "merchant_saas_trial_status", mock_trial)
+    mock_preview = AsyncMock(side_effect=AssertionError("Issued invoice is final"))
+    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", mock_preview)
+    from telegram_membership_saas.localization import _language
+    for lang, caption in (("ru", "СЧЁТ БОТА"), ("en", "BOT BILL")):
+        token = _language.set(lang)
+        try:
+            inst = bot()
+            q = query("saasbotbill:" + encode_uuid(project_id))
+            await cb(q, inst)
+            q.answer.assert_awaited_once()
+            sent = inst.send_message.await_args
+            assert caption in sent.args[1]
+            assert "@test_bot" in sent.args[1]
+            assert "300.00 ₽" in sent.args[1]
+            assert str(invoice_id) not in sent.args[1]
+            rows = sent.kwargs["reply_markup"].inline_keyboard
+            assert [len(row) for row in rows] == [1, 1]
+            assert rows[0][0].callback_data == (
+                "own:spm:" + encode_uuid(invoice_id) + ":RUB:0"
+            )
+            assert rows[0][0].style == "success"
+            assert rows[1][0].callback_data == "own:select:" + project_id.hex
+            assert rows[1][0].style == "primary"
+        finally:
+            _language.reset(token)
+    assert summary.await_count == 2
+    for call in summary.await_args_list:
+        assert call.kwargs["project_id"] == project_id
+    mock_trial.assert_not_awaited()
+    mock_preview.assert_not_awaited()
+    account.assert_not_awaited()
+
+
+async def test_central_bot_bill_trial_has_only_back_and_readonly_sales(
+    monkeypatch,
+):
+    project_id = uuid4()
+    cb = handler(monkeypatch, selected=project_id)
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(
+        return_value=overview(project_id, has_bot=True),
+    ))
+    monkeypatch.setattr(ui, "merchant_saas_bill_summary", AsyncMock(
+        return_value={
+            "project_id": str(project_id), "invoice_id": None,
+            "total_due_rub": "0", "turnover": [],
+            "upcoming_at": "2099-11-24T18:00:00+03:00",
+        },
+    ))
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "USD"},
+    ))
+    trial = AsyncMock(return_value={
+        "state": "trial", "remaining_seconds": 57 * 3600,
+        "trial_ends_at": "2099-11-24T18:00:00+03:00",
+    })
+    monkeypatch.setattr(ui, "merchant_saas_trial_status", trial)
+    sales = AsyncMock(return_value={
+        "month": "2026-11-01",
+        "rails": [{"kind": "subscription", "sold": 4},
+                  {"kind": "file_stars", "sold": 2}],
+    })
+    monkeypatch.setattr(ui, "merchant_saas_unified_monthly_preview", sales)
+    currency = AsyncMock(return_value={
+        "rows": [{"currency": "RUB", "gross": "2800"}],
+    })
+    monkeypatch.setattr(ui, "merchant_saas_project_preview", currency)
+    inst = bot()
+    q = query("saasbotbill:" + encode_uuid(project_id))
+    await cb(q, inst)
+    q.answer.assert_awaited_once()
+    text = inst.send_message.await_args.args[1]
+    assert "ПРОБНЫЙ ПЕРИОД" in text
+    assert "2800" in text
+    assert "4" in text and "2" in text
+    assert "$5" in text
+    assert "0 ₽" in text
+    markup = inst.send_message.await_args.kwargs["reply_markup"]
+    assert len(markup.inline_keyboard) == 1
+    assert markup.inline_keyboard[0][0].callback_data == (
+        "own:select:" + project_id.hex
+    )
+    assert not any(
+        b.callback_data.startswith("own:spm:")
+        for row in markup.inline_keyboard for b in row
+    )
+    assert sales.await_args.kwargs["project_id"] == project_id
+    assert currency.await_args.kwargs["project_id"] == project_id
+    assert trial.await_args.kwargs["project_id"] == project_id
+
+
+async def test_central_bot_bill_denies_foreign_owner_and_stale_mismatch(
+    monkeypatch,
+):
+    project_id = uuid4()
+    cb = handler(monkeypatch, selected=project_id)
+    blocked = AsyncMock(side_effect=PermissionError("Not your bot"))
+    monkeypatch.setattr(ui, "merchant_saas_bill_summary", blocked)
+    inst = bot()
+    req = query("saasbotbill:" + encode_uuid(project_id))
+    await cb(req, inst)
+    assert req.answer.await_args.kwargs["show_alert"] is True
+    inst.send_message.assert_not_awaited()
+    # Even a broken callback result must not display another bot's invoice.
+    blocked.side_effect = None
+    blocked.return_value = {
+        "project_id": str(uuid4()), "invoice_id": None,
+        "total_due_rub": "0", "turnover": [],
+    }
+    req2 = query("saasbotbill:" + encode_uuid(project_id))
+    await cb(req2, inst)
+    assert req2.answer.await_args.kwargs["show_alert"] is True
+    inst.send_message.assert_not_awaited()
