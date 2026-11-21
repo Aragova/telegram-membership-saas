@@ -363,10 +363,9 @@ async def test_switching_from_native_picker_removes_sticky_keyboard(monkeypatch)
     handler = AsyncMock(return_value="ok")
     query = _query("new")
 
-    assert await middleware(handler, query, {"bot": _bot()}) == "ok"
-    keyboard_cleanup.assert_awaited_once_with(
-        query.message.chat.id, query.from_user.id,
-    )
+    bot = _bot()
+    assert await middleware(handler, query, {"bot": bot}) == "ok"
+    keyboard_cleanup.assert_awaited_once_with(bot, query.from_user.id)
 
 
 class _language_context:
