@@ -167,6 +167,7 @@ jobs:
                       "platform_saas_publish_fx_rate(date,text,numeric)",
                       "platform_saas_monthly_fx(date)",
                       "platform_saas_project_preview(uuid,date)",
+                      "platform_saas_bot_native_sales_preview(uuid,date)",
                       "platform_saas_quote_project_bill(uuid,date,text)",
                       "platform_saas_publish_cbr_fx_rate(date,text,numeric,date)",
                       "platform_saas_publish_cbr_daily_fx(date,text,numeric,date)",
