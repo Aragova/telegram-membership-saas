@@ -180,6 +180,10 @@ async def test_stale_rich_cancel_cannot_close_newer_owner_form(monkeypatch):
     home = AsyncMock()
     monkeypatch.setattr(ui, "cancel_owner_flow", canceled)
     monkeypatch.setattr(ui, "owner_home", home)
+    lava_cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", lava_cleanup,
+    )
     bot = _bot()
     query = SimpleNamespace(
         message=SimpleNamespace(chat=SimpleNamespace(type="private")),
@@ -187,9 +191,33 @@ async def test_stale_rich_cancel_cannot_close_newer_owner_form(monkeypatch):
     )
     await _handler("owner_callback", callback=True)(query, bot)
     assert canceled.await_args.kwargs["expected_generation"] == "old"
+    lava_cleanup.assert_not_called()
     home.assert_not_awaited()
     bot.send_message.assert_not_awaited()
     assert query.answer.await_args.kwargs["show_alert"] is True
+
+
+async def test_successful_owner_prompt_navigation_clears_lava_only_after_guard(
+    monkeypatch,
+):
+    owner = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
+    )
+    cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", cleanup,
+    )
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=_user(), data="own:promptcancel:live", answer=AsyncMock(),
+    )
+    bot = _bot()
+    await _handler("owner_callback", callback=True)(query, bot)
+    cleanup.assert_called_once_with(payer_id=_user().id, central_bot_id=bot.id)
+    query.answer.assert_awaited_once()
 
 
 async def test_first_start_shows_only_language_choices(monkeypatch):
