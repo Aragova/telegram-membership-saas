@@ -796,11 +796,6 @@ def create_owner_setup_router(
                 tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
                 "substart", "success",
             )])
-            if not home.projects:
-                rows.append([InlineKeyboardButton(
-                    text=tr("⬅️ Назад", "⬅️ Back"), callback_data="lng:menu",
-                    style="primary",
-                )])
         if home.projects:
             # Existing connections retain account invoices and language access.
             # /billing remains available even when all connections are deleted.
