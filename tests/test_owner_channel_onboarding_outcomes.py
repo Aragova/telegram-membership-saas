@@ -155,10 +155,11 @@ async def test_native_picker_has_one_result_and_one_inline_action(
     sent = bot.send_message.await_args
     assert isinstance(sent.kwargs["reply_markup"], ReplyKeyboardRemove)
     assert ("✅" if success else "⚠️") in sent.args[1]
-    assert ("группа" if kind == "group" else "канал") in (
-        sent.args[1].lower() if language == "ru" else
-        ("group" if "group" in sent.args[1].lower() else "channel")
+    thing = (
+        ("группа" if kind == "group" else "канал") if language == "ru"
+        else ("group" if kind == "group" else "channel")
     )
+    assert thing in sent.args[1].lower()
     assert bot.edit_message_reply_markup.await_count == 1
     edited = bot.edit_message_reply_markup.await_args.kwargs
     assert edited["message_id"] == 450
