@@ -20,65 +20,37 @@ _STEP = {
 
 
 def _channel_setup_copy(bot_name: str) -> tuple[str, str]:
-    """Detailed RU/EN onboarding copy using the exact connected bot handle.
+    """Concise RU/EN setup copy for the exact connected bot.
 
-    Channel verification checks Telegram's can_invite_users AND
-    can_restrict_members; labels can differ between Telegram clients.
+    Telegram verification still requires can_invite_users and
+    can_restrict_members; this only shortens the instructions.
     """
     handle = "<b>@" + escape(bot_name.lstrip("@")) + "</b>"
     ru = "\n".join([
-        "<b>📢 ПОДКЛЮЧЕНИЕ КАНАЛА ИЛИ ГРУППЫ</b>",
-        "Для продолжения настройки добавьте <b>именно ЭТОГО бота</b> "
-        + handle + " в администраторы <b>закрытого канала или группы</b>. "
-        "Это позволит выдавать покупателям доступ и отключать его "
-        "после завершения подписки.",
-        "<b>📋 ПОШАГОВАЯ ИНСТРУКЦИЯ</b>",
-        "<b>1️⃣ Добавьте бота в администраторы.</b>\n"
-        "Откройте свой канал или группу → нажмите на название → "
-        "«Управление» / «Изменить» → «Администраторы» → "
-        "«Добавить администратора». Найдите " + handle
-        + " и выберите именно его. "
-        "<i>Обычного добавления бота в участники недостаточно.</i>",
-        "<b>2️⃣ Включите ДВА обязательных права:</b>\n"
-        "✅ <b>Пригласительные ссылки / добавление пользователей</b> "
-        "— для выдачи доступа после оплаты.\n"
-        "✅ <b>Блокировка / удаление пользователей</b> "
-        "— для завершения доступа после окончания подписки.\n"
-        "<i>Названия переключателей могут немного отличаться в Telegram.</i>",
-        "<b>3️⃣ Подтвердите канал или группу в ViMi Pay.</b>\n"
-        "Сохраните права администратора и вернитесь <b>в этот чат</b>. "
-        "Нажмите кнопку ниже, выберите канал или группу и следуйте "
-        "инструкции Telegram. ViMi Pay проверит ваши права и права бота.",
-        "<b>🛡 ВАШИ НАСТРОЙКИ СОХРАНЯТСЯ</b>\n"
-        "Уже сохранённые каналы, тарифы, способы оплаты и другие "
-        "настройки останутся на месте.",
+        "<b>📢 ПОДКЛЮЧЕНИЕ КАНАЛА</b>",
+        "Добавьте <b>ЭТОГО бота</b> " + handle
+        + " в администраторы вашего <b>закрытого канала или группы</b>.",
+        "<b>📋 КАК ЭТО СДЕЛАТЬ?</b>",
+        "<b>1️⃣</b> Откройте канал или группу → <b>Управление</b> → "
+        "<b>Администраторы</b> → <b>Добавить администратора</b>.",
+        "<b>2️⃣</b> Найдите " + handle + " и включите <b>два права</b>:\n"
+        "✅ <b>Добавление пользователей</b> (пригласительные ссылки)\n"
+        "✅ <b>Блокировка / удаление пользователей</b>",
+        "<b>3️⃣</b> Сохраните права и нажмите кнопку ниже для подключения.",
+        "<b>🛡</b> Сохранённые тарифы, оплаты и настройки не изменятся.",
     ])
     en = "\n".join([
-        "<b>📢 CONNECT A CHANNEL OR GROUP</b>",
-        "To continue, add <b>THIS exact bot</b> "
-        + handle + " as an administrator of a <b>private channel or "
-        "supergroup</b>. This lets it grant buyers access and revoke it "
-        "when a subscription ends.",
-        "<b>📋 STEP-BY-STEP GUIDE</b>",
-        "<b>1️⃣ Make the bot an administrator.</b>\n"
-        "Open your channel or group → tap its name → Edit / Manage → "
-        "Administrators → Add Administrator. Search for "
-        + handle + " and select this exact bot. "
-        "<i>Adding it as an ordinary member is not enough.</i>",
-        "<b>2️⃣ Enable TWO required permissions:</b>\n"
-        "✅ <b>Invite users / create invite links</b> "
-        "— to grant access after payment.\n"
-        "✅ <b>Ban / remove users</b> "
-        "— to end access when subscriptions expire.\n"
-        "<i>Permission names may vary slightly by Telegram app.</i>",
-        "<b>3️⃣ Confirm your channel or group in ViMi Pay.</b>\n"
-        "Save the administrator permissions and return <b>to this chat</b>. "
-        "Tap the button below, choose the channel or group and follow "
-        "Telegram's instructions. ViMi Pay will verify your permissions "
-        "and the bot's permissions.",
-        "<b>🛡 YOUR SETTINGS ARE PRESERVED</b>\n"
-        "Previously saved channels, plans, payment methods and other "
-        "settings will remain available.",
+        "<b>📢 CONNECT A CHANNEL</b>",
+        "Add <b>THIS bot</b> " + handle
+        + " as an administrator of your <b>private channel or group</b>.",
+        "<b>📋 HOW TO CONNECT?</b>",
+        "<b>1️⃣</b> Open the channel or group → <b>Manage</b> → "
+        "<b>Administrators</b> → <b>Add Administrator</b>.",
+        "<b>2️⃣</b> Find " + handle + " and enable <b>two permissions</b>:\n"
+        "✅ <b>Add users</b> (invite links)\n"
+        "✅ <b>Ban / remove users</b>",
+        "<b>3️⃣</b> Save the permissions and tap the button below to connect.",
+        "<b>🛡</b> Saved plans, payments and settings will not change.",
     ])
     return ru, en
 

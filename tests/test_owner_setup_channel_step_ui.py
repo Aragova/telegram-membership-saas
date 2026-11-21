@@ -20,16 +20,16 @@ from telegram_membership_saas.rich_messages import RICH_ACTIONS_MARKER
     "locale,title,guide,role,invite,restrict,action",
     [
         (
-            "ru", "Настройка ViMi Pay", "ПОШАГОВАЯ ИНСТРУКЦИЯ",
-            "именно ЭТОГО бота",
-            "Пригласительные ссылки / добавление пользователей",
+            "ru", "Настройка ViMi Pay", "КАК ЭТО СДЕЛАТЬ?",
+            "ЭТОГО бота",
+            "Добавление пользователей",
             "Блокировка / удаление пользователей",
             "📢 Подключить канал / группу",
         ),
         (
-            "en", "ViMi Pay setup", "STEP-BY-STEP GUIDE",
-            "THIS exact bot",
-            "Invite users / create invite links",
+            "en", "ViMi Pay setup", "HOW TO CONNECT?",
+            "THIS bot",
+            "Add users",
             "Ban / remove users",
             "📢 Connect channel / group",
         ),
@@ -63,11 +63,18 @@ def test_channel_setup_rich_classic_and_action_match_approved_mockup(
         assert html.count("@vimitest21bot") >= 2
         assert "/cancel" not in html
         assert "Language / Язык" not in html
+        assert "Проверит ваши права и права бота" not in html
+        assert ("Сохранённые тарифы" if locale == "ru"
+                else "Saved plans") in html
     assert RICH_ACTIONS_MARKER in rich
     assert RICH_ACTIONS_MARKER not in classic
     assert "<h3>" in rich and "<table" in rich
     assert "<h3>" not in classic and "<table" not in classic
     assert "своего бота" not in rich
+    assert len(rich) < 2000  # Step 1 stays short on a phone display.
+    assert "<b>1️⃣</b>" in rich and "<b>2️⃣</b>" in rich
+    assert "<b>3️⃣</b>" in rich
+    assert "🛡" in rich
 
 
 @pytest.mark.parametrize("locale", ["ru", "en"])
