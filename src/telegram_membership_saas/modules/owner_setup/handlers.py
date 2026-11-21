@@ -100,6 +100,13 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
+from telegram_membership_saas.modules.owner_setup.channel_stage2_ui import (
+    directory_classic,
+    directory_rich,
+    manual_classic,
+    manual_rich,
+    picker_classic,
+)
 from telegram_membership_saas.modules.owner_setup.connection_cards import (
     connection_management_classic,
     connection_management_rich,
@@ -207,6 +214,7 @@ from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
     owner_setup_step_classic,
     owner_setup_step_rich,
     wizard_primary_label,
+    wizard_primary_style,
 )
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     archive_owner_plan,
@@ -224,7 +232,6 @@ from telegram_membership_saas.modules.owner_setup.premium_welcome import (
 )
 from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
     rich_channel_card,
-    rich_channel_directory,
     rich_owner_statistics,
     rich_subscriber_card,
     rich_subscriber_invoices,
@@ -1257,7 +1264,7 @@ def create_owner_setup_router(
                 # buttons on any of the 4 wizard steps.
                 wizard_rows = [[_button(
                     wizard_primary_label(action, label),
-                    action, "success",
+                    action, wizard_primary_style(action),
                 )]]
                 await send_owner_rich(
                     bot, chat_id=user_id,
@@ -3150,36 +3157,51 @@ def create_owner_setup_router(
     async def show_resources(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
     ) -> None:
-        """Channel list with direct management rather than a plain bullet dump."""
-        data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
+        """Stage 2/4: connected channels, one Back, no premature dashboard."""
+        data = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
         rows = [
             [_button("📢 " + name[:43], "resourceview:" + encode_uuid(rid))]
             for rid, name, _ in data.resources
         ]
         rows.extend([
-            [_button(tr("➕ Добавить канал", "➕ Add channel"), "pick:channel", "success"),
-             _button(tr("➕ Добавить группу", "➕ Add group"), "pick:group", "success")],
-            [_button(tr("✍️ Добавить по ID", "✍️ Add by ID"), "resource:manual")],
-            [_button(tr("⬅️ Панель администратора", "⬅️ Admin dashboard"),
-                     "dashboard")],
+            [_button(
+                tr("➕ Добавить канал", "➕ Add channel"),
+                "pick:channel", "success",
+            )],
+            [_button(
+                tr("➕ Добавить группу", "➕ Add group"),
+                "pick:group", "success",
+            )],
+            [_button(
+                tr("✍️ Добавить по ID", "✍️ Add by ID"),
+                "resource:manual", "primary",
+            )],
+            # The dashboard itself chooses wizard step 1/4 until setup
+            # completes. Never link to the unready admin panel here.
+            [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
         ])
-        classic_text = (
-            tr("📢 <b>Мои каналы и группы</b>\n",
-               "📢 <b>My channels and groups</b>\n")
-            + tr("Подключено: ", "Connected: ") + str(len(data.resources))
-            + "\n\n"
-            + tr(
-                "Выберите канал для просмотра подписчиков, оплат, "
-                "статистики или удаления. Новые каналы добавляются ниже.",
-                "Select a channel for member counts, payments, statistics "
-                "or deletion. Add another channel below.",
-            )
-        )
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=rich_channel_directory(len(data.resources)),
-            classic_html=classic_text, reply_markup=_markup(rows),
+            rich_html=directory_rich(len(data.resources)),
+            classic_html=directory_classic(len(data.resources)),
+            reply_markup=_markup(rows),
         )
+
+    async def connected_bot_handle(
+        actor_id: UUID, project_id: UUID,
+    ) -> str | None:
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        return next((
+            name for _, name, status in overview.bot_instances
+            if status == "registered"
+        ), None) or next((
+            name for name, status in overview.bots
+            if status == "registered"
+        ), None)
 
     async def show_resource_card(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
@@ -4289,6 +4311,44 @@ def create_owner_setup_router(
                 await show_home(bot, message.chat.id, actor_id)
         else:
             await show_home(bot, message.chat.id, actor_id)
+
+    @router.message(
+        F.text.in_({"⬅️ Назад", "⬅️ Back"}),
+        OwnerHomeFilter(factory, fixed_project_id),
+    )
+    async def back_native_chat_picker(message: Message, bot: Bot) -> None:
+        """Back from Telegram's native chat picker, never cancel newer forms."""
+        if not _private(message) or fixed_project_id is None:
+            return
+        actor_id = await actor(message.from_user)
+        try:
+            previous = await consume_button_flow(
+                factory, actor_id=actor_id, expected_step="chat_picker",
+                bot_scope_id=bot.id, discard=True,
+                allow_expired_chat_picker=True,
+            )
+        except ValueError:
+            await bot.send_message(message.chat.id, tr(
+                "⚠️ Выбор чата уже закрыт. Откройте подключение заново.",
+                "⚠️ Chat selection has expired. Reopen the connection screen.",
+            ))
+            return
+        if previous.project_id != fixed_project_id:
+            raise PermissionError(tr(
+                "Настройка другого бота недоступна",
+                "You cannot manage another bot's setup",
+            ))
+        # Telegram reply keyboards do not disappear reliably on one_time.
+        # Hide only after the correct active picker was atomically dismissed.
+        await bot.send_message(
+            message.chat.id,
+            tr("↩️ Возвращаемся к подключению.",
+               "↩️ Back to connections."),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await show_resources(
+            bot, message.chat.id, actor_id, fixed_project_id,
+        )
 
     @router.message(Command("cancel"), OwnerHomeFilter(factory, fixed_project_id))
     @router.message(
@@ -6965,45 +7025,47 @@ def create_owner_setup_router(
                     raise ValueError(tr("Неизвестный тип чата", "Unsupported chat type"))
                 request_id = randbelow(2**31 - 2) + 1
                 await set_flow(
-                    factory, actor_id=actor_id,
-                    step="chat_picker", payload={"request_id": request_id},
+                    factory, actor_id=actor_id, step="chat_picker",
+                    payload={"request_id": request_id},
                     bot_scope_id=bot.id if fixed_project_id else 0,
                 )
+                # request_chat can only be shown on a native reply keyboard;
+                # Rich inline buttons cannot invoke Telegram's picker.
+                # Use one fully formatted Telegram HTML message with
+                # exactly two native actions: Select chat and Back.
                 await bot.send_message(
                     user_id,
-                    tr(
-                        "📢 Выберите ваш канал или группу с помощью кнопки ниже.\n"
-                        "Убедитесь, что ваш подключённый бот уже добавлен "
-                        "администратором с правами приглашения и блокировки.",
-                        "📢 Choose a channel or group using the button below.\n"
-                        "Your connected bot must already be an administrator "
-                        "with permission to invite and ban members.",
+                    picker_classic(
+                        kind, await connected_bot_handle(actor_id, project_id),
                     ),
+                    parse_mode="HTML",
                     reply_markup=ReplyKeyboardMarkup(
                         keyboard=[
                             [KeyboardButton(
-                                text=tr("📢 Выбрать чат", "📢 Choose chat"),
+                                text=(
+                                    tr("📢 Выбрать канал", "📢 Select channel")
+                                    if kind == "channel" else
+                                    tr("👥 Выбрать группу", "👥 Select group")
+                                ),
                                 request_chat=KeyboardButtonRequestChat(
                                     request_id=request_id,
                                     chat_is_channel=(kind == "channel"),
                                     request_title=True,
                                 ),
                             )],
-                            [KeyboardButton(text=tr("✖️ Отмена", "✖️ Cancel"))],
+                            [KeyboardButton(text=tr("⬅️ Назад", "⬅️ Back"))],
                         ],
                         resize_keyboard=True,
                         one_time_keyboard=True,
                     ),
                 )
             elif action == "resource:manual":
+                username = await connected_bot_handle(actor_id, project_id)
                 await prompt(
                     bot, user_id, actor_id, step="resource_reference",
-                    text=tr(
-                        "📢 Отправьте ID канала (например, -100…) или @username.\n"
-                        "Ваш собственный бот уже должен быть администратором.",
-                        "📢 Send the channel ID (for example, -100…) or @username.\n"
-                        "Your bot must already be a channel administrator.",
-                    ),
+                    text=manual_classic(username),
+                    rich_html=manual_rich(username),
+                    show_main_menu=False,
                 )
             elif action == "plans":
                 await show_plans(bot, user_id, actor_id, project_id)
