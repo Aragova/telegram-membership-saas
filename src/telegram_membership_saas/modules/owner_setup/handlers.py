@@ -860,29 +860,65 @@ def create_owner_setup_router(
             bot, chat_id=user_id,
             rich_html=(
                 "<h3>" + tr("🔐 Платные подписки", "🔐 Paid subscriptions")
-                + "</h3><p>" + tr(
-                    "Продавайте доступ к закрытым каналам и группам, "
-                    "автоматически управляйте тарифами, платежами и сроками.",
-                    "Sell access to private channels and groups and manage "
-                    "plans, payments and access periods automatically.",
+                + "</h3><p><b>" + tr(
+                    "🤖 Выберите способ подключения Telegram-бота",
+                    "🤖 Choose how to connect your Telegram bot",
+                ) + "</b></p><p><b>" + tr(
+                    "✨ Создать бота", "✨ Create bot",
+                ) + "</b><br>" + tr(
+                    "Telegram предложит указать имя и @username. Подтвердите "
+                    "создание, и ViMi Pay подключит нового бота автоматически. "
+                    "Копировать API-токен не понадобится.",
+                    "Telegram will ask for a name and @username. Confirm "
+                    "creation, and ViMi Pay will connect the new bot "
+                    "automatically. No API token to copy.",
                 ) + "</p><p><b>" + tr(
-                    "Как создадим вашего бота?",
-                    "How should we create your bot?",
-                ) + "</b></p><p>" + tr(
-                    "✨ Автоматически через Telegram или 🔑 вручную через "
-                    "@BotFather. Для существующего бота выберите BotFather.",
-                    "✨ Automatically through Telegram or 🔑 manually using "
-                    "@BotFather. Select BotFather for an existing bot.",
+                    "🔑 Через BotFather", "🔑 Via BotFather",
+                ) + "</b><br>" + tr(
+                    "Для уже созданного бота или ручного создания нового:",
+                    "For an existing bot or to create a new one manually:",
+                ) + "</p><p>" + tr(
+                    "1. Откройте @BotFather: /mybots для существующего бота "
+                    "или /newbot для нового.<br>"
+                    "2. Получите API-токен и отправьте его в ViMi Pay.<br>"
+                    "3. Мы проверим токен и удалим сообщение с ним из чата.",
+                    "1. Open @BotFather: /mybots for an existing bot or "
+                    "/newbot for a new one.<br>"
+                    "2. Get the API token and send it to ViMi Pay.<br>"
+                    "3. We'll verify the token and delete its chat message.",
+                ) + "</p><p>" + tr(
+                    "После подключения откройте своего бота, чтобы настроить "
+                    "канал, тарифы и оплату.",
+                    "After connecting, open your own bot to configure "
+                    "your channel, plans and payments.",
                 ) + "</p>"
             ),
             classic_html=(
                 tr("🔐 <b>Платные подписки</b>", "🔐 <b>Paid subscriptions</b>")
-                + "\n\n" + tr(
-                    "Создайте бота для продажи доступа к каналам и группам. "
-                    "✨ Автоматическое создание или 🔑 подключение "
-                    "через BotFather.",
-                    "Create a bot to sell access to channels and groups. "
-                    "✨ Automatic creation or 🔑 connect through BotFather.",
+                + "\n\n<b>" + tr(
+                    "🤖 Выберите способ подключения Telegram-бота",
+                    "🤖 Choose how to connect your Telegram bot",
+                ) + "</b>\n\n<b>" + tr(
+                    "✨ Создать бота", "✨ Create bot",
+                ) + "</b>\n" + tr(
+                    "Укажите имя и @username в Telegram. ViMi Pay подключит "
+                    "бота автоматически, без копирования API-токена.",
+                    "Set the name and @username in Telegram. ViMi Pay "
+                    "connects the bot automatically, no token to copy.",
+                ) + "\n\n<b>" + tr(
+                    "🔑 Через BotFather", "🔑 Via BotFather",
+                ) + "</b>\n" + tr(
+                    "1. @BotFather → /mybots (существующий) или /newbot (новый).\n"
+                    "2. Получите и отправьте API-токен в ViMi Pay.\n"
+                    "3. Мы проверим токен и удалим сообщение с ним.",
+                    "1. @BotFather → /mybots (existing) or /newbot (new).\n"
+                    "2. Get the API token and send it to ViMi Pay.\n"
+                    "3. We verify the token and delete its message.",
+                ) + "\n\n" + tr(
+                    "После подключения откройте своего бота для настройки "
+                    "канала, тарифов и оплаты.",
+                    "After connecting, open your bot to configure "
+                    "the channel, plans and payments.",
                 )
             ),
             reply_markup=_markup(rows),
