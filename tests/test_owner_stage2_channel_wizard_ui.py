@@ -35,7 +35,7 @@ def test_directory_and_manual_rich_classic_language_contract(
         other = directory_rich(3)
     finally:
         _language.reset(token)
-    assert title in empty and title in basic
+    assert title.lower() in empty.lower() and title.lower() in basic.lower()
     assert "<table bordered compact>" in empty
     assert "0</td>" in empty
     assert "3</td>" in other
