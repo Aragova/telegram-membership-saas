@@ -745,6 +745,28 @@ def create_owner_setup_router(
             )]
         return []
 
+    def onboarding_language_rows() -> list[list[InlineKeyboardButton]]:
+        """The two choices on the complete first-run welcome card."""
+        return [[
+            InlineKeyboardButton(
+                text="🇷🇺 Русский", callback_data="lng:set:ru",
+                style="success",
+            ),
+            InlineKeyboardButton(
+                text="🇬🇧 English", callback_data="lng:set:en",
+                style="primary",
+            ),
+        ]]
+
+    async def show_onboarding_language(bot: Bot, user_id: int) -> None:
+        """Return to screen 1, not the compact general language selector."""
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=central_welcome_rich(language_selected=False),
+            classic_html=central_welcome_classic(language_selected=False),
+            reply_markup=_markup(onboarding_language_rows()),
+        )
+
     async def show_home(bot: Bot, user_id: int, actor_id: UUID) -> None:
         home = await owner_home(
             factory, actor_id=actor_id,
@@ -780,22 +802,16 @@ def create_owner_setup_router(
             if fixed_project_id is None and not home.projects else True
         )
         if not language_selected:
-            # First-run language choice contains no unrelated actions.
-            rows.append([
-                InlineKeyboardButton(
-                    text="🇷🇺 Русский", callback_data="lng:set:ru",
-                    style="success",
-                ),
-                InlineKeyboardButton(
-                    text="🇬🇧 English", callback_data="lng:set:en",
-                    style="primary",
-                ),
-            ])
+            rows.extend(onboarding_language_rows())
         else:
             rows.append([_button(
                 tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
                 "substart", "success",
             )])
+            if not home.projects:
+                rows.append([_button(
+                    tr("⬅️ Назад", "⬅️ Back"), "onboardlanguage", "primary",
+                )])
         if home.projects:
             # Existing connections retain account invoices and language access.
             # /billing remains available even when all connections are deleted.
@@ -4031,7 +4047,8 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "newmanaged", "substart", "onboardhome", "projects", "archives", "dashboard",
+                "new", "newmanaged", "substart", "onboardhome", "onboardlanguage",
+                "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
@@ -4053,8 +4070,8 @@ def create_owner_setup_router(
                 return
         else:
             if action in {
-                "new", "newmanaged", "substart", "projects", "archives", "bots",
-                "connect", "oblist",
+                "new", "newmanaged", "substart", "onboardhome", "onboardlanguage",
+                "projects", "archives", "bots", "connect", "oblist",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
@@ -4070,6 +4087,10 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action == "onboardlanguage":
+                await show_onboarding_language(bot, user_id)
+                await query.answer()
+                return
             if action == "onboardhome":
                 # Back must work before the first bot/project exists.
                 await show_home(bot, user_id, actor_id)
