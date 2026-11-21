@@ -84,6 +84,12 @@ def _customer_counts(blockers: RetirementBlockers) -> list[str]:
         + ": <b>" + str(blockers.subscriptions) + "</b>",
         tr("📨 Ожидают приглашения", "📨 Waiting for invitations")
         + ": <b>" + str(blockers.join_tickets) + "</b>",
+        tr("📂 Покупки файлов в обработке", "📂 File purchases pending")
+        + ": <b>" + str(blockers.file_orders) + "</b>",
+        tr("⭐ Оплаты Stars в обработке", "⭐ Stars payments pending")
+        + ": <b>" + str(blockers.stars_checkouts) + "</b>",
+        tr("📣 Активные платные ссылки", "📣 Active paid channel links")
+        + ": <b>" + str(blockers.native_paid_links) + "</b>",
     ]
 
 
@@ -155,6 +161,18 @@ def obligations_card(*, username: str | None, blockers: RetirementBlockers,
                    "🔑 Other access and pending actions")
                 + ": <b>" + str(other) + "</b>"
             )
+        if (blockers.file_orders or blockers.stars_checkouts
+                or blockers.native_paid_links):
+            parts.append("🚀 " + tr(
+                "Если есть покупки файлов, оплаты Stars или активные платные "
+                "ссылки, откройте своего бота и проверьте их. "
+                "Незавершённые оплаты нельзя объявлять завершёнными вручную "
+                "без подтверждения. Выключите платные ссылки перед отключением.",
+                "If file purchases, Stars payments or active paid channel "
+                "links remain, open your bot and review them. Never treat "
+                "unverified payments as completed. Disable paid links before "
+                "disconnecting.",
+            ))
         parts.append("<b>" + tr("📌 ЧТО ДЕЛАТЬ ДАЛЬШЕ?",
                                  "📌 WHAT TO DO NEXT?") + "</b>\n"
             + tr("1️⃣ Проверьте покупки и подтвердите или отклоните оплаты.\n"
