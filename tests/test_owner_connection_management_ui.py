@@ -688,7 +688,8 @@ def test_project_disposal_cards_are_rich_bilingual_and_html_safe(
             assert "Demo <&>" not in rich and "Demo <&>" not in classic
             assert "<h3>" in rich and "<h3>" not in classic
             assert account in rich and account in classic
-            assert "@vimipay_bot" in rich if not archive else True
+            if not archive:
+                assert "@vimipay_bot" in rich
             done_rich = project_disposal_success(
                 name="Demo <&>", archive=archive, rich=True,
             )
@@ -696,7 +697,8 @@ def test_project_disposal_cards_are_rich_bilingual_and_html_safe(
                 name="Demo <&>", archive=archive, rich=False,
             )
             assert "<h3>" in done_rich and "<h3>" not in done_classic
-            assert "Demo &lt;&amp;&gt;" in done_rich and done_classic
+            assert "Demo &lt;&amp;&gt;" in done_rich
+            assert "Demo &lt;&amp;&gt;" in done_classic
             assert "✅" in done_rich
             assert "<script" not in done_rich
     finally:
