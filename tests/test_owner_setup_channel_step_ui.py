@@ -12,6 +12,7 @@ from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
     owner_setup_step_classic,
     owner_setup_step_rich,
     wizard_primary_label,
+    wizard_primary_style,
 )
 from telegram_membership_saas.rich_messages import RICH_ACTIONS_MARKER
 
@@ -100,6 +101,12 @@ def test_channel_setup_escapes_bot_username_and_timezone(locale):
         assert "test<&>bot" == unescape(
             "test&lt;&amp;&gt;bot"
         )
+
+
+def test_only_first_setup_connect_button_is_blue():
+    assert wizard_primary_style("resources") == "primary"
+    for action in ("methods", "plans", "saasprofile"):
+        assert wizard_primary_style(action) == "success"
 
 
 def test_other_wizard_steps_preserve_existing_content_and_contextual_button():
