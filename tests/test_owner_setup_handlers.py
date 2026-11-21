@@ -110,7 +110,7 @@ async def test_first_start_shows_only_language_choices(monkeypatch):
     assert "Что будем создавать?" not in sent.args[1]
 
 
-async def test_first_start_after_language_has_only_subscription_and_back(monkeypatch):
+async def test_first_start_after_language_has_only_subscription(monkeypatch):
     uid = uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
     monkeypatch.setattr(
@@ -121,17 +121,17 @@ async def test_first_start_after_language_has_only_subscription_and_back(monkeyp
     )
     monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
-    await _handler("home_message")(_message("/menu"), bot)
-    sent = bot.send_message.await_args
-    buttons = [
-        (button.text, button.callback_data)
-        for row in sent.kwargs["reply_markup"].inline_keyboard
-        for button in row
-    ]
-    assert buttons == [
-        ("🔐 Платные подписки", "own:substart"),
-        ("⬅️ Назад", "lng:menu"),
-    ]
+    for command in ("/start", "/menu"):
+        await _handler("home_message")(_message(command), bot)
+        sent = bot.send_message.await_args
+        buttons = [
+            (button.text, button.callback_data)
+            for row in sent.kwargs["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        assert buttons == [
+            ("🔐 Платные подписки", "own:substart"),
+        ]
     assert "Что будем создавать?" not in sent.args[1]
     assert "Выберите «🔐 Платные подписки»" not in sent.args[1]
 
@@ -177,7 +177,7 @@ async def test_subscription_back_returns_without_existing_project(monkeypatch):
             bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert callbacks == ["own:substart", "lng:menu"]
+        assert callbacks == ["own:substart"]
         assert go_back.answer.await_count == 1
         selected.assert_not_awaited()
     finally:
