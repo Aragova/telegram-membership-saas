@@ -116,6 +116,9 @@ async def test_botfather_secret_prompt_uses_rich_back_and_menu(monkeypatch):
 async def test_botfather_prompt_back_returns_to_subscription_choices(monkeypatch):
     owner = uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(
+        ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
+    )
     back = AsyncMock(return_value=SetupFlow(
         step="new_bot_token", project_id=None, payload={},
         prompt_message_id=1357, generation="gen-123",
@@ -134,6 +137,36 @@ async def test_botfather_prompt_back_returns_to_subscription_choices(monkeypatch
         for button in row
     ]
     assert buttons == ["own:newmanaged", "own:new", "own:onboardhome"]
+    query.answer.assert_awaited_once()
+
+
+async def test_botfather_back_with_existing_connections_opens_registry(monkeypatch):
+    owner = uuid4()
+    project = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(
+        ui, "back_owner_flow",
+        AsyncMock(return_value=SetupFlow(
+            step="new_bot_token", project_id=None, payload={},
+            prompt_message_id=1357, generation="old",
+        )),
+    )
+    monkeypatch.setattr(
+        ui, "owner_home",
+        AsyncMock(return_value=OwnerHome(((project, "Existing bot"),), None)),
+    )
+    bot = _bot()
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=_user(), data="own:promptback:old", answer=AsyncMock(),
+    )
+    await _handler("owner_callback", callback=True)(query, bot)
+    buttons = [
+        b.callback_data
+        for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert any(b.startswith("own:select:") for b in buttons)
     query.answer.assert_awaited_once()
 
 
