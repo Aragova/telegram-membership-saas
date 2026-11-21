@@ -1564,7 +1564,7 @@ def create_owner_setup_router(
                     "saasnearest:" + encode_uuid(UUID(str(nearest["invoice_id"]))),
                     "success",
                 )])
-            if report.total:
+            if report.unpaid:
                 rows.append([_button(
                     tr("📋 Все выставленные счета",
                        "📋 All issued invoices"),
