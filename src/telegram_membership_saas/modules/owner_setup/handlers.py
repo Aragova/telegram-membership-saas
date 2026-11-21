@@ -326,6 +326,21 @@ def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def remove_native_owner_keyboard(bot: Bot, user_id: int) -> None:
+    """Hide a Telegram reply keyboard when leaving a native picker flow."""
+    try:
+        await bot.send_message(
+            user_id,
+            tr("⌨️ Системная клавиатура закрыта.",
+               "⌨️ Telegram system keyboard closed."),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    except AiogramError:
+        logging.getLogger(__name__).warning(
+            "Failed to hide stale native owner keyboard"
+        )
+
+
 def _statistics_amount(amount: Decimal) -> str:
     """Preserve integer trailing zeroes while trimming fractional padding."""
     value = format(amount, "f")
@@ -665,6 +680,7 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 # Managed bot confirmation must retain the staged candidate
                 # and generation until atomic registration consumes them.
                 "own:managedconfirm:",
+                "own:promptback:", "own:promptcancel:",
             ))
             and bot is not None
             and event.message is not None
@@ -676,10 +692,13 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 self.factory, telegram_id=user.id,
                 username=user.username, first_name=user.first_name,
             )
-            await cancel_owner_flow(
+            was_native = await cancel_owner_flow(
                 self.factory, actor_id=actor_id,
                 bot_scope_id=bot.id if self.fixed_project_id else 0,
+                report_native_keyboard=True,
             )
+            if was_native is True:
+                await remove_native_owner_keyboard(bot, user.id)
             if self.fixed_project_id is not None:
                 await cancel_draft(
                     self.factory, project_id=self.fixed_project_id,
@@ -1880,17 +1899,18 @@ def create_owner_setup_router(
                 step=step, payload=payload or {},
                 bot_scope_id=bot.id if fixed_project_id else 0,
             )
+        # RichUiBot places inline Back/Menu inside the message when supported.
+        # Each action is bound to this form generation so old cards are harmless.
         sent = await bot.send_message(
-            user_id,
-            text + tr(
-                "\n\n↩ /back — назад · /cancel — в меню.",
-                "\n\n↩ /back — back · /cancel — main menu.",
-            ),
-            parse_mode="HTML",
-            # Do not force Telegram's persistent "В ответ…" composer.
-            # The next plain text message is safely matched to this
-            # user's live, bot-scoped setup flow instead.
-            reply_markup=ReplyKeyboardRemove(),
+            user_id, text, parse_mode="HTML",
+            reply_markup=_markup([
+                [_button(
+                    tr("⬅️ Назад", "⬅️ Back"), "promptback:" + generation,
+                )],
+                [_button(
+                    tr("✖️ В меню", "✖️ Main menu"), "promptcancel:" + generation,
+                )],
+            ]),
         )
         await bind_prompt(
             factory, actor_id=actor_id, step=step,
@@ -3908,10 +3928,13 @@ def create_owner_setup_router(
             )
         # /menu exits the old text-entry wizard; the next casual message
         # must never be mistaken for old payment instructions or a plan title.
-        await cancel_owner_flow(
+        was_native = await cancel_owner_flow(
             factory, actor_id=actor_id,
             bot_scope_id=bot.id if fixed_project_id else 0,
+            report_native_keyboard=True,
         )
+        if was_native is True:
+            await remove_native_owner_keyboard(bot, message.chat.id)
         command = (
             (getattr(message, "text", None) or "/start")
             .split(maxsplit=1)[0].split("@")[0].lower()
@@ -3968,20 +3991,32 @@ def create_owner_setup_router(
         )
         await show_home(bot, message.chat.id, actor_id)
 
-    @router.message(Command("back"), OwnerHomeFilter(factory, fixed_project_id))
-    async def back_setup_message(message: Message, bot: Bot) -> None:
-        """Return to the parent section, clearing only this unfinished wizard."""
-        if not _private(message):
-            return
-        actor_id = await actor(message.from_user)
+    async def navigate_owner_prompt_back(
+        bot: Bot, user_id: int, actor_id: UUID,
+        *, expected_generation: str | None = None,
+    ) -> bool:
+        """Back resolves the current form parent and refuses stale buttons."""
+        prior = await back_owner_flow(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+            expected_generation=expected_generation,
+        )
+        if expected_generation is not None and prior is None:
+            # An old button must not cancel a newer input or session.
+            return False
         if fixed_project_id is not None:
             await cancel_draft(
                 factory, project_id=fixed_project_id, actor_id=actor_id,
             )
-        prior = await back_owner_flow(
-            factory, actor_id=actor_id,
-            bot_scope_id=bot.id if fixed_project_id else 0,
-        )
+        if prior is not None and prior.step == "new_bot_token":
+            # A clean user came via Paid subscriptions; an existing owner
+            # came from My connections. Return to the actual parent.
+            home = await owner_home(factory, actor_id=actor_id)
+            if home.projects or home.archived_count:
+                await show_connections(bot, user_id, actor_id)
+            else:
+                await show_subscription_start(bot, user_id)
+            return True
         if (
             prior is None or prior.project_id is None
             or (fixed_project_id is not None and prior.project_id != fixed_project_id)
@@ -3989,64 +4024,75 @@ def create_owner_setup_router(
             # Also clear a stale chat-picker keyboard after the 15-minute TTL.
             # The expired flow no longer has a reliable step to inspect.
             await bot.send_message(
-                message.chat.id,
+                user_id,
                 tr("↩️ Возврат в главное меню.", "↩️ Back to the main menu."),
                 reply_markup=ReplyKeyboardRemove(),
             )
-            await show_home(bot, message.chat.id, actor_id)
-            return
+            await show_home(bot, user_id, actor_id)
+            return True
         project_id = prior.project_id
         if prior.step == "chat_picker":
             await bot.send_message(
-                message.chat.id,
+                user_id,
                 tr("Выбор чата закрыт.", "Chat selection closed."),
                 reply_markup=ReplyKeyboardRemove(),
             )
         if prior.step in ("plan_name", "plan_duration", "plan_resource"):
-            await show_plans(bot, message.chat.id, actor_id, project_id)
+            await show_plans(bot, user_id, actor_id, project_id)
         elif prior.step == "currency_custom_code":
             mode = prior.payload.get("mode")
             target = prior.payload.get("target")
             if mode == "price" and target:
                 await show_plan_card(
-                    bot, message.chat.id, actor_id, project_id,
+                    bot, user_id, actor_id, project_id,
                     UUID(hex=target),
                 )
             elif mode == "attach" and target:
                 await show_method_card(
-                    bot, message.chat.id, actor_id, project_id,
+                    bot, user_id, actor_id, project_id,
                     UUID(hex=target),
                 )
             else:
-                await show_methods(bot, message.chat.id, actor_id, project_id)
+                await show_methods(bot, user_id, actor_id, project_id)
         elif prior.step in ("price_amount", "plan_rename"):
             try:
                 plan_id = UUID(hex=prior.payload["plan_id"])
             except (KeyError, TypeError, ValueError, AttributeError):
-                await show_plans(bot, message.chat.id, actor_id, project_id)
+                await show_plans(bot, user_id, actor_id, project_id)
             else:
                 if prior.payload.get("currency") == "XTR":
                     await show_stars_payments(
-                        bot, message.chat.id, actor_id, project_id,
+                        bot, user_id, actor_id, project_id,
                         page=int(prior.payload.get("stars_page", 0)),
                     )
                 else:
                     await show_plan_card(
-                        bot, message.chat.id, actor_id, project_id, plan_id,
+                        bot, user_id, actor_id, project_id, plan_id,
                     )
         elif prior.step in ("method_rename", "method_edit"):
             await show_method_card(
-                bot, message.chat.id, actor_id, project_id,
+                bot, user_id, actor_id, project_id,
                 UUID(hex=prior.payload["method_id"]),
             )
         elif prior.step in ("method_name", "method_instruction"):
-            await show_methods(bot, message.chat.id, actor_id, project_id)
+            await show_methods(bot, user_id, actor_id, project_id)
+        elif prior.step == "crypto_pay_token":
+            await show_crypto_pay(bot, user_id, actor_id, project_id)
         elif prior.step in ("chat_picker", "resource_reference"):
-            await show_resources(bot, message.chat.id, actor_id, project_id)
+            await show_resources(bot, user_id, actor_id, project_id)
         elif prior.step in ("bot_token", "connection_rename") and fixed_project_id is None:
-            await show_bots(bot, message.chat.id, actor_id, project_id)
+            await show_bots(bot, user_id, actor_id, project_id)
         else:
-            await show_dashboard(bot, message.chat.id, actor_id, project_id)
+            await show_dashboard(bot, user_id, actor_id, project_id)
+        return True
+
+    @router.message(Command("back"), OwnerHomeFilter(factory, fixed_project_id))
+    async def back_setup_message(message: Message, bot: Bot) -> None:
+        if not _private(message):
+            return
+        await navigate_owner_prompt_back(
+            bot, message.chat.id, await actor(message.from_user),
+        )
 
     @router.message(Command("billing"))
     async def owner_platform_billing_command(message: Message, bot: Bot) -> None:
@@ -4088,6 +4134,7 @@ def create_owner_setup_router(
                 "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
+                "promptback:", "promptcancel:",
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
@@ -4125,6 +4172,46 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action.startswith(("promptback:", "promptcancel:")):
+                generation = action.split(":", 1)[1]
+                if not generation or len(generation) > 64:
+                    await query.answer(
+                        tr("Кнопка устарела", "Button expired"), show_alert=True,
+                    )
+                    return
+                if action.startswith("promptback:"):
+                    moved = await navigate_owner_prompt_back(
+                        bot, user_id, actor_id,
+                        expected_generation=generation,
+                    )
+                else:
+                    moved = await cancel_owner_flow(
+                        factory, actor_id=actor_id,
+                        bot_scope_id=bot.id if fixed_project_id else 0,
+                        expected_generation=generation,
+                    )
+                    if moved:
+                        if fixed_project_id is not None:
+                            await cancel_draft(
+                                factory, project_id=fixed_project_id,
+                                actor_id=actor_id,
+                            )
+                        await show_home(bot, user_id, actor_id)
+                if not moved:
+                    await query.answer(
+                        tr("Эта форма уже закрыта", "This form has expired"),
+                        show_alert=True,
+                    )
+                else:
+                    # Lava's outer middleware deliberately deferred cleanup
+                    # for this generation-guarded action. Never clear a newer
+                    # email request when a stale Back/Menu card is tapped.
+                    if fixed_project_id is None:
+                        lava_ui.clear_pending_lava_after_owner_navigation(
+                            payer_id=user_id, central_bot_id=bot.id,
+                        )
+                    await query.answer()
+                return
             if action == "onboardlanguage":
                 await show_onboarding_language(bot, user_id)
                 await query.answer()
@@ -5278,11 +5365,10 @@ def create_owner_setup_router(
                     text=tr(
                         "✉️ <b>Сообщение покупателю</b>\n\n"
                         "Отправьте текст, эмодзи или Telegram-ссылку. "
-                        "Сообщение будет отправлено только этому покупателю. "
-                        "Чтобы отменить, используйте /cancel.",
+                        "Сообщение будет отправлено только этому покупателю.",
                         "✉️ <b>Message customer</b>\n\n"
                         "Send text, emoji or Telegram links. "
-                        "Only this buyer receives it. /cancel to exit.",
+                        "Only this buyer receives it.",
                     ),
                 )
             elif action.startswith("subactivate:"):
@@ -6512,10 +6598,10 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, step="plan_name", source_flow=flow,
                     text=tr(
                         "✏️ Введите название тарифа (2–120 символов). "
-                        "Для тарифа без названия нажмите /back и создайте его "
-                        "через выбор срока.",
+                        "Для тарифа без названия вернитесь назад и "
+                        "выберите срок.",
                         "✏️ Enter an optional plan name (2–120 characters). "
-                        "For an unnamed plan, use /back and choose its duration.",
+                        "For an unnamed plan, go Back and choose its duration.",
                     ),
                 )
             elif action.startswith("duration:"):
@@ -7204,11 +7290,11 @@ def create_owner_setup_router(
                         "🔐 <b>Отправьте API-токен вашего приложения Crypto Pay.</b>\n"
                         "Сообщение будет удалено до проверки. Никому не передавайте "
                         "токен. При ошибке удаления токен придётся сменить.\n"
-                        "Нажмите /cancel, чтобы выйти.",
+                        "Для выхода нажмите «В меню».",
                         "🔐 <b>Send your Crypto Pay app API token.</b>\n"
                         "Your message will be deleted before verification. "
                         "Never share the token. If deletion fails, rotate it.\n"
-                        "Use /cancel to exit.",
+                        "Tap Main menu to exit.",
                     ),
                 )
                 remember_crypto_pay_owner(

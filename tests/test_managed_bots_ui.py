@@ -349,8 +349,24 @@ async def test_other_navigation_still_cancels_owner_wizard(monkeypatch):
 
     cancel.assert_awaited_once_with(
         middleware.factory, actor_id=actor_id, bot_scope_id=0,
+        report_native_keyboard=True,
     )
     handler.assert_awaited_once()
+
+async def test_switching_from_native_picker_removes_sticky_keyboard(monkeypatch):
+    actor_id = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock(return_value=True))
+    keyboard_cleanup = AsyncMock()
+    monkeypatch.setattr(ui, "remove_native_owner_keyboard", keyboard_cleanup)
+    middleware = ui.ClearOwnerInputOnNavigation(MagicMock(), None)
+    handler = AsyncMock(return_value="ok")
+    query = _query("new")
+
+    bot = _bot()
+    assert await middleware(handler, query, {"bot": bot}) == "ok"
+    keyboard_cleanup.assert_awaited_once_with(bot, query.from_user.id)
+
 
 class _language_context:
     def __init__(self, *_args, **_kwargs):

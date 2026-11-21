@@ -212,7 +212,10 @@ async def test_rename_connection_central_only(monkeypatch):
     instance = bot()
     await cb(query("connrename:" + project_id.hex), instance)
     assert "название подключения" in instance.send_message.await_args.args[1]
-    assert instance.send_message.await_args.kwargs["reply_markup"].remove_keyboard
+    markup = instance.send_message.await_args.kwargs["reply_markup"]
+    assert [b.callback_data for row in markup.inline_keyboard for b in row] == [
+        "own:promptback:generation", "own:promptcancel:generation",
+    ]
     ui.set_flow.assert_awaited_once()
 
     # A saved prompt from another project must never rename the selected one.

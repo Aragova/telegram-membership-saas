@@ -83,6 +83,143 @@ def test_management_dispatcher_routes_owner_first_buyer_separately():
     assert "telegram-commerce" not in [r.name for r in central.sub_routers]
 
 
+async def test_botfather_secret_prompt_uses_rich_back_and_menu(monkeypatch):
+    owner = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "set_flow", AsyncMock(return_value="gen-123"))
+    bound = AsyncMock()
+    monkeypatch.setattr(ui, "bind_prompt", bound)
+    monkeypatch.setattr(
+        ui, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="configured"),
+    )
+    callback = _handler("owner_callback", callback=True)
+    bot = _bot()
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=_user(), data="own:new", answer=AsyncMock(),
+    )
+    await callback(query, bot)
+    sent = bot.send_message.await_args
+    assert "BotFather" in sent.args[1]
+    assert "/back" not in sent.args[1] and "/cancel" not in sent.args[1]
+    buttons = [
+        button.callback_data
+        for row in sent.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert buttons == ["own:promptback:gen-123", "own:promptcancel:gen-123"]
+    assert bound.await_args.kwargs["message_id"] == 1357
+    query.answer.assert_awaited_once()
+
+
+async def test_botfather_prompt_back_returns_to_subscription_choices(monkeypatch):
+    owner = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(
+        ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
+    )
+    back = AsyncMock(return_value=SetupFlow(
+        step="new_bot_token", project_id=None, payload={},
+        prompt_message_id=1357, generation="gen-123",
+    ))
+    monkeypatch.setattr(ui, "back_owner_flow", back)
+    bot = _bot()
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=_user(), data="own:promptback:gen-123", answer=AsyncMock(),
+    )
+    await _handler("owner_callback", callback=True)(query, bot)
+    assert back.await_args.kwargs["expected_generation"] == "gen-123"
+    buttons = [
+        button.callback_data
+        for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert buttons == ["own:newmanaged", "own:new", "own:onboardhome"]
+    query.answer.assert_awaited_once()
+
+
+async def test_botfather_back_with_existing_connections_opens_registry(monkeypatch):
+    owner = uuid4()
+    project = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(
+        ui, "back_owner_flow",
+        AsyncMock(return_value=SetupFlow(
+            step="new_bot_token", project_id=None, payload={},
+            prompt_message_id=1357, generation="old",
+        )),
+    )
+    monkeypatch.setattr(
+        ui, "owner_home",
+        AsyncMock(return_value=OwnerHome(((project, "Existing bot"),), None)),
+    )
+    monkeypatch.setattr(
+        ui, "list_archived_owner_connections", AsyncMock(return_value=[]),
+    )
+    bot = _bot()
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=_user(), data="own:promptback:old", answer=AsyncMock(),
+    )
+    await _handler("owner_callback", callback=True)(query, bot)
+    buttons = [
+        b.callback_data
+        for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for b in row
+    ]
+    assert any(b.startswith("own:select:") for b in buttons)
+    query.answer.assert_awaited_once()
+
+
+async def test_stale_rich_cancel_cannot_close_newer_owner_form(monkeypatch):
+    owner = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    canceled = AsyncMock(return_value=False)
+    home = AsyncMock()
+    monkeypatch.setattr(ui, "cancel_owner_flow", canceled)
+    monkeypatch.setattr(ui, "owner_home", home)
+    lava_cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", lava_cleanup,
+    )
+    bot = _bot()
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=_user(), data="own:promptcancel:old", answer=AsyncMock(),
+    )
+    await _handler("owner_callback", callback=True)(query, bot)
+    assert canceled.await_args.kwargs["expected_generation"] == "old"
+    lava_cleanup.assert_not_called()
+    home.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    assert query.answer.await_args.kwargs["show_alert"] is True
+
+
+async def test_successful_owner_prompt_navigation_clears_lava_only_after_guard(
+    monkeypatch,
+):
+    owner = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
+    )
+    cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", cleanup,
+    )
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=_user(), data="own:promptcancel:live", answer=AsyncMock(),
+    )
+    bot = _bot()
+    await _handler("owner_callback", callback=True)(query, bot)
+    cleanup.assert_called_once_with(payer_id=_user().id, central_bot_id=bot.id)
+    query.answer.assert_awaited_once()
+
+
 async def test_first_start_shows_only_language_choices(monkeypatch):
     uid = uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))

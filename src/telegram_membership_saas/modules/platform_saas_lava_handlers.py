@@ -71,6 +71,15 @@ def _prune_expired(now: float) -> None:
             _pending_lava.pop(key, None)
 
 
+def clear_pending_lava_after_owner_navigation(
+    *, payer_id: int, central_bot_id: int,
+) -> None:
+    """Disarm email entry only AFTER owner navigation passed its own guard."""
+    for key, request in tuple(_pending_lava.items()):
+        if key[0] == payer_id and request.central_bot_id == central_bot_id:
+            _pending_lava.pop(key, None)
+
+
 async def send_platform_lava_email_prompt(
     bot: Bot,
     factory: async_sessionmaker[AsyncSession],
@@ -119,21 +128,24 @@ async def send_platform_lava_email_prompt(
             "💳 <b>Lava.top · оплата ViMi Pay</b>\n"
             "К оплате: <b>{amount:.2f} ₽</b>\n\n"
             "Отправьте адрес email <b>обычным сообщением</b> "
-            "для выставления счёта. /cancel — отменить ввод. "
+            "для выставления счёта. "
             "Адрес передаётся Lava.top, а не владельцу канала. "
             "Это ещё не платёж.",
             "💳 <b>Lava.top · ViMi Pay payment</b>\n"
             "Amount: <b>{amount:.2f} RUB</b>\n\n"
             "Send your email address <b>as a normal message</b> "
-            "to create the checkout. /cancel — stop email entry. "
+            "to create the checkout. "
             "The address is sent to Lava.top, not the channel owner. "
             "No payment is made yet.",
         ).format(amount=remaining),
         parse_mode="HTML",
-        # ForceReply leaves the native "В ответ…" composer pinned in some
-        # Telegram clients. The next plain message is matched to the
-        # per-user, per-central-bot, 10-minute in-memory request instead.
-        reply_markup=ReplyKeyboardRemove(),
+        # One in-message cancel action, bound to this prompt's message_id.
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=tr("✖️ Отмена", "✖️ Cancel"),
+                callback_data="lava:cancel", style="primary",
+            ),
+        ]]),
     )
     _pending_lava[(payer_telegram_id, prompt.message_id)] = _PendingEmail(
         invoice_id=invoice_id, central_bot_id=bot.id,
@@ -200,7 +212,15 @@ class ClearPendingLavaOnNavigation(BaseMiddleware):
             and chat.type == "private" and chat.id == user.id
         ):
             navigating = (
-                isinstance(event, CallbackQuery)
+                (
+                    isinstance(event, CallbackQuery)
+                    and event.data != "lava:cancel"
+                    # The owning router must validate the prompt generation
+                    # before this input can be cleared by navigation.
+                    and not (event.data or "").startswith((
+                        "own:promptback:", "own:promptcancel:",
+                    ))
+                )
                 or (
                     isinstance(event, Message)
                     and isinstance(event.text, str)
@@ -262,6 +282,43 @@ def create_platform_saas_lava_router(
                     "Return to payment methods.",
                 ),
             )
+
+    @router.callback_query(F.data == "lava:cancel")
+    async def cancel_lava_email_button(query: CallbackQuery, bot: Bot) -> None:
+        """Cancel only this prompt; never disarm a newer invoice's email input."""
+        if (
+            query.message is None
+            or query.message.chat.type != "private"
+            or query.from_user is None
+            or query.message.chat.id != query.from_user.id
+        ):
+            await query.answer(tr("Нет доступа", "Access denied"), show_alert=True)
+            return
+        current = _current_prompt(query.from_user.id, bot.id)
+        message_id = getattr(query.message, "message_id", None)
+        if (
+            current is None or current[0][1] != message_id
+            or monotonic() >= current[1].expires_at
+        ):
+            await query.answer(
+                tr("Форма устарела", "This form has expired"), show_alert=True,
+            )
+            return
+        _pending_lava.pop(current[0], None)
+        await query.answer()
+        await bot.send_message(
+            query.from_user.id,
+            tr(
+                "✅ Ввод email для Lava.top отменён. Счёт не изменён.",
+                "✅ Lava.top email entry cancelled. Invoice unchanged.",
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text=tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                    callback_data="own:saasinvoices:0", style="primary",
+                ),
+            ]]),
+        )
 
     @router.message(_LavaCancelFilter())
     async def cancel_lava_email(message: Message, bot: Bot) -> None:

@@ -59,7 +59,9 @@ async def test_four_letter_reason_is_explained_before_database_reject(monkeypatc
     await entry(message, bot)
     bot.send_message.assert_awaited_once()
     assert "5–500 символов" in bot.send_message.await_args.args[1]
-    assert "/cancel" in bot.send_message.await_args.args[1]
+    assert "/cancel" not in bot.send_message.await_args.args[1]
+    markup = bot.send_message.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == "plat:v2proofs:0"
     reject.assert_not_awaited()
 
     rich = AsyncMock()

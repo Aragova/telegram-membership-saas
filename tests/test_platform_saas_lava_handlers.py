@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from aiogram.types import CallbackQuery
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.localization import _language
@@ -72,7 +73,9 @@ async def test_deeplink_collects_actual_email_and_issues_one_link(
         assert (payer, 500) in lava._pending_lava
         assert balance.await_count == 1
         prompt = bot.send_message.await_args
-        assert prompt.kwargs["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
+        buttons = prompt.kwargs["reply_markup"].inline_keyboard
+        assert buttons[0][0].callback_data == "lava:cancel"
+        assert "/cancel" not in prompt.args[1]
         assert ("обычным сообщением" if language == "ru" else "normal message") in prompt.args[1]
         incoming = _message(payer, text="buyer+pay@example.com")
         assert await lava._LavaEmailReplyFilter()(incoming, bot)
@@ -304,6 +307,89 @@ async def test_cancel_lava_email_leaves_original_invoice_untouched(monkeypatch):
     out = bot.send_message.await_args
     assert "отменён" in out.args[1]
     assert out.kwargs["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
+
+
+async def test_rich_cancel_only_disarms_own_current_lava_prompt():
+    bot = MagicMock()
+    bot.id = 900
+    bot.send_message = AsyncMock()
+    router = lava.create_platform_saas_lava_router(MagicMock())
+    handler = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "cancel_lava_email_button"
+    )
+    invoice = uuid4()
+    lava._pending_lava[(123, 500)] = lava._PendingEmail(
+        invoice, bot.id, lava.monotonic() + 600,
+    )
+
+    def callback(message_id):
+        return SimpleNamespace(
+            from_user=SimpleNamespace(id=123),
+            message=SimpleNamespace(
+                message_id=message_id,
+                chat=SimpleNamespace(id=123, type="private"),
+            ),
+            data="lava:cancel", answer=AsyncMock(),
+        )
+
+    old = callback(499)
+    await handler(old, bot)
+    assert (123, 500) in lava._pending_lava
+    assert old.answer.await_args.kwargs["show_alert"] is True
+    bot.send_message.assert_not_awaited()
+
+    current = callback(500)
+    await handler(current, bot)
+    assert lava._pending_lava == {}
+    assert "отменён" in bot.send_message.await_args.args[1]
+    keyboard = bot.send_message.await_args.kwargs["reply_markup"]
+    assert keyboard.inline_keyboard[0][0].callback_data == "own:saasinvoices:0"
+    current.answer.assert_awaited_once()
+
+
+async def test_lava_cancel_callback_is_not_cleared_before_handler():
+    invoice = uuid4()
+    lava._pending_lava[(123, 500)] = lava._PendingEmail(
+        invoice, 900, lava.monotonic() + 600,
+    )
+    navigation = lava.ClearPendingLavaOnNavigation()
+    callback = AsyncMock()
+    def event(data):
+        return CallbackQuery.model_construct(
+            from_user=SimpleNamespace(id=123),
+            message=SimpleNamespace(
+                chat=SimpleNamespace(id=123, type="private"),
+            ),
+            data=data,
+        )
+    await navigation(callback, event("lava:cancel"), {})
+    assert (123, 500) in lava._pending_lava
+    await navigation(callback, event("own:promptback:old"), {})
+    assert (123, 500) in lava._pending_lava
+    await navigation(callback, event("own:promptcancel:old"), {})
+    assert (123, 500) in lava._pending_lava
+    await navigation(callback, event("own:projects"), {})
+    assert lava._pending_lava == {}
+
+
+async def test_lava_cleanup_after_owner_navigation_is_scoped():
+    invoice = uuid4()
+    lava._pending_lava[(123, 500)] = lava._PendingEmail(
+        invoice, 900, lava.monotonic() + 600,
+    )
+    lava._pending_lava[(456, 501)] = lava._PendingEmail(
+        uuid4(), 900, lava.monotonic() + 600,
+    )
+    lava.clear_pending_lava_after_owner_navigation(
+        payer_id=123, central_bot_id=901,
+    )
+    assert len(lava._pending_lava) == 2
+    lava.clear_pending_lava_after_owner_navigation(
+        payer_id=123, central_bot_id=900,
+    )
+    assert (123, 500) not in lava._pending_lava
+    assert (456, 501) in lava._pending_lava
 
 
 async def test_non_lava_reply_and_unrelated_user_not_swallowed(monkeypatch):

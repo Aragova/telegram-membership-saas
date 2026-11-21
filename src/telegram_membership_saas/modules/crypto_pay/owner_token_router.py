@@ -245,11 +245,23 @@ def create_crypto_secret_router(
                 tr(
                     "⚠️ Crypto Pay не подтвердил приложение. "
                     "Защищённый ввод остаётся активным. Проверьте API-токен "
-                    "в @CryptoBot и отправьте его ещё раз или нажмите /cancel.",
+                    "в @CryptoBot и отправьте его ещё раз.",
                     "⚠️ Crypto Pay couldn't verify the app. "
                     "Protected input remains active. Check the API token "
-                    "in @CryptoBot and send it again, or use /cancel.",
+                    "in @CryptoBot and send it again.",
                 ),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text=tr("⬅️ Назад", "⬅️ Back"),
+                        callback_data="own:promptback:" + flow.generation,
+                        style="primary",
+                    )],
+                    [InlineKeyboardButton(
+                        text=tr("✖️ В меню", "✖️ Main menu"),
+                        callback_data="own:promptcancel:" + flow.generation,
+                        style="primary",
+                    )],
+                ]),
             )
             return
         # Only the original generation may be cleared. Never erase a
