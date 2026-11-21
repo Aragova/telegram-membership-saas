@@ -15,7 +15,6 @@ from telegram_membership_saas.modules.owner_setup.premium_welcome import (
 )
 from telegram_membership_saas.modules.platform_saas_bill_ui import (
     _bill_status,
-    _billed_amount,
     unified_merchant_bill_classic,
     unified_merchant_bill_rich,
 )
@@ -88,8 +87,8 @@ def _preview_details(
         rows.append("</table>")
         if not turnover:
             rows.append("<p><i>" + tr(
-                "Подтверждённых продаж пока нет.",
-                "No verified turnover yet.",
+                "Оборот по валютам пока не отражён.",
+                "Currency turnover is not yet available.",
             ) + "</i></p>")
         rows.append("<p><i>" + sales_note + "</i></p>")
         return "\n".join(rows)
@@ -105,8 +104,8 @@ def _preview_details(
         for currency, gross in turnover
     )
     if not turnover:
-        rows.append(tr("Подтверждённых продаж пока нет.",
-                       "No verified turnover yet."))
+        rows.append(tr("Оборот по валютам пока не отражён.",
+                       "Currency turnover is not yet available."))
     rows.append("<i>" + sales_note + "</i>")
     return "\n".join(rows)
 
@@ -191,8 +190,8 @@ def bot_bill_rich(
         "<h4>" + tr("💰 ФИНАНСОВЫЙ ИТОГ",
                      "💰 FINANCIAL SUMMARY") + "</h4>",
         "<table bordered compact><tr><th>"
-        + tr("Начислено по выставленным счетам",
-             "Charged on issued invoices")
+        + tr("Начислено по текущему счёту",
+             "Charged on the current invoice")
         + "</th><td>0 ₽</td></tr>",
         "<tr><th>" + tr("✅ Сейчас к оплате", "✅ Amount due now")
         + "</th><td><b>0 ₽</b></td></tr></table>",
@@ -251,8 +250,8 @@ def bot_bill_classic(
         "", _preview_details(sales=sales, currencies=currencies, rich=False),
         "", tr("💰 <b>ФИНАНСОВЫЙ ИТОГ</b>",
                "💰 <b>FINANCIAL SUMMARY</b>"),
-        tr("Начислено по выставленным счетам: 0 ₽",
-           "Charged on issued invoices: 0 ₽"),
+        tr("Начислено по текущему счёту: 0 ₽",
+           "Charged on the current invoice: 0 ₽"),
         tr("✅ <b>Сейчас к оплате: 0 ₽</b>",
            "✅ <b>Amount due now: 0 ₽</b>"),
         "<i>" + tr(
