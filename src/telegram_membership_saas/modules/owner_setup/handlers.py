@@ -1886,6 +1886,7 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID,
         *, step: str, text: str, payload: dict | None = None,
         source_flow: SetupFlow | None = None,
+        rich_html: str | None = None, show_main_menu: bool = True,
     ) -> None:
         if source_flow is None:
             generation = await set_flow(
@@ -1899,19 +1900,26 @@ def create_owner_setup_router(
                 step=step, payload=payload or {},
                 bot_scope_id=bot.id if fixed_project_id else 0,
             )
-        # RichUiBot places inline Back/Menu inside the message when supported.
-        # Each action is bound to this form generation so old cards are harmless.
-        sent = await bot.send_message(
-            user_id, text, parse_mode="HTML",
-            reply_markup=_markup([
-                [_button(
-                    tr("⬅️ Назад", "⬅️ Back"), "promptback:" + generation,
-                )],
-                [_button(
-                    tr("✖️ В меню", "✖️ Main menu"), "promptcancel:" + generation,
-                )],
-            ]),
-        )
+        # Generation-bound buttons prevent stale prompts cancelling a newer one.
+        rows = [[_button(
+            tr("⬅️ Назад", "⬅️ Back"), "promptback:" + generation,
+        )]]
+        if show_main_menu:
+            rows.append([_button(
+                tr("✖️ В меню", "✖️ Main menu"),
+                "promptcancel:" + generation,
+            )])
+        if rich_html is not None:
+            # Keep the real sent message ID for secure token capture while
+            # rendering the full Rich message and its classic fallback.
+            sent = await send_owner_rich(
+                bot, chat_id=user_id, rich_html=rich_html,
+                classic_html=text, reply_markup=_markup(rows),
+            )
+        else:
+            sent = await bot.send_message(
+                user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
+            )
         await bind_prompt(
             factory, actor_id=actor_id, step=step,
             message_id=sent.message_id, generation=generation,
@@ -4486,27 +4494,94 @@ def create_owner_setup_router(
                 return
             if action == "new":
                 if get_settings().bot_token_encryption_key is None:
-                    raise ValueError(tr("Подключение ботов пока недоступно",
-                                        "Bot connections are unavailable"))
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
                 await prompt(
                     bot, user_id, actor_id, step="new_bot_token",
-                    text=(
-                        tr(
-                            "✦ <b>Подключение бота подписок</b>\n\n"
-                            "1. Создайте бота в @BotFather или получите новый "
-                            "токен существующего.\n"
-                            "2. Отправьте токен следующим сообщением.\n"
-                            "3. Мы сразу удалим сообщение и проверим подключение.\n\n"
-                            "После проверки откройте своего бота и "
-                            "настройте каналы, оплату и тарифы.",
-                            "✦ <b>Connect a subscription bot</b>\n\n"
-                            "1. Create a bot in @BotFather or request a new token "
-                            "for an existing bot.\n"
-                            "2. Send the token in your next message.\n"
-                            "3. We delete the token message immediately and "
-                            "verify the connection.\n\n"
-                            "Then open your bot to set up channels, payments and plans.",
-                        )
+                    show_main_menu=False,
+                    rich_html=(
+                        "<h3>" + tr(
+                            "🔑 Подключение Telegram-бота",
+                            "🔑 Connect your Telegram bot",
+                        ) + "</h3><p><b>" + tr(
+                            "🤖 УЖЕ ЕСТЬ БОТ ИЛИ СОЗДАЁТЕ НОВОГО?",
+                            "🤖 HAVE A BOT OR CREATING A NEW ONE?",
+                        ) + "</b></p><p><b>" + tr(
+                            "1️⃣ ОТКРОЙТЕ @BotFather",
+                            "1️⃣ OPEN @BotFather",
+                        ) + "</b><br>" + tr(
+                            "👉 <b>Существующий бот:</b> отправьте /mybots, "
+                            "выберите бота и откройте API Token.<br>"
+                            "👉 <b>Новый бот:</b> отправьте /newbot и "
+                            "следуйте инструкциям Telegram.",
+                            "👉 <b>Existing bot:</b> send /mybots, "
+                            "select your bot and open API Token.<br>"
+                            "👉 <b>New bot:</b> send /newbot and "
+                            "follow Telegram's instructions.",
+                        ) + "</p><p><b>" + tr(
+                            "2️⃣ СКОПИРУЙТЕ API-ТОКЕН",
+                            "2️⃣ COPY THE API TOKEN",
+                        ) + "</b><br>" + tr(
+                            "👉 Скопируйте токен, который выдаст @BotFather.",
+                            "👉 Copy the token issued by @BotFather.",
+                        ) + "</p><p><b>" + tr(
+                            "3️⃣ ОТПРАВЬТЕ ТОКЕН СЮДА",
+                            "3️⃣ SEND THE TOKEN HERE",
+                        ) + "</b><br>" + tr(
+                            "👉 <b>ВЕРНИТЕСЬ В ЭТОТ ЧАТ ViMi Pay.</b><br>"
+                            "👉 Вставьте токен в обычное поле <b>«Сообщение…»</b> "
+                            "внизу Telegram.<br>"
+                            "👉 Нажмите <b>➤ ОТПРАВИТЬ</b>.",
+                            "👉 <b>RETURN TO THIS ViMi Pay CHAT.</b><br>"
+                            "👉 Paste the token into the regular "
+                            "<b>Message…</b> box at the bottom of Telegram.<br>"
+                            "👉 Tap <b>➤ SEND</b>.",
+                        ) + "</p><p><b>" + tr(
+                            "✅ ЧТО ДАЛЬШЕ?",
+                            "✅ WHAT HAPPENS NEXT?",
+                        ) + "</b><br>" + tr(
+                            "ViMi Pay проверит токен, удалит сообщение с ним "
+                            "из чата и подключит вашего бота.",
+                            "ViMi Pay will verify the token, delete its chat "
+                            "message and connect your bot.",
+                        ) + "</p><p>" + tr(
+                            "🔒 Никому больше не передавайте API-токен: "
+                            "он даёт доступ к управлению ботом.",
+                            "🔒 Never share your API token elsewhere: "
+                            "it grants control of your bot.",
+                        ) + "</p>"
+                    ),
+                    text=tr(
+                        "🔑 <b>Подключение Telegram-бота</b>\n\n"
+                        "<b>🤖 УЖЕ ЕСТЬ БОТ ИЛИ СОЗДАЁТЕ НОВОГО?</b>\n\n"
+                        "<b>1️⃣ ОТКРОЙТЕ @BotFather</b>\n"
+                        "👉 Существующий бот: /mybots → выберите бота → API Token.\n"
+                        "👉 Новый бот: /newbot → следуйте инструкциям.\n\n"
+                        "<b>2️⃣ СКОПИРУЙТЕ API-ТОКЕН</b>\n"
+                        "👉 Скопируйте токен от @BotFather.\n\n"
+                        "<b>3️⃣ ОТПРАВЬТЕ ТОКЕН СЮДА</b>\n"
+                        "👉 <b>ВЕРНИТЕСЬ В ЭТОТ ЧАТ ViMi Pay.</b>\n"
+                        "👉 Вставьте токен в поле <b>«Сообщение…»</b> внизу.\n"
+                        "👉 Нажмите <b>➤ ОТПРАВИТЬ</b>.\n\n"
+                        "<b>✅ ЧТО ДАЛЬШЕ?</b> ViMi Pay проверит токен и "
+                        "удалит сообщение с ним из чата.\n"
+                        "🔒 Не передавайте токен посторонним.",
+                        "🔑 <b>Connect your Telegram bot</b>\n\n"
+                        "<b>🤖 HAVE A BOT OR CREATING A NEW ONE?</b>\n\n"
+                        "<b>1️⃣ OPEN @BotFather</b>\n"
+                        "👉 Existing: /mybots → choose your bot → API Token.\n"
+                        "👉 New: /newbot → follow the instructions.\n\n"
+                        "<b>2️⃣ COPY THE API TOKEN</b>\n"
+                        "👉 Copy the token from @BotFather.\n\n"
+                        "<b>3️⃣ SEND THE TOKEN HERE</b>\n"
+                        "👉 <b>RETURN TO THIS ViMi Pay CHAT.</b>\n"
+                        "👉 Paste the token into <b>Message…</b> below.\n"
+                        "👉 Tap <b>➤ SEND</b>.\n\n"
+                        "<b>✅ WHAT NEXT?</b> ViMi Pay checks the token and "
+                        "deletes its message from the chat.\n"
+                        "🔒 Never share the token with strangers.",
                     ),
                 )
                 await query.answer()
