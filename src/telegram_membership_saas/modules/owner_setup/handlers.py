@@ -3213,7 +3213,7 @@ def create_owner_setup_router(
     async def show_connection_result(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, success: bool, kind: str, resource_name: str | None = None,
-        native_picker: bool = False, problem: str = "permissions",
+        problem: str = "permissions",
     ) -> None:
         """Single result message with one continuation or back action."""
         onboarding = await initial_setup_active(actor_id, project_id)
@@ -3235,28 +3235,15 @@ def create_owner_setup_router(
             resource_name=resource_name, onboarding=onboarding,
             problem=problem,
         )
-        if not native_picker:
-            await send_owner_rich(
-                bot, chat_id=user_id,
-                rich_html=rich, classic_html=classic,
-                reply_markup=_markup(rows),
-            )
-            return
-        # Telegram requires separate reply-keyboard removal and inline
-        # markup types. Edit the *same* bot message to attach its one action.
-        sent = await bot.send_message(
-            user_id, classic, parse_mode="HTML",
-            reply_markup=ReplyKeyboardRemove(),
+        # Telegram's native picker is one-time: clients hide its reply
+        # keyboard after chat_shared. The result must use a real inline
+        # action directly, not attempt to edit ReplyKeyboardRemove markup
+        # (Telegram prohibits that edit). Exactly one bot result is sent.
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=rich, classic_html=classic,
+            reply_markup=_markup(rows),
         )
-        try:
-            await bot.edit_message_reply_markup(
-                chat_id=user_id, message_id=sent.message_id,
-                reply_markup=_markup(rows),
-            )
-        except AiogramError:
-            logging.getLogger(__name__).exception(
-                "ViMi Pay channel result button unavailable"
-            )
 
     async def connected_bot_handle(
         actor_id: UUID, project_id: UUID,
@@ -8435,7 +8422,7 @@ def create_owner_setup_router(
             bot, message.chat.id, actor_id, fixed_project_id,
             success=success, kind=kind,
             resource_name=chat.name if chat is not None else None,
-            native_picker=True, problem=problem,
+            problem=problem,
         )
 
     async def send_connected_bot(
