@@ -8388,6 +8388,7 @@ def create_owner_setup_router(
 
     @router.message(F.chat_shared)
     async def shared_chat_handler(message: Message, bot: Bot) -> None:
+        """Native chat selector: a single outcome, never a second directory."""
         if not _private(message) or fixed_project_id is None:
             return
         actor_id = await actor(message.from_user)
@@ -8395,43 +8396,42 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=fixed_project_id,
         ):
             return
+        kind = "channel"
         try:
             flow = await consume_button_flow(
                 factory, actor_id=actor_id, expected_step="chat_picker",
                 request_id=message.chat_shared.request_id,
                 bot_scope_id=bot.id,
+                discard=True,
             )
             if flow.project_id != fixed_project_id:
-                raise ValueError(tr("Настройка другого бота недоступна",
-                                    "You cannot change another bot's settings"))
+                raise ValueError(tr(
+                    "Настройка другого бота недоступна",
+                    "You cannot change another bot's settings",
+                ))
+            kind = flow.payload.get("kind", "channel")
             chat = await verify_channel_and_add(
                 factory, actor_id=actor_id,
                 actor_telegram_id=message.from_user.id,
                 project_id=flow.project_id,
                 chat_reference=message.chat_shared.chat_id,
             )
-        except (ValueError, PermissionError) as exc:
-            await bot.send_message(
-                message.chat.id, "⚠️ " + owner_error(str(exc)),
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            await bot.send_message(
-                message.chat.id,
-                tr("Вернуться к управлению каналами",
-                   "Return to channel management"),
-                reply_markup=_markup([[_button(
-                    tr("⬅️ Каналы и группы", "⬅️ Channels and groups"),
-                    "resources",
-                )]]),
-            )
-            return
-        await bot.send_message(
-            message.chat.id,
-            tr("✅ Канал «" + escape(chat.name) + "» подключён.",
-                       "✅ Channel “" + escape(chat.name) + "” connected."),
-            parse_mode="HTML", reply_markup=ReplyKeyboardRemove(),
+            success = True
+        except (ValueError, PermissionError):
+            success = False
+            chat = None
+        # A Telegram chat_shared service bubble is separate from our
+        # message. Delete it when Telegram permits; never block the result.
+        try:
+            await bot.delete_message(message.chat.id, message.message_id)
+        except (AiogramError, TypeError):
+            pass
+        await show_connection_result(
+            bot, message.chat.id, actor_id, fixed_project_id,
+            success=success, kind=kind,
+            resource_name=chat.name if chat is not None else None,
+            native_picker=True,
         )
-        await show_resources(bot, message.chat.id, actor_id, flow.project_id)
 
     async def send_connected_bot(
         bot: Bot, user_id: int, actor_id: UUID,
