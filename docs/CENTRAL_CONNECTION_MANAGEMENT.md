@@ -48,6 +48,48 @@ opens one compact **Управление подключением** card:
 The active list paginates 10 per page, including networks of 100+ bots. Archive
 list is likewise paginated. No extra Telegram native menu commands.
 
+## Per-bot service bill in central (RU / EN)
+
+For each **connected bot**, the central connection-management card has
+**🧾 Счёт бота / 🧾 Bot bill** instead of a misleading account invoices action.
+
+- The button carries the exact project ID and opens the existing owner-only
+  `platform_saas_merchant_bill_summary(month, project)` evidence for that bot.
+  Current project ownership, registration and currency profile are rechecked
+  on every request. No historical account-wide total is labeled as the bot's.
+- If there is **no issued invoice**, show the actual owner-level 72-hour trial
+  state and remaining time when active. An older owner's expired trial is not
+  restarted for a new bot. The current-month verified sales previews may
+  display native currency turnover and sale counts; they are clearly marked
+  informational, not an issued commission or a payable debt.
+- If the **first invoice** has been issued, show its real service-only charge,
+  alongside a separate read-only current-month sales snapshot.
+- For subsequent issued invoices, reuse the existing canonical per-bot
+  service/closed-period commission view, including separate subscription and
+  file charges, confirmed payments, refund credits and remaining amount.
+  The **Pay** button appears only for a real issued unpaid invoice and uses the
+  existing ViMi Pay settlement selector.
+- **⬅️ Назад к управлению ботом / Back to bot management** re-selects that
+  exact project and returns to its connection card. Service currency remains
+  scoped to the connected bot's own admin configuration.
+- On a **disconnected connection**, the button instead reads
+  **🧾 Счета аккаунта / Account invoices** and uses existing historical
+  account records; former invoices must remain reachable even after removal.
+- A new owner-only, read-only SQL RPC
+  `platform_saas_bot_native_sales_preview(project, month)` groups verified
+  **manual subscriptions, manual files, Stars subscriptions, Stars files,
+  Crypto subscriptions and Crypto files**, without combining distinct native
+  currencies or adding invoice charges. It follows the existing owner-period
+  attribution for manual payments and immutable owner evidence for Stars.
+  Crypto Pay native turnover comes directly from confirmed **mainnet**
+  invoices (historical owner-scoped), even when USD valuation evidence is
+  pending. Captured and uncaptured invoices are never double-counted.
+  Migration 0104 adds only that SQL function and runtime execute grant:
+  no tables, invoice writes, FX rates or billing calculations are changed.
+- The central account history, `/billing`, tenant bot bill, native invoice
+  payment rails and RLS-ledger are untouched. No invented invoice, test-only
+  controls or new billing formulas.
+
 ## Security and data integrity
 
 - **Actual project owner only** may rename, permanently remove, archive or

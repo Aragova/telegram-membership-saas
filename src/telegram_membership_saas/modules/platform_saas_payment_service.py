@@ -175,6 +175,32 @@ async def merchant_saas_project_preview(
     return result
 
 
+async def merchant_saas_bot_native_sales_preview(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_user_id: UUID, project_id: UUID, month: date,
+) -> dict:
+    """All confirmed bot sales by original rail/currency; no FX or charges.
+
+    The new owner-checked SQL RPC uses the same six original evidence sources
+    as commercial billing. Never merge different currencies or imply debt.
+    """
+    if month.day != 1:
+        raise ValueError("The accounting month must start on day 1")
+    stmt = text(
+        "SELECT public.platform_saas_bot_native_sales_preview("
+        ":project,:month) AS data"
+    ).columns(data=JSONB)
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_user_id, project_id=project_id),
+    ) as session:
+        data = (await session.execute(stmt, {
+            "project": project_id, "month": month,
+        })).scalar_one()
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        raise RuntimeError("Invalid per-bot native sales preview")
+    return data
+
+
 async def merchant_saas_bill_summary(
     factory: async_sessionmaker[AsyncSession], *,
     actor_user_id: UUID, month: date,

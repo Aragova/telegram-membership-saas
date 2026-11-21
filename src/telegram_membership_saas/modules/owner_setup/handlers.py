@@ -70,6 +70,10 @@ from telegram_membership_saas.modules.owner_notifications import (
     read_owner_settings,
     set_owner_setting,
 )
+from telegram_membership_saas.modules.owner_setup.bot_bill_ui import (
+    bot_bill_classic,
+    bot_bill_rich,
+)
 from telegram_membership_saas.modules.owner_setup.bulk_sales import (
     read_bulk_sales_state,
     switch_all_sales,
@@ -271,6 +275,7 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_bill_summary,
+    merchant_saas_bot_native_sales_preview,
     merchant_saas_statements,
     merchant_saas_trial_status,
 )
@@ -1492,6 +1497,102 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+    async def show_central_bot_bill(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        """Owner's current per-bot bill, not the central account invoice index.
+
+        Every monetary value comes from an existing owner/project-scoped
+        read-only RPC. A sales preview never creates a payable amount.
+        """
+        if fixed_project_id is not None:
+            raise PermissionError("The central per-bot bill belongs to ViMi Pay")
+        month = datetime.now(ZoneInfo("Europe/Moscow")).date().replace(day=1)
+        bill = await merchant_saas_bill_summary(
+            factory, actor_user_id=actor_id, month=month,
+            project_id=project_id,
+        )
+        if str(bill.get("project_id")) != str(project_id):
+            raise ValueError(tr(
+                "Данные счёта не совпадают с выбранным ботом. Откройте подключение заново.",
+                "Invoice data do not match the selected bot. Reopen the connection.",
+            ))
+        info = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        username = next(
+            (name for _, name, status in info.bot_instances
+             if status == "registered"), None,
+        )
+        if username is None:
+            raise ValueError(tr(
+                "Бот больше не подключён. Откройте историю счетов аккаунта.",
+                "This bot is no longer connected. Open account invoice history.",
+            ))
+        profile = await saas_price_profile(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        future_currency = str(profile["currency"])
+        if future_currency not in ("RUB", "USD"):
+            raise ValueError(tr(
+                "Валюта обслуживания этого бота недоступна.",
+                "This bot's service currency is unavailable.",
+            ))
+
+        trial: dict | None = None
+        sales: dict | None = None
+        if bill.get("invoice_id") is None:
+            try:
+                trial = await merchant_saas_trial_status(
+                    factory, actor_user_id=actor_id, project_id=project_id,
+                )
+            except PermissionError:
+                raise
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Could not read per-bot trial status"
+                )
+        if bill.get("invoice_id") is None or bill.get("first_period"):
+            # The live calendar-month preview is informational only. Never
+            # mislabel it as the closed period of an issued commission invoice.
+            try:
+                sales = await merchant_saas_bot_native_sales_preview(
+                    factory, actor_user_id=actor_id,
+                    month=month, project_id=project_id,
+                )
+            except PermissionError:
+                raise
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Current-month per-bot sales preview is unavailable"
+                )
+                sales = None
+
+        due = Decimal(str(bill.get("total_due_rub") or "0"))
+        invoice_id = bill.get("invoice_id")
+        rows: list[list[InlineKeyboardButton]] = []
+        if invoice_id is not None and due > 0:
+            rows.append([_button(
+                tr("💳 Оплатить счёт", "💳 Pay invoice"),
+                "spm:" + encode_uuid(UUID(str(invoice_id))) + ":RUB:0",
+                "success",
+            )])
+        rows.append([_button(
+            tr("⬅️ Назад к управлению ботом", "⬅️ Back to bot management"),
+            "select:" + project_id.hex, "primary",
+        )])
+        args = dict(
+            username=username, bill=bill, trial=trial,
+            timezone=info.timezone, sales=sales,
+            future_currency=future_currency,
+        )
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=bot_bill_rich(**args),
+            classic_html=bot_bill_classic(**args),
+            reply_markup=_markup(rows),
+        )
+
     async def show_saas_issued_invoice(
         bot: Bot, user_id: int, actor_id: UUID,
         invoice_id: UUID, *, page: int,
@@ -2078,8 +2179,10 @@ def create_owner_setup_router(
             ))
         # Account invoices remain separate from the connected bot's shop.
         service_actions.append(_button(
-            tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-            "saasinvoices:0", "primary",
+            tr("🧾 Счёт бота" if connected else "🧾 Счета аккаунта",
+               "🧾 Bot bill" if connected else "🧾 Account invoices"),
+            ("saasbotbill:" + encode_uuid(project_id)
+             if connected else "saasinvoices:0"), "primary",
         ))
         service_actions.append(_button(
             tr("⬅️ Все подключения", "⬅️ All connections"),
@@ -4167,7 +4270,8 @@ def create_owner_setup_router(
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "managedcancel:",
                 "connrename:", "connremove:", "connremoveok:",
-                "connarchive:", "connarchiveok:", "saasinvoices:", "saaspaychoices:",
+                "connarchive:", "connarchiveok:", "saasbotbill:",
+                "saasinvoices:", "saaspaychoices:",
                 "saasprofile", "saasprice:", "saasbill:", "saasbillchoose:",
                 "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
@@ -5196,6 +5300,15 @@ def create_owner_setup_router(
                 # into individual charges. Return to the owner's bill.
                 await show_saas_statements(
                     bot, user_id, actor_id, fixed_project_id,
+                )
+                await query.answer()
+                return
+            if action.startswith("saasbotbill:"):
+                if fixed_project_id is not None:
+                    raise PermissionError("Per-bot bill link belongs to central ViMi Pay")
+                target_id = decode_uuid(action.split(":", 1)[1])
+                await show_central_bot_bill(
+                    bot, user_id, actor_id, target_id,
                 )
                 await query.answer()
                 return

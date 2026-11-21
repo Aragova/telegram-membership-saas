@@ -162,9 +162,14 @@ def _action_descriptions(
                "Change its internal ViMi Pay label, not its @username."),
         ))
     items.append((
-        tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-        tr("Посмотреть счета за обслуживание и комиссию сервиса.",
-           "View service and commission invoices."),
+        tr("🧾 Счёт бота" if connected else "🧾 Счета аккаунта",
+           "🧾 Bot bill" if connected else "🧾 Account invoices"),
+        tr(
+            "Пробный период, обслуживание, продажи и долг именно этого бота."
+            if connected else "История счетов аккаунта, в том числе удалённых ботов.",
+            "This bot's trial, service, sales and invoice balance."
+            if connected else "Account invoice history, including retired bots.",
+        ),
     ))
     if danger_kind == "detach":
         items.append((
