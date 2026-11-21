@@ -25,15 +25,11 @@ TRIAL = {
 }
 SALES = {
     "month": "2026-11-01",
-    "billing_enabled": True,
-    "rails": [
-        {"kind": "subscription", "sold": 4},
-        {"kind": "file_manual", "sold": 2},
-    ],
-}
-CURRENCIES = {
     "rows": [
-        {"currency": "RUB", "gross": "2800.00", "fee_rub": "0.00"},
+        {"kind": "subscription", "sold": 4,
+         "currency": "RUB", "gross": "2000.00"},
+        {"kind": "file_manual", "sold": 2,
+         "currency": "RUB", "gross": "800.00"},
     ],
 }
 ISSUED = {
@@ -56,14 +52,13 @@ ISSUED = {
 }
 
 
-def render(lang, bill, *, trial=None, sales=None, currencies=None):
+def render(lang, bill, *, trial=None, sales=None):
     args = dict(
         username="vimitest21bot",
         bill=bill,
         trial=trial,
         timezone="Europe/Moscow",
         sales=sales,
-        currencies=currencies,
         future_currency="RUB",
     )
     token = _language.set(lang)
@@ -83,7 +78,7 @@ def test_active_trial_is_true_to_database_and_has_no_payable_charge(
     lang, heading, period, sales,
 ):
     rich, classic = render(
-        lang, TRIAL_BILL, trial=TRIAL, sales=SALES, currencies=CURRENCIES,
+        lang, TRIAL_BILL, trial=TRIAL, sales=SALES,
     )
     for text in (rich, classic):
         assert heading in text
@@ -91,7 +86,7 @@ def test_active_trial_is_true_to_database_and_has_no_payable_charge(
         assert "2" in text  # two days of recorded trial time
         assert sales in text
         assert "4" in text and "2" in text  # source-derived sale counts
-        assert "2800" in text  # real native RUB turnover, not guessed FX
+        assert "2000" in text and "800" in text  # native turnover per kind
         assert "150 ₽" in text  # only a future service-rate disclosure
         assert "0 ₽" in text  # no issued invoice, no current amount due
         assert "internal-project-id" not in text
@@ -130,13 +125,13 @@ def test_first_issued_month_is_service_only_and_sales_are_informational(lang):
         total_rub="150", total_due_rub="150",
     )
     rich, classic = render(
-        lang, bill, sales=SALES, currencies=CURRENCIES,
+        lang, bill, sales=SALES,
     )
     for text in (rich, classic):
         assert "150.00 ₽" in text
         assert "550.00 ₽" not in text
         assert "300.00 ₽" not in text
-        assert "2800" in text
+        assert "2000" in text and "800" in text
         assert "4" in text
         assert "2026-11" in text
         assert ("не входят" if lang == "ru" else "not part") in text
@@ -173,9 +168,11 @@ def test_escaped_owner_name_and_native_currencies():
         bill=TRIAL_BILL,
         trial=TRIAL,
         timezone="Europe/Moscow",
-        sales=SALES,
-        currencies={"rows": [
-            {"currency": "XTR", "gross": "250", "fee_rub": "0"},
+        sales={"month": "2026-11-01", "rows": [
+            {"kind": "subscription_stars", "sold": 2,
+             "currency": "XTR", "gross": "250"},
+            {"kind": "file_crypto", "sold": 1,
+             "currency": "TON", "gross": "0.5"},
         ]},
         future_currency="USD",
     )
@@ -186,4 +183,33 @@ def test_escaped_owner_name_and_native_currencies():
         assert "@test<&bot" not in text
         assert "250" in text
         assert "Telegram Stars" in text
+        assert "TON" in text and "0.5" in text
         assert "$5" in text
+
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+def test_six_sales_rails_are_present_without_currency_mixing(lang):
+    sales = {"month": "2026-11-01", "rows": [
+        {"kind": "subscription", "currency": "RUB",
+         "gross": "1000.00", "sold": 1},
+        {"kind": "file_manual", "currency": "USD",
+         "gross": "12.50", "sold": 2},
+        {"kind": "subscription_stars", "currency": "XTR",
+         "gross": "250", "sold": 3},
+        {"kind": "file_stars", "currency": "XTR",
+         "gross": "120", "sold": 4},
+        {"kind": "subscription_crypto", "currency": "TON",
+         "gross": "0.50", "sold": 5},
+        {"kind": "file_crypto", "currency": "USDT",
+         "gross": "4.25", "sold": 6},
+    ]}
+    rich, classic = render(lang, TRIAL_BILL, trial=TRIAL, sales=sales)
+    for html in (rich, classic):
+        for amount in ("1000", "12.5", "250", "120", "0.5", "4.25"):
+            assert amount in html
+        for currency in ("RUB", "USD", "TON", "USDT", "Telegram Stars"):
+            assert currency in html
+        assert "9" in html  # subscriptions 1+3+5
+        assert "12" in html  # files 2+4+6
+        assert "5%:" not in html
