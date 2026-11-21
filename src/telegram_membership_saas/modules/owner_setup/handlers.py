@@ -780,6 +780,7 @@ def create_owner_setup_router(
             if fixed_project_id is None and not home.projects else True
         )
         if not language_selected:
+            # First-run language choice contains no unrelated actions.
             rows.append([
                 InlineKeyboardButton(
                     text="🇷🇺 Русский", callback_data="lng:set:ru",
@@ -790,21 +791,28 @@ def create_owner_setup_router(
                     style="primary",
                 ),
             ])
-        rows.append([_button(
-            tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
-            "substart", "success",
-        )])
-        if language_selected:
+        else:
+            rows.append([_button(
+                tr("🔐 Платные подписки", "🔐 Paid subscriptions"),
+                "substart", "success",
+            )])
+            if not home.projects:
+                rows.append([InlineKeyboardButton(
+                    text=tr("⬅️ Назад", "⬅️ Back"), callback_data="lng:menu",
+                    style="primary",
+                )])
+        if home.projects:
+            # Existing connections retain account invoices and language access.
+            # /billing remains available even when all connections are deleted.
+            rows.append([_button(
+                tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                "saasinvoices:0",
+            )])
             rows.append([InlineKeyboardButton(
                 text="🌐 Language / Язык", callback_data="lng:menu",
-                style="primary",
             )])
-        # Account-level bills remain reachable even with zero connections.
-        rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-                     "saasinvoices:0")])
-        rows.append([InlineKeyboardButton(text="🌐 Language / Язык", callback_data="lng:menu")])
-        if platform_navigation(user_id):
-            rows.append(platform_navigation(user_id))
+            if platform_navigation(user_id):
+                rows.append(platform_navigation(user_id))
         if not home.projects:
             await send_owner_rich(
                 bot, chat_id=user_id,
@@ -835,7 +843,7 @@ def create_owner_setup_router(
                     "new", "primary",
                 ),
             ],
-            [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
+            [_button(tr("⬅️ Назад", "⬅️ Back"), "onboardhome", "primary")],
         ]
         await send_owner_rich(
             bot, chat_id=user_id,
@@ -4028,7 +4036,7 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "newmanaged", "substart", "projects", "archives", "dashboard",
+                "new", "newmanaged", "substart", "onboardhome", "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
@@ -4067,6 +4075,11 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action == "onboardhome":
+                # Back must work before the first bot/project exists.
+                await show_home(bot, user_id, actor_id)
+                await query.answer()
+                return
             if action == "substart":
                 await show_subscription_start(bot, user_id)
                 await query.answer()

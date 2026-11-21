@@ -113,6 +113,9 @@ async def test_english_central_welcome(monkeypatch) -> None:
     monkeypatch.setattr(
         owner_ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
     )
+    monkeypatch.setattr(
+        owner_ui, "has_explicit_language_choice", AsyncMock(return_value=True),
+    )
     monkeypatch.setattr(owner_ui, "cancel_owner_flow", AsyncMock())
     router = owner_ui.create_owner_setup_router(MagicMock())
     start = next(
@@ -138,10 +141,7 @@ async def test_english_central_welcome(monkeypatch) -> None:
             b.text for row in sent.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert "🔐 Paid subscriptions" in labels
-        assert "🇷🇺 Русский" in labels
-        assert "🇬🇧 English" in labels
-        assert "✨ Create a bot" not in labels
-        assert "🔑 Via BotFather" not in labels
+        assert labels == ["🔐 Paid subscriptions", "⬅️ Back"]
+        assert "What will you create?" not in sent.args[1]
     finally:
         _language.reset(token)

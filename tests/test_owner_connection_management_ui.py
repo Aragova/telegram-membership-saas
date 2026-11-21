@@ -273,9 +273,12 @@ async def test_last_archived_connection_is_reachable_from_central_start(monkeypa
     ) == 1
 
 
-async def test_central_main_menu_has_invoice_entry_without_connections(monkeypatch):
+async def test_central_first_run_hides_invoices_but_keeps_billing_command(monkeypatch):
     monkeypatch.setattr(
         ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
+    )
+    monkeypatch.setattr(
+        ui, "has_explicit_language_choice", AsyncMock(return_value=False),
     )
     monkeypatch.setattr(ui, "send_owner_rich", AsyncMock())
     monkeypatch.setattr(
@@ -304,11 +307,13 @@ async def test_central_main_menu_has_invoice_entry_without_connections(monkeypat
         b.callback_data for row in markup.inline_keyboard
         for b in row if b.callback_data
     ]
-    assert actions.count("own:saasinvoices:0") == 1
-    # New users choose a language and product category before bot creation.
-    assert "own:substart" in actions
-    assert "lng:set:ru" in actions and "lng:set:en" in actions
-    assert "own:newmanaged" not in actions
+    assert actions == ["lng:set:ru", "lng:set:en"]
+    # Invoice access is still available through the permanent /billing command,
+    # including when an older tenant has removed all of its bots.
+    assert any(
+        item.callback.__name__ == "owner_platform_billing_command"
+        for item in router.message.handlers
+    )
 
 
 async def test_central_selected_connection_dashboard_has_invoice_entry(
