@@ -13,8 +13,10 @@ from telegram_membership_saas.rich_messages import RICH_ACTIONS_MARKER
 
 _STEP = {
     "resources": 1,
-    "methods": 2,
-    "plans": 3,
+    # Step 2 is the channel/group selection screen.
+    "methods": 3,
+    "plans": 4,
+    # Service currency is a final confirmation after the 4 guided steps.
     "saasprofile": 4,
 }
 
@@ -101,6 +103,12 @@ def wizard_primary_label(action: str, default_label: str) -> str:
     if action == "resources":
         return tr("📢 Подключить канал / группу",
                   "📢 Connect channel / group")
+    if action == "methods":
+        return tr("💳 Настроить оплату покупателей", "💳 Set up buyer payments")
+    if action == "plans":
+        return tr("📦 Создать первый тариф", "📦 Create first plan")
+    if action == "saasprofile":
+        return tr("💱 Завершить настройку", "💱 Finish setup")
     return default_label
 
 
@@ -146,12 +154,14 @@ def owner_setup_step_rich(
         ),
     }
     title, description = items.get(action, items["methods"])
+    progress = (tr("Завершение", "Finish") if action == "saasprofile"
+                else str(step) + "/4")
     return "\n".join([
         "<h3>" + tr("✨ Настройка ViMi Pay", "✨ ViMi Pay setup") + "</h3>",
         "<p><b>" + escape(bot_name) + "</b> 🌍 " + escape(timezone) + "</p>",
         "<table bordered compact><tr><th>" + tr(
             "Этап", "Step",
-        ) + "</th><td>" + str(step) + "/4</td></tr></table>",
+        ) + "</th><td>" + progress + "</td></tr></table>",
         "<h4>" + title + "</h4>",
         "<p>" + description + "</p>",
         "<p>" + tr(
@@ -170,11 +180,13 @@ def owner_setup_step_classic(
     if action == "resources":
         return _channel_step_classic(bot_name=bot_name, timezone=timezone)
     step = _STEP.get(action, 1)
+    progress = (tr("Завершение", "Finish") if action == "saasprofile"
+                else str(step) + "/4")
     return (
         tr("✨ <b>Настройка ViMi Pay</b>", "✨ <b>ViMi Pay setup</b>")
         + "\n🤖 <b>" + escape(bot_name) + "</b> 🌍 "
         + escape(timezone) + "\n"
-        + tr("Этап ", "Step ") + str(step) + "/4\n\n"
+        + tr("Этап ", "Step ") + progress + "\n\n"
         + tr("Следуйте кнопке ниже для продолжения. Все настройки "
              "сохраняются.", "Use the button below to continue. Your "
              "progress is saved.")

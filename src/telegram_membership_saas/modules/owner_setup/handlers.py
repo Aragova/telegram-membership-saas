@@ -101,6 +101,9 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     remove_channel_without_paid_purchases,
 )
 from telegram_membership_saas.modules.owner_setup.channel_stage2_ui import (
+    connection_problem_code,
+    connection_result_classic,
+    connection_result_rich,
     directory_classic,
     directory_rich,
     manual_classic,
@@ -3154,38 +3157,91 @@ def create_owner_setup_router(
             )
 
 
+    async def initial_setup_active(actor_id: UUID, project_id: UUID, data=None) -> bool:
+        """Use the real initial-setup flag, never assume every bot is new."""
+        if fixed_project_id is None:
+            return False
+        if data is None:
+            data = await setup_overview(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+        if not any(status == "registered" for _, _, status in data.bot_instances):
+            return False
+        try:
+            profile = await saas_price_profile(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+        except PermissionError:
+            return False
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "ViMi Pay setup state unavailable"
+            )
+            return not data.sales_configured
+        return profile.get("currency_selected") is False
+
     async def show_resources(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
     ) -> None:
-        """Stage 2/4: connected channels, one Back, no premature dashboard."""
+        """No resource/statistics buttons in the initial setup catalog."""
         data = await setup_overview(
             factory, actor_id=actor_id, project_id=project_id,
         )
-        rows = [
-            [_button("📢 " + name[:43], "resourceview:" + encode_uuid(rid))]
-            for rid, name, _ in data.resources
-        ]
+        onboarding = await initial_setup_active(actor_id, project_id, data)
+        rows = (
+            [] if onboarding else [
+                [_button("📢 " + name[:43], "resourceview:" + encode_uuid(rid))]
+                for rid, name, _ in data.resources
+            ]
+        )
         rows.extend([
-            [_button(
-                tr("➕ Добавить канал", "➕ Add channel"),
-                "pick:channel", "success",
-            )],
-            [_button(
-                tr("➕ Добавить группу", "➕ Add group"),
-                "pick:group", "success",
-            )],
-            [_button(
-                tr("✍️ Добавить по ID", "✍️ Add by ID"),
-                "resource:manual", "primary",
-            )],
-            # The dashboard itself chooses wizard step 1/4 until setup
-            # completes. Never link to the unready admin panel here.
+            [_button(tr("➕ Добавить канал", "➕ Add channel"),
+                     "pick:channel", "success")],
+            [_button(tr("➕ Добавить группу", "➕ Add group"),
+                     "pick:group", "success")],
+            [_button(tr("✍️ Добавить по ID", "✍️ Add by ID"),
+                     "resource:manual", "primary")],
             [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
         ])
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=directory_rich(len(data.resources)),
-            classic_html=directory_classic(len(data.resources)),
+            rich_html=directory_rich(len(data.resources), onboarding=onboarding),
+            classic_html=directory_classic(len(data.resources), onboarding=onboarding),
+            reply_markup=_markup(rows),
+        )
+
+    async def show_connection_result(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, success: bool, kind: str, resource_name: str | None = None,
+        problem: str = "permissions",
+    ) -> None:
+        """Single result message with one continuation or back action."""
+        onboarding = await initial_setup_active(actor_id, project_id)
+        username = await connected_bot_handle(actor_id, project_id)
+        rows = [[_button(
+            (tr("➡️ Этап 3 · Настроить оплату", "➡️ Step 3 · Set up payments")
+             if success and onboarding else
+             tr("⬅️ Каналы и группы", "⬅️ Channels and groups")),
+            "dashboard" if success and onboarding else "resources",
+            "primary",
+        )]]
+        rich = connection_result_rich(
+            success=success, kind=kind, username=username,
+            resource_name=resource_name, onboarding=onboarding,
+            problem=problem,
+        )
+        classic = connection_result_classic(
+            success=success, kind=kind, username=username,
+            resource_name=resource_name, onboarding=onboarding,
+            problem=problem,
+        )
+        # Telegram's native picker is one-time: clients hide its reply
+        # keyboard after chat_shared. The result must use a real inline
+        # action directly, not attempt to edit ReplyKeyboardRemove markup
+        # (Telegram prohibits that edit). Exactly one bot result is sent.
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=rich, classic_html=classic,
             reply_markup=_markup(rows),
         )
 
@@ -7026,7 +7082,7 @@ def create_owner_setup_router(
                 request_id = randbelow(2**31 - 2) + 1
                 await set_flow(
                     factory, actor_id=actor_id, step="chat_picker",
-                    payload={"request_id": request_id},
+                    payload={"request_id": request_id, "kind": kind},
                     bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 # request_chat can only be shown on a native reply keyboard;
@@ -8322,6 +8378,7 @@ def create_owner_setup_router(
 
     @router.message(F.chat_shared)
     async def shared_chat_handler(message: Message, bot: Bot) -> None:
+        """Native chat selector: a single outcome, never a second directory."""
         if not _private(message) or fixed_project_id is None:
             return
         actor_id = await actor(message.from_user)
@@ -8329,43 +8386,44 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=fixed_project_id,
         ):
             return
+        kind = "channel"
+        problem = "permissions"
         try:
             flow = await consume_button_flow(
                 factory, actor_id=actor_id, expected_step="chat_picker",
                 request_id=message.chat_shared.request_id,
                 bot_scope_id=bot.id,
+                discard=True,
             )
             if flow.project_id != fixed_project_id:
-                raise ValueError(tr("Настройка другого бота недоступна",
-                                    "You cannot change another bot's settings"))
+                raise ValueError(tr(
+                    "Настройка другого бота недоступна",
+                    "You cannot change another bot's settings",
+                ))
+            kind = flow.payload.get("kind", "channel")
             chat = await verify_channel_and_add(
                 factory, actor_id=actor_id,
                 actor_telegram_id=message.from_user.id,
                 project_id=flow.project_id,
                 chat_reference=message.chat_shared.chat_id,
             )
+            success = True
         except (ValueError, PermissionError) as exc:
-            await bot.send_message(
-                message.chat.id, "⚠️ " + owner_error(str(exc)),
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            await bot.send_message(
-                message.chat.id,
-                tr("Вернуться к управлению каналами",
-                   "Return to channel management"),
-                reply_markup=_markup([[_button(
-                    tr("⬅️ Каналы и группы", "⬅️ Channels and groups"),
-                    "resources",
-                )]]),
-            )
-            return
-        await bot.send_message(
-            message.chat.id,
-            tr("✅ Канал «" + escape(chat.name) + "» подключён.",
-                       "✅ Channel “" + escape(chat.name) + "” connected."),
-            parse_mode="HTML", reply_markup=ReplyKeyboardRemove(),
+            success = False
+            chat = None
+            problem = connection_problem_code(exc)
+        # A Telegram chat_shared service bubble is separate from our
+        # message. Delete it when Telegram permits; never block the result.
+        try:
+            await bot.delete_message(message.chat.id, message.message_id)
+        except (AiogramError, TypeError):
+            pass
+        await show_connection_result(
+            bot, message.chat.id, actor_id, fixed_project_id,
+            success=success, kind=kind,
+            resource_name=chat.name if chat is not None else None,
+            problem=problem,
         )
-        await show_resources(bot, message.chat.id, actor_id, flow.project_id)
 
     async def send_connected_bot(
         bot: Bot, user_id: int, actor_id: UUID,
@@ -8659,13 +8717,15 @@ def create_owner_setup_router(
                     actor_telegram_id=message.from_user.id,
                     project_id=project_id, chat_reference=reference,
                 )
-                await bot.send_message(
-                    message.chat.id,
-                    tr(f"✅ Канал «{escape(resource.name)}» подключён.",
-                       f"✅ Channel “{escape(resource.name)}” connected."),
-                    parse_mode="HTML",
+                resource_kind = (
+                    "group" if "group" in str(resource.resource_type).lower()
+                    else "channel"
                 )
-                await show_resources(bot, message.chat.id, actor_id, project_id)
+                await show_connection_result(
+                    bot, message.chat.id, actor_id, project_id,
+                    success=True, kind=resource_kind,
+                    resource_name=resource.name,
+                )
             elif flow.step == "plan_name":
                 if not 2 <= len(text) <= 120:
                     raise ValueError(tr("Название тарифа: от 2 до 120 символов",
@@ -8855,6 +8915,15 @@ def create_owner_setup_router(
                 )
                 await show_dashboard(bot, message.chat.id, actor_id, project_id)
         except (ValueError, PermissionError, RuntimeError) as exc:
+            if flow.step == "resource_reference" and flow.project_id is not None:
+                # One compact Rich error with a working Back, not a generic
+                # technical warning followed by the entire admin directory.
+                await show_connection_result(
+                    bot, message.chat.id, actor_id, flow.project_id,
+                    success=False, kind="chat",
+                    problem=connection_problem_code(exc),
+                )
+                return
             destination = {
                 "plan_name": "plans",
                 "stars_month_price": "starspage:0",
