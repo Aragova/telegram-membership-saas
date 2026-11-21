@@ -137,6 +137,38 @@ async def test_first_start_after_language_has_subscription_and_back(monkeypatch)
     assert "Выберите «🔐 Платные подписки»" not in sent.args[1]
 
 
+async def test_subscription_choice_explains_both_connection_methods(monkeypatch):
+    """The connection choice must provide real instructions, not a sales slogan."""
+    from telegram_membership_saas.localization import _language
+
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    callback = _handler("owner_callback", callback=True)
+    bot = _bot()
+
+    for language, expected in (
+        ("ru", ("Создать бота", "Через BotFather", "API-токен", "удалим")),
+        ("en", ("Create bot", "Via BotFather", "API token", "delete")),
+    ):
+        query = SimpleNamespace(
+            message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+            from_user=_user(), data="own:substart", answer=AsyncMock(),
+        )
+        token = _language.set(language)
+        try:
+            await callback(query, bot)
+            sent = bot.send_message.await_args
+            for phrase in (*expected, "/mybots", "/newbot", "@BotFather"):
+                assert phrase in sent.args[1]
+            assert "Продавайте доступ к закрытым каналам" not in sent.args[1]
+            assert "Sell access to private channels and groups" not in sent.args[1]
+            assert [
+                button.callback_data for row in sent.kwargs["reply_markup"].inline_keyboard
+                for button in row
+            ] == ["own:newmanaged", "own:new", "own:onboardhome"]
+        finally:
+            _language.reset(token)
+
+
 async def test_subscription_back_returns_without_existing_project(monkeypatch):
     from telegram_membership_saas.localization import _language
 
