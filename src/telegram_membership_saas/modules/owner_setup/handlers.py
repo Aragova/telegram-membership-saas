@@ -206,6 +206,7 @@ from telegram_membership_saas.modules.owner_setup.obligations import (
 from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
     owner_setup_step_classic,
     owner_setup_step_rich,
+    wizard_primary_label,
 )
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     archive_owner_plan,
@@ -1251,16 +1252,13 @@ def create_owner_setup_router(
                              if status == "registered"), "")
                     or data.project_name
                 )
-                wizard_rows = [
-                    [
-                        _button(label, action, "success"),
-                        _button(tr("❔ Помощь", "❔ Help"), "help", "primary"),
-                    ],
-                    [InlineKeyboardButton(
-                        text="🌐 Language / Язык",
-                        callback_data="lng:menu", style="primary",
-                    )],
-                ]
+                # The guided setup already tells the owner what to do.
+                # One scoped forward action, no distracting help/language
+                # buttons on any of the 4 wizard steps.
+                wizard_rows = [[_button(
+                    wizard_primary_label(action, label),
+                    action, "success",
+                )]]
                 await send_owner_rich(
                     bot, chat_id=user_id,
                     rich_html=owner_setup_step_rich(
