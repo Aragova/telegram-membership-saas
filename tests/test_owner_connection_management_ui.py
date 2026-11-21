@@ -3,7 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
+
+from telegram_membership_saas.localization import _language
 from telegram_membership_saas.modules.owner_setup import handlers as ui
+from telegram_membership_saas.modules.owner_setup.central_connection_flow_ui import (
+    project_disposal_card,
+    project_disposal_success,
+)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     ConnectionDisposition,
 )
@@ -662,3 +669,106 @@ async def test_central_bot_bill_denies_foreign_owner_and_stale_mismatch(
     await cb(req2, inst)
     assert req2.answer.await_args.kwargs["show_alert"] is True
     inst.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize("lang,delete_heading,archive_heading,account", [
+    ("ru", "УДАЛЕНИЕ ПОДКЛЮЧЕНИЯ", "ПЕРЕМЕЩЕНИЕ В АРХИВ", "Счёт аккаунта"),
+    ("en", "DELETE CONNECTION", "ARCHIVE CONNECTION", "Account bill"),
+])
+def test_project_disposal_cards_are_rich_bilingual_and_html_safe(
+    lang, delete_heading, archive_heading, account,
+):
+    token = _language.set(lang)
+    try:
+        for archive, heading in ((False, delete_heading), (True, archive_heading)):
+            rich = project_disposal_card(name="Demo <&>", archive=archive, rich=True)
+            classic = project_disposal_card(name="Demo <&>", archive=archive, rich=False)
+            assert heading in rich and heading in classic
+            assert "Demo &lt;&amp;&gt;" in rich and "Demo &lt;&amp;&gt;" in classic
+            assert "Demo <&>" not in rich and "Demo <&>" not in classic
+            assert "<h3>" in rich and "<h3>" not in classic
+            assert account in rich and account in classic
+            assert "@vimipay_bot" in rich if not archive else True
+            done_rich = project_disposal_success(
+                name="Demo <&>", archive=archive, rich=True,
+            )
+            done_classic = project_disposal_success(
+                name="Demo <&>", archive=archive, rich=False,
+            )
+            assert "<h3>" in done_rich and "<h3>" not in done_classic
+            assert "Demo &lt;&amp;&gt;" in done_rich and done_classic
+            assert "✅" in done_rich
+            assert "<script" not in done_rich
+    finally:
+        _language.reset(token)
+
+
+@pytest.mark.parametrize("lang,heading,success", [
+    ("ru", "ПЕРЕМЕЩЕНИЕ В АРХИВ", "ПОДКЛЮЧЕНИЕ В АРХИВЕ"),
+    ("en", "ARCHIVE CONNECTION", "CONNECTION ARCHIVED"),
+])
+async def test_archive_confirmation_has_single_success_and_working_navigation(
+    monkeypatch, lang, heading, success,
+):
+    project_id = uuid4()
+    cb = handler(monkeypatch, selected=project_id)
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(
+        return_value=overview(project_id),
+    ))
+    monkeypatch.setattr(ui, "get_connection_disposition", AsyncMock(
+        return_value=ConnectionDisposition(False, True),
+    ))
+    archive = AsyncMock()
+    monkeypatch.setattr(ui, "archive_owner_connection", archive)
+    instance = bot()
+    locale = _language.set(lang)
+    try:
+        await cb(query("connarchive:" + project_id.hex), instance)
+        assert archive.await_count == 0
+        assert instance.send_message.await_count == 1
+        confirm = instance.send_message.await_args
+        assert heading in confirm.args[1]
+        assert buttons(confirm) == [
+            "own:connarchiveok:" + project_id.hex, "own:bots",
+        ]
+        assert [
+            b.style for row in confirm.kwargs["reply_markup"].inline_keyboard
+            for b in row
+        ] == ["danger", "primary"]
+
+        await cb(query("connarchiveok:" + project_id.hex), instance)
+        archive.assert_awaited_once()
+        assert archive.await_args.kwargs["project_id"] == project_id
+        assert instance.send_message.await_count == 2
+        done = instance.send_message.await_args
+        assert success in done.args[1]
+        assert buttons(done) == ["own:archives", "own:onboardhome"]
+    finally:
+        _language.reset(locale)
+
+
+async def test_archive_confirmation_denies_connected_bot_and_foreign_selection(
+    monkeypatch,
+):
+    project_id, foreign = uuid4(), uuid4()
+    cb = handler(monkeypatch, selected=project_id)
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(
+        return_value=overview(project_id),
+    ))
+    monkeypatch.setattr(ui, "get_connection_disposition", AsyncMock(
+        return_value=ConnectionDisposition(True, True),
+    ))
+    archive = AsyncMock()
+    monkeypatch.setattr(ui, "archive_owner_connection", archive)
+    instance = bot()
+    request = query("connarchive:" + project_id.hex)
+    await cb(request, instance)
+    assert request.answer.await_args.kwargs["show_alert"] is True
+    archive.assert_not_awaited()
+    instance.send_message.assert_not_awaited()
+
+    request = query("connarchiveok:" + foreign.hex)
+    await cb(request, instance)
+    assert request.answer.await_args.kwargs["show_alert"] is True
+    archive.assert_not_awaited()
+    instance.send_message.assert_not_awaited()
