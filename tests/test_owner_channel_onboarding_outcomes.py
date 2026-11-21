@@ -271,3 +271,98 @@ def test_structured_manual_card_and_step_three(language):
     assert "⚠️" in failed and "1️⃣" in failed
     assert "&lt;private&gt;" in fallback
     assert "2</td>" in intro
+
+
+@pytest.mark.parametrize("language", ["ru", "en"])
+async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, language):
+    project = uuid4()
+    # Currency is already selected: this is a RETEST after removal, not
+    # a new trial or a billing profile reset.
+    _setup(monkeypatch, project, resources=(), first_run=False)
+    set_flow = AsyncMock(return_value="next")
+    monkeypatch.setattr(ui, "set_flow", set_flow)
+    render = AsyncMock(return_value=SimpleNamespace(message_id=451))
+    monkeypatch.setattr(ui, "send_owner_rich", render)
+    native = _bot()
+    query = SimpleNamespace(
+        data="own:pick:channel",
+        from_user=SimpleNamespace(id=345, username="owner", first_name="Owner"),
+        message=SimpleNamespace(chat=SimpleNamespace(type="private", id=345)),
+        answer=AsyncMock(),
+    )
+    token = _language.set(language)
+    try:
+        await _handler(project, "owner_callback")(query, native)
+        assert set_flow.await_args.kwargs["payload"]["guided"] is True
+        payload = set_flow.await_args.kwargs["payload"]
+        monkeypatch.setattr(ui, "consume_button_flow", AsyncMock(
+            return_value=SetupFlow(
+                project_id=project, step="chat_picker",
+                payload=payload, generation="next",
+                prompt_message_id=None,
+            ),
+        ))
+        monkeypatch.setattr(ui, "verify_channel_and_add", AsyncMock(
+            return_value=SimpleNamespace(name="Reconnected", resource_type="telegram_channel"),
+        ))
+        await _handler(project, "shared_chat_handler")(
+            _message(chat_shared=SimpleNamespace(
+                chat_id=-1001234567890, request_id=payload["request_id"],
+            )), native,
+        )
+        assert render.await_count == 1
+        result = render.await_args.kwargs
+        assert result["reply_markup"].inline_keyboard[0][0].callback_data == (
+            "own:setupstep3"
+        )
+        assert "Reconnected" in result["rich_html"]
+        # The CTA MUST actually open step 3, not the finished main dashboard.
+        query.data = "own:setupstep3"
+        await _handler(project, "owner_callback")(query, native)
+        assert render.await_count == 2
+        step = render.await_args.kwargs
+        assert "3/4" in step["rich_html"]
+        assert step["reply_markup"].inline_keyboard[0][0].callback_data == (
+            "own:methods"
+        )
+    finally:
+        _language.reset(token)
+
+
+async def test_reconnecting_by_id_carries_guided_state_without_new_messages(
+    monkeypatch,
+):
+    project = uuid4()
+    _setup(monkeypatch, project, resources=(), first_run=False)
+    monkeypatch.setattr(ui, "set_flow", AsyncMock(return_value="manual"))
+    monkeypatch.setattr(ui, "bind_prompt", AsyncMock())
+    render = AsyncMock(return_value=SimpleNamespace(message_id=451))
+    monkeypatch.setattr(ui, "send_owner_rich", render)
+    bot = _bot()
+    query = SimpleNamespace(
+        data="own:resource:manual",
+        from_user=SimpleNamespace(id=345, username="owner", first_name="Owner"),
+        message=SimpleNamespace(chat=SimpleNamespace(type="private", id=345)),
+        answer=AsyncMock(),
+    )
+    await _handler(project, "owner_callback")(query, bot)
+    guided = ui.set_flow.await_args.kwargs["payload"]
+    assert guided == {"guided": True}
+    render.reset_mock()
+    monkeypatch.setattr(ui, "consume_flow", AsyncMock(return_value=SetupFlow(
+        project_id=project, step="resource_reference", payload=guided,
+        generation="manual", prompt_message_id=451,
+    )))
+    monkeypatch.setattr(ui, "verify_channel_and_add", AsyncMock(
+        return_value=SimpleNamespace(
+            name="Reconnected", resource_type="telegram_channel",
+        ),
+    ))
+    await _handler(project, "owner_reply_handler")(
+        _message(text="-1001234567890"), bot,
+    )
+    render.assert_awaited_once()
+    assert render.await_args.kwargs["reply_markup"].inline_keyboard[0][
+        0
+    ].callback_data == "own:setupstep3"
+    bot.send_message.assert_not_awaited()

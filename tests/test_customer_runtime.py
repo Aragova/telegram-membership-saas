@@ -228,6 +228,20 @@ async def test_empty_resources_preserve_access_maintenance(monkeypatch):
     bot.get_chat_member.assert_not_awaited()
 
 
+async def test_preflight_sql_excludes_removed_active_channels(monkeypatch):
+    # Tombstoned channels are still status=active for pending payment/grants.
+    # Validate the actual SQL filter, not only a mock that supplies live rows.
+    session = _sf(monkeypatch, bots=[])
+    bot = MagicMock()
+    bot.get_chat_member = AsyncMock()
+    await verify_resource_permissions(None, project_id=uuid4(), bot=bot)
+    statement = session.scalars.await_args.args[0]
+    sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "resources.status = 'active'" in sql
+    assert "resources.removed_at IS NULL" in sql
+    bot.get_chat_member.assert_not_awaited()
+
+
 def test_customer_bot_config_and_blank_id(monkeypatch):
     monkeypatch.setenv("TMS_CUSTOMER_TELEGRAM_BOT_ID", "")
     assert Settings(_env_file=None).customer_telegram_bot_id is None

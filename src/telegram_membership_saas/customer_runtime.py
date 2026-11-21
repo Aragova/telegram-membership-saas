@@ -229,6 +229,10 @@ async def verify_resource_permissions(
             select(Resource).where(
                 Resource.project_id == project_id,
                 Resource.status == ResourceStatus.ACTIVE.value,
+                # A removed channel deliberately stays ACTIVE in storage so
+                # existing invoices and entitlement reconciliation survive.
+                # It must not veto startup of the remaining customer bot.
+                Resource.removed_at.is_(None),
             )
         )).all())
     if not resources:

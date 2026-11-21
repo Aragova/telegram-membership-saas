@@ -1,11 +1,13 @@
 """Channel removal keeps pending invoices and blocks real paid purchases."""
 import os
 from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
 from telegram_membership_saas.config import Settings
+from telegram_membership_saas.customer_runtime import verify_resource_permissions
 from telegram_membership_saas.db import (
     build_engine,
     build_session_factory,
@@ -162,6 +164,59 @@ async def test_pending_invoice_does_not_block_channel_removal_and_can_be_reviewe
                 actor_telegram_user_id=owner_tg, approve=True,
             )
             assert approved.changed
+    finally:
+        await engine.dispose()
+
+
+async def test_removed_channels_do_not_block_bot_startup_or_live_channel_checks():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    try:
+        _, owner, project, removed, _, request, _ = (
+            await _new_paid_channel(factory)
+        )
+        await remove_channel_without_paid_purchases(
+            factory, actor_id=owner, project_id=project,
+            resource_id=removed,
+        )
+        bot = MagicMock()
+        bot.id = 123456
+        bot.get_chat_member = AsyncMock(side_effect=AssertionError(
+            "Removed resource must never be checked during startup",
+        ))
+        # No visible resources: customer bot may start even though the
+        # removed resource stays active for an outstanding payment request.
+        await verify_resource_permissions(factory, project_id=project, bot=bot)
+        bot.get_chat_member.assert_not_awaited()
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            saved = await session.get(Resource, removed)
+            invoice = await session.get(PaymentRequest, request)
+            assert saved.status == "active" and saved.removed_at is not None
+            assert invoice is not None and invoice.status == "waiting_confirmation"
+
+        new_chat_id = "-100" + str(_tg())
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner, project_id=project),
+        ) as session:
+            session.add(Resource(
+                id=uuid4(), project_id=project,
+                resource_type=ResourceType.TELEGRAM_CHANNEL.value,
+                name="Reconnected channel",
+                external_id=new_chat_id,
+            ))
+        bot.get_chat_member = AsyncMock(return_value=type(
+            "Member", (), {
+                "status": "administrator",
+                "can_invite_users": True,
+                "can_restrict_members": True,
+            },
+        )())
+        await verify_resource_permissions(factory, project_id=project, bot=bot)
+        bot.get_chat_member.assert_awaited_once_with(
+            chat_id=new_chat_id, user_id=bot.id,
+        )
     finally:
         await engine.dispose()
 
