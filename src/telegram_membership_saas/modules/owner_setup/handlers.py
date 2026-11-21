@@ -214,6 +214,7 @@ from telegram_membership_saas.modules.owner_setup.onboarding_ui import (
     owner_setup_step_classic,
     owner_setup_step_rich,
     wizard_primary_label,
+    wizard_primary_style,
 )
 from telegram_membership_saas.modules.owner_setup.plan_management import (
     archive_owner_plan,
@@ -1263,7 +1264,7 @@ def create_owner_setup_router(
                 # buttons on any of the 4 wizard steps.
                 wizard_rows = [[_button(
                     wizard_primary_label(action, label),
-                    action, "success",
+                    action, wizard_primary_style(action),
                 )]]
                 await send_owner_rich(
                     bot, chat_id=user_id,
