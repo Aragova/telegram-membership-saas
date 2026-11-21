@@ -43,6 +43,23 @@ def _labels(statement, billing: dict) -> dict:
     }
 
 
+def _other_invoice_caption(count: int) -> str:
+    """Count all other unpaid invoices, not just bills sharing a due date."""
+    if count <= 0:
+        return ""
+    ending = (
+        "неоплаченный счёт" if count % 10 == 1 and count % 100 != 11
+        else "неоплаченных счёта" if count % 10 in (2, 3, 4)
+        and count % 100 not in (12, 13, 14)
+        else "неоплаченных счетов"
+    )
+    english = "other unpaid invoice" if count == 1 else "other unpaid invoices"
+    return "+ " + tr(
+        f"ещё {count} {ending} в аккаунте",
+        f"{count} {english} in this account",
+    )
+
+
 def account_bill_rich(statement, billing: dict) -> str:
     data = _labels(statement, billing)
     lines = [
@@ -105,13 +122,9 @@ def account_bill_rich(statement, billing: dict) -> str:
             + _date(next_due["due_at"]) + "</b></td></tr>",
             "</table>",
         ])
-        extra = max(0, int(next_due.get("same_day_count") or 0) - 1)
-        if extra:
-            lines.append("<p><i>+ " + tr(
-                "ещё ", "another ") + str(extra) + tr(
-                " неоплаченных счетов с этим сроком",
-                " unpaid invoices with the same due date",
-            ) + "</i></p>")
+        other = _other_invoice_caption(data["unpaid"] - 1)
+        if other:
+            lines.append("<p><i>" + other + "</i></p>")
     elif data["overdue"]:
         lines.append("<p>⚠️ " + tr(
             "Проверьте просроченные счета в списке выставленных счетов.",
@@ -169,12 +182,9 @@ def account_bill_classic(statement, billing: dict) -> str:
                      + identity + " · " + _money(next_due["remaining_rub"])
                      + "\n" + tr("📅 Срок оплаты: ", "📅 Pay by: ")
                      + "<b>" + _date(next_due["due_at"]) + "</b>")
-        extra = max(0, int(next_due.get("same_day_count") or 0) - 1)
-        if extra:
-            parts.append("+ " + str(extra) + tr(
-                " неоплаченных счетов с этим сроком",
-                " unpaid invoices with the same due date",
-            ))
+        other = _other_invoice_caption(data["unpaid"] - 1)
+        if other:
+            parts.append(other)
     elif data["overdue"]:
         parts.append("⚠️ " + tr(
             "Проверьте просроченные счета в списке.",
