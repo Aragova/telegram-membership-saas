@@ -161,6 +161,13 @@ from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
     deactivate_native_stars_link,
     read_native_stars_target,
 )
+from telegram_membership_saas.modules.owner_setup.network_home_service import (
+    read_owner_network_home,
+)
+from telegram_membership_saas.modules.owner_setup.network_home_ui import (
+    owner_network_home_classic,
+    owner_network_home_rich,
+)
 from telegram_membership_saas.modules.owner_setup.network_profiles import (
     get_project_import_status,
     read_owner_network_profile,
@@ -803,13 +810,80 @@ def create_owner_setup_router(
             bot_scope_id=bot.id if fixed_project_id else 0,
             fixed_project_id=fixed_project_id,
         )
+        if fixed_project_id is None:
+            # A selected bot must NEVER hijack the central /start or /menu.
+            # First-run language choice is the only pre-dashboard gate.
+            if (
+                not home.projects and not home.archived_count
+                and not await has_explicit_language_choice(factory, user_id)
+            ):
+                await show_onboarding_language(bot, user_id)
+                return
+            rows: list[list[InlineKeyboardButton]] = [
+                [
+                    _button(tr("🤖 Мои подключения", "🤖 My connections"),
+                            "projects", "success"),
+                    _button(tr("✨ Добавить бота", "✨ Add bot"),
+                            "substart", "success"),
+                ],
+                [
+                    _button(tr("🧾 Счёт аккаунта", "🧾 Account bill"),
+                            "saasinvoices:0", "primary"),
+                    InlineKeyboardButton(
+                        text="🌐 Language / Язык",
+                        callback_data="lng:menu", style="primary",
+                    ),
+                ],
+                [InlineKeyboardButton(
+                    text=tr("🛟 Поддержка", "🛟 Support"),
+                    url="https://t.me/vimi_support_bot", style="success",
+                )],
+            ]
+            try:
+                report = await read_owner_network_home(
+                    factory, actor_id=actor_id,
+                )
+            except PermissionError:
+                raise
+            except Exception:
+                # A reporting RPC must not make the central menu unusable.
+                # Never turn missing statistics into fictional zero figures.
+                logging.getLogger(__name__).exception(
+                    "ViMi Pay network home snapshot unavailable"
+                )
+                rich = "<h3>✦ ViMi Pay · " + tr(
+                    "ГЛАВНОЕ МЕНЮ", "MAIN MENU",
+                ) + "</h3><p>⚠️ " + tr(
+                    "Сводка сети временно недоступна. "
+                    "Управление подключениями и счетами работает.",
+                    "The network summary is temporarily unavailable. "
+                    "Connections and invoices remain accessible.",
+                ) + "</p>"
+                classic = rich.replace("<h3>", "<b>").replace("</h3>", "</b>")
+            else:
+                rich = owner_network_home_rich(report)
+                classic = owner_network_home_classic(report)
+                nearest = report["billing"].get("next")
+                if nearest:
+                    nearest_id = UUID(str(nearest["invoice_id"]))
+                    name = nearest.get("username")
+                    label = (
+                        "🤖 @" + str(name).lstrip("@")[:28]
+                        if name else tr("🧾 Ближайший счёт", "🧾 Next invoice")
+                    )
+                    rows.insert(2, [_button(
+                        label, "saasbill:" + encode_uuid(nearest_id) + ":0",
+                        "primary",
+                    )])
+            if platform_navigation(user_id):
+                rows.append(platform_navigation(user_id))
+            await send_owner_rich(
+                bot, chat_id=user_id, rich_html=rich,
+                classic_html=classic, reply_markup=_markup(rows),
+            )
+            return
         if home.selected is not None:
             await show_dashboard(bot, user_id, actor_id, home.selected)
-            return
-        if fixed_project_id is None and (home.projects or home.archived_count):
-            # Even with zero active projects, keep archived connections
-            # reachable through /start, /menu and /bots.
-            await show_connections(bot, user_id, actor_id)
             return
         lines = [tr("✨ <b>ViMi Pay · Управление подписками</b>",
                     "✨ <b>ViMi Pay · Membership management</b>"), ""]
@@ -1002,7 +1076,7 @@ def create_owner_setup_router(
                         "projects", "primary",
                     ),
                     _button(
-                        tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay bills"),
+                        tr("🧾 Счёт аккаунта", "🧾 Account bill"),
                         "saasinvoices:0", "primary",
                     ),
                 ],
@@ -1428,11 +1502,11 @@ def create_owner_setup_router(
             if nav:
                 rows.append(nav)
             rows.append([_button(
-                tr("🏠 Главное меню", "🏠 Main menu"), "projects",
+                tr("🏠 Главное меню", "🏠 Main menu"), "onboardhome",
             )])
             amount = format(report.outstanding_rub, ".2f") + " ₽"
             count = str(report.unpaid)
-            title = tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices")
+            title = tr("🧾 СЧЁТ АККАУНТА", "🧾 ACCOUNT BILL")
             table = (
                 "<table bordered compact><tr><th>"
                 + tr("Неоплачено", "Unpaid") + "</th><td><b>"
@@ -2082,8 +2156,11 @@ def create_owner_setup_router(
         # The only entry to the existing central-account invoice ledger.
         # It must remain visible whether the owner has active, archived,
         # or zero bots. Do not create another invoice screen.
-        rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+        rows.append([_button(tr("🧾 Счёт аккаунта", "🧾 Account bill"),
                      "saasinvoices:0")])
+        rows.append([_button(
+            tr("🏠 Главное меню", "🏠 Main menu"), "onboardhome", "primary",
+        )])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
         title = tr("📁 <b>Мои подключения</b>", "📁 <b>My connections</b>")
@@ -4083,17 +4160,10 @@ def create_owner_setup_router(
         elif command == "/plans" and fixed_project_id is not None:
             await show_plans(bot, message.chat.id, actor_id, fixed_project_id)
         elif command == "/bots":
-            selected = await get_selected_project(
-                factory, actor_id=actor_id,
-                bot_scope_id=bot.id if fixed_project_id else 0,
-                fixed_project_id=fixed_project_id,
-            )
-            if selected is None:
-                await show_home(bot, message.chat.id, actor_id)
-            elif fixed_project_id is None:
-                await show_bots(bot, message.chat.id, actor_id, selected)
+            if fixed_project_id is None:
+                await show_connections(bot, message.chat.id, actor_id)
             else:
-                await show_dashboard(bot, message.chat.id, actor_id, selected)
+                await show_home(bot, message.chat.id, actor_id)
         else:
             await show_home(bot, message.chat.id, actor_id)
 
