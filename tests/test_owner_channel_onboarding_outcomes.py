@@ -151,28 +151,25 @@ async def test_native_picker_has_one_result_and_one_inline_action(
         await _handler(project, "shared_chat_handler")(event, bot)
     finally:
         _language.reset(token)
-    assert bot.send_message.await_count == 1
-    sent = bot.send_message.await_args
-    assert isinstance(sent.kwargs["reply_markup"], ReplyKeyboardRemove)
-    assert ("✅" if success else "⚠️") in sent.args[1]
+    # The client already hides the one-time request_chat keyboard.
+    # The bot sends ONE Rich result with its inline action directly.
+    assert bot.send_message.await_count == 0
+    assert bot.edit_message_reply_markup.await_count == 0
+    render.assert_awaited_once()
+    args = render.await_args.kwargs
+    assert ("✅" if success else "⚠️") in args["rich_html"]
     thing = (
-        ("группа" if success else "группу") if kind == "group" and language == "ru"
-        else "канал" if language == "ru"
-        else "group" if kind == "group"
-        else "channel"
+        ("ГРУППА" if kind == "group" else "КАНАЛ") if language == "ru"
+        else ("GROUP" if kind == "group" else "CHANNEL")
     )
-    assert thing in sent.args[1].lower()
-    assert bot.edit_message_reply_markup.await_count == 1
-    edited = bot.edit_message_reply_markup.await_args.kwargs
-    assert edited["message_id"] == 450
-    buttons = edited["reply_markup"].inline_keyboard
+    assert thing in args["rich_html"]
+    buttons = args["reply_markup"].inline_keyboard
     assert len(buttons) == 1 and len(buttons[0]) == 1
     assert buttons[0][0].callback_data == (
         "own:dashboard" if success else "own:resources"
     )
     assert consumed.await_args.kwargs["discard"] is True
     assert bot.delete_message.await_count == 1
-    render.assert_not_awaited()  # Never send a second directory card.
 
 
 @pytest.mark.parametrize("language", ["ru", "en"])
