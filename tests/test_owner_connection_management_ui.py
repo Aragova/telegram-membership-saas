@@ -94,14 +94,22 @@ async def test_connection_list_paginates_100_without_overflow(monkeypatch):
     instance = bot()
     await cb(query("projects"), instance)
     first = buttons(instance.send_message.await_args)
-    assert len([x for x in first if x.startswith("own:select:")]) == 10
+    assert len([x for x in first if x.startswith("own:select:")]) == 12
     assert "own:projects:1" in first
-    assert first.count("own:saasinvoices:0") == 1
-    await cb(query("projects:9"), instance)
+    assert "own:saasinvoices:0" not in first
+    assert "own:onboardhome" in first
+    assert "own:newmanaged" in first and "own:new" in first
+    assert "У вас подключено" in instance.send_message.await_args.args[1]
+    await cb(query("projects:8"), instance)
     last = buttons(instance.send_message.await_args)
-    assert len([x for x in last if x.startswith("own:select:")]) == 10
-    assert "own:projects:8" in last
-    assert "own:projects:10" not in last
+    assert len([x for x in last if x.startswith("own:select:")]) == 4
+    assert "own:projects:7" in last
+    assert "own:projects:9" not in last
+    assert "📄 9/9" in [
+        b.text for row in instance.send_message.await_args.kwargs[
+            "reply_markup"
+        ].inline_keyboard for b in row
+    ]
     assert all(len(x.encode()) <= 64 for x in last)
 
 
