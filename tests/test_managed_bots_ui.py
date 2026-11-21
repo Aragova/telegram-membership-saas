@@ -98,6 +98,10 @@ async def test_managed_creation_cancel_hides_native_button(monkeypatch):
     )
     consumed = AsyncMock(return_value=SimpleNamespace(step="managed_bot_create"))
     monkeypatch.setattr(ui, "consume_button_flow", consumed)
+    lava_cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", lava_cleanup,
+    )
     bot = _bot()
     callback = _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")
     query = _query("managedcancel:my-generation")
@@ -109,6 +113,9 @@ async def test_managed_creation_cancel_hides_native_button(monkeypatch):
         "bot_scope_id": 0,
         "discard": True,
     }
+    lava_cleanup.assert_called_once_with(
+        payer_id=123, central_bot_id=bot.id,
+    )
     assert isinstance(
         bot.send_message.await_args_list[0].kwargs["reply_markup"],
         ReplyKeyboardRemove,
@@ -127,12 +134,17 @@ async def test_stale_managed_cancel_cannot_clear_new_creation(monkeypatch):
     )
     consume = AsyncMock(side_effect=ValueError("stale"))
     monkeypatch.setattr(ui, "consume_button_flow", consume)
+    lava_cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", lava_cleanup,
+    )
     bot = _bot()
     query = _query("managedcancel:previous-generation")
     await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
         query, bot,
     )
     assert consume.await_count == 1
+    lava_cleanup.assert_not_called()
     assert bot.send_message.await_count == 0
     assert query.answer.await_args.kwargs["show_alert"] is True
 
