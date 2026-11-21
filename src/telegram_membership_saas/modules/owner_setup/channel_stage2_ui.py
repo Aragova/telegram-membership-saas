@@ -18,7 +18,7 @@ def _handle(username: str | None) -> str:
     return "<b>@" + escape(username.lstrip("@"), quote=True) + "</b>"
 
 
-def directory_rich(count: int) -> str:
+def directory_rich(count: int, *, onboarding: bool = False) -> str:
     parts = [
         "<h3>" + tr("📢 Мои каналы и группы",
                     "📢 My channels and groups") + "</h3>",
@@ -42,6 +42,12 @@ def directory_rich(count: int) -> str:
                 "when all initial setup steps are complete.",
             ) + "</p>",
         ]
+    elif onboarding:
+        parts.append("<p>✅ " + tr(
+            "Канал или группа уже добавлены. Вернитесь назад, "
+            "чтобы продолжить настройку.",
+            "A channel or group is connected. Go back to continue setup.",
+        ) + "</p>")
     else:
         parts.append("<p>🔗 " + tr(
             "Выберите подключённый канал или группу для управления "
@@ -53,7 +59,7 @@ def directory_rich(count: int) -> str:
     return "\n".join(parts)
 
 
-def directory_classic(count: int) -> str:
+def directory_classic(count: int, *, onboarding: bool = False) -> str:
     parts = [
         tr("📢 <b>Мои каналы и группы</b>",
            "📢 <b>My channels and groups</b>"),
@@ -74,6 +80,12 @@ def directory_classic(count: int) -> str:
                 "The full dashboard will open after all setup steps.",
             ),
         ]
+    elif onboarding:
+        parts.append("✅ " + tr(
+            "Канал или группа уже добавлены. Вернитесь назад, "
+            "чтобы продолжить настройку.",
+            "A channel or group is connected. Go back to continue setup.",
+        ))
     else:
         parts.append("🔗 " + tr(
             "Выберите подключённый канал или группу для управления "
