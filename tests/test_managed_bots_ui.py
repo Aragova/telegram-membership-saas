@@ -52,7 +52,9 @@ async def test_rich_creation_step_precedes_temporary_native_button(monkeypatch):
     await handler(first, bot)
     flow.assert_not_awaited()
     sent = bot.send_message.await_args
-    assert "Создать бота через Telegram" in sent.args[1]
+    assert any(title in sent.args[1] for title in (
+        "Создать бота через Telegram", "Create a bot with Telegram",
+    ))
     assert "@username" in sent.args[1]
     assert "BotFather" not in sent.args[1]
     assert [
