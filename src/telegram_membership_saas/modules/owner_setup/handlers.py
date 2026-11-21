@@ -109,6 +109,8 @@ from telegram_membership_saas.modules.owner_setup.channel_stage2_ui import (
     manual_classic,
     manual_rich,
     picker_classic,
+    setup_stage_two_classic,
+    setup_stage_two_rich,
 )
 from telegram_membership_saas.modules.owner_setup.connection_cards import (
     connection_management_classic,
@@ -238,6 +240,7 @@ from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
     rich_owner_statistics,
     rich_subscriber_card,
     rich_subscriber_invoices,
+    replace_owner_rich,
     send_owner_rich,
 )
 from telegram_membership_saas.modules.owner_setup.service import (
@@ -3182,6 +3185,7 @@ def create_owner_setup_router(
 
     async def show_resources(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None,
     ) -> None:
         """No resource/statistics buttons in the initial setup catalog."""
         data = await setup_overview(
@@ -3203,10 +3207,32 @@ def create_owner_setup_router(
                      "resource:manual", "primary")],
             [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
         ])
-        await send_owner_rich(
-            bot, chat_id=user_id,
+        await replace_owner_rich(
+            bot, chat_id=user_id, message_id=source_message_id,
             rich_html=directory_rich(len(data.resources), onboarding=onboarding),
             classic_html=directory_classic(len(data.resources), onboarding=onboarding),
+            reply_markup=_markup(rows),
+        )
+
+    async def show_channel_setup_step_two(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None,
+    ) -> None:
+        """Explicit Back destination: real channel step 2/4, not the work panel."""
+        data = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        rows = [
+            [_button(tr("📢 Каналы и группы", "📢 Channels and groups"),
+                     "resources", "primary")],
+            [_button(tr("➡️ Этап 3/4 · Способы оплаты",
+                        "➡️ Step 3/4 · Payment methods"),
+                     "setupstep3", "primary")],
+        ]
+        await replace_owner_rich(
+            bot, chat_id=user_id, message_id=source_message_id,
+            rich_html=setup_stage_two_rich(len(data.resources)),
+            classic_html=setup_stage_two_classic(len(data.resources)),
             reply_markup=_markup(rows),
         )
 
@@ -3243,6 +3269,7 @@ def create_owner_setup_router(
 
     async def show_payment_setup_step(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None,
     ) -> None:
         """Show step 3 directly after a verified channel, with no success interstitial.
 
@@ -3265,8 +3292,8 @@ def create_owner_setup_router(
                      if state == "registered"), "")
             or overview.project_name
         )
-        await send_owner_rich(
-            bot, chat_id=user_id,
+        await replace_owner_rich(
+            bot, chat_id=user_id, message_id=source_message_id,
             rich_html=owner_setup_step_rich(
                 bot_name=bot_name, timezone=overview.timezone,
                 action="methods",
@@ -3277,7 +3304,7 @@ def create_owner_setup_router(
             ),
             reply_markup=_markup([[_button(
                 wizard_primary_label("methods", "💳"),
-                "methods", "success",
+                "methods:guided", "primary",
             )]]),
         )
 
@@ -3608,50 +3635,114 @@ def create_owner_setup_router(
 
     async def show_methods(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
-        page: int = 0,
+        page: int = 0, *, guided: bool | None = None,
+        source_message_id: int | None = None,
     ) -> None:
+        """Concise payment-method lesson and real manual-method pagination."""
+        if not 0 <= page <= 10000:
+            raise ValueError("Invalid payment-method page")
+        if guided is None:
+            guided = await initial_setup_active(actor_id, project_id)
         methods = await list_owner_methods(
             factory, actor_id=actor_id, project_id=project_id, page=page,
         )
-        lines = [
-            tr("💳 <b>Способы оплаты</b>", "💳 <b>Payment methods</b>"),
-            tr("Страница ", "Page ") + str(page + 1),
-            "",
-        ]
-        rows = []
-        if not methods:
-            lines.append(
-                tr("Нет способов оплаты на этой странице.",
-                   "No payment methods on this page.")
-                if page else
-                tr("Ручные способы ещё не настроены. "
-                   "⭐ Telegram Stars и 💎 Crypto Pay доступны ниже.",
-                   "No manual payment methods yet. "
-                   "⭐ Telegram Stars and 💎 Crypto Pay are below.")
+        if page and not methods:
+            # An old pagination button after deletion must never trap the owner
+            # in a blank page or show a meaningless "Page 2".
+            await show_methods(
+                bot, user_id, actor_id, project_id, page=0, guided=guided,
+                source_message_id=source_message_id,
             )
-        for method in methods:
-            lines.append(
-                "• <b>" + escape(method.name) + "</b> — "
-                + _status(method.status) + "\n  "
-                + escape(", ".join(method.currencies) or tr("Без валюты", "No currency"))
-            )
-            rows.append([
-                _button("⚙️ " + method.name[:40], "method:" + method.id.hex),
-            ])
-        navigation = []
-        if page > 0:
-            navigation.append(_button(
-                "⬅️ Назад", "methodpage:" + str(page - 1),
-            ))
+            return
+        has_next = False
         if len(methods) == METHOD_PAGE_SIZE and page < 10000:
-            navigation.append(_button(
-                "➡️ Далее", "methodpage:" + str(page + 1),
+            has_next = bool(await list_owner_methods(
+                factory, actor_id=actor_id, project_id=project_id,
+                page=page + 1,
             ))
-        if navigation:
-            rows.append(navigation)
-        if methods or page > 0:
+        rich_parts = [
+            "<h3>" + tr("💳 Способы оплаты", "💳 Payment methods") + "</h3>",
+        ]
+        classic_parts = [
+            tr("💳 <b>Способы оплаты</b>", "💳 <b>Payment methods</b>"),
+        ]
+        if guided:
+            rich_parts.append(
+                "<p><b>" + tr("🚀 ЭТАП НАСТРОЙКИ · 3/4",
+                                "🚀 SETUP STEP · 3/4") + "</b></p>"
+            )
+            classic_parts.append(tr("🚀 Этап 3/4", "🚀 Step 3/4"))
+        rich_parts.extend([
+            "<h4>" + tr("📋 ЧТО НУЖНО СДЕЛАТЬ?",
+                           "📋 WHAT TO DO?") + "</h4>",
+            "<p>" + tr(
+                "Подключите <b>хотя бы один способ оплаты</b>, "
+                "чтобы покупатели могли оплачивать подписки и файлы.",
+                "Enable <b>at least one payment method</b> "
+                "so buyers can pay for subscriptions and files.",
+            ) + "</p>",
+            "<p>" + tr(
+                "⭐ <b>Telegram Stars</b> · 💎 <b>Crypto Pay</b> · "
+                "✍️ <b>Полуавтомат</b>",
+                "⭐ <b>Telegram Stars</b> · 💎 <b>Crypto Pay</b> · "
+                "✍️ <b>Manual transfer</b>",
+            ) + "</p>",
+            "<p>💡 " + tr(
+                "Остальные способы можно подключить позже.",
+                "You can add other methods later.",
+            ) + "</p>",
+        ])
+        classic_parts.extend([
+            tr("Подключите <b>хотя бы один способ</b> для "
+               "оплаты подписок и файлов.",
+               "Enable <b>at least one method</b> to sell "
+               "subscriptions and files."),
+            tr("⭐ Telegram Stars · 💎 Crypto Pay · ✍️ Полуавтомат",
+               "⭐ Telegram Stars · 💎 Crypto Pay · ✍️ Manual transfer"),
+            tr("💡 Остальные способы можно добавить позже.",
+               "💡 You can add the others later."),
+        ])
+        rows: list[list[InlineKeyboardButton]] = []
+        if methods:
+            rich_parts.append("<h4>" + tr(
+                "🧾 Ручные способы", "🧾 Manual payment methods",
+            ) + "</h4>")
+            for method in methods:
+                item = (
+                    "• <b>" + escape(method.name) + "</b> · "
+                    + _status(method.status) + " · "
+                    + escape(", ".join(method.currencies) or tr(
+                        "Без валюты", "No currency",
+                    ))
+                )
+                rich_parts.append("<p>" + item + "</p>")
+                classic_parts.append(item)
+                rows.append([_button(
+                    "⚙️ " + method.name[:40], "method:" + method.id.hex,
+                    "primary",
+                )])
+        if page > 0 or has_next:
+            # There is no "Page 1" label for a single manual-method page.
+            indicator = tr("Страница ", "Page ") + str(page + 1)
+            rich_parts.append("<p>" + indicator + "</p>")
+            classic_parts.append(indicator)
+            pagination = []
+            prefix = "methodwizardpage:" if guided else "methodpage:"
+            if page:
+                pagination.append(_button(
+                    tr("◀ Предыдущая", "◀ Previous"),
+                    prefix + str(page - 1), "primary",
+                ))
+            if has_next:
+                pagination.append(_button(
+                    tr("Следующая ▶", "Next ▶"),
+                    prefix + str(page + 1), "primary",
+                ))
+            rows.append(pagination)
+        if methods and not guided:
             bulk = await read_bulk_sales_state(
-                factory, actor_id=actor_id, project_id=project_id, kind="method",
+                factory, actor_id=actor_id, project_id=project_id,
+                kind="method",
             )
             if bulk.available:
                 rows.append([_button(
@@ -3662,16 +3753,21 @@ def create_owner_setup_router(
                     + encode_uuid(project_id),
                     "success" if bulk.enable_action else "danger",
                 )])
-        rows.append([
-            _button("⭐ Telegram Stars", "starspage:0", "success"),
-            _button("💎 Crypto Pay", "cryptopay", "success"),
+        rows.extend([
+            [
+                _button("⭐ Telegram Stars", "starspage:0", "primary"),
+                _button("💎 Crypto Pay", "cryptopay", "primary"),
+            ],
+            [_button(tr("➕ Добавить ручной способ", "➕ Add manual method"),
+                     "newmethod", "primary")],
+            [_button(tr("⬅️ Назад", "⬅️ Back"),
+                     "setupback2" if guided else "dashboard", "primary")],
         ])
-        rows.append([_button("➕ Добавить способ", "newmethod", "success")])
-        if methods or page > 0:
-            rows.append([_button("➡️ Перейти к тарифам", "plans")])
-        rows.append([_button("⬅️ Панель администратора", "dashboard")])
-        await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
+        rich_parts.append(RICH_ACTIONS_MARKER)
+        await replace_owner_rich(
+            bot, chat_id=user_id, message_id=source_message_id,
+            rich_html="\n".join(rich_parts),
+            classic_html="\n\n".join(classic_parts),
             reply_markup=_markup(rows),
         )
 
@@ -6503,10 +6599,18 @@ def create_owner_setup_router(
                 await show_settings(bot, user_id)
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action == "setupback2":
+                if fixed_project_id != project_id:
+                    raise PermissionError("Open the connected administrator bot")
+                await show_channel_setup_step_two(
+                    bot, user_id, actor_id, project_id,
+                    source_message_id=getattr(query.message, "message_id", None),
+                )
             elif action == "setupstep3":
-                # Backward-compatible CTA on cards sent by older deployments.
+                # Backward-compatible CTA and forward from stage 2/4.
                 await show_payment_setup_step(
                     bot, user_id, actor_id, project_id,
+                    source_message_id=getattr(query.message, "message_id", None),
                 )
             elif action.startswith("connrename:"):
                 target_id = UUID(hex=action.split(":", 1)[1])
@@ -7096,7 +7200,11 @@ def create_owner_setup_router(
                     show_main_menu=False,
                 )
             elif action == "resources":
-                await show_resources(bot, user_id, actor_id, project_id)
+                await show_resources(
+                    bot, user_id, actor_id, project_id,
+                    source_message_id=getattr(query.message, "message_id", None)
+                    if fixed_project_id is not None else None,
+                )
             elif action.startswith("resourceview:"):
                 resource_id = decode_uuid(action.split(":", 1)[1])
                 await show_resource_card(
@@ -7758,8 +7866,13 @@ def create_owner_setup_router(
                     parse_mode="HTML",
                 )
                 await show_plans(bot, user_id, actor_id, project_id)
-            elif action == "methods":
-                await show_methods(bot, user_id, actor_id, project_id)
+            elif action in ("methods", "methods:guided"):
+                await show_methods(
+                    bot, user_id, actor_id, project_id,
+                    guided=True if action == "methods:guided" else None,
+                    source_message_id=getattr(query.message, "message_id", None)
+                    if fixed_project_id is not None else None,
+                )
             elif action == "starsnew":
                 overview = await setup_overview(
                     factory, actor_id=actor_id, project_id=project_id,
@@ -8108,10 +8221,13 @@ def create_owner_setup_router(
                     actor_id=actor_id,
                 )
                 await show_crypto_pay(bot, user_id, actor_id, project_id)
-            elif action.startswith("methodpage:"):
+            elif action.startswith(("methodpage:", "methodwizardpage:")):
                 page = int(action.split(":", 1)[1])
                 await show_methods(
                     bot, user_id, actor_id, project_id, page=page,
+                    guided=True if action.startswith("methodwizardpage:") else None,
+                    source_message_id=getattr(query.message, "message_id", None)
+                    if fixed_project_id is not None else None,
                 )
             elif action == "newmethod":
                 await currency_picker(
@@ -8442,6 +8558,26 @@ def create_owner_setup_router(
             )
             await query.answer(detail[:180], show_alert=True)
             return
+        # Method submenus still send their own cards; retire the originating
+        # selection card after the new one exists. Do not apply this to
+        # payment mutations, receipts, or arbitrary admin callbacks.
+        if action in {"newmethod", "cryptopay"} or action.startswith((
+            "starspage:", "method:",
+        )):
+            old_id = getattr(query.message, "message_id", None)
+            if old_id is not None and fixed_project_id is not None:
+                try:
+                    await bot.delete_message(user_id, old_id)
+                except AiogramError:
+                    try:
+                        await bot.edit_message_reply_markup(
+                            chat_id=user_id, message_id=old_id,
+                            reply_markup=None,
+                        )
+                    except AiogramError:
+                        logging.getLogger(__name__).warning(
+                            "Unable to retire previous payment-setup card"
+                        )
         await query.answer()
 
     @router.message(F.managed_bot_created)
