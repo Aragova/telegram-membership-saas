@@ -215,6 +215,7 @@ async def test_navigation_middleware_discards_plain_input_on_dashboard_click(mon
     assert await middleware(handler, event, {"bot": bot}) == "handled"
     cancel.assert_awaited_once_with(
         factory, actor_id=actor, bot_scope_id=bot.id,
+        report_native_keyboard=True,
     )
     handler.assert_awaited_once()
     cancel_broadcast.assert_awaited_once_with(
