@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-
 from telegram_membership_saas import localization
 from telegram_membership_saas.modules.owner_setup import handlers as ui
 from telegram_membership_saas.modules.owner_setup.service import SetupFlow
