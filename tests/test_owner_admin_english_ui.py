@@ -105,13 +105,13 @@ async def test_english_empty_payment_methods(monkeypatch):
         bot, _ = await _owner_action(monkeypatch, "methods")
         text = bot.send_message.await_args.args[1]
         assert "Payment methods" in text
-        assert "No manual payment methods yet" in text
+        assert "at least one method" in text
         labels = [
             b.text for row in bot.send_message.await_args.kwargs[
                 "reply_markup"
             ].inline_keyboard for b in row
         ]
-        assert "➕ Add method" in labels
+        assert "➕ Add manual method" in labels
     finally:
         _language.reset(token)
 

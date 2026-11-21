@@ -172,7 +172,7 @@ async def test_native_picker_has_one_result_and_one_inline_action(
     buttons = args["reply_markup"].inline_keyboard
     assert len(buttons) == 1 and len(buttons[0]) == 1
     assert buttons[0][0].callback_data == (
-        "own:methods" if success else "own:resources"
+        "own:methods:guided" if success else "own:resources"
     )
     assert consumed.await_args.kwargs["discard"] is True
     assert [call.args for call in bot.delete_message.await_args_list] == [
@@ -220,7 +220,7 @@ async def test_manual_id_one_rich_result_and_correct_navigation(
         assert "⚠️" in args["rich_html"]
     assert [item.callback_data for row in
             args["reply_markup"].inline_keyboard for item in row] == [
-        "own:methods" if success else "own:resources",
+        "own:methods:guided" if success else "own:resources",
     ]
 
 
@@ -338,7 +338,7 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
             "ПОДКЛЮЧЕНО" not in result["rich_html"]
         )
         assert result["reply_markup"].inline_keyboard[0][0].callback_data == (
-            "own:methods"
+            "own:methods:guided"
         )
         # Existing older cards can still call the legacy CTA safely.
         query.data = "own:setupstep3"
@@ -346,7 +346,7 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
         assert render.await_count == 2
         assert render.await_args.kwargs["reply_markup"].inline_keyboard[0][
             0
-        ].callback_data == "own:methods"
+        ].callback_data == "own:methods:guided"
     finally:
         _language.reset(token)
 
@@ -389,5 +389,5 @@ async def test_reconnecting_by_id_carries_guided_state_without_new_messages(
     assert "3/4" in render.await_args.kwargs["rich_html"]
     assert render.await_args.kwargs["reply_markup"].inline_keyboard[0][
         0
-    ].callback_data == "own:methods"
+    ].callback_data == "own:methods:guided"
     bot.send_message.assert_not_awaited()

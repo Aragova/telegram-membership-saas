@@ -19,7 +19,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
+from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.localization import read_language
 from telegram_membership_saas.modules.identity import TelegramUser
+from telegram_membership_saas.modules.projects import Project
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +89,23 @@ async def set_chat_commands(
     bot: Bot, *, chat_id: int, role: str, language: str,
 ) -> None:
     """A role and preferred language override that applies immediately."""
-    try:
-        await bot.set_my_commands(
-            commands=commands_for(role, language),
-            scope=BotCommandScopeChat(chat_id=chat_id),
-        )
-    except AiogramError:
-        logger.warning("Could not refresh Telegram native menu for this chat")
+    # A private-chat language-specific command list can persist independently
+    # of the neutral list. Explicitly overwrite both for the exact chat to
+    # avoid keeping old /subscription buyer commands in an owner chat.
+    scope = BotCommandScopeChat(chat_id=chat_id)
+    for language_code in (None, "ru"):
+        try:
+            await bot.set_my_commands(
+                commands=commands_for(role, language),
+                scope=scope,
+                **({"language_code": language_code}
+                   if language_code is not None else {}),
+            )
+        except AiogramError:
+            logger.warning(
+                "Could not refresh %s Telegram commands for chat %s",
+                language_code or "default", chat_id,
+            )
 
 
 async def refresh_user_commands(
@@ -139,3 +152,38 @@ async def refresh_user_commands(
     await set_chat_commands(
         bot, chat_id=chat_id, role=role, language=language,
     )
+
+
+
+async def sync_project_owner_commands(
+    bot: Bot,
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    project_id: UUID,
+) -> None:
+    """Repair already-connected owner menus during customer bot startup.
+
+    setMyCommands(AllPrivateChats) installs the buyer list for everyone. A
+    narrower chat-scoped owner list must be recreated after deployments even
+    when the owner doesn't send /start. No owner identity is guessed from a
+    Telegram username; it comes from the project record in project-scoped RLS.
+    """
+    async with system_project_session_scope(factory, project_id) as session:
+        owner_id = await session.scalar(
+            select(Project.owner_user_id).where(Project.id == project_id),
+        )
+        telegram_id = (
+            await session.scalar(
+                select(TelegramUser.telegram_user_id).where(
+                    TelegramUser.id == owner_id,
+                ),
+            )
+            if owner_id is not None else None
+        )
+    if telegram_id is not None:
+        # Respect the manually selected RU/EN locale (or last observed
+        # Telegram language) when restoring commands after a restart.
+        language = await read_language(factory, telegram_id, "ru")
+        await set_chat_commands(
+            bot, chat_id=telegram_id, role="owner", language=language,
+        )

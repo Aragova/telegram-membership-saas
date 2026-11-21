@@ -114,7 +114,7 @@ def wizard_primary_label(action: str, default_label: str) -> str:
 
 def wizard_primary_style(action: str) -> str:
     """Blue connect button on step 1/4; other wizard actions unchanged."""
-    return "primary" if action == "resources" else "success"
+    return "primary" if action in ("resources", "methods") else "success"
 
 
 def owner_setup_step_rich(
@@ -122,6 +122,31 @@ def owner_setup_step_rich(
 ) -> str:
     if action == "resources":
         return _channel_step_rich(bot_name=bot_name, timezone=timezone)
+    if action == "methods":
+        # The owner is already inside their own bot. Avoid repeating its
+        # username/timezone and keep the actual 3/4 lesson short.
+        return "\n".join([
+            "<h3>" + tr("✨ Настройка ViMi Pay", "✨ ViMi Pay setup") + "</h3>",
+            "<table bordered compact><tr><th>"
+            + tr("🚀 Этап настройки", "🚀 Setup step")
+            + "</th><td><b>3/4</b></td></tr></table>",
+            "<h4>" + tr("💳 Способы оплаты", "💳 Payment methods") + "</h4>",
+            "<p>" + tr(
+                "Выберите, <b>как покупатели будут оплачивать</b> "
+                "подписки и файлы.",
+                "Choose <b>how buyers will pay</b> for subscriptions "
+                "and files.",
+            ) + "</p>",
+            "<p>1️⃣ " + tr(
+                "Настройте <b>минимум один способ оплаты</b>.",
+                "Set up <b>at least one payment method</b>.",
+            ) + "</p>",
+            "<p>2️⃣ " + tr(
+                "Остальные способы можно <b>добавить позже</b>.",
+                "You can <b>add the other methods later</b>.",
+            ) + "</p>",
+            RICH_ACTIONS_MARKER,
+        ])
     step = _STEP.get(action, 1)
     items = {
         "methods": (
@@ -179,6 +204,19 @@ def owner_setup_step_classic(
 ) -> str:
     if action == "resources":
         return _channel_step_classic(bot_name=bot_name, timezone=timezone)
+    if action == "methods":
+        return "\n\n".join([
+            tr("✨ <b>Настройка ViMi Pay</b>", "✨ <b>ViMi Pay setup</b>"),
+            tr("🚀 <b>Этап 3/4 · Способы оплаты</b>",
+               "🚀 <b>Step 3/4 · Payment methods</b>"),
+            tr("Выберите, <b>как покупатели будут оплачивать</b> "
+               "подписки и файлы.",
+               "Choose <b>how buyers will pay</b> for subscriptions and files."),
+            tr("1️⃣ Настройте <b>минимум один способ оплаты</b>.\n"
+               "2️⃣ Остальные можно <b>добавить позже</b>.",
+               "1️⃣ Set up <b>at least one payment method</b>.\n"
+               "2️⃣ You can <b>add the others later</b>."),
+        ])
     step = _STEP.get(action, 1)
     progress = (tr("Завершение", "Finish") if action == "saasprofile"
                 else str(step) + "/4")

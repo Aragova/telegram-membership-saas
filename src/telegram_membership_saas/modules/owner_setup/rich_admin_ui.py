@@ -12,6 +12,7 @@ from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
+from aiogram.methods import EditMessageText
 from aiogram.types import InlineKeyboardMarkup, Message
 
 from telegram_membership_saas.currency_display import display_currency, display_price
@@ -377,3 +378,68 @@ async def send_owner_rich(
         return await bot.send_message(
             chat_id, classic_html, parse_mode="HTML", reply_markup=reply_markup,
         )
+
+
+async def replace_owner_rich(
+    bot: Bot, *, chat_id: int, message_id: int | None,
+    rich_html: str, classic_html: str,
+    reply_markup: InlineKeyboardMarkup,
+) -> Message | bool:
+    """Replace one onboarding card instead of accumulating Telegram messages.
+
+    Edit the message (including its native Rich buttons) where supported.
+    For messages that cannot be edited, send the replacement first, then
+    remove the previous bot-owned message. Never leave live stale buttons if
+    Telegram refuses deletion. Transport errors are not retried.
+    """
+    if message_id is None or not isinstance(bot, Bot):
+        # Standalone adapters/test doubles may not implement awaitable
+        # edit endpoints. Real connected Telegram Bots always edit first.
+        return await send_owner_rich(
+            bot, chat_id=chat_id, rich_html=rich_html,
+            classic_html=classic_html, reply_markup=reply_markup,
+        )
+    if (
+        rich_enabled() and InputRichMessage is not None
+        and "rich_message" in EditMessageText.model_fields
+    ):
+        try:
+            inside = rich_with_inline_actions(rich_html, reply_markup)
+            return await bot(EditMessageText(
+                text=None,
+                rich_message=InputRichMessage(html=(
+                    inside if inside is not None
+                    else strip_rich_action_markers(rich_html)
+                )),
+                chat_id=chat_id, message_id=message_id,
+                reply_markup=None if inside is not None else reply_markup,
+            ))
+        except (TelegramBadRequest, TelegramNotFound) as exc:
+            if "message is not modified" in str(exc).lower():
+                return True
+            log.info("Rich owner card edit unavailable: %s", exc)
+    try:
+        with classic_messages():
+            return await bot.edit_message_text(
+                text=classic_html, chat_id=chat_id,
+                message_id=message_id, parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+    except (TelegramBadRequest, TelegramNotFound) as exc:
+        if "message is not modified" in str(exc).lower():
+            return True
+        log.info("Classic owner card edit unavailable: %s", exc)
+    sent = await send_owner_rich(
+        bot, chat_id=chat_id, rich_html=rich_html,
+        classic_html=classic_html, reply_markup=reply_markup,
+    )
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except (TelegramBadRequest, TelegramNotFound):
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=message_id, reply_markup=None,
+            )
+        except (TelegramBadRequest, TelegramNotFound):
+            log.warning("Could not retire old onboarding card %s", message_id)
+    return sent

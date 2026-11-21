@@ -296,7 +296,7 @@ async def test_method_list_paginates_and_deep_link_opens_offscreen_item(monkeypa
     )
     latest = MethodInfo(uuid4(), "New method", "active", ("USD",))
     listing = AsyncMock(side_effect=[
-        first, (latest,),
+        first, (latest,), (latest,),
     ])
     monkeypatch.setattr(ui, "list_owner_methods", listing)
     lookup = AsyncMock(return_value=latest)
