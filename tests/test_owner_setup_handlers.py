@@ -579,6 +579,8 @@ async def test_token_is_deleted_before_registering(monkeypatch):
     assert calls == ["delete", "register"]
     assert token not in str(bot.send_message.await_args.kwargs)
     assert token not in str(bot.send_message.await_args.args)
+    # Existing bot's token rotation returns to management, not first-run setup.
+    assert "УПРАВЛЕНИЕ ПОДКЛЮЧЕНИЕМ" in bot.send_message.await_args.args[1]
 
 
 async def test_failed_token_deletion_stops_all_registration(monkeypatch):
@@ -751,3 +753,44 @@ async def test_crypto_pay_token_deletion_failure_prevents_registration(monkeypat
     )
     await handler(message, bot)
     connect.assert_not_awaited()
+
+
+async def test_first_token_on_existing_empty_connection_shows_single_success(
+    monkeypatch,
+):
+    user_id, project_id = uuid4(), uuid4()
+    token = "123456789:" + "A" * 40
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(
+        return_value=user_id,
+    ))
+    monkeypatch.setattr(ui, "consume_flow", AsyncMock(return_value=SetupFlow(
+        "bot_token", project_id, {}, 999,
+    )))
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(return_value=SetupOverview(
+        project_id=project_id,
+        project_name="My empty project",
+        timezone="Europe/Moscow", bots=(),
+        resources=(), plans=(), methods=(),
+        bot_instances=(), can_delete_bot=True,
+    )))
+    monkeypatch.setattr(ui, "register_customer_bot", AsyncMock(
+        return_value=SimpleNamespace(username="first_bot"),
+    ))
+    monkeypatch.setattr(ui, "set_default_project_name_from_bot", AsyncMock())
+    monkeypatch.setattr(ui, "get_project_import_status", AsyncMock(return_value=None))
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="key",
+    ))
+    instance = _bot()
+    reply = _message(text=token)
+    reply.message_id = 1234
+    reply.reply_to_message = SimpleNamespace(
+        message_id=999, from_user=SimpleNamespace(id=instance.id),
+    )
+    await _handler("owner_reply_handler")(reply, instance)
+    assert instance.send_message.await_count == 1
+    sent = instance.send_message.await_args
+    assert "БОТ УСПЕШНО ПОДКЛЮЧЁН" in sent.args[1]
+    rows = sent.kwargs["reply_markup"].inline_keyboard
+    assert rows[0][0].url == "https://t.me/first_bot"
+    assert rows[1][0].callback_data == "own:select:" + project_id.hex
