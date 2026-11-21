@@ -2921,6 +2921,14 @@ def create_owner_setup_router(
                     tr("🔄 Проверить доступы", "🔄 Review access"),
                     "oblist:sync", "primary",
                 )])
+            if (counts.file_orders or counts.stars_checkouts
+                    or counts.native_paid_links) and username:
+                rows.append([InlineKeyboardButton(
+                    text=tr("🚀 Открыть бота и проверить продажи",
+                            "🚀 Open bot and review sales"),
+                    url="https://t.me/" + username,
+                    style="success",
+                )])
             rows.append([_button(
                 tr("⬅️ К отключению", "⬅️ Back to disconnection"),
                 back_action, "primary",
@@ -2981,10 +2989,9 @@ def create_owner_setup_router(
             for item in snapshot.access:
                 visible += 1
                 records.append(
-                    tr("🔄 Доступ пользователя ", "🔄 Access for user ")
-                    + "<b>" + str(item.customer_id.int % 1000000)
-                    + "</b> · " + escape(obligation_status(item.actual),
-                                          quote=True)
+                    tr("🔄 Состояние доступа", "🔄 Access status")
+                    + ": <b>" + escape(obligation_status(item.actual),
+                                       quote=True) + "</b>"
                 )
                 rows.append([_button(
                     tr("🔄 Перепроверить доступ", "🔄 Recheck access"),
