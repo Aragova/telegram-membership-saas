@@ -2921,6 +2921,24 @@ def create_owner_setup_router(
                     tr("🔄 Проверить доступы", "🔄 Review access"),
                     "oblist:sync", "primary",
                 )])
+            if (
+                counts.access_actions > 0 and not any((
+                    counts.requests, counts.file_orders,
+                    counts.stars_checkouts, counts.native_paid_links,
+                    counts.subscriptions, counts.grants,
+                    counts.access, counts.join_tickets,
+                )) and overview.can_delete_bot and active_bot
+            ):
+                # A deleted/unreachable BotFather bot can leave access
+                # operations stuck. Keep the existing explicit, owner-only
+                # exception discoverable from the overview. The callback
+                # validates the same safety conditions again.
+                rows.append([_button(
+                    tr("🗑 Отключить недоступного бота",
+                       "🗑 Retire unreachable bot"),
+                    "orphanask:" + project_ref + ":"
+                    + encode_uuid(active_bot[0]), "danger",
+                )])
             if (counts.file_orders or counts.stars_checkouts
                     or counts.native_paid_links) and username:
                 rows.append([InlineKeyboardButton(
