@@ -141,7 +141,7 @@ async def test_english_central_welcome(monkeypatch) -> None:
             b.text for row in sent.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert labels == ["🔐 Paid subscriptions"]
+        assert labels == ["🔐 Paid subscriptions", "⬅️ Back"]
         assert "What will you create?" not in sent.args[1]
     finally:
         _language.reset(token)
