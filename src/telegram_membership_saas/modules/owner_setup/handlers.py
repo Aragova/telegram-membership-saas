@@ -3210,19 +3210,35 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+    async def guided_channel_selection(actor_id: UUID, project_id: UUID) -> bool:
+        """Treat an empty connection list as a new channel setup attempt.
+
+        A completed bot may remove all channels to reconnect them. Keep its
+        billing/currency history intact but continue the channel wizard.
+        Capture this before saving the newly selected resource.
+        """
+        if await initial_setup_active(actor_id, project_id):
+            return True
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        return not overview.resources
+
     async def show_connection_result(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, success: bool, kind: str, resource_name: str | None = None,
-        problem: str = "permissions",
+        problem: str = "permissions", guided: bool = False,
     ) -> None:
         """Single result message with one continuation or back action."""
-        onboarding = await initial_setup_active(actor_id, project_id)
+        first_run = await initial_setup_active(actor_id, project_id)
+        onboarding = first_run or guided
         username = await connected_bot_handle(actor_id, project_id)
         rows = [[_button(
             (tr("➡️ Этап 3 · Настроить оплату", "➡️ Step 3 · Set up payments")
              if success and onboarding else
              tr("⬅️ Каналы и группы", "⬅️ Channels and groups")),
-            "dashboard" if success and onboarding else "resources",
+            ("dashboard" if first_run else "setupstep3")
+            if success and onboarding else "resources",
             "primary",
         )]]
         rich = connection_result_rich(
@@ -6426,6 +6442,40 @@ def create_owner_setup_router(
                 await show_settings(bot, user_id)
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
+            elif action == "setupstep3":
+                # Reconnecting a channel on an already configured bot must
+                # not reset its currency, invoices, methods or subscriptions.
+                if fixed_project_id is None:
+                    raise PermissionError("Setup step is tenant-only")
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if not any(s == "active" for _, _, s in overview.resources):
+                    raise ValueError(tr(
+                        "Сначала подключите канал или группу.",
+                        "Connect a channel or group first.",
+                    ))
+                name = (
+                    overview.live_bot_username
+                    or next((n for n, state in overview.bots
+                             if state == "registered"), "")
+                    or overview.project_name
+                )
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=owner_setup_step_rich(
+                        bot_name=name, timezone=overview.timezone,
+                        action="methods",
+                    ),
+                    classic_html=owner_setup_step_classic(
+                        bot_name=name, timezone=overview.timezone,
+                        action="methods",
+                    ),
+                    reply_markup=_markup([[_button(
+                        wizard_primary_label("methods", "💳"),
+                        "methods", "success",
+                    )]]),
+                )
             elif action.startswith("connrename:"):
                 target_id = UUID(hex=action.split(":", 1)[1])
                 if target_id != project_id:
@@ -7080,9 +7130,13 @@ def create_owner_setup_router(
                 if kind not in ("channel", "group"):
                     raise ValueError(tr("Неизвестный тип чата", "Unsupported chat type"))
                 request_id = randbelow(2**31 - 2) + 1
+                guided = await guided_channel_selection(actor_id, project_id)
                 await set_flow(
                     factory, actor_id=actor_id, step="chat_picker",
-                    payload={"request_id": request_id, "kind": kind},
+                    payload={
+                        "request_id": request_id, "kind": kind,
+                        "guided": guided,
+                    },
                     bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 # request_chat can only be shown on a native reply keyboard;
@@ -7121,6 +7175,11 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, step="resource_reference",
                     text=manual_classic(username),
                     rich_html=manual_rich(username),
+                    payload={
+                        "guided": await guided_channel_selection(
+                            actor_id, project_id,
+                        ),
+                    },
                     show_main_menu=False,
                 )
             elif action == "plans":
@@ -8388,6 +8447,7 @@ def create_owner_setup_router(
             return
         kind = "channel"
         problem = "permissions"
+        guided = False
         try:
             flow = await consume_button_flow(
                 factory, actor_id=actor_id, expected_step="chat_picker",
@@ -8401,6 +8461,7 @@ def create_owner_setup_router(
                     "You cannot change another bot's settings",
                 ))
             kind = flow.payload.get("kind", "channel")
+            guided = flow.payload.get("guided") is True
             chat = await verify_channel_and_add(
                 factory, actor_id=actor_id,
                 actor_telegram_id=message.from_user.id,
@@ -8422,7 +8483,7 @@ def create_owner_setup_router(
             bot, message.chat.id, actor_id, fixed_project_id,
             success=success, kind=kind,
             resource_name=chat.name if chat is not None else None,
-            problem=problem,
+            problem=problem, guided=guided,
         )
 
     async def send_connected_bot(
@@ -8725,6 +8786,7 @@ def create_owner_setup_router(
                     bot, message.chat.id, actor_id, project_id,
                     success=True, kind=resource_kind,
                     resource_name=resource.name,
+                    guided=flow.payload.get("guided") is True,
                 )
             elif flow.step == "plan_name":
                 if not 2 <= len(text) <= 120:
@@ -8922,6 +8984,7 @@ def create_owner_setup_router(
                     bot, message.chat.id, actor_id, flow.project_id,
                     success=False, kind="chat",
                     problem=connection_problem_code(exc),
+                    guided=flow.payload.get("guided") is True,
                 )
                 return
             destination = {
