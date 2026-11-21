@@ -130,54 +130,136 @@ def picker_classic(kind: str, username: str | None) -> str:
 
 
 def manual_rich(username: str | None) -> str:
-    handle = _handle(username)
+    """Readable Rich card with separate headings, lists and example."""
     return "\n".join([
-        "<h3>" + tr("✍️ Подключение по ID",
-                    "✍️ Connect by ID") + "</h3>",
+        "<h3>" + tr("✍️ Подключение по ID", "✍️ Connect by ID") + "</h3>",
         "<table bordered compact><tr><th>"
         + tr("🚀 Этап", "🚀 Step") + "</th><td><b>2/4</b></td></tr></table>",
-        "<p>🔗 " + tr(
-            "Отправьте <b>ID канала или группы</b> в формате "
-            "<code>-100...</code> либо публичный <b>@username</b> "
-            "обычным сообщением <b>в этот чат</b>.",
-            "Send the <b>channel or group ID</b> in the "
-            "<code>-100...</code> format, or its public "
-            "<b>@username</b>, as a regular message <b>in this chat</b>.",
-        ) + "</p>",
-        "<p>ℹ️ " + tr(
-            "Перед отправкой убедитесь, что ", "Before sending, make sure "
-        ) + handle + tr(
-            " уже администратор нужного канала или группы "
-            "с правами <b>добавления</b> и <b>блокировки пользователей</b>.",
-            " is already an administrator of the channel or group "
-            "with <b>invite</b> and <b>ban users</b> permissions.",
-        ) + "</p>",
-        "<p><b>" + tr("💬 Пример", "💬 Example")
-        + ":</b> <code>-1001234567890</code> "
-        + tr("или", "or") + " <code>@my_private_channel</code></p>",
+        "<h4>" + tr("📨 ЧТО ОТПРАВИТЬ?", "📨 WHAT TO SEND?") + "</h4>",
+        "<p>" + tr("Отправьте <b>в этот чат</b> один из вариантов:",
+                    "Send <b>one of these</b> to this chat:") + "</p>",
+        "<ul><li>" + tr("ID канала или группы (начинается с <code>-100</code>)",
+                         "Channel or group ID (starts with <code>-100</code>)")
+        + "</li><li>" + tr("Публичный <b>@username</b> канала или группы",
+                           "Public channel or group <b>@username</b>")
+        + "</li></ul>",
+        "<h4>" + tr("✅ ПЕРЕД ОТПРАВКОЙ", "✅ BEFORE SENDING") + "</h4>",
+        "<p>" + tr("Добавьте ", "Add ") + _handle(username)
+        + tr(" в администраторы выбранного канала или группы.",
+             " as an administrator of the selected channel or group.") + "</p>",
+        "<ul><li>" + tr("Добавление пользователей", "Invite users")
+        + "</li><li>" + tr("Блокировка / удаление пользователей",
+                           "Ban / remove users") + "</li></ul>",
+        "<h4>" + tr("💬 ПРИМЕР", "💬 EXAMPLE") + "</h4>",
+        "<pre>-1001234567890\n" + tr("или", "or")
+        + "\n@my_private_channel</pre>",
         RICH_ACTIONS_MARKER,
     ])
 
 
 def manual_classic(username: str | None) -> str:
-    handle = _handle(username)
     return "\n\n".join([
-        tr("✍️ <b>ПОДКЛЮЧЕНИЕ ПО ID</b>",
-           "✍️ <b>CONNECT BY ID</b>"),
+        tr("✍️ <b>Подключение по ID</b>", "✍️ <b>Connect by ID</b>"),
         "<b>" + tr("🚀 Этап 2 из 4", "🚀 Step 2 of 4") + "</b>",
-        "🔗 " + tr(
-            "Отправьте ID канала или группы <code>-100...</code> "
-            "либо публичный <b>@username</b> прямо в этот чат.",
-            "Send the channel/group ID <code>-100...</code> "
-            "or public <b>@username</b> directly in this chat.",
+        tr("📨 <b>ЧТО ОТПРАВИТЬ?</b>", "📨 <b>WHAT TO SEND?</b>")
+        + "\n" + tr(
+            "Отправьте в этот чат ID канала или группы "
+            "(начинается с <code>-100</code>) или публичный <b>@username</b>.",
+            "Send a channel/group ID (starts with <code>-100</code>) "
+            "or public <b>@username</b> to this chat.",
         ),
-        "ℹ️ " + tr(
-            "Убедитесь, что ", "Make sure "
-        ) + handle + tr(
-            " уже администратор с правами добавления и блокировки пользователей.",
-            " is an administrator with invite and ban permissions.",
+        tr("✅ <b>ПЕРЕД ОТПРАВКОЙ</b>", "✅ <b>BEFORE SENDING</b>")
+        + "\n" + _handle(username) + tr(
+            " должен быть администратором с правами:\n"
+            "• Добавление пользователей\n"
+            "• Блокировка / удаление пользователей",
+            " must be an administrator with:\n"
+            "• Invite users\n"
+            "• Ban / remove users",
         ),
-        "💬 <b>" + tr("Пример", "Example") + ":</b> "
-        + "<code>-1001234567890</code> "
+        tr("💬 <b>ПРИМЕР</b>", "💬 <b>EXAMPLE</b>")
+        + "\n<code>-1001234567890</code> "
         + tr("или", "or") + " <code>@my_private_channel</code>",
+    ])
+
+
+def connection_result_rich(
+    *, success: bool, kind: str, username: str | None,
+    resource_name: str | None = None, onboarding: bool = False,
+) -> str:
+    """One result card, one forward/back action; no duplicate directory."""
+    if kind not in ("channel", "group"):
+        kind = "channel"
+    thing = tr("КАНАЛ", "CHANNEL") if kind == "channel" else tr("ГРУППА", "GROUP")
+    head = (tr("✅ ПОДКЛЮЧЕНО", "✅ CONNECTED") if success
+            else tr("⚠️ НЕ ПОДКЛЮЧЕНО", "⚠️ NOT CONNECTED"))
+    parts = ["<h3>" + head + " · " + thing + "</h3>"]
+    if success:
+        parts.append("<p>✅ <b>" + escape(resource_name or "", quote=True)
+                     + "</b> " + tr("сохранён в ViMi Pay.",
+                                     "has been saved in ViMi Pay.") + "</p>")
+        parts.append("<p>🚀 " + (
+            tr("Следующий этап — <b>оплата покупателей</b>.",
+               "Next: <b>buyer payments</b>.")
+            if onboarding else
+            tr("Подключение доступно в разделе «Каналы и группы».",
+               "Manage this connection under Channels and groups.")
+        ) + "</p>")
+    else:
+        parts.extend([
+            "<p>" + tr(
+                "ViMi Pay не смог подтвердить доступ к выбранному чату.",
+                "ViMi Pay could not verify access to this chat.",
+            ) + "</p>",
+            "<h4>" + tr("📋 КАК ИСПРАВИТЬ?", "📋 HOW TO FIX IT?") + "</h4>",
+            "<p><b>1️⃣</b> " + tr("Добавьте ", "Add ") + _handle(username)
+            + tr(" в администраторы.", " as an administrator.") + "</p>",
+            "<p><b>2️⃣</b> " + tr(
+                "Включите права <b>добавлять</b> и <b>блокировать пользователей</b>.",
+                "Enable <b>invite users</b> and <b>ban/remove users</b>.",
+            ) + "</p>",
+            "<p><b>3️⃣</b> " + tr(
+                "Сохраните права и повторите выбор.",
+                "Save the permissions and select the chat again.",
+            ) + "</p>",
+        ])
+    parts.append(RICH_ACTIONS_MARKER)
+    return "\n".join(parts)
+
+
+def connection_result_classic(
+    *, success: bool, kind: str, username: str | None,
+    resource_name: str | None = None, onboarding: bool = False,
+) -> str:
+    if kind not in ("channel", "group"):
+        kind = "channel"
+    thing = tr("канал", "channel") if kind == "channel" else tr("группа", "group")
+    if success:
+        return "\n\n".join([
+            "✅ <b>" + tr("Подключено: ", "Connected: ")
+            + escape(resource_name or "", quote=True) + "</b>",
+            tr("Теперь ", "This ") + thing + tr(
+                " подключён к ViMi Pay.", " is connected to ViMi Pay.",
+            ),
+            (tr("🚀 Следующий этап — оплата покупателей.",
+                "🚀 Next: buyer payments.")
+             if onboarding else tr(
+                "📂 Управление доступно в разделе «Каналы и группы».",
+                "📂 Manage it under Channels and groups.",
+             )),
+        ])
+    return "\n\n".join([
+        "⚠️ <b>" + tr("Не удалось подключить: ",
+                      "Could not connect: ") + thing + "</b>",
+        tr("ViMi Pay не смог проверить доступ.",
+           "ViMi Pay could not verify access."),
+        tr("📋 <b>Что сделать?</b>", "📋 <b>What to do?</b>")
+        + "\n<b>1️⃣</b> " + tr("Добавьте ", "Add ") + _handle(username)
+        + tr(" в администраторы.", " as an administrator.")
+        + "\n<b>2️⃣</b> " + tr(
+            "Разрешите добавлять и блокировать пользователей.",
+            "Enable invite and ban user permissions.",
+        ) + "\n<b>3️⃣</b> " + tr(
+            "Повторите выбор.", "Try selecting the chat again.",
+        ),
     ])
