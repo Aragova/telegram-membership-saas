@@ -37,7 +37,7 @@ count/amount, and the earliest *future* issued unpaid invoice. Shows its
 original Moscow-local due date, remaining RUB amount, and @bot username.
 If there are multiple invoices due on that same Moscow calendar date,
 shows \`+ ещё N / + another N\`. An inline button opens that **exact issued
-invoice** (owner authorization rechecked in the existing invoice route).
+invoice**. At click time the owner-scoped `platform_saas_owner_invoice_page(uuid)` RPC resolves its current position in the six-per-page invoice history, even if newly issued bills pushed it beyond page zero. The existing invoice handler independently rechecks owner authorization.
 Deleted bots have a neutral "Previously disconnected bot" label and still
 link to their retained invoice. No fictional upcoming date is shown for
 unissued future charges or unexpired trials.
