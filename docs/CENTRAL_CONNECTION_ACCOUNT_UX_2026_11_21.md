@@ -42,6 +42,29 @@ database field or fake button. One contextual **⬅️ Back** on input prompts
 rather than two competing exit controls. Existing generation-bound prompt
 cancellation prevents old keyboards from canceling a newer input.
 
+## Final central project disposal UI
+
+This also applies to the distinct **empty connection deletion / archive**
+operations. These are NOT the same as bot disconnection. The original
+`remove_unused_connection` and `archive_owner_connection` authorization,
+database-history locks and protected-customer guards remain unchanged.
+
+- **Delete empty connection**: only a disconnected project with no protected
+  financial/access history can be permanently removed. The confirmation states
+  exactly which local configuration is erased. The owner is warned explicitly
+  that account invoices and any debt do **not** disappear; settlement stays in
+  the central **🧾 Account bill**.
+- **Archive disconnected connection**: preserves plans, settings and all
+  customer/payment history; restoration remains available from the archived
+  connections section. Outstanding bills are not forgiven by archiving.
+- Each operation uses a full RU/EN Rich card plus complete classic fallback,
+  with an escaped project name. Red destructive button, blue cancel.
+- On success the central bot displays exactly **one complete result screen**.
+  There is no extra unsolicited connection list: choose **📂 My connections**
+  or **🏠 Main menu** after deletion, or **📦 Archived connections** or
+  **🏠 Main menu** after archiving.
+- Do not add redundant billing buttons or display internal project IDs.
+
 ## Verification
 
 Run the full CI and review exact PR HEAD. Cover RU/EN and HTML escaping,
