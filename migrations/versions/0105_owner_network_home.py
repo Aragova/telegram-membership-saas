@@ -207,7 +207,61 @@ def upgrade() -> None:
     """)
 
 
+    # A next-invoice callback MUST resolve the current page at click time,
+    # not assume the nearest due invoice is on descending statement page 0.
+    op.execute("""
+      CREATE FUNCTION public.platform_saas_owner_invoice_page(p_invoice uuid)
+      RETURNS integer LANGUAGE plpgsql STABLE SECURITY DEFINER
+      SET search_path = pg_catalog, public
+      AS $fn$
+      DECLARE
+        actor uuid;
+        due_at_value timestamptz;
+        order_id uuid;
+        offset_count bigint;
+      BEGIN
+        actor := NULLIF(current_setting('app.current_user_id', true), '')::uuid;
+        IF actor IS NULL OR p_invoice IS NULL THEN
+          RAISE EXCEPTION 'Authenticated invoice owner required'
+            USING ERRCODE='42501';
+        END IF;
+        SELECT i.due_at, i.id INTO due_at_value, order_id
+        FROM public.platform_saas_invoices i
+        WHERE i.id = p_invoice AND i.owner_user_id = actor
+          AND i.status = 'issued';
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'Invoice does not belong to account'
+            USING ERRCODE='42501';
+        END IF;
+        SELECT count(*) INTO offset_count
+        FROM public.platform_saas_invoices i
+        WHERE i.owner_user_id = actor AND i.status = 'issued'
+          AND (i.due_at, i.id) > (due_at_value, order_id);
+        RETURN floor(offset_count::numeric / 6)::integer;
+      END; $fn$
+    """)
+    op.execute("""
+      REVOKE ALL ON FUNCTION
+        public.platform_saas_owner_invoice_page(uuid)
+      FROM PUBLIC
+    """)
+    op.execute("""
+      DO $grants$
+      BEGIN
+        IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='membership_runtime')
+        THEN
+          GRANT EXECUTE ON FUNCTION
+            public.platform_saas_owner_invoice_page(uuid)
+          TO membership_runtime;
+        END IF;
+      END $grants$
+    """)
+
+
 def downgrade() -> None:
+    op.execute(
+        "DROP FUNCTION IF EXISTS public.platform_saas_owner_invoice_page(uuid)"
+    )
     op.execute(
         "DROP FUNCTION IF EXISTS public.platform_saas_owner_network_home()"
     )
