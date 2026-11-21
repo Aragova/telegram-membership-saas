@@ -171,6 +171,43 @@ async def test_back_owner_flow_atomically_invalidates_force_reply(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stale_rich_form_buttons_do_not_clear_newer_wizard(monkeypatch):
+    actor_id, project_id = uuid4(), uuid4()
+    state = SimpleNamespace(
+        step="price_amount", payload={"plan_id": uuid4().hex},
+        selected_project_id=project_id, prompt_message_id=99,
+        generation="newer", expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    session = SimpleNamespace(get=AsyncMock(return_value=state))
+
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield session
+
+    monkeypatch.setattr(service, "tenant_session_scope", scope)
+    result = await service.back_owner_flow(
+        MagicMock(), actor_id=actor_id, bot_scope_id=900,
+        expected_generation="old",
+    )
+    assert result is None
+    cancelled = await service.cancel_owner_flow(
+        MagicMock(), actor_id=actor_id, bot_scope_id=900,
+        expected_generation="old",
+    )
+    assert cancelled is False
+    assert state.step == "price_amount"
+    assert state.generation == "newer"
+    assert state.prompt_message_id == 99
+    assert state.selected_project_id == project_id
+    result = await service.back_owner_flow(
+        MagicMock(), actor_id=actor_id, bot_scope_id=900,
+        expected_generation="newer",
+    )
+    assert result is not None and result.step == "price_amount"
+    assert state.step is None and state.generation is None
+
+
+@pytest.mark.asyncio
 async def test_back_command_routes_to_price_plan_without_modifying_price(monkeypatch):
     project_id, actor_id, plan_id = uuid4(), uuid4(), uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
