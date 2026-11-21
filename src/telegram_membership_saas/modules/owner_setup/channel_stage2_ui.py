@@ -347,3 +347,33 @@ def connection_result_classic(
             "Повторите выбор.", "Try selecting the chat again.",
         ),
     ])
+
+
+
+def setup_stage_two_rich(resource_count: int) -> str:
+    """Step 2 return card, without opening the work-mode resource catalog."""
+    return "\n".join([
+        "<h3>" + tr("📢 Этап 2/4 · Подключение канала",
+                    "📢 Step 2/4 · Connect a channel") + "</h3>",
+        "<p>✅ " + tr(
+            "Подключённых каналов и групп: ",
+            "Connected channels and groups: ",
+        ) + str(resource_count) + "</p>",
+        "<p>" + tr(
+            "Можно подключить ещё один ресурс или вернуться "
+            "к настройке способов оплаты.",
+            "Add another channel or group, or continue "
+            "setting up payment methods.",
+        ) + "</p>",
+        RICH_ACTIONS_MARKER,
+    ])
+
+
+def setup_stage_two_classic(resource_count: int) -> str:
+    return "\n\n".join([
+        tr("📢 <b>Этап 2/4 · Подключение канала</b>",
+           "📢 <b>Step 2/4 · Connect a channel</b>"),
+        "✅ " + tr("Подключено: ", "Connected: ") + str(resource_count),
+        tr("Добавьте другой канал или перейдите к способам оплаты.",
+           "Add another channel or continue to payment methods."),
+    ])
