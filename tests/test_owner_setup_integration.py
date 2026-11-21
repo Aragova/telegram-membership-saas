@@ -37,6 +37,48 @@ def _new_telegram_id():
     return (uuid4().int % 8_000_000_000_000_000_000) + 1
 
 
+async def test_native_picker_bound_message_is_not_a_text_prompt():
+    engine = build_engine(Settings())
+    sf = build_session_factory(engine)
+    try:
+        actor = await setup.ensure_telegram_actor(
+            sf, telegram_id=_new_telegram_id(),
+            username="native_picker_owner", first_name="Owner",
+        )
+        project = await setup.create_owner_project(
+            sf, actor_id=actor, name="Picker-only channel test",
+        )
+        generation = await setup.set_flow(
+            sf, actor_id=actor, step="chat_picker",
+            payload={"kind": "channel", "request_id": 42},
+            project_id=project, bot_scope_id=987,
+        )
+        await setup.bind_prompt(
+            sf, actor_id=actor, step="chat_picker", message_id=501,
+            generation=generation, bot_scope_id=987,
+        )
+        # Even a direct reply to the native picker instructions must not
+        # consume the button-only flow; only matching chat_shared may.
+        for reply_id in (None, 501):
+            assert not await setup.is_expected_prompt(
+                sf, actor_id=actor, reply_message_id=reply_id,
+                bot_scope_id=987,
+            )
+            assert await setup.consume_flow(
+                sf, actor_id=actor, reply_message_id=reply_id,
+                bot_scope_id=987,
+            ) is None
+        matching = await setup.consume_button_flow(
+            sf, actor_id=actor, expected_step="chat_picker",
+            request_id=42, bot_scope_id=987, discard=True,
+        )
+        assert matching.project_id == project
+        assert matching.prompt_message_id == 501
+        assert matching.payload["kind"] == "channel"
+    finally:
+        await engine.dispose()
+
+
 async def test_owner_configures_project_channel_tariff_payment_and_publishes(monkeypatch):
     engine = build_engine(Settings())
     sf = build_session_factory(engine)

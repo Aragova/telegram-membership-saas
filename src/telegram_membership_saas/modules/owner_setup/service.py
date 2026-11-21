@@ -367,6 +367,9 @@ async def is_expected_prompt(
         return bool(
             state is not None
             and state.step
+            # Native request_chat is button-only. Its bound message ID is
+            # used for cleanup, never for accepting arbitrary text replies.
+            and state.step != "chat_picker"
             and state.prompt_message_id is not None
             and (
                 reply_message_id is None
@@ -386,6 +389,7 @@ async def consume_flow(
         state = await _current_session(session, actor_id, bot_scope_id)
         if (
             not state.step
+            or state.step == "chat_picker"
             or state.prompt_message_id is None
             or (reply_message_id is not None
                 and state.prompt_message_id != reply_message_id)
