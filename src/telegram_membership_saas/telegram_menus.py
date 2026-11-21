@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import system_project_session_scope
-from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.identity import TelegramUser
+from telegram_membership_saas.modules.projects import Project
 
 logger = logging.getLogger(__name__)
 

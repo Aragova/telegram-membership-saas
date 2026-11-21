@@ -11,8 +11,8 @@ from decimal import Decimal
 from html import escape
 
 from aiogram import Bot
-from aiogram.methods import EditMessageText
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
+from aiogram.methods import EditMessageText
 from aiogram.types import InlineKeyboardMarkup, Message
 
 from telegram_membership_saas.currency_display import display_currency, display_price

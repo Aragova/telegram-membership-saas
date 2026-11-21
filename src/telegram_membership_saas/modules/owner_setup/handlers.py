@@ -236,11 +236,11 @@ from telegram_membership_saas.modules.owner_setup.premium_welcome import (
     trial_status_classic,
 )
 from telegram_membership_saas.modules.owner_setup.rich_admin_ui import (
+    replace_owner_rich,
     rich_channel_card,
     rich_owner_statistics,
     rich_subscriber_card,
     rich_subscriber_invoices,
-    replace_owner_rich,
     send_owner_rich,
 )
 from telegram_membership_saas.modules.owner_setup.service import (

@@ -1,7 +1,7 @@
 """Role-scoped native commands: the owner is an admin, not a buyer."""
 
-from unittest.mock import AsyncMock, MagicMock
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
