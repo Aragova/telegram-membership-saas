@@ -7,7 +7,7 @@ No synthetic sales or debts are committed.
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
