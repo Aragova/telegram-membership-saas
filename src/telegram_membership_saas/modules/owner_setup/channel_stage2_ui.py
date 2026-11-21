@@ -188,9 +188,11 @@ def connection_result_rich(
     resource_name: str | None = None, onboarding: bool = False,
 ) -> str:
     """One result card, one forward/back action; no duplicate directory."""
-    if kind not in ("channel", "group"):
-        kind = "channel"
-    thing = tr("КАНАЛ", "CHANNEL") if kind == "channel" else tr("ГРУППА", "GROUP")
+    if kind not in ("channel", "group", "chat"):
+        kind = "chat"
+    thing = (tr("КАНАЛ", "CHANNEL") if kind == "channel"
+             else tr("ГРУППА", "GROUP") if kind == "group"
+             else tr("КАНАЛ / ГРУППА", "CHANNEL / GROUP"))
     head = (tr("✅ ПОДКЛЮЧЕНО", "✅ CONNECTED") if success
             else tr("⚠️ НЕ ПОДКЛЮЧЕНО", "⚠️ NOT CONNECTED"))
     parts = ["<h3>" + head + " · " + thing + "</h3>"]
@@ -231,9 +233,11 @@ def connection_result_classic(
     *, success: bool, kind: str, username: str | None,
     resource_name: str | None = None, onboarding: bool = False,
 ) -> str:
-    if kind not in ("channel", "group"):
-        kind = "channel"
-    thing = tr("канал", "channel") if kind == "channel" else tr("группа", "group")
+    if kind not in ("channel", "group", "chat"):
+        kind = "chat"
+    thing = (tr("канал", "channel") if kind == "channel"
+             else tr("группу", "group") if kind == "group"
+             else tr("канал или группу", "channel or group"))
     if success:
         return "\n\n".join([
             "✅ <b>" + tr("Подключено: ", "Connected: ")
