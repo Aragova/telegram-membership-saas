@@ -37,3 +37,24 @@ async def read_owner_network_home(
     ):
         raise RuntimeError("Incomplete ViMi Pay owner fleet summary")
     return report
+
+
+async def owner_invoice_statement_page(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, invoice_id: UUID,
+) -> int:
+    """Resolve the invoice's current owner-authorized history page at click time.
+
+    The page may shift when new invoices are issued after the main dashboard
+    was rendered. This read does not lock, modify or settle the invoice.
+    """
+    stmt = text(
+        "SELECT public.platform_saas_owner_invoice_page(:invoice) AS page"
+    )
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id),
+    ) as session:
+        page = (await session.execute(stmt, {"invoice": invoice_id})).scalar_one()
+    if not isinstance(page, int) or not 0 <= page <= 100000:
+        raise ValueError("Invalid owner invoice page")
+    return page
