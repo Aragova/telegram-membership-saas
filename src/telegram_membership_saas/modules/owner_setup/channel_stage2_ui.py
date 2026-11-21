@@ -36,10 +36,10 @@ def directory_rich(count: int) -> str:
                 "group where the bot will grant and revoke subscriber access.",
             ) + "</p>",
             "<p>ℹ️ " + tr(
-                "После завершения первого подключения откроется "
+                "После завершения первоначальной настройки откроется "
                 "полная панель управления.",
                 "The full management dashboard will become available "
-                "when initial setup is complete.",
+                "when all initial setup steps are complete.",
             ) + "</p>",
         ]
     else:
@@ -69,9 +69,9 @@ def directory_classic(count: int) -> str:
                 "or group where the bot grants and revokes access.",
             ),
             "ℹ️ " + tr(
-                "После завершения первого подключения откроется "
+                "После завершения первоначальной настройки откроется "
                 "полная панель управления.",
-                "The full dashboard will open after initial setup.",
+                "The full dashboard will open after all setup steps.",
             ),
         ]
     else:
