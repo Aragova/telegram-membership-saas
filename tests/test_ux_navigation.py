@@ -47,18 +47,20 @@ def test_roles_offer_only_implemented_commands_without_duplicates():
     expected_connected = ["menu", "subscription", "support"]
     # Central accounts need their historical invoices even with zero bots.
     expected_central = ["start", "bots", "billing"]
-    for role in ("buyer", "owner"):
-        for language in ("ru", "en"):
-            commands = commands_for(role, language)
-            assert [command.command for command in commands] == expected_connected
-            assert len({command.command for command in commands}) == 3
+    for language in ("ru", "en"):
+        buyer_commands = commands_for("buyer", language)
+        owner_commands = commands_for("owner", language)
+        assert [command.command for command in buyer_commands] == expected_connected
+        assert len({command.command for command in buyer_commands}) == 3
+        assert [command.command for command in owner_commands] == ["start"]
+        assert len({command.command for command in owner_commands}) == 1
     for role in ("central", "platform"):
         for language in ("ru", "en"):
             commands = commands_for(role, language)
             assert [command.command for command in commands] == expected_central
             assert len({command.command for command in commands}) == 3
     assert commands_for("buyer", "en")[1].description == "🧾 My subscriptions"
-    assert commands_for("owner", "ru")[1].description == "🧾 Мои подписки"
+    assert commands_for("owner", "ru")[0].description == "🏠 Главное меню"
     assert commands_for("buyer", "ru")[2].description == "🛟 Поддержка"
     assert all(
         not command.command.startswith("/")
@@ -84,10 +86,8 @@ async def test_native_menu_default_and_language_specific_chat_override():
     command = bot.set_my_commands.await_args
     assert command.kwargs["scope"].type == "chat"
     assert command.kwargs["scope"].chat_id == 711
-    assert [c.command for c in command.kwargs["commands"]] == [
-        "menu", "subscription", "support",
-    ]
-    assert command.kwargs["commands"][1].description == "🧾 My subscriptions"
+    assert [c.command for c in command.kwargs["commands"]] == ["start"]
+    assert command.kwargs["commands"][0].description == "🏠 Main menu"
 
 
 async def test_central_platform_owner_override_uses_own_chat_only(monkeypatch):

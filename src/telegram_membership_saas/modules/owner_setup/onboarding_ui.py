@@ -104,7 +104,7 @@ def wizard_primary_label(action: str, default_label: str) -> str:
         return tr("📢 Подключить канал / группу",
                   "📢 Connect channel / group")
     if action == "methods":
-        return tr("💳 Настроить оплату покупателей", "💳 Set up buyer payments")
+        return tr("💳 Настроить способы оплаты", "💳 Set up payment methods")
     if action == "plans":
         return tr("📦 Создать первый тариф", "📦 Create first plan")
     if action == "saasprofile":
@@ -125,7 +125,7 @@ def owner_setup_step_rich(
     step = _STEP.get(action, 1)
     items = {
         "methods": (
-            tr("💳 Оплата покупателей", "💳 Buyer payments"),
+            tr("💳 Способы оплаты", "💳 Payment methods"),
             tr("Выберите хотя бы один рабочий способ оплаты: ⭐ Telegram "
                "Stars, Crypto Pay или полуавтоматический перевод. Укажите "
                "реальные реквизиты и инструкции. Это платежи покупателей, "

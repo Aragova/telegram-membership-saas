@@ -3241,40 +3241,81 @@ def create_owner_setup_router(
             # Deletion can fail for an old message. Still deliver the result.
             pass
 
+    async def show_payment_setup_step(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+    ) -> None:
+        """Show step 3 directly after a verified channel, with no success interstitial.
+
+        Keep account currency, old invoices and subscriptions untouched even
+        when an existing owner reconnects their first channel.
+        """
+        if fixed_project_id is None or project_id != fixed_project_id:
+            raise PermissionError("Setup step is tenant-only")
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        if not any(status == "active" for _, _, status in overview.resources):
+            raise ValueError(tr(
+                "Сначала подключите канал или группу.",
+                "Connect a channel or group first.",
+            ))
+        bot_name = (
+            overview.live_bot_username
+            or next((name for name, state in overview.bots
+                     if state == "registered"), "")
+            or overview.project_name
+        )
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=owner_setup_step_rich(
+                bot_name=bot_name, timezone=overview.timezone,
+                action="methods",
+            ),
+            classic_html=owner_setup_step_classic(
+                bot_name=bot_name, timezone=overview.timezone,
+                action="methods",
+            ),
+            reply_markup=_markup([[_button(
+                wizard_primary_label("methods", "💳"),
+                "methods", "success",
+            )]]),
+        )
+
     async def show_connection_result(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, success: bool, kind: str, resource_name: str | None = None,
         problem: str = "permissions", guided: bool = False,
     ) -> None:
-        """Single result message with one continuation or back action."""
-        first_run = await initial_setup_active(actor_id, project_id)
-        onboarding = first_run or guided
+        """On success open the destination directly; on failure show one error."""
+        if success:
+            if guided or await initial_setup_active(actor_id, project_id):
+                # No "connected" acknowledgement and no extra Next click.
+                await show_payment_setup_step(
+                    bot, user_id, actor_id, project_id,
+                )
+            else:
+                # Adding a channel to an already working bot is maintenance,
+                # not onboarding: return to the actual connected-resource list.
+                await show_resources(bot, user_id, actor_id, project_id)
+            return
         username = await connected_bot_handle(actor_id, project_id)
         rows = [[_button(
-            (tr("➡️ Этап 3 · Настроить оплату", "➡️ Step 3 · Set up payments")
-             if success and onboarding else
-             tr("⬅️ Каналы и группы", "⬅️ Channels and groups")),
-            ("dashboard" if first_run else "setupstep3")
-            if success and onboarding else "resources",
-            "primary",
+            tr("⬅️ Каналы и группы", "⬅️ Channels and groups"),
+            "resources", "primary",
         )]]
-        rich = connection_result_rich(
-            success=success, kind=kind, username=username,
-            resource_name=resource_name, onboarding=onboarding,
-            problem=problem,
-        )
-        classic = connection_result_classic(
-            success=success, kind=kind, username=username,
-            resource_name=resource_name, onboarding=onboarding,
-            problem=problem,
-        )
-        # Telegram's native picker is one-time: clients hide its reply
-        # keyboard after chat_shared. The result must use a real inline
-        # action directly, not attempt to edit ReplyKeyboardRemove markup
-        # (Telegram prohibits that edit). Exactly one bot result is sent.
+        # Rejected choices keep the single bilingual rich explanation.
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=rich, classic_html=classic,
+            rich_html=connection_result_rich(
+                success=False, kind=kind, username=username,
+                resource_name=resource_name, onboarding=False,
+                problem=problem,
+            ),
+            classic_html=connection_result_classic(
+                success=False, kind=kind, username=username,
+                resource_name=resource_name, onboarding=False,
+                problem=problem,
+            ),
             reply_markup=_markup(rows),
         )
 
@@ -6463,38 +6504,9 @@ def create_owner_setup_router(
             elif action == "dashboard":
                 await show_dashboard(bot, user_id, actor_id, project_id)
             elif action == "setupstep3":
-                # Reconnecting a channel on an already configured bot must
-                # not reset its currency, invoices, methods or subscriptions.
-                if fixed_project_id is None:
-                    raise PermissionError("Setup step is tenant-only")
-                overview = await setup_overview(
-                    factory, actor_id=actor_id, project_id=project_id,
-                )
-                if not any(s == "active" for _, _, s in overview.resources):
-                    raise ValueError(tr(
-                        "Сначала подключите канал или группу.",
-                        "Connect a channel or group first.",
-                    ))
-                name = (
-                    overview.live_bot_username
-                    or next((n for n, state in overview.bots
-                             if state == "registered"), "")
-                    or overview.project_name
-                )
-                await send_owner_rich(
-                    bot, chat_id=user_id,
-                    rich_html=owner_setup_step_rich(
-                        bot_name=name, timezone=overview.timezone,
-                        action="methods",
-                    ),
-                    classic_html=owner_setup_step_classic(
-                        bot_name=name, timezone=overview.timezone,
-                        action="methods",
-                    ),
-                    reply_markup=_markup([[_button(
-                        wizard_primary_label("methods", "💳"),
-                        "methods", "success",
-                    )]]),
+                # Backward-compatible CTA on cards sent by older deployments.
+                await show_payment_setup_step(
+                    bot, user_id, actor_id, project_id,
                 )
             elif action.startswith("connrename:"):
                 target_id = UUID(hex=action.split(":", 1)[1])
