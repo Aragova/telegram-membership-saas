@@ -138,7 +138,8 @@ def test_first_time_wizard_is_bilingual_and_uses_only_existing_actions():
             )
         finally:
             _language.reset(token)
-        assert "4/4" in card and "4/4" in fallback
+        assert ("Завершение" if language == "ru" else "Finish") in card
+        assert ("Завершение" if language == "ru" else "Finish") in fallback
         assert label in card
         assert RICH_ACTIONS_MARKER in card
         assert "150" in card and "5" in card
