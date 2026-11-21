@@ -4384,7 +4384,7 @@ def create_owner_setup_router(
                 "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
-                "promptback:", "promptcancel:",
+                "oblist:", "promptback:", "promptcancel:",
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
@@ -4410,7 +4410,7 @@ def create_owner_setup_router(
                 "onboardlanguage",
                 "projects", "archives", "bots", "connect", "oblist",
             } or action.startswith((
-                "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "oblist:", "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "managedcancel:",
@@ -6244,18 +6244,18 @@ def create_owner_setup_router(
                 await get_connection_disposition(
                     factory, actor_id=actor_id, project_id=target_id,
                 )
+                data = await setup_overview(
+                    factory, actor_id=actor_id, project_id=target_id,
+                )
+                username = next((
+                    name for _, name, status in data.bot_instances
+                    if status == "registered"
+                ), None)
                 await prompt(
                     bot, user_id, actor_id, step="connection_rename",
-                    text=tr(
-                        "✏️ <b>Новое название подключения</b>\n\n"
-                        "Это название видно только в ViMi Pay. "
-                        "Имя Telegram-бота в BotFather не изменится.\n"
-                        "Введите название от 2 до 120 символов.",
-                        "✏️ <b>Rename connection</b>\n\n"
-                        "This is an internal ViMi Pay label. "
-                        "It does not rename your Telegram bot.\n"
-                        "Enter 2–120 characters.",
-                    ),
+                    text=rename_input_card(username=username, rich=False),
+                    rich_html=rename_input_card(username=username, rich=True),
+                    show_main_menu=False,
                 )
             elif action.startswith(("connremove:", "connremoveok:",
                                     "connarchive:", "connarchiveok:")):
@@ -6483,36 +6483,37 @@ def create_owner_setup_router(
                 if name is None or not data.can_delete_bot:
                     raise PermissionError(tr("Этот бот не доступен для удаления",
                                             "This bot cannot be removed."))
-                await bot.send_message(
-                    user_id,
-                    tr("🗑 <b>Удалить @", "🗑 <b>Remove @") + escape(name)
-                    + "?</b>\n\n"
-                    + tr(
-                        "ViMi Pay отключит обработку покупателей, затем удалит "
-                        "подключение, сохранённый токен и состояние запуска.\n\n"
-                        "Настройки проекта и история платежей останутся: они "
-                        "не принадлежат токену бота. Повторно подключить этот "
-                        "Telegram-бот можно после завершения удаления.\n\n"
-                        "При незавершённых оплатах или действующих подписках "
-                        "удаление не начнётся, чтобы не оставить людей без "
-                        "управления доступом.",
-                        "ViMi Pay will stop serving buyers, then remove this "
-                        "connection, saved token and runtime state.\n\n"
-                        "Project settings and payment history are preserved. "
-                        "You can reconnect this Telegram bot after removal finishes.\n\n"
-                        "Removal will be blocked while payments or paid subscriptions "
-                        "remain unsettled, so buyers do not lose access management.",
+                blockers = (await list_owner_obligations(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )).blockers
+                # Never show a destructive confirmation when the current
+                # owner-scoped snapshot still has protected buyer obligations.
+                rows = []
+                if not blockers.has_blockers:
+                    rows.append([_button(
+                        tr("🗑 Да, отключить бота",
+                           "🗑 Yes, disconnect bot"),
+                        "dropok:" + project_ref + ":" + instance_ref,
+                        "danger",
+                    )])
+                else:
+                    rows.append([_button(
+                        tr("👥 Покупатели и доступы",
+                           "👥 Customers and access"),
+                        "oblist", "primary",
+                    )])
+                rows.append([_button(
+                    tr("⬅️ Отмена", "⬅️ Cancel"), "bots", "primary",
+                )])
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=disconnect_card(
+                        username=name, blockers=blockers, rich=True,
                     ),
-                    parse_mode="HTML",
-                    reply_markup=_markup([
-                        [_button(
-                            "🗑 Да, удалить бота",
-                            "dropok:" + project_ref + ":" + instance_ref,
-                            "danger",
-                        )],
-                        [_button("🧾 Управлять обязательствами", "oblist")],
-                        [_button("Отмена", "bots")],
-                    ]),
+                    classic_html=disconnect_card(
+                        username=name, blockers=blockers, rich=False,
+                    ),
+                    reply_markup=_markup(rows),
                 )
             elif action.startswith("dropok:"):
                 _, project_ref, instance_ref = action.split(":", 2)
@@ -6772,23 +6773,18 @@ def create_owner_setup_router(
                 if get_settings().bot_token_encryption_key is None:
                     raise ValueError(tr("Подключение ботов временно недоступно",
                                         "Bot connections are temporarily unavailable"))
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                username = next((
+                    name for _, name, status in overview.bot_instances
+                    if status == "registered"
+                ), None)
                 await prompt(
                     bot, user_id, actor_id, step="bot_token",
-                    text=(
-                        tr(
-                            "🤖 <b>Подключение вашего бота</b>\n\n"
-                            "1. Создайте бота в @BotFather.\n"
-                            "2. Ответьте на это сообщение токеном.\n"
-                            "3. ViMi Pay сразу удалит ваше сообщение и проверит токен.\n\n"
-                            "Бот пока не начнёт принимать покупателей.",
-                            "🤖 <b>Connect your bot</b>\n\n"
-                            "1. Create a bot in @BotFather.\n"
-                            "2. Reply to this message with its token.\n"
-                            "3. ViMi Pay deletes your message immediately and verifies "
-                            "the token.\n\n"
-                            "Buyers cannot purchase until setup is finished.",
-                        )
-                    ),
+                    text=token_input_card(username=username, rich=False),
+                    rich_html=token_input_card(username=username, rich=True),
+                    show_main_menu=False,
                 )
             elif action == "resources":
                 await show_resources(bot, user_id, actor_id, project_id)
