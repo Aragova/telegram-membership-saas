@@ -81,6 +81,49 @@ def upgrade() -> None:
             WHERE s.project_id = p_project AND s.owner_user_id = actor
               AND s.paid_at >= month_from AND s.paid_at < month_to
             UNION ALL
+            -- Telegram confirmed Stars payments can precede monthly reward
+            -- capture (a reward quote may be missing). Include those native
+            -- purchases once, without inventing a 5% invoice.
+            SELECT 'file_stars'::text, 'XTR'::text,
+                   f.stars_amount::numeric
+            FROM public.file_sale_purchases f
+            WHERE f.project_id = p_project AND f.status = 'paid'
+              AND f.telegram_charge_id IS NOT NULL
+              AND f.paid_at >= month_from AND f.paid_at < month_to
+              AND EXISTS(
+                SELECT 1 FROM public.merchant_project_periods history
+                WHERE history.project_id = f.project_id
+                  AND history.owner_user_id = actor
+                  AND history.started_at <= f.paid_at
+                  AND (history.ended_at IS NULL
+                       OR history.ended_at > f.paid_at)
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_star_sales captured
+                WHERE captured.source_kind = 'file_stars'
+                  AND captured.source_id = f.id
+              )
+            UNION ALL
+            SELECT 'subscription_stars'::text, 'XTR'::text,
+                   o.stars_amount::numeric
+            FROM public.subscription_star_orders o
+            WHERE o.project_id = p_project AND o.status = 'paid'
+              AND o.telegram_charge_id IS NOT NULL
+              AND o.paid_at >= month_from AND o.paid_at < month_to
+              AND EXISTS(
+                SELECT 1 FROM public.merchant_project_periods history
+                WHERE history.project_id = o.project_id
+                  AND history.owner_user_id = actor
+                  AND history.started_at <= o.paid_at
+                  AND (history.ended_at IS NULL
+                       OR history.ended_at > o.paid_at)
+              )
+              AND NOT EXISTS(
+                SELECT 1 FROM public.platform_saas_star_sales captured
+                WHERE captured.source_kind = 'subscription_stars'
+                  AND captured.source_id = o.id
+              )
+            UNION ALL
             -- Crypto Pay may verify a payment BEFORE sale-day USD valuation
             -- becomes available. The paid MAINNET invoice is the authority
             -- for native turnover, not the deferred commission evidence.
