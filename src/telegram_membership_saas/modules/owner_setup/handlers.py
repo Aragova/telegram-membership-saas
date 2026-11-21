@@ -679,7 +679,7 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 "own:duration:", "own:use:",
                 # Managed bot confirmation must retain the staged candidate
                 # and generation until atomic registration consumes them.
-                "own:managedconfirm:",
+                "own:managedconfirm:", "own:managedcancel:",
                 "own:promptback:", "own:promptcancel:",
             ))
             and bot is not None
@@ -4146,7 +4146,7 @@ def create_owner_setup_router(
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "managedcancel:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasinvoices:", "saaspaychoices:",
                 "saasprofile", "saasprice:", "saasbill:", "saasbillchoose:",
                 "saasbillquote:", "sl:",
@@ -4169,7 +4169,7 @@ def create_owner_setup_router(
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "managedsync:", "managedconfirm:", "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "managedcancel:", "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             )):
 
@@ -4336,23 +4336,67 @@ def create_owner_setup_router(
                     await query.answer()
                     return
                 request_id = randbelow(2_000_000_000) + 1
-                await set_flow(
+                generation = await set_flow(
                     factory, actor_id=actor_id, step="managed_bot_create",
                     payload={"request_id": request_id}, bot_scope_id=0,
                 )
+                # The Telegram-managed bot button must be a native reply
+                # button. Its cancellation lives on a separate Rich card.
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=tr(
+                        "<h3>✨ Создание Telegram-бота</h3>"
+                        "<p><b>🤖 СОЗДАЙТЕ СВОЕГО БОТА ЗА ПАРУ ШАГОВ</b></p>"
+                        "<p>👉 Нажмите <b>«✨ Создать нового бота»</b> внизу чата.<br>"
+                        "👉 Укажите <b>ИМЯ</b> и <b>@username</b> бота "
+                        "(он должен заканчиваться на bot).<br>"
+                        "👉 <b>ПОДТВЕРДИТЕ СОЗДАНИЕ</b> в Telegram. "
+                        "ViMi Pay подключит бота автоматически.</p>"
+                        "<p><b>🔐 БЕЗ ПЕРЕДАЧИ ТОКЕНА</b><br>"
+                        "Копировать и отправлять API-токен в чат не нужно.</p>"
+                        "<p>⏳ На подтверждение даётся <b>15 минут</b>.</p>",
+                        "<h3>✨ Create your Telegram bot</h3>"
+                        "<p><b>🤖 CREATE YOUR BOT IN A FEW STEPS</b></p>"
+                        "<p>👉 Tap <b>“✨ Create new bot”</b> below the chat.<br>"
+                        "👉 Enter a <b>NAME</b> and <b>@username</b> "
+                        "(it must end in bot).<br>"
+                        "👉 <b>CONFIRM CREATION</b> in Telegram. "
+                        "ViMi Pay will connect the bot automatically.</p>"
+                        "<p><b>🔐 NO TOKEN SHARING</b><br>"
+                        "You don't need to copy or send an API token.</p>"
+                        "<p>⏳ You have <b>15 minutes</b> to confirm.</p>",
+                    ),
+                    classic_html=tr(
+                        "✨ <b>Создание Telegram-бота</b>\n\n"
+                        "<b>🤖 СОЗДАЙТЕ СВОЕГО БОТА ЗА ПАРУ ШАГОВ</b>\n\n"
+                        "👉 Нажмите <b>«✨ Создать нового бота»</b> внизу.\n"
+                        "👉 Укажите <b>ИМЯ</b> и <b>@username</b> (оканчивается на bot).\n"
+                        "👉 <b>ПОДТВЕРДИТЕ СОЗДАНИЕ</b> в Telegram.\n\n"
+                        "<b>🔐 БЕЗ ПЕРЕДАЧИ ТОКЕНА</b>: "
+                        "ViMi Pay получит его автоматически.\n"
+                        "⏳ Подтвердите в течение <b>15 минут</b>.",
+                        "✨ <b>Create your Telegram bot</b>\n\n"
+                        "<b>🤖 CREATE YOUR BOT IN A FEW STEPS</b>\n\n"
+                        "👉 Tap <b>“✨ Create new bot”</b> below.\n"
+                        "👉 Enter a <b>NAME</b> and <b>@username</b> (ends in bot).\n"
+                        "👉 <b>CONFIRM CREATION</b> in Telegram.\n\n"
+                        "<b>🔐 NO TOKEN SHARING</b>: "
+                        "ViMi Pay receives the token automatically.\n"
+                        "⏳ Confirm within <b>15 minutes</b>.",
+                    ),
+                    reply_markup=_markup([[_button(
+                        tr("✖️ Отменить создание", "✖️ Cancel creation"),
+                        "managedcancel:" + generation, "primary",
+                    )]]),
+                )
+                # Native request_managed_bot cannot coexist with inline markup.
                 await bot.send_message(
                     user_id,
                     tr(
-                        "👇 Нажмите системную кнопку Telegram "
-                        "«✨ Создать нового бота» под сообщением. "
-                        "Она нужна для безопасного создания бота.\n"
-                        "⏳ Подтвердите создание в течение 15 минут. "
-                        "Отмена: /cancel.",
-                        "👇 Tap the Telegram system button "
-                        "“✨ Create new bot” below. Telegram requires this "
-                        "button for secure bot creation.\n"
-                        "⏳ Confirm within 15 minutes. Cancel: /cancel.",
+                        "👇 <b>КНОПКА СОЗДАНИЯ</b> находится внизу чата.",
+                        "👇 The <b>CREATE BUTTON</b> is below the chat.",
                     ),
+                    parse_mode="HTML",
                     reply_markup=ReplyKeyboardMarkup(
                         keyboard=[[
                             KeyboardButton(
@@ -4366,6 +4410,36 @@ def create_owner_setup_router(
                         resize_keyboard=True, one_time_keyboard=True,
                     ),
                 )
+                await query.answer()
+                return
+            if action.startswith("managedcancel:"):
+                generation = action.split(":", 1)[1]
+                if not generation or len(generation) > 64:
+                    await query.answer(
+                        tr("Запрос устарел", "Request expired"), show_alert=True,
+                    )
+                    return
+                try:
+                    await consume_button_flow(
+                        factory, actor_id=actor_id,
+                        expected_step="managed_bot_create",
+                        generation=generation, bot_scope_id=0, discard=True,
+                    )
+                except ValueError:
+                    await query.answer(
+                        tr("Запрос уже закрыт или устарел",
+                           "Request already closed or expired"),
+                        show_alert=True,
+                    )
+                    return
+                await bot.send_message(
+                    user_id, tr(
+                        "✖️ Создание бота отменено.",
+                        "✖️ Bot creation cancelled.",
+                    ),
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+                await show_subscription_start(bot, user_id)
                 await query.answer()
                 return
             if action.startswith("managedconfirm:"):
