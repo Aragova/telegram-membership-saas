@@ -174,13 +174,14 @@ async def test_back_replaces_methods_with_stage_two_not_admin_panel(monkeypatch,
     assert "Панель администратора" not in card["rich_html"]
 
 
-async def test_selecting_stars_retires_the_previous_chooser(monkeypatch):
+async def test_selecting_crypto_retires_the_previous_chooser(monkeypatch):
     project = uuid4()
     _screen(monkeypatch, project)
-    monkeypatch.setattr(ui, "show_stars_payments", AsyncMock())
+    monkeypatch.setattr(ui, "read_crypto_pay_connection", AsyncMock(return_value=None))
+    monkeypatch.setattr(ui, "send_owner_rich", AsyncMock())
     bot = _bot()
-    await _callback(project)(_query("starspage:0", message_id=777), bot)
-    ui.show_stars_payments.assert_awaited_once()
+    await _callback(project)(_query("cryptopay", message_id=777), bot)
+    ui.read_crypto_pay_connection.assert_awaited_once()
     bot.delete_message.assert_awaited_once_with(345, 777)
 
 

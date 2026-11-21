@@ -41,6 +41,7 @@ def _handler(monkeypatch, project, instance):
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
     monkeypatch.setattr(ui, "can_manage_project", AsyncMock(return_value=True))
     monkeypatch.setattr(ui, "get_selected_project", AsyncMock(return_value=project))
+    monkeypatch.setattr(ui, "initial_setup_active", AsyncMock(return_value=False))
     monkeypatch.setattr(ui, "setup_overview", AsyncMock(return_value=SetupOverview(
         project_id=project, project_name="Example",
         timezone="Europe/Moscow", bots=(("example_bot", "registered"),),

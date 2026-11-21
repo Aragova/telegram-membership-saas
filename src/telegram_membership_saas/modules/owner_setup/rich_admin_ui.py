@@ -392,7 +392,9 @@ async def replace_owner_rich(
     remove the previous bot-owned message. Never leave live stale buttons if
     Telegram refuses deletion. Transport errors are not retried.
     """
-    if message_id is None:
+    if message_id is None or not isinstance(bot, Bot):
+        # Standalone adapters/test doubles may not implement awaitable
+        # edit endpoints. Real connected Telegram Bots always edit first.
         return await send_owner_rich(
             bot, chat_id=chat_id, rich_html=rich_html,
             classic_html=classic_html, reply_markup=reply_markup,

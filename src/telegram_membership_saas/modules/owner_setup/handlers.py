@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from inspect import iscoroutinefunction
 from datetime import datetime
 from decimal import Decimal
 from html import escape
@@ -8592,7 +8593,10 @@ def create_owner_setup_router(
             "starspage:", "method:",
         )):
             old_id = getattr(query.message, "message_id", None)
-            if old_id is not None and fixed_project_id is not None:
+            if (
+                old_id is not None and fixed_project_id is not None
+                and iscoroutinefunction(bot.delete_message)
+            ):
                 try:
                     await bot.delete_message(user_id, old_id)
                 except AiogramError:

@@ -58,6 +58,7 @@ def _auth(monkeypatch, project_id):
     monkeypatch.setattr(
         ui, "get_selected_project", AsyncMock(return_value=project_id),
     )
+    monkeypatch.setattr(ui, "initial_setup_active", AsyncMock(return_value=False))
     monkeypatch.setattr(
         ui, "read_bulk_sales_state", AsyncMock(
             return_value=BulkSalesState(
@@ -296,7 +297,7 @@ async def test_method_list_paginates_and_deep_link_opens_offscreen_item(monkeypa
     )
     latest = MethodInfo(uuid4(), "New method", "active", ("USD",))
     listing = AsyncMock(side_effect=[
-        first, (latest,),
+        first, (latest,), (latest,),
     ])
     monkeypatch.setattr(ui, "list_owner_methods", listing)
     lookup = AsyncMock(return_value=latest)
