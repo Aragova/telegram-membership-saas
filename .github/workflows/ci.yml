@@ -215,6 +215,7 @@ jobs:
                       "platform_saas_merchant_bill_summary(date,uuid)",
                       "platform_saas_bot_native_sales_preview(uuid,date)",
                       "platform_saas_owner_network_home()",
+                      "platform_saas_owner_invoice_page(uuid)",
                       "platform_saas_bot_price_profile_read(uuid)",
                       "platform_saas_bot_price_profile_read_v2(uuid)",
                       "platform_saas_bot_price_profile_set(uuid,text)",
