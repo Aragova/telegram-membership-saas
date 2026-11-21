@@ -125,3 +125,27 @@ rename it and then delete it via explicit confirmation. Then verify the
 remaining bots continue responding. For a project with history, verify
 archiving and restoring — do not invent financial activity or delete real
 records to create a test.
+
+## Compact «Мои подключения» registry (RU / EN)
+
+The central `/bots` and **🤖 Мои подключения / My connections** action
+open a **selector only**, not an account financial dashboard. The screen
+shows a brief, properly declined connected-bot count, a direct choice to
+manage a connection, and no redundant per-bot status cards or `Счёт аккаунта`
+button.
+
+- Show **12 connection buttons per page**. Page numbers and previous/next
+  callbacks handle 13, 100 or more active connections with clamped bounds.
+- Keep existing `select:<project>` callbacks, two onboarding actions
+  (`✨ Создать бота` and `🔑 Через BotFather`), and **🏠 Главное меню**.
+- An **📦 Архив подключений** action appears only when archived connections
+  exist; the archived list uses the same 12-per-page pagination and retains
+  its archive/restoration handlers.
+- Use a short Rich HTML heading, bold count and italic instruction, backed
+  by equivalent Telegram-compatible classic HTML in RU and EN.
+- The **🧾 Счёт аккаунта / Account bill** remains available from the
+  central main dashboard and native `/billing` command; per-bot bills remain
+  in the selected bot's management card. No ledger or invoice changes.
+- This list does not add a separate platform-owner shortcut: the platform
+  panel remains reachable from the central main dashboard.
+
