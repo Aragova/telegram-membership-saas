@@ -139,16 +139,6 @@ def owner_setup_step_rich(
         return _channel_step_rich(bot_name=bot_name, timezone=timezone)
     step = _STEP.get(action, 1)
     items = {
-        "resources": (
-            tr("📢 Канал или группа", "📢 Channel or group"),
-            tr("Добавьте своего бота в администраторы закрытого канала "
-               "или группы. Предоставьте права на создание приглашений "
-               "и управление участниками. Затем отправьте канал или группу "
-               "боту для автоматической проверки.",
-               "Make this bot an administrator of a private channel or "
-               "group. Grant rights for invite links and membership "
-               "management. Then share the channel or group for a live check."),
-        ),
         "methods": (
             tr("💳 Оплата покупателей", "💳 Buyer payments"),
             tr("Выберите хотя бы один рабочий способ оплаты: ⭐ Telegram "
@@ -178,7 +168,7 @@ def owner_setup_step_rich(
                "also include 5% of confirmed sales. This is per bot."),
         ),
     }
-    title, description = items.get(action, items["resources"])
+    title, description = items.get(action, items["methods"])
     return "\n".join([
         "<h3>" + tr("✨ Настройка ViMi Pay", "✨ ViMi Pay setup") + "</h3>",
         "<p><b>" + escape(bot_name) + "</b> 🌍 " + escape(timezone) + "</p>",
