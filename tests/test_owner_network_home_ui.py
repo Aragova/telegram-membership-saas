@@ -201,7 +201,7 @@ async def test_bots_command_always_opens_registry(monkeypatch):
     ))
     instance = _bot()
     await _home_handler()(_message("/bots"), instance)
-    assert "Мои подключения" in instance.send_message.await_args.args[1]
+    assert "МОИ ПОДКЛЮЧЕНИЯ" in instance.send_message.await_args.args[1]
     assert "own:select:" + selected.hex in [
         b.callback_data
         for row in instance.send_message.await_args.kwargs[
