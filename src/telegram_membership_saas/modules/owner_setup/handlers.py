@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from inspect import iscoroutinefunction
 from datetime import datetime
 from decimal import Decimal
 from html import escape
+from inspect import iscoroutinefunction
 from secrets import randbelow
 from time import monotonic
 from uuid import UUID
