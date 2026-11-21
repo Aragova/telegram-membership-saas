@@ -4203,6 +4203,13 @@ def create_owner_setup_router(
                         show_alert=True,
                     )
                 else:
+                    # Lava's outer middleware deliberately deferred cleanup
+                    # for this generation-guarded action. Never clear a newer
+                    # email request when a stale Back/Menu card is tapped.
+                    if fixed_project_id is None:
+                        lava_ui.clear_pending_lava_after_owner_navigation(
+                            payer_id=user_id, central_bot_id=bot.id,
+                        )
                     await query.answer()
                 return
             if action == "onboardlanguage":
