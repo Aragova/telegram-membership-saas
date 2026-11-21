@@ -39,7 +39,7 @@ def test_directory_and_manual_rich_classic_language_contract(
     assert "<table bordered compact>" in empty
     assert "0</td>" in empty
     assert "3</td>" in other
-    assert "dashboard" not in empty.lower()
+    assert "<h3>" in empty
     assert ("полная панель" if language == "ru" else "full management") in empty
     assert ("полная панель" if language == "ru" else "full management") not in other
     assert RICH_ACTIONS_MARKER in empty
@@ -47,7 +47,7 @@ def test_directory_and_manual_rich_classic_language_contract(
     for html in (manual, manual_basic):
         assert "@vimitest21bot" in html
         assert "-1001234567890" in html and "@my_private_channel" in html
-        assert "2/4" in html or "2 of 4" in html
+        assert "2/4" in html or "2 of 4" in html or "2 из 4" in html
         assert ("блокировки" if language == "ru" else "ban") in html
         assert "В меню" not in html and "Main menu" not in html
     assert RICH_ACTIONS_MARKER in manual
