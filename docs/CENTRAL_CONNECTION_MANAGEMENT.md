@@ -75,9 +75,17 @@ For each **connected bot**, the central connection-management card has
 - On a **disconnected connection**, the button instead reads
   **🧾 Счета аккаунта / Account invoices** and uses existing historical
   account records; former invoices must remain reachable even after removal.
+- A new owner-only, read-only SQL RPC
+  `platform_saas_bot_native_sales_preview(project, month)` groups verified
+  **manual subscriptions, manual files, Stars subscriptions, Stars files,
+  Crypto subscriptions and Crypto files**, without combining distinct native
+  currencies or adding invoice charges. It follows the existing owner-period
+  attribution for manual payments and immutable owner evidence for Stars/Crypto.
+  Migration 0104 adds only that SQL function and runtime execute grant:
+  no tables, invoice writes, FX rates or billing calculations are changed.
 - The central account history, `/billing`, tenant bot bill, native invoice
-  payment rails and RLS-ledger are untouched. No new schema, invented invoice,
-  test-only controls or new billing formulas.
+  payment rails and RLS-ledger are untouched. No invented invoice, test-only
+  controls or new billing formulas.
 
 ## Security and data integrity
 
