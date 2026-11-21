@@ -225,3 +225,130 @@ def obligations_card(*, username: str | None, blockers: RetirementBlockers,
             ))
     return _card(tr("👥 ПОКУПАТЕЛИ И ДОСТУПЫ",
                     "👥 CUSTOMERS AND ACCESS"), parts, rich=rich)
+
+
+def project_disposal_card(*, name: str, archive: bool, rich: bool) -> str:
+    """Explain exactly what is removed or preserved before owner confirmation."""
+    project = "📂 <b>" + escape(name, quote=True) + "</b>"
+    if archive:
+        return _card(
+            tr("📦 ПЕРЕМЕЩЕНИЕ В АРХИВ", "📦 ARCHIVE CONNECTION"),
+            [
+                project,
+                "<b>" + tr("📌 ЧТО ПРОИЗОЙДЁТ?",
+                            "📌 WHAT WILL HAPPEN?") + "</b>\n"
+                + tr(
+                    "📦 Подключение исчезнет из активного списка.\n"
+                    "💾 Тарифы, настройки, платежи и история покупателей сохранятся.\n"
+                    "↩️ Восстановить подключение можно через «Архив подключений».",
+                    "📦 The connection will be hidden from the active list.\n"
+                    "💾 Plans, settings, payments and buyer history stay intact.\n"
+                    "↩️ Restore it from Archived connections.",
+                ),
+                "<b>" + tr("🛡 ПЕРЕД АРХИВАЦИЕЙ",
+                           "🛡 BEFORE ARCHIVING") + "</b>\n"
+                + tr(
+                    "Telegram-бот должен быть уже отключён. Все "
+                    "обязательства перед покупателями должны быть завершены.",
+                    "The Telegram bot must already be disconnected. "
+                    "All customer obligations must be resolved.",
+                ),
+                "⚠️ " + tr(
+                    "Неоплаченные счета остаются в разделе «🧾 Счёт аккаунта». "
+                    "Архивация не отменяет долг.",
+                    "Unpaid invoices remain under 🧾 Account bill. "
+                    "Archiving does not cancel debt.",
+                ),
+            ],
+            rich=rich,
+        )
+    return _card(
+        tr("🗑 УДАЛЕНИЕ ПОДКЛЮЧЕНИЯ", "🗑 DELETE CONNECTION"),
+        [
+            project,
+            "<b>⚠️ " + tr(
+                "ВЫ УДАЛЯЕТЕ ОТКЛЮЧЁННЫЙ ПРОЕКТ.",
+                "YOU ARE DELETING A DISCONNECTED PROJECT.",
+            ) + "</b>\n"
+            + tr(
+                "После подтверждения восстановить его настройки будет нельзя.",
+                "Once confirmed, its configuration cannot be restored.",
+            ),
+            "<b>" + tr("🗑 ЧТО БУДЕТ УДАЛЕНО?",
+                       "🗑 WHAT WILL BE DELETED?") + "</b>\n"
+            + tr(
+                "Только настройки этого проекта: тарифы, способы оплаты "
+                "и привязки каналов.",
+                "Only this project's configuration: plans, payment methods "
+                "and channel connections.",
+            ),
+            "<b>" + tr("✅ ЧТО ОСТАНЕТСЯ?",
+                       "✅ WHAT WILL REMAIN?") + "</b>\n"
+            + tr(
+                "Другие боты и профиль сети останутся без изменений. "
+                "Подключение с покупками, подписками или историей доступа "
+                "удалить нельзя: для него предусмотрен архив.",
+                "Other bots and your network profile are unaffected. "
+                "A connection with purchases, subscriptions or access "
+                "history cannot be deleted: use the archive instead.",
+            ),
+            "<b>" + tr("💳 ВАЖНО ПРО СЧЕТА",
+                       "💳 IMPORTANT: INVOICES") + "</b>\n"
+            + tr(
+                "⚠️ Неоплаченные счета ViMi Pay НЕ исчезнут после удаления "
+                "и могут ограничить новые подключения. Посмотреть и "
+                "оплатить их можно в «🧾 Счёт аккаунта» главного меню "
+                "@vimipay_bot.",
+                "⚠️ Unpaid ViMi Pay invoices do NOT disappear when a "
+                "connection is deleted and may block new connections. "
+                "View and pay them via 🧾 Account bill in the main menu "
+                "of @vimipay_bot.",
+            ),
+        ],
+        rich=rich,
+    )
+
+
+def project_disposal_success(*, name: str, archive: bool, rich: bool) -> str:
+    """One complete terminal screen, not a success toast plus another menu."""
+    if archive:
+        return _card(
+            tr("✅ ПОДКЛЮЧЕНИЕ В АРХИВЕ",
+               "✅ CONNECTION ARCHIVED"),
+            [
+                "📂 <b>" + escape(name, quote=True) + "</b>",
+                "💾 " + tr(
+                    "Все настройки и история сохранены. Подключение больше "
+                    "не показывается среди активных.",
+                    "All settings and history are preserved. The connection "
+                    "is no longer in the active list.",
+                ),
+                "↩️ " + tr(
+                    "Вернуть его можно из раздела «Архив подключений».",
+                    "You can restore it from Archived connections.",
+                ),
+            ],
+            rich=rich,
+        )
+    return _card(
+        tr("✅ ПОДКЛЮЧЕНИЕ УДАЛЕНО",
+           "✅ CONNECTION DELETED"),
+        [
+            "📂 <b>" + escape(name, quote=True) + "</b>",
+            "🗑 " + tr(
+                "Настройки пустого подключения удалены. Другие боты "
+                "и профиль сети не затронуты.",
+                "The unused connection's settings have been deleted. "
+                "Other bots and your network profile are unaffected.",
+            ),
+            "💳 " + tr(
+                "История счетов аккаунта и возможная задолженность сохранены.",
+                "Account invoice history and any outstanding debt remain.",
+            ),
+            "➡️ " + tr(
+                "Откройте «Мои подключения», чтобы продолжить.",
+                "Open My connections to continue.",
+            ),
+        ],
+        rich=rich,
+    )

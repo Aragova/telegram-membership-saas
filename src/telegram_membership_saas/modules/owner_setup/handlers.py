@@ -91,6 +91,8 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
 from telegram_membership_saas.modules.owner_setup.central_connection_flow_ui import (
     disconnect_card,
     obligations_card,
+    project_disposal_card,
+    project_disposal_success,
     rename_input_card,
     token_input_card,
 )
@@ -6354,85 +6356,103 @@ def create_owner_setup_router(
                             "История платежей и доступов не подлежит удалению. "
                             "Для этого проекта используйте архив."
                         )
-                    await bot.send_message(
-                        user_id,
-                        tr("🗑 <b>Удалить подключение «", "🗑 <b>Delete connection “")
-                        + escape(data.project_name)
-                        + tr("»?</b>\n\n", "”?</b>\n\n")
-                        + tr(
-                            "Это действие необратимо. Будут удалены только "
-                            "настройки НЕПОДКЛЮЧЁННОГО проекта (тарифы, "
-                            "способы оплаты, каналы). Данные других ботов "
-                            "и профиль сети сохранятся.\n\n"
-                            "Проекты с платежами, подписчиками или историей "
-                            "доступа удалить нельзя.\n\n"
-                            "⚠️ Неоплаченные счета ViMi Pay сохраняются "
-                            "после удаления подключения и могут блокировать "
-                            "новые подключения. Оплатить их можно в "
-                            "@vimipay_bot через /billing.",
-                            "This cannot be undone. Configuration of this "
-                            "DISCONNECTED project (plans, methods, channels) "
-                            "will be deleted. Other bots and your network "
-                            "profile remain untouched.\n\n"
-                            "Projects with payment or access history cannot "
-                            "be permanently deleted.\n\n"
-                            "⚠️ Unpaid ViMi Pay invoices survive connection "
-                            "deletion and may block new connections. Pay them "
-                            "in @vimipay_bot via /billing.",
+                    await send_owner_rich(
+                        bot, chat_id=user_id,
+                        rich_html=project_disposal_card(
+                            name=data.project_name, archive=False, rich=True,
                         ),
-                        parse_mode="HTML",
+                        classic_html=project_disposal_card(
+                            name=data.project_name, archive=False, rich=False,
+                        ),
                         reply_markup=_markup([
                             [_button(
                                 tr("🗑 Да, удалить подключение",
-                                   "🗑 Confirm deletion"),
+                                   "🗑 Yes, delete connection"),
                                 "connremoveok:" + target_id.hex, "danger",
                             )],
-                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bots")],
+                            [_button(
+                                tr("⬅️ Отмена", "⬅️ Cancel"),
+                                "bots", "primary",
+                            )],
                         ]),
                     )
                 elif verb == "connremoveok":
                     await remove_unused_connection(
                         factory, actor_id=actor_id, project_id=target_id,
                     )
-                    await bot.send_message(
-                        user_id, tr("✅ Подключение удалено.",
-                                    "✅ Connection deleted."),
-                    )
-                    await show_connections(bot, user_id, actor_id)
-                elif verb == "connarchive":
-                    await bot.send_message(
-                        user_id,
-                        tr("📦 <b>Архивировать «", "📦 <b>Archive “")
-                        + escape(data.project_name)
-                        + tr("»?</b>\n\n", "”?</b>\n\n")
-                        + tr(
-                            "Подключение исчезнет из активного списка. "
-                            "Тарифы и финансовая история сохранятся; "
-                            "вернуть подключение можно из архива. "
-                            "Действующий Telegram-бот должен быть отключён.",
-                            "It will be hidden from the active list. "
-                            "Plans and financial history are kept. "
-                            "You can restore it from the archive. "
-                            "The Telegram bot must be disconnected first.",
+                    # One complete confirmation, no additional unsolicited
+                    # connections list after a successful destructive action.
+                    await send_owner_rich(
+                        bot, chat_id=user_id,
+                        rich_html=project_disposal_success(
+                            name=data.project_name, archive=False, rich=True,
                         ),
-                        parse_mode="HTML",
+                        classic_html=project_disposal_success(
+                            name=data.project_name, archive=False, rich=False,
+                        ),
+                        reply_markup=_markup([[
+                            _button(
+                                tr("📂 Мои подключения", "📂 My connections"),
+                                "projects", "primary",
+                            ),
+                            _button(
+                                tr("🏠 Главное меню", "🏠 Main menu"),
+                                "onboardhome", "primary",
+                            ),
+                        ]]),
+                    )
+                elif verb == "connarchive":
+                    disposition = await get_connection_disposition(
+                        factory, actor_id=actor_id, project_id=target_id,
+                    )
+                    if disposition.has_bot:
+                        raise ValueError(tr(
+                            "Сначала отключите бота в управлении подключением.",
+                            "Disconnect the bot in connection management first.",
+                        ))
+                    await send_owner_rich(
+                        bot, chat_id=user_id,
+                        rich_html=project_disposal_card(
+                            name=data.project_name, archive=True, rich=True,
+                        ),
+                        classic_html=project_disposal_card(
+                            name=data.project_name, archive=True, rich=False,
+                        ),
                         reply_markup=_markup([
                             [_button(
-                                tr("📦 Да, архивировать", "📦 Confirm archive"),
+                                tr("📦 Да, архивировать", "📦 Yes, archive"),
                                 "connarchiveok:" + target_id.hex, "danger",
                             )],
-                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"), "bots")],
+                            [_button(
+                                tr("⬅️ Отмена", "⬅️ Cancel"),
+                                "bots", "primary",
+                            )],
                         ]),
                     )
                 else:
                     await archive_owner_connection(
                         factory, actor_id=actor_id, project_id=target_id,
                     )
-                    await bot.send_message(
-                        user_id, tr("✅ Подключение перемещено в архив.",
-                                    "✅ Connection moved to archive."),
+                    await send_owner_rich(
+                        bot, chat_id=user_id,
+                        rich_html=project_disposal_success(
+                            name=data.project_name, archive=True, rich=True,
+                        ),
+                        classic_html=project_disposal_success(
+                            name=data.project_name, archive=True, rich=False,
+                        ),
+                        reply_markup=_markup([[
+                            _button(
+                                tr("📦 Архив подключений",
+                                   "📦 Archived connections"),
+                                "archives", "primary",
+                            ),
+                            _button(
+                                tr("🏠 Главное меню", "🏠 Main menu"),
+                                "onboardhome", "primary",
+                            ),
+                        ]]),
                     )
-                    await show_connections(bot, user_id, actor_id)
             elif action == "network":
                 await show_network_profile(bot, user_id, actor_id, project_id)
             elif action == "networkask":
