@@ -365,8 +365,31 @@ async def test_lava_cancel_callback_is_not_cleared_before_handler():
         )
     await navigation(callback, event("lava:cancel"), {})
     assert (123, 500) in lava._pending_lava
+    await navigation(callback, event("own:promptback:old"), {})
+    assert (123, 500) in lava._pending_lava
+    await navigation(callback, event("own:promptcancel:old"), {})
+    assert (123, 500) in lava._pending_lava
     await navigation(callback, event("own:projects"), {})
     assert lava._pending_lava == {}
+
+
+async def test_lava_cleanup_after_owner_navigation_is_scoped():
+    invoice = uuid4()
+    lava._pending_lava[(123, 500)] = lava._PendingEmail(
+        invoice, 900, lava.monotonic() + 600,
+    )
+    lava._pending_lava[(456, 501)] = lava._PendingEmail(
+        uuid4(), 900, lava.monotonic() + 600,
+    )
+    lava.clear_pending_lava_after_owner_navigation(
+        payer_id=123, central_bot_id=901,
+    )
+    assert len(lava._pending_lava) == 2
+    lava.clear_pending_lava_after_owner_navigation(
+        payer_id=123, central_bot_id=900,
+    )
+    assert (123, 500) not in lava._pending_lava
+    assert (456, 501) in lava._pending_lava
 
 
 async def test_non_lava_reply_and_unrelated_user_not_swallowed(monkeypatch):
