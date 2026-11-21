@@ -224,14 +224,17 @@ async def test_rename_connection_central_only(monkeypatch):
     monkeypatch.setattr(ui, "get_connection_disposition", AsyncMock(
         return_value=ConnectionDisposition(False, False),
     ))
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(
+        return_value=overview(project_id),
+    ))
     monkeypatch.setattr(ui, "set_flow", AsyncMock(return_value="generation"))
     monkeypatch.setattr(ui, "bind_prompt", AsyncMock())
     instance = bot()
     await cb(query("connrename:" + project_id.hex), instance)
-    assert "название подключения" in instance.send_message.await_args.args[1]
+    assert "НАЗВАНИЕ ПОДКЛЮЧЕНИЯ" in instance.send_message.await_args.args[1]
     markup = instance.send_message.await_args.kwargs["reply_markup"]
     assert [b.callback_data for row in markup.inline_keyboard for b in row] == [
-        "own:promptback:generation", "own:promptcancel:generation",
+        "own:promptback:generation",
     ]
     ui.set_flow.assert_awaited_once()
 
