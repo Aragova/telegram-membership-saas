@@ -162,6 +162,7 @@ from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
     read_native_stars_target,
 )
 from telegram_membership_saas.modules.owner_setup.network_home_service import (
+    owner_invoice_statement_page,
     read_owner_network_home,
 )
 from telegram_membership_saas.modules.owner_setup.network_home_ui import (
@@ -851,15 +852,17 @@ def create_owner_setup_router(
                 logging.getLogger(__name__).exception(
                     "ViMi Pay network home snapshot unavailable"
                 )
-                rich = "<h3>✦ ViMi Pay · " + tr(
+                title = "✦ ViMi Pay · " + tr(
                     "ГЛАВНОЕ МЕНЮ", "MAIN MENU",
-                ) + "</h3><p>⚠️ " + tr(
+                )
+                notice = "⚠️ " + tr(
                     "Сводка сети временно недоступна. "
                     "Управление подключениями и счетами работает.",
                     "The network summary is temporarily unavailable. "
                     "Connections and invoices remain accessible.",
-                ) + "</p>"
-                classic = rich.replace("<h3>", "<b>").replace("</h3>", "</b>")
+                )
+                rich = "<h3>" + title + "</h3><p>" + notice + "</p>"
+                classic = "<b>" + title + "</b>\n\n" + notice
             else:
                 rich = owner_network_home_rich(report)
                 classic = owner_network_home_classic(report)
@@ -872,7 +875,7 @@ def create_owner_setup_router(
                         if name else tr("🧾 Ближайший счёт", "🧾 Next invoice")
                     )
                     rows.insert(2, [_button(
-                        label, "saasbill:" + encode_uuid(nearest_id) + ":0",
+                        label, "saasnearest:" + encode_uuid(nearest_id),
                         "primary",
                     )])
             if platform_navigation(user_id):
@@ -5379,6 +5382,20 @@ def create_owner_setup_router(
                 target_id = decode_uuid(action.split(":", 1)[1])
                 await show_central_bot_bill(
                     bot, user_id, actor_id, target_id,
+                )
+                await query.answer()
+                return
+            if action.startswith("saasnearest:"):
+                if fixed_project_id is not None:
+                    raise PermissionError("Nearest account invoice belongs to central ViMi Pay")
+                invoice_id = decode_uuid(action.split(":", 1)[1])
+                # The invoice can be on any page and pages change as bills
+                # arrive. The owner-scoped DB lookup resolves it at click time.
+                invoice_page = await owner_invoice_statement_page(
+                    factory, actor_id=actor_id, invoice_id=invoice_id,
+                )
+                await show_saas_issued_invoice(
+                    bot, user_id, actor_id, invoice_id, page=invoice_page,
                 )
                 await query.answer()
                 return
