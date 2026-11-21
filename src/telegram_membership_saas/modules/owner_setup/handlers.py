@@ -4434,6 +4434,12 @@ def create_owner_setup_router(
                         show_alert=True,
                     )
                     return
+                # The outer Lava middleware defers this guarded action.
+                # Only a successfully cancelled current request may clear
+                # the user's pending Lava email input.
+                lava_ui.clear_pending_lava_after_owner_navigation(
+                    payer_id=user_id, central_bot_id=bot.id,
+                )
                 await bot.send_message(
                     user_id, tr(
                         "✖️ Создание бота отменено.",
