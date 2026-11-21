@@ -4009,8 +4009,13 @@ def create_owner_setup_router(
                 factory, project_id=fixed_project_id, actor_id=actor_id,
             )
         if prior is not None and prior.step == "new_bot_token":
-            # BotFather entry was opened from the subscriptions selector.
-            await show_subscription_start(bot, user_id)
+            # A clean user came via Paid subscriptions; an existing owner
+            # came from My connections. Return to the actual parent.
+            home = await owner_home(factory, actor_id=actor_id)
+            if home.projects or home.archived_count:
+                await show_connections(bot, user_id, actor_id)
+            else:
+                await show_subscription_start(bot, user_id)
             return True
         if (
             prior is None or prior.project_id is None
