@@ -183,9 +183,68 @@ def manual_classic(username: str | None) -> str:
     ])
 
 
+def connection_problem_code(error: Exception) -> str:
+    """Classify known owner-safe verification failures without leaking internals."""
+    detail = str(error).casefold()
+    if "просроченн" in detail and "сч" in detail:
+        return "invoice"
+    if "другом вашем подключении" in detail:
+        return "previous_connection"
+    if "финансовая история в удалённом подключении" in detail:
+        return "archived_connection"
+    if "устарел" in detail or "expired" in detail:
+        return "expired"
+    if "другого бота" in detail or "another bot" in detail:
+        return "expired"
+    return "permissions"
+
+
+def _connection_problem_copy(problem: str) -> tuple[str, str]:
+    if problem == "invoice":
+        return (
+            tr("🧾 НЕОПЛАЧЕННЫЙ СЧЁТ", "🧾 OVERDUE BILL"),
+            tr("Подключение новых каналов временно приостановлено из-за "
+               "просроченного счёта ViMi Pay. Откройте @vimipay_bot → "
+               "«Счёт аккаунта», оплатите задолженность и повторите.",
+               "Adding new channels is paused due to an overdue ViMi Pay "
+               "bill. Open @vimipay_bot → Account bill, pay the amount "
+               "due and try again."),
+        )
+    if problem == "previous_connection":
+        return (
+            tr("🔒 КАНАЛ УЖЕ ПОДКЛЮЧАЛСЯ", "🔒 CHANNEL ALREADY CONNECTED"),
+            tr("Канал уже использовался в другом вашем подключении. "
+               "Откройте @vimipay_bot → «Мои подключения», при "
+               "необходимости восстановите прежнее подключение из архива.",
+               "This channel belongs to an earlier connection. Open "
+               "@vimipay_bot → My connections and restore the old "
+               "connection from the archive if needed."),
+        )
+    if problem == "archived_connection":
+        return (
+            tr("📦 СОХРАНЕНА ФИНАНСОВАЯ ИСТОРИЯ", "📦 PAYMENT HISTORY PRESERVED"),
+            tr("Канал связан с удалённым подключением, у которого "
+               "сохранилась финансовая история. Обратитесь в "
+               "@vimi_support_bot для безопасного восстановления.",
+               "This channel is linked to a removed connection with "
+               "payment history. Contact @vimi_support_bot to restore "
+               "it safely."),
+        )
+    if problem == "expired":
+        return (
+            tr("⌛ ВЫБОР УСТАРЕЛ", "⌛ SELECTION EXPIRED"),
+            tr("Время выбора истекло или вы открыли другой экран. "
+               "Вернитесь в «Каналы и группы» и начните выбор заново.",
+               "This selection expired or another screen was opened. "
+               "Go back to Channels and groups and choose again."),
+        )
+    return "", ""
+
+
 def connection_result_rich(
     *, success: bool, kind: str, username: str | None,
     resource_name: str | None = None, onboarding: bool = False,
+    problem: str = "permissions",
 ) -> str:
     """One result card, one forward/back action; no duplicate directory."""
     if kind not in ("channel", "group", "chat"):
@@ -209,23 +268,28 @@ def connection_result_rich(
                "Manage this connection under Channels and groups.")
         ) + "</p>")
     else:
-        parts.extend([
-            "<p>" + tr(
-                "ViMi Pay не смог подтвердить доступ к выбранному чату.",
-                "ViMi Pay could not verify access to this chat.",
-            ) + "</p>",
-            "<h4>" + tr("📋 КАК ИСПРАВИТЬ?", "📋 HOW TO FIX IT?") + "</h4>",
-            "<p><b>1️⃣</b> " + tr("Добавьте ", "Add ") + _handle(username)
-            + tr(" в администраторы.", " as an administrator.") + "</p>",
-            "<p><b>2️⃣</b> " + tr(
-                "Включите права <b>добавлять</b> и <b>блокировать пользователей</b>.",
-                "Enable <b>invite users</b> and <b>ban/remove users</b>.",
-            ) + "</p>",
-            "<p><b>3️⃣</b> " + tr(
-                "Сохраните права и повторите выбор.",
-                "Save the permissions and select the chat again.",
-            ) + "</p>",
-        ])
+        heading, explanation = _connection_problem_copy(problem)
+        if explanation:
+            parts.extend(["<h4>" + heading + "</h4>",
+                          "<p>" + explanation + "</p>"])
+        else:
+            parts.extend([
+                "<p>" + tr(
+                    "ViMi Pay не смог подтвердить доступ к выбранному чату.",
+                    "ViMi Pay could not verify access to this chat.",
+                ) + "</p>",
+                "<h4>" + tr("📋 КАК ИСПРАВИТЬ?", "📋 HOW TO FIX IT?") + "</h4>",
+                "<p><b>1️⃣</b> " + tr("Добавьте ", "Add ") + _handle(username)
+                + tr(" в администраторы.", " as an administrator.") + "</p>",
+                "<p><b>2️⃣</b> " + tr(
+                    "Включите права <b>добавлять</b> и <b>блокировать пользователей</b>.",
+                    "Enable <b>invite users</b> and <b>ban/remove users</b>.",
+                ) + "</p>",
+                "<p><b>3️⃣</b> " + tr(
+                    "Сохраните права и повторите выбор.",
+                    "Save permissions and select the chat again.",
+                ) + "</p>",
+            ])
     parts.append(RICH_ACTIONS_MARKER)
     return "\n".join(parts)
 
@@ -233,6 +297,7 @@ def connection_result_rich(
 def connection_result_classic(
     *, success: bool, kind: str, username: str | None,
     resource_name: str | None = None, onboarding: bool = False,
+    problem: str = "permissions",
 ) -> str:
     if kind not in ("channel", "group", "chat"):
         kind = "chat"
@@ -251,6 +316,14 @@ def connection_result_classic(
                 "📂 Управление доступно в разделе «Каналы и группы».",
                 "📂 Manage it under Channels and groups.",
              )),
+        ])
+    heading, explanation = _connection_problem_copy(problem)
+    if explanation:
+        return "\n\n".join([
+            "⚠️ <b>" + tr("Не удалось подключить: ",
+                          "Could not connect: ") + thing + "</b>",
+            "<b>" + heading + "</b>",
+            explanation,
         ])
     return "\n\n".join([
         "⚠️ <b>" + tr("Не удалось подключить: ",
