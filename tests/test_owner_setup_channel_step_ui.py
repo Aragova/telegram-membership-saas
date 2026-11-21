@@ -125,6 +125,10 @@ def test_other_wizard_steps_preserve_existing_content_and_contextual_button():
             )
             assert expected in rich
             assert "ViMi Pay setup" in classic
-            assert wizard_primary_label(action, expected) == expected
+            label = wizard_primary_label(action, expected)
+            assert label != expected
+            assert label.startswith({
+                "methods": "💳", "plans": "📦", "saasprofile": "💱",
+            }[action])
     finally:
         _language.reset(token)
