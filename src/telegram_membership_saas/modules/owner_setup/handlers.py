@@ -3045,8 +3045,16 @@ def create_owner_setup_router(
                     "⬅️", "obpage:" + project_ref + ":"
                     + section + ":" + str(page - 1), "primary",
                 ))
-            # The service returns up to 12 entries for each specific category.
-            if visible == 12 and page < 200:
+            # Pagination follows source rows, not only editable rows.
+            # Paid grants can appear alongside manual grants and are skipped
+            # as actions; they must not accidentally hide subsequent pages.
+            source_size = {
+                "pay": len(snapshot.payments),
+                "sub": len(snapshot.subscriptions),
+                "grant": len(snapshot.grants),
+                "sync": len(snapshot.access),
+            }[section]
+            if source_size == 12 and page < 200:
                 nav.append(_button(
                     "➡️", "obpage:" + project_ref + ":"
                     + section + ":" + str(page + 1), "primary",
