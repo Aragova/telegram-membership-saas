@@ -64,7 +64,8 @@ def test_channel_setup_rich_classic_and_action_match_approved_mockup(
         assert "/cancel" not in html
         assert "Language / Язык" not in html
         assert "Проверит ваши права и права бота" not in html
-        assert "It's" not in html
+        assert ("Сохранённые тарифы" if locale == "ru"
+                else "Saved plans") in html
     assert RICH_ACTIONS_MARKER in rich
     assert RICH_ACTIONS_MARKER not in classic
     assert "<h3>" in rich and "<table" in rich
