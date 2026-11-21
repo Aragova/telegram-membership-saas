@@ -63,6 +63,20 @@ async def test_six_rails_preserve_native_amounts_and_reject_foreign_owner():
                     "product": product, "bot": telegram_bot_id,
                     "method": uuid4(), "at": now})
 
+                # Telegram Stars file purchase confirmed without a reward
+                # capture: its native amount must still be visible, but not
+                # counted again if the capture subsequently materializes.
+                await conn.execute(text(
+                    "INSERT INTO file_sale_purchases("
+                    "id,project_id,product_id,telegram_bot_id,"
+                    "telegram_user_id,stars_amount,product_name,"
+                    "invoice_payload,telegram_charge_id,status,paid_at)"
+                    " VALUES(:id,:project,:product,:bot,123456,42,"
+                    "'Uncaptured Stars purchase',:payload,:charge,'paid',:at)"
+                ), {"id": uuid4(), "project": project, "product": product,
+                    "bot": telegram_bot_id, "payload": str(uuid4()),
+                    "charge": str(uuid4()), "at": now})
+
                 rate = (await conn.execute(text(
                     "SELECT usd_per_star FROM platform_saas_star_reward_rates "
                     "WHERE effective_on='2026-11-11'"
@@ -168,7 +182,8 @@ async def test_six_rails_preserve_native_amounts_and_reject_foreign_owner():
                 kinds = {(row["kind"], row["currency"]): row
                          for row in snapshot["rows"]}
                 assert Decimal(kinds["file_manual", "RUB"]["gross"]) == 120
-                assert Decimal(kinds["file_stars", "XTR"]["gross"]) == 120
+                assert Decimal(kinds["file_stars", "XTR"]["gross"]) == 162
+                assert kinds["file_stars", "XTR"]["sold"] == 2
                 assert Decimal(kinds["subscription_stars", "XTR"]["gross"]) == 250
                 assert Decimal(kinds["file_crypto", "TON"]["gross"]) == Decimal("0.5")
                 assert Decimal(kinds["subscription_crypto", "USDT"]["gross"]) == Decimal("4.25")
