@@ -101,6 +101,7 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     remove_channel_without_paid_purchases,
 )
 from telegram_membership_saas.modules.owner_setup.channel_stage2_ui import (
+    connection_problem_code,
     connection_result_classic,
     connection_result_rich,
     directory_classic,
@@ -3212,7 +3213,7 @@ def create_owner_setup_router(
     async def show_connection_result(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, success: bool, kind: str, resource_name: str | None = None,
-        native_picker: bool = False,
+        native_picker: bool = False, problem: str = "permissions",
     ) -> None:
         """Single result message with one continuation or back action."""
         onboarding = await initial_setup_active(actor_id, project_id)
@@ -3227,10 +3228,12 @@ def create_owner_setup_router(
         rich = connection_result_rich(
             success=success, kind=kind, username=username,
             resource_name=resource_name, onboarding=onboarding,
+            problem=problem,
         )
         classic = connection_result_classic(
             success=success, kind=kind, username=username,
             resource_name=resource_name, onboarding=onboarding,
+            problem=problem,
         )
         if not native_picker:
             await send_owner_rich(
@@ -8397,6 +8400,7 @@ def create_owner_setup_router(
         ):
             return
         kind = "channel"
+        problem = "permissions"
         try:
             flow = await consume_button_flow(
                 factory, actor_id=actor_id, expected_step="chat_picker",
@@ -8417,9 +8421,10 @@ def create_owner_setup_router(
                 chat_reference=message.chat_shared.chat_id,
             )
             success = True
-        except (ValueError, PermissionError):
+        except (ValueError, PermissionError) as exc:
             success = False
             chat = None
+            problem = connection_problem_code(exc)
         # A Telegram chat_shared service bubble is separate from our
         # message. Delete it when Telegram permits; never block the result.
         try:
@@ -8430,7 +8435,7 @@ def create_owner_setup_router(
             bot, message.chat.id, actor_id, fixed_project_id,
             success=success, kind=kind,
             resource_name=chat.name if chat is not None else None,
-            native_picker=True,
+            native_picker=True, problem=problem,
         )
 
     async def send_connected_bot(
@@ -8929,6 +8934,7 @@ def create_owner_setup_router(
                 await show_connection_result(
                     bot, message.chat.id, actor_id, flow.project_id,
                     success=False, kind="chat",
+                    problem=connection_problem_code(exc),
                 )
                 return
             destination = {
