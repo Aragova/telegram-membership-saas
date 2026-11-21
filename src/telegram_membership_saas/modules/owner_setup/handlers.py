@@ -7977,6 +7977,12 @@ def create_owner_setup_router(
     async def finish_bot_connection(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, token: str,
     ) -> None:
+        before = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        was_connected = any(
+            status == "registered" for _, status in before.bots
+        )
         result = await register_customer_bot(
             factory, project_id=project_id,
             actor_telegram_user_id=user_id, token=token,
@@ -7987,9 +7993,13 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
             username=result.username,
         )
-        await send_connected_bot(
-            bot, user_id, actor_id, project_id, result.username,
-        )
+        if was_connected:
+            # Rotating a token is maintenance, not first-time onboarding.
+            await show_bots(bot, user_id, actor_id, project_id)
+        else:
+            await send_connected_bot(
+                bot, user_id, actor_id, project_id, result.username,
+            )
 
     @router.message(SetupReplyFilter(factory, fixed_project_id))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:
