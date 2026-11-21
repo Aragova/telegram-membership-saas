@@ -43,19 +43,18 @@ ROLE_COMMANDS = {
         ("filepayments", "🧾 Проверка оплат файлов", "🧾 File payment reviews"),
         ("support", "🛟 Поддержка", "🛟 Support"),
     ),
-    # The central bot has no buyer subscriptions. The account-level
-    # /billing command is needed even after every bot has been deleted.
+    # Central and platform owner menus expose only the 3 stable entrypoints.
+    # /menu and /help remain valid hidden commands for old messages.
+    # /billing must survive removal of the final bot.
     "central": (
-        ("menu", "🏠 Главное меню", "🏠 Main menu"),
-        ("bots", "🤖 Мои боты", "🤖 My bots"),
-        ("billing", "🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-        ("help", "🛟 Помощь", "🛟 Help"),
+        ("start", "🏠 Главное меню", "🏠 Main menu"),
+        ("bots", "🤖 Мои подключения", "🤖 My connections"),
+        ("billing", "🧾 Счёт аккаунта", "🧾 Account bill"),
     ),
     "platform": (
-        ("menu", "🏠 Главное меню", "🏠 Main menu"),
-        ("bots", "🤖 Мои боты", "🤖 My bots"),
-        ("billing", "🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-        ("help", "🛟 Помощь", "🛟 Help"),
+        ("start", "🏠 Главное меню", "🏠 Main menu"),
+        ("bots", "🤖 Мои подключения", "🤖 My connections"),
+        ("billing", "🧾 Счёт аккаунта", "🧾 Account bill"),
     ),
 }
 
