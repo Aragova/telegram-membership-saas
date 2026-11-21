@@ -4106,6 +4106,7 @@ def create_owner_setup_router(
                 "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
+                "promptback:", "promptcancel:",
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
@@ -4143,6 +4144,39 @@ def create_owner_setup_router(
                 )
                 return
         try:
+            if action.startswith(("promptback:", "promptcancel:")):
+                generation = action.split(":", 1)[1]
+                if not generation or len(generation) > 64:
+                    await query.answer(
+                        tr("Кнопка устарела", "Button expired"), show_alert=True,
+                    )
+                    return
+                if action.startswith("promptback:"):
+                    moved = await navigate_owner_prompt_back(
+                        bot, user_id, actor_id,
+                        expected_generation=generation,
+                    )
+                else:
+                    moved = await cancel_owner_flow(
+                        factory, actor_id=actor_id,
+                        bot_scope_id=bot.id if fixed_project_id else 0,
+                        expected_generation=generation,
+                    )
+                    if moved:
+                        if fixed_project_id is not None:
+                            await cancel_draft(
+                                factory, project_id=fixed_project_id,
+                                actor_id=actor_id,
+                            )
+                        await show_home(bot, user_id, actor_id)
+                if not moved:
+                    await query.answer(
+                        tr("Эта форма уже закрыта", "This form has expired"),
+                        show_alert=True,
+                    )
+                else:
+                    await query.answer()
+                return
             if action == "onboardlanguage":
                 await show_onboarding_language(bot, user_id)
                 await query.answer()
