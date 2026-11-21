@@ -3970,20 +3970,27 @@ def create_owner_setup_router(
         )
         await show_home(bot, message.chat.id, actor_id)
 
-    @router.message(Command("back"), OwnerHomeFilter(factory, fixed_project_id))
-    async def back_setup_message(message: Message, bot: Bot) -> None:
-        """Return to the parent section, clearing only this unfinished wizard."""
-        if not _private(message):
-            return
-        actor_id = await actor(message.from_user)
+    async def navigate_owner_prompt_back(
+        bot: Bot, user_id: int, actor_id: UUID,
+        *, expected_generation: str | None = None,
+    ) -> bool:
+        """Back resolves the current form parent and refuses stale buttons."""
+        prior = await back_owner_flow(
+            factory, actor_id=actor_id,
+            bot_scope_id=bot.id if fixed_project_id else 0,
+            expected_generation=expected_generation,
+        )
+        if expected_generation is not None and prior is None:
+            # An old button must not cancel a newer input or session.
+            return False
         if fixed_project_id is not None:
             await cancel_draft(
                 factory, project_id=fixed_project_id, actor_id=actor_id,
             )
-        prior = await back_owner_flow(
-            factory, actor_id=actor_id,
-            bot_scope_id=bot.id if fixed_project_id else 0,
-        )
+        if prior is not None and prior.step == "new_bot_token":
+            # BotFather entry was opened from the subscriptions selector.
+            await show_subscription_start(bot, user_id)
+            return True
         if (
             prior is None or prior.project_id is None
             or (fixed_project_id is not None and prior.project_id != fixed_project_id)
@@ -3991,64 +3998,73 @@ def create_owner_setup_router(
             # Also clear a stale chat-picker keyboard after the 15-minute TTL.
             # The expired flow no longer has a reliable step to inspect.
             await bot.send_message(
-                message.chat.id,
+                user_id,
                 tr("↩️ Возврат в главное меню.", "↩️ Back to the main menu."),
                 reply_markup=ReplyKeyboardRemove(),
             )
-            await show_home(bot, message.chat.id, actor_id)
-            return
+            await show_home(bot, user_id, actor_id)
+            return True
         project_id = prior.project_id
         if prior.step == "chat_picker":
             await bot.send_message(
-                message.chat.id,
+                user_id,
                 tr("Выбор чата закрыт.", "Chat selection closed."),
                 reply_markup=ReplyKeyboardRemove(),
             )
         if prior.step in ("plan_name", "plan_duration", "plan_resource"):
-            await show_plans(bot, message.chat.id, actor_id, project_id)
+            await show_plans(bot, user_id, actor_id, project_id)
         elif prior.step == "currency_custom_code":
             mode = prior.payload.get("mode")
             target = prior.payload.get("target")
             if mode == "price" and target:
                 await show_plan_card(
-                    bot, message.chat.id, actor_id, project_id,
+                    bot, user_id, actor_id, project_id,
                     UUID(hex=target),
                 )
             elif mode == "attach" and target:
                 await show_method_card(
-                    bot, message.chat.id, actor_id, project_id,
+                    bot, user_id, actor_id, project_id,
                     UUID(hex=target),
                 )
             else:
-                await show_methods(bot, message.chat.id, actor_id, project_id)
+                await show_methods(bot, user_id, actor_id, project_id)
         elif prior.step in ("price_amount", "plan_rename"):
             try:
                 plan_id = UUID(hex=prior.payload["plan_id"])
             except (KeyError, TypeError, ValueError, AttributeError):
-                await show_plans(bot, message.chat.id, actor_id, project_id)
+                await show_plans(bot, user_id, actor_id, project_id)
             else:
                 if prior.payload.get("currency") == "XTR":
                     await show_stars_payments(
-                        bot, message.chat.id, actor_id, project_id,
+                        bot, user_id, actor_id, project_id,
                         page=int(prior.payload.get("stars_page", 0)),
                     )
                 else:
                     await show_plan_card(
-                        bot, message.chat.id, actor_id, project_id, plan_id,
+                        bot, user_id, actor_id, project_id, plan_id,
                     )
         elif prior.step in ("method_rename", "method_edit"):
             await show_method_card(
-                bot, message.chat.id, actor_id, project_id,
+                bot, user_id, actor_id, project_id,
                 UUID(hex=prior.payload["method_id"]),
             )
         elif prior.step in ("method_name", "method_instruction"):
-            await show_methods(bot, message.chat.id, actor_id, project_id)
+            await show_methods(bot, user_id, actor_id, project_id)
         elif prior.step in ("chat_picker", "resource_reference"):
-            await show_resources(bot, message.chat.id, actor_id, project_id)
+            await show_resources(bot, user_id, actor_id, project_id)
         elif prior.step in ("bot_token", "connection_rename") and fixed_project_id is None:
-            await show_bots(bot, message.chat.id, actor_id, project_id)
+            await show_bots(bot, user_id, actor_id, project_id)
         else:
-            await show_dashboard(bot, message.chat.id, actor_id, project_id)
+            await show_dashboard(bot, user_id, actor_id, project_id)
+        return True
+
+    @router.message(Command("back"), OwnerHomeFilter(factory, fixed_project_id))
+    async def back_setup_message(message: Message, bot: Bot) -> None:
+        if not _private(message):
+            return
+        await navigate_owner_prompt_back(
+            bot, message.chat.id, await actor(message.from_user),
+        )
 
     @router.message(Command("billing"))
     async def owner_platform_billing_command(message: Message, bot: Bot) -> None:
