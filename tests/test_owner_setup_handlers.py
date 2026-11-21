@@ -59,6 +59,14 @@ def _overview(project_id):
     )
 
 
+def _fleet_snapshot():
+    return {
+        "network": {"connected": 1, "healthy": 1, "attention": 0, "down": 0},
+        "revenue": [{"currency": "RUB", "gross": "125", "purchases": 1}],
+        "billing": {"unpaid": 0, "overdue": 0, "overdue_rub": "0", "next": None},
+    }
+
+
 def test_management_dispatcher_routes_owner_first_buyer_separately():
     central = create_dispatcher(
         MagicMock(), project_id=uuid4(), enable_access=False
@@ -248,6 +256,12 @@ async def test_successful_owner_prompt_navigation_clears_lava_only_after_guard(
     monkeypatch.setattr(
         ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
     )
+    monkeypatch.setattr(
+        ui, "has_explicit_language_choice", AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        ui, "read_owner_network_home", AsyncMock(return_value=_fleet_snapshot()),
+    )
     cleanup = MagicMock()
     monkeypatch.setattr(
         ui.lava_ui, "clear_pending_lava_after_owner_navigation", cleanup,
@@ -298,6 +312,9 @@ async def test_first_start_after_language_has_subscription_and_back(monkeypatch)
     monkeypatch.setattr(
         ui, "has_explicit_language_choice", AsyncMock(return_value=True),
     )
+    monkeypatch.setattr(
+        ui, "read_owner_network_home", AsyncMock(return_value=_fleet_snapshot()),
+    )
     monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
     for command in ("/start", "/menu"):
@@ -308,10 +325,12 @@ async def test_first_start_after_language_has_subscription_and_back(monkeypatch)
             for row in sent.kwargs["reply_markup"].inline_keyboard
             for button in row
         ]
-        assert buttons == [
-            ("🔐 Платные подписки", "own:substart"),
-            ("⬅️ Назад", "own:onboardlanguage"),
+        assert [code for _, code in buttons] == [
+            "own:projects", "own:substart", "own:saasinvoices:0",
+            "lng:menu", None,
         ]
+        assert buttons[-1][0] == "🛟 Поддержка"
+        assert "ГЛАВНОЕ МЕНЮ" in sent.args[1]
     assert "Что будем создавать?" not in sent.args[1]
     assert "Выберите «🔐 Платные подписки»" not in sent.args[1]
 
@@ -359,6 +378,9 @@ async def test_subscription_back_returns_without_existing_project(monkeypatch):
     monkeypatch.setattr(
         ui, "has_explicit_language_choice", AsyncMock(return_value=True),
     )
+    monkeypatch.setattr(
+        ui, "read_owner_network_home", AsyncMock(return_value=_fleet_snapshot()),
+    )
     selected = AsyncMock(side_effect=AssertionError("No project exists yet"))
     monkeypatch.setattr(ui, "get_selected_project", selected)
     bot = _bot()
@@ -389,7 +411,10 @@ async def test_subscription_back_returns_without_existing_project(monkeypatch):
             bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert callbacks == ["own:substart", "own:onboardlanguage"]
+        assert callbacks == [
+            "own:projects", "own:substart", "own:saasinvoices:0",
+            "lng:menu", None,
+        ]
         assert go_back.answer.await_count == 1
         selected.assert_not_awaited()
     finally:
@@ -448,13 +473,16 @@ async def test_central_start_shows_connection_registry_without_raw_uuids(monkeyp
     )
     monkeypatch.setattr(
         ui, "setup_overview",
-        AsyncMock(return_value=_overview(project_id)),
+        AsyncMock(side_effect=AssertionError("Do not open selected connection")),
+    )
+    monkeypatch.setattr(
+        ui, "read_owner_network_home", AsyncMock(return_value=_fleet_snapshot()),
     )
     monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
     await _handler("home_message")(_message(), bot)
     sent = bot.send_message.await_args
-    assert "Ваши подключения" in sent.args[1]
+    assert "ГЛАВНОЕ МЕНЮ" in sent.args[1]
     assert "Настройте" not in sent.args[1]
     assert project_id.hex not in sent.args[1]
     assert str(project_id) not in sent.args[1]
@@ -474,7 +502,12 @@ async def test_central_connected_menu_has_rich_card_and_colored_two_column_actio
         AsyncMock(return_value=OwnerHome(((project, "My Premium"),), project)),
     )
     monkeypatch.setattr(
-        ui, "setup_overview", AsyncMock(return_value=_overview(project)),
+        ui, "setup_overview", AsyncMock(side_effect=AssertionError(
+            "Must not open the previously selected bot",
+        )),
+    )
+    monkeypatch.setattr(
+        ui, "read_owner_network_home", AsyncMock(return_value=_fleet_snapshot()),
     )
     monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
@@ -482,22 +515,20 @@ async def test_central_connected_menu_has_rich_card_and_colored_two_column_actio
     args = bot.send_message.await_args
     screen = args.args[1]
     rows = args.kwargs["reply_markup"].inline_keyboard
-    assert "Ваши подключения" in screen
-    assert "my_owner_bot" in screen
+    assert "ГЛАВНОЕ МЕНЮ" in screen
+    assert "my_owner_bot" not in screen
     assert "Подключите бота и продолжите" not in screen
-    assert [len(row) for row in rows[:3]] == [2, 2, 2]
-    assert [[b.style for b in row] for row in rows[:3]] == [
-        ["success", "success"], ["primary", "primary"],
-        ["success", "success"],
+    assert [len(row) for row in rows] == [2, 2, 1]
+    assert [[b.style for b in row] for row in rows] == [
+        ["success", "success"], ["primary", "primary"], ["success"],
     ]
-    assert rows[0][0].url == "https://t.me/my_owner_bot"
-    assert rows[0][1].callback_data == "own:bots"
+    assert [b.callback_data for b in rows[0]] == [
+        "own:projects", "own:substart",
+    ]
     assert [b.callback_data for b in rows[1]] == [
-        "own:projects", "own:saasinvoices:0",
+        "own:saasinvoices:0", "lng:menu",
     ]
-    assert [b.callback_data for b in rows[2]] == [
-        "own:help", "lng:menu",
-    ]
+    assert rows[2][0].url == "https://t.me/vimi_support_bot"
 
 
 def test_central_connected_card_rich_and_classic_agree_on_navigation():
