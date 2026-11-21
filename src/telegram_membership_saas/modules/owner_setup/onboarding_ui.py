@@ -103,6 +103,12 @@ def wizard_primary_label(action: str, default_label: str) -> str:
     if action == "resources":
         return tr("📢 Подключить канал / группу",
                   "📢 Connect channel / group")
+    if action == "methods":
+        return tr("💳 Настроить оплату покупателей", "💳 Set up buyer payments")
+    if action == "plans":
+        return tr("📦 Создать первый тариф", "📦 Create first plan")
+    if action == "saasprofile":
+        return tr("💱 Завершить настройку", "💱 Finish setup")
     return default_label
 
 
