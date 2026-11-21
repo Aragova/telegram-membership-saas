@@ -9,6 +9,21 @@ A network owner with 50–100 bots also needs paginated discovery.
 
 ## Owner UX
 
+After either native Telegram Managed Bot creation or BotFather token onboarding,
+the central bot sends **one success card** with (1) a green link opening the
+new customer bot to finish channel/payment/plan setup, and (2) a blue
+**Manage connection** callback targeting the exact newly created project.
+Management is **not** opened automatically on registration. Telegram's
+mandatory system reply keyboard for managed creation is removed and its
+short cleanup message is deleted after the success card is sent.
+
+Connection success and management cards have **Rich HTML** and **classic HTML**
+fallback, RU/EN localization, contextual instructions, and no technical IDs
+in user-facing text. The management view groups up to two actions per row:
+green for opening/checking, blue for settings/navigation/invoices, red for
+protected destructive operations. The existing bot retirement, archive,
+RLS owner authorization, and payment history semantics are unchanged.
+
 In central **Мои боты · личный режим → Мои подключения**, each connection
 opens one compact **Управление подключением** card:
 
