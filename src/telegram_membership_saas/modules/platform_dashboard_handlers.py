@@ -962,6 +962,13 @@ def _saas_invoice_text(report) -> str:
     return "\n".join(lines)
 
 
+def _operator_form_actions(
+    destination: str = "pm",
+) -> InlineKeyboardMarkup:
+    """Inline controls for a live operator text entry (Rich when supported)."""
+    return _keyboard([[_button(tr("✖️ Отмена", "✖️ Cancel"), destination)]])
+
+
 def _editor_command(text: str | None) -> str | None:
     """Only a slash command at the beginning of a message is a command."""
     value = (text or "").lstrip()
@@ -1350,19 +1357,25 @@ def create_platform_dashboard_router(
             )
             return
         if _editor_command(message.text):
-            await bot.send_message(user.id, tr(
-                "Укажите причину отклонения или /cancel.",
-                "Enter the rejection reason or /cancel.",
-            ))
+            await bot.send_message(
+                user.id, tr(
+                    "Укажите причину отклонения (5–500 символов).",
+                    "Enter the rejection reason (5–500 characters).",
+                ),
+                reply_markup=_operator_form_actions("v2proofs:0"),
+            )
             return
         value = message.text.strip()
         if not 5 <= len(value) <= 500:
-            await bot.send_message(user.id, tr(
-                "⚠️ Причина отклонения должна содержать 5–500 символов. "
-                "Счёт при этом не удаляется. /cancel — отмена.",
-                "⚠️ Rejection reason must be 5–500 characters. "
-                "The invoice is retained. /cancel to abort.",
-            ))
+            await bot.send_message(
+                user.id, tr(
+                    "⚠️ Причина отклонения должна содержать 5–500 символов. "
+                    "Счёт при этом не удаляется.",
+                    "⚠️ Rejection reason must be 5–500 characters. "
+                    "The invoice is retained.",
+                ),
+                reply_markup=_operator_form_actions("v2proofs:0"),
+            )
             return
         try:
             actor_id = await ensure_telegram_actor(
@@ -1397,9 +1410,10 @@ def create_platform_dashboard_router(
             await _show_catalog(bot, user)
             return
         if _editor_command(message.text):
-            await bot.send_message(user.id, tr(
-                "Введите текст или /cancel.", "Enter text or /cancel.",
-            ))
+            await bot.send_message(
+                user.id, tr("Введите текст.", "Enter text."),
+                reply_markup=_operator_form_actions(),
+            )
             return
         value = message.text.strip()
         stage = draft["stage"]
@@ -1420,12 +1434,13 @@ def create_platform_dashboard_router(
         if stage == "name":
             draft["name"] = value
             draft["stage"] = "instructions"
-            await bot.send_message(user.id, tr(
-                "✍️ Отправьте реквизиты и инструкцию оплаты одним сообщением. "
-                "/cancel — отмена.",
-                "✍️ Send payment details and instructions in one message. "
-                "/cancel to abort.",
-            ))
+            await bot.send_message(
+                user.id, tr(
+                    "✍️ Отправьте реквизиты и инструкцию оплаты одним сообщением.",
+                    "✍️ Send payment details and instructions in one message.",
+                ),
+                reply_markup=_operator_form_actions(),
+            )
             return
         try:
             actor_id = await _catalog_actor(user)
@@ -1452,11 +1467,13 @@ def create_platform_dashboard_router(
                                   else target["instructions"]),settings=config,
                 )
         except (ValueError,RuntimeError):
-            await bot.send_message(user.id, tr(
-                "⚠️ Не удалось сохранить способ. Проверьте данные и повторите "
-                "или /cancel.",
-                "⚠️ Could not save the method. Retry or /cancel.",
-            ))
+            await bot.send_message(
+                user.id, tr(
+                    "⚠️ Не удалось сохранить способ. Проверьте данные и повторите.",
+                    "⚠️ Could not save the method. Check the details and retry.",
+                ),
+                reply_markup=_operator_form_actions(),
+            )
             return
         pending_catalog.pop(user.id,None)
         await _show_catalog(bot,user)
@@ -1472,10 +1489,13 @@ def create_platform_dashboard_router(
             await _show_bank_screen(bot, user)
             return
         if _editor_command(message.text) not in (None, "/disable"):
-            await bot.send_message(user.id, tr(
-                "Пришлите реквизиты, /disable или /cancel.",
-                "Send bank details, /disable or /cancel.",
-            ))
+            await bot.send_message(
+                user.id, tr(
+                    "Пришлите реквизиты или /disable для отключения.",
+                    "Send bank details or /disable to disable.",
+                ),
+                reply_markup=_operator_form_actions("bankdetails"),
+            )
             return
         instructions = None if _editor_command(message.text) == "/disable" else (
             message.text.strip()
@@ -1523,9 +1543,11 @@ def create_platform_dashboard_router(
         raw = message.text.strip()
         if len(raw) < 8 or len(raw) > 900:
             await bot.send_message(
-                user.id,
-                tr("Введите реквизиты длиной 8–900 символов или /cancel.",
-                   "Enter 8–900 characters or /cancel."),
+                user.id, tr(
+                    "Введите реквизиты длиной 8–900 символов.",
+                    "Enter 8–900 characters.",
+                ),
+                reply_markup=_operator_form_actions("bankdetails"),
             )
             return
         try:
@@ -1717,12 +1739,15 @@ def create_platform_dashboard_router(
                 pending_catalog[query.from_user.id] = {
                     "stage":"name","currency":currency,
                 }
-                await bot.send_message(query.from_user.id,tr(
-                    "✍️ Напишите название способа оплаты, например "
-                    "«СБП» или «PayPal». 2–80 символов. /cancel — отмена.",
-                    "✍️ Enter a method name, e.g. «Bank transfer» "
-                    "or «PayPal». 2–80 characters. /cancel to abort.",
-                ))
+                await bot.send_message(
+                    query.from_user.id, tr(
+                        "✍️ Напишите название способа оплаты, например "
+                        "«СБП» или «PayPal». 2–80 символов.",
+                        "✍️ Enter a method name, e.g. «Bank transfer» "
+                        "or «PayPal». 2–80 characters.",
+                    ),
+                    reply_markup=_operator_form_actions(),
+                )
             elif len(tokens)==3 and tokens[1]=="pm":
                 await _show_catalog_method(
                     bot,query.from_user,decode_uuid(tokens[2]),
@@ -1761,10 +1786,11 @@ def create_platform_dashboard_router(
                 pending_catalog[query.from_user.id]={
                     "stage":"edit_"+tokens[3],"method_id":method_id,
                 }
-                await bot.send_message(query.from_user.id,tr(
-                    "✍️ Введите новое значение или /cancel для отмены.",
-                    "✍️ Send the new value or /cancel to abort.",
-                ))
+                await bot.send_message(
+                    query.from_user.id,
+                    tr("✍️ Введите новое значение.", "✍️ Send the new value."),
+                    reply_markup=_operator_form_actions(),
+                )
             elif len(tokens)==3 and tokens[1]=="pmdeleteask":
                 method_id=decode_uuid(tokens[2])
                 await _render_platform_screen(
@@ -1996,14 +2022,12 @@ def create_platform_dashboard_router(
                         bot, chat_id=query.from_user.id,
                         text=tr(
                             "❌ <b>Отклонить чек</b>\n"
-                            "Укажите причину (5–500 символов). "
-                            "/cancel — отмена.",
+                            "Укажите причину (5–500 символов).",
                             "❌ <b>Reject receipt</b>\n"
-                            "Enter reason (5–500 characters). "
-                            "/cancel to abort.",
+                            "Enter reason (5–500 characters).",
                         ),
                         reply_markup=_keyboard([[_button(
-                            tr("⬅️ Назад", "⬅️ Back"),
+                            tr("✖️ Отмена", "✖️ Cancel"),
                             "v2proofs:" + page_token,
                         )]]), message_id=message_id,
                     )
