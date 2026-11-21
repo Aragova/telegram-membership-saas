@@ -88,6 +88,16 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
+from telegram_membership_saas.modules.owner_setup.account_bill_ui import (
+    account_bill_classic,
+    account_bill_rich,
+)
+from telegram_membership_saas.modules.owner_setup.central_connection_flow_ui import (
+    disconnect_card,
+    obligations_card,
+    rename_input_card,
+    token_input_card,
+)
 from telegram_membership_saas.modules.owner_setup.connection_cards import (
     connection_management_classic,
     connection_management_rich,
@@ -1468,73 +1478,108 @@ def create_owner_setup_router(
             reply_markup=keyboard,
         )
 
+    async def show_account_invoice_list(
+        bot: Bot, user_id: int, actor_id: UUID, *, page: int = 0,
+    ) -> None:
+        """Account-wide historical invoices, including retired bot debts."""
+        report = await merchant_saas_statements(
+            factory, actor_user_id=actor_id, page=page,
+        )
+        if page > 0 and page * 6 >= report.total:
+            raise ValueError(tr("Эта страница больше не существует.",
+                                "This invoice page is no longer available."))
+        rows: list[list[InlineKeyboardButton]] = []
+        for item in report.invoices:
+            due = Decimal(str(item.get("remaining_rub", item["amount_rub"])))
+            if item.get("status") == "paid":
+                due = Decimal("0")
+            label = (
+                (tr("🔴 К оплате", "🔴 Due") + " · "
+                 + format(due, ".2f") + " ₽")
+                if due > 0 else
+                (tr("✅ Оплачено", "✅ Paid") + " · "
+                 + format(Decimal(str(item["amount_rub"])), ".2f") + " ₽")
+            )
+            due_day = str(item.get("due_at") or "")[:10]
+            if len(due_day) == 10 and due_day[4:5] == "-":
+                label += " · " + due_day[8:10] + "." + due_day[5:7] + "." + due_day[:4]
+            rows.append([_button(
+                label, "saasbill:" + encode_uuid(UUID(str(item["id"])))
+                + ":" + str(page), "primary",
+            )])
+        if not report.invoices:
+            empty = tr("📋 Счетов пока нет.", "📋 No invoices yet.")
+        else:
+            empty = tr("Выберите счёт, чтобы открыть его подробности.",
+                       "Choose an invoice to view its details.")
+        nav: list[InlineKeyboardButton] = []
+        if page:
+            nav.append(_button("⬅️", "saasaccountlist:" + str(page - 1)))
+        if (page + 1) * 6 < report.total:
+            nav.append(_button("➡️", "saasaccountlist:" + str(page + 1)))
+        if nav:
+            rows.append(nav)
+        rows.append([_button(
+            tr("⬅️ Счёт аккаунта", "⬅️ Account bill"),
+            "saasinvoices:0", "primary",
+        )])
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=(
+                "<h3>" + tr("📋 ВЫСТАВЛЕННЫЕ СЧЕТА",
+                            "📋 ISSUED INVOICES") + "</h3>"
+                "<p><i>" + empty + "</i></p><p><b>"
+                + tr("📄 Страница ", "📄 Page ") + str(page + 1)
+                + " / " + str(max(1, (report.total + 5) // 6))
+                + "</b></p>"
+            ),
+            classic_html=(
+                "<b>" + tr("📋 ВЫСТАВЛЕННЫЕ СЧЕТА",
+                           "📋 ISSUED INVOICES") + "</b>\n"
+                + empty + "\n" + tr("Страница ", "Page ")
+                + str(page + 1) + " / " + str(max(1, (report.total + 5) // 6))
+            ),
+            reply_markup=_markup(rows),
+        )
+
     async def show_saas_statements(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID | None, *, page: int = 0,
     ) -> None:
         """One issued invoice per bot; never sum another bot's finances."""
         if project_id is None:
-            # Preserve original historical account receipts after a transfer.
-            # Current per-bot statements are opened INSIDE each connected bot.
             report = await merchant_saas_statements(
-                factory, actor_user_id=actor_id, page=page,
+                factory, actor_user_id=actor_id, page=0,
             )
+            # Only real issued invoices and the owner-scoped fleet ledger
+            # contribute figures. Never manufacture future obligations.
+            home = await read_owner_network_home(factory, actor_id=actor_id)
+            billing = home["billing"]
             rows: list[list[InlineKeyboardButton]] = []
-            for item in report.invoices:
-                # Issued debt remains payable after physical bot retirement.
-                # Never disguise an outstanding amount as a paid "archive".
-                due = Decimal(str(item.get("remaining_rub", item["amount_rub"])))
-                if item.get("status") == "paid":
-                    due = Decimal("0")
-                label = (
-                    tr("🔴 К оплате", "🔴 Amount due") + " · "
-                    + format(due, ".2f") + " ₽"
-                    if due > 0 else tr("✅ Оплачено", "✅ Paid") + " · "
-                    + format(Decimal(str(item["amount_rub"])), ".2f") + " ₽"
-                )
-                service_day = str(item.get("period_start") or "")[:10]
-                if len(service_day) == 10 and service_day[4:5] == "-":
-                    label += (" · " + service_day[8:10] + "."
-                              + service_day[5:7] + "." + service_day[:4])
+            nearest = billing.get("next") if report.unpaid else None
+            if isinstance(nearest, dict) and nearest.get("invoice_id"):
                 rows.append([_button(
-                    label,
-                    "saasbill:" + encode_uuid(UUID(str(item["id"])))
-                    + ":" + str(page),
+                    tr("💳 Открыть ближайший счёт",
+                       "💳 Open next invoice"),
+                    "saasnearest:" + encode_uuid(UUID(str(nearest["invoice_id"]))),
+                    "success",
                 )])
-            nav: list[InlineKeyboardButton] = []
-            if page:
-                nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
-            if (page + 1) * 6 < report.total:
-                nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
-            if nav:
-                rows.append(nav)
-            rows.append([_button(
-                tr("🏠 Главное меню", "🏠 Main menu"), "onboardhome",
-            )])
-            amount = format(report.outstanding_rub, ".2f") + " ₽"
-            count = str(report.unpaid)
-            title = tr("🧾 СЧЁТ АККАУНТА", "🧾 ACCOUNT BILL")
-            table = (
-                "<table bordered compact><tr><th>"
-                + tr("Неоплачено", "Unpaid") + "</th><td><b>"
-                + count + " · " + amount + "</b></td></tr></table>"
-            )
+            if report.total:
+                rows.append([_button(
+                    tr("📋 Все выставленные счета",
+                       "📋 All issued invoices"),
+                    "saasaccountlist:0", "primary",
+                )])
+            rows.append([
+                _button(tr("📂 Мои подключения", "📂 My connections"),
+                        "projects", "primary"),
+                _button(tr("🏠 Главное меню", "🏠 Main menu"),
+                        "onboardhome", "primary"),
+            ])
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html="<h3>" + title + "</h3>" + table + "<p>" + tr(
-                    "Каждый бот имеет собственный счёт и валюту. Изменить валюту "
-                    "можно в разделе «🧾 Счёт» соответствующего бота.",
-                    "Every bot has its own invoice and currency. Change it from "
-                    "that bot's 🧾 Bill section.",
-                ) + "</p>",
-                classic_html=(
-                    "<b>" + title + "</b>\n\n"
-                    + tr("Неоплачено: ", "Unpaid: ") + count + " · " + amount
-                    + "\n\n" + tr(
-                        "Валюта выбирается отдельно в каждом боте.",
-                        "Set the currency separately in each bot.",
-                    )
-                ),
+                rich_html=account_bill_rich(report, billing),
+                classic_html=account_bill_classic(report, billing),
                 reply_markup=_markup(rows),
             )
             return
@@ -1720,7 +1765,8 @@ def create_owner_setup_router(
         # currency snapshots remain visible, but no new legacy lock is offered.
         buttons.append([_button(
             tr("⬅️ К счетам", "⬅️ Invoices"),
-            "saasinvoices:" + str(page),
+            ("saasaccountlist:" if fixed_project_id is None
+             else "saasinvoices:") + str(page),
         )])
         await send_owner_rich(
             bot, chat_id=user_id,
@@ -4345,7 +4391,7 @@ def create_owner_setup_router(
                 "managedsync:", "managedconfirm:", "managedcancel:",
                 "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasbotbill:",
-                "saasnearest:", "saasinvoices:", "saaspaychoices:",
+                "saasnearest:", "saasinvoices:", "saasaccountlist:", "saaspaychoices:",
                 "saasprofile", "saasprice:", "saasbill:", "saasbillchoose:",
                 "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
@@ -5397,6 +5443,17 @@ def create_owner_setup_router(
                 )
                 await show_saas_issued_invoice(
                     bot, user_id, actor_id, invoice_id, page=invoice_page,
+                )
+                await query.answer()
+                return
+            if action.startswith("saasaccountlist:"):
+                if fixed_project_id is not None:
+                    raise PermissionError("Account invoices belong to central ViMi Pay")
+                page_text = action.split(":", 1)[1]
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Invalid invoice page")
+                await show_account_invoice_list(
+                    bot, user_id, actor_id, page=int(page_text),
                 )
                 await query.answer()
                 return
