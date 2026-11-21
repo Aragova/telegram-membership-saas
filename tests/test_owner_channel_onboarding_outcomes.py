@@ -316,6 +316,8 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
             "own:setupstep3"
         )
         assert "Reconnected" in result["rich_html"]
+        # Simulate the resource now appearing in the DB after successful add.
+        ui.setup_overview.return_value = _data(project, ("Reconnected",))
         # The CTA MUST actually open step 3, not the finished main dashboard.
         query.data = "own:setupstep3"
         await _handler(project, "owner_callback")(query, native)
