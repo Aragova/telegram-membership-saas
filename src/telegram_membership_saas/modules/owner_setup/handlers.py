@@ -4146,7 +4146,8 @@ def create_owner_setup_router(
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "managedsync:", "managedconfirm:", "managedcancel:", "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "managedcancel:",
+                "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasinvoices:", "saaspaychoices:",
                 "saasprofile", "saasprice:", "saasbill:", "saasbillchoose:",
                 "saasbillquote:", "sl:",
@@ -4169,7 +4170,8 @@ def create_owner_setup_router(
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
-                "managedsync:", "managedconfirm:", "managedcancel:", "connrename:", "connremove:", "connremoveok:",
+                "managedsync:", "managedconfirm:", "managedcancel:",
+                "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:",
             )):
 
