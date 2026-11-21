@@ -4344,7 +4344,7 @@ def create_owner_setup_router(
                 "managedsync:", "managedconfirm:", "managedcancel:",
                 "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasbotbill:",
-                "saasinvoices:", "saaspaychoices:",
+                "saasnearest:", "saasinvoices:", "saaspaychoices:",
                 "saasprofile", "saasprice:", "saasbill:", "saasbillchoose:",
                 "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
