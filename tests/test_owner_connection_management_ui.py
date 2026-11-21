@@ -391,8 +391,9 @@ async def test_archived_registry_keeps_direct_invoice_navigation(monkeypatch):
     instance = bot()
     await cb(query("archives"), instance)
     actions = buttons(instance.send_message.await_args)
-    assert actions.count("own:saasinvoices:0") == 1
+    assert "own:saasinvoices:0" not in actions
     assert "own:projects" in actions
+    assert "own:onboardhome" in actions
 
 
 def test_central_native_telegram_menu_exposes_billing_but_customer_does_not():
