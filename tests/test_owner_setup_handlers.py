@@ -144,9 +144,10 @@ async def test_botfather_rich_instructions_in_ru_and_en(monkeypatch):
             )
             await callback(query, bot)
             sent = bot.send_message.await_args
+            rendered = sent.args[1].replace("<b>", "").replace("</b>", "")
             for phrase in (title, instruction, box, send, "@BotFather",
                            "/mybots", "/newbot", "API"):
-                assert phrase in sent.args[1]
+                assert phrase in rendered
             buttons = sent.kwargs["reply_markup"].inline_keyboard
             assert len(buttons) == 1
             assert buttons[0][0].callback_data == "own:promptback:gen-ru-en"
