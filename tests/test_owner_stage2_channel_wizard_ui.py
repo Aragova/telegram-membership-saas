@@ -211,6 +211,7 @@ async def test_back_from_native_picker_disposes_only_current_flow(monkeypatch):
     consumed.assert_awaited_once()
     assert consumed.await_args.kwargs["expected_step"] == "chat_picker"
     assert consumed.await_args.kwargs["discard"] is True
+    assert consumed.await_args.kwargs["allow_expired_chat_picker"] is True
     assert consumed.await_args.kwargs["bot_scope_id"] == 987
     assert isinstance(
         bot.send_message.await_args.kwargs["reply_markup"], ReplyKeyboardRemove,
