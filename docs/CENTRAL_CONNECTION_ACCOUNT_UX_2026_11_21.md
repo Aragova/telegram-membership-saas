@@ -74,3 +74,39 @@ blockers, input binding, clean back navigation, protected disconnect,
 should use real test bots without mutating paid buyer data.
 
 Do not merge or deploy without explicit owner approval.
+
+
+## Approved onboarding step 1/4: connect channel / group
+
+The first step in each freshly connected bot's 4-step setup uses the
+approved Telegram-style Rich presentation. The live verified owner bot
+username is shown as **@handle** alongside its timezone and the current
+**1/4** progress indicator. This is rendered in proper Telegram Rich HTML,
+with a full classic HTML fallback, rather than promising arbitrary CSS or
+image-generated gradients that Telegram buttons do not support.
+
+The copy walks owners through the actual Telegram permissions that
+`verify_channel_and_add` requires:
+
+1. Open the **private channel or supergroup** → tap its title →
+   **Edit / Manage** → **Administrators** → **Add Administrator**, selecting
+   precisely the `@handle` currently connected to this ViMi Pay project.
+2. Grant **Invite users / invite links** (`can_invite_users`) **and**
+   **Ban / remove users** (`can_restrict_members`). These are necessary
+   for paid access grants and subscription expirations; ordinary membership
+   or just one permission is not sufficient. Permission labels can vary by
+   Telegram client.
+3. Save permissions, return to this same chat, click the sole
+   **📢 Connect channel / group** button, and choose the channel/group
+   in the next existing management step. ViMi Pay checks bot rights and
+   the acting owner's administrator role against Telegram before saving.
+
+The first step shows one **green** action, with no extra Help or Language
+buttons. Other steps also retain one scoped forward action; no underlying
+callbacks, pricing, payments, channel authorization or entitlement logic
+changes. Language selection continues to live outside this guided screen.
+This screen is available in RU/EN and protects HTML-sensitive bot names.
+
+Test acceptance: both locales, Rich/classic content, exact connected bot,
+both permissions, progress 1/4, single scoped action, escaping and intact
+subsequent setup steps.
