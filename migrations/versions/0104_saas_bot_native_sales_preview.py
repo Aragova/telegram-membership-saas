@@ -81,11 +81,28 @@ def upgrade() -> None:
             WHERE s.project_id = p_project AND s.owner_user_id = actor
               AND s.paid_at >= month_from AND s.paid_at < month_to
             UNION ALL
-            SELECT c.source_kind::text, c.currency_code::text,
-                   c.original_amount::numeric
-            FROM public.platform_saas_crypto_sales c
-            WHERE c.project_id = p_project AND c.owner_user_id = actor
-              AND c.paid_at >= month_from AND c.paid_at < month_to
+            -- Crypto Pay may verify a payment BEFORE sale-day USD valuation
+            -- becomes available. The paid MAINNET invoice is the authority
+            -- for native turnover, not the deferred commission evidence.
+            -- Read it only once, including already captured paid invoices.
+            SELECT CASE WHEN i.kind = 'subscription'
+                        THEN 'subscription_crypto'::text
+                        ELSE 'file_crypto'::text END,
+                   i.currency_code::text, i.amount::numeric
+            FROM public.crypto_pay_invoices i
+            JOIN public.crypto_pay_apps a
+              ON a.id = i.app_id AND a.project_id = i.project_id
+            WHERE i.project_id = p_project AND i.status = 'paid'
+              AND a.environment = 'mainnet'
+              AND i.paid_at >= month_from AND i.paid_at < month_to
+              AND EXISTS(
+                SELECT 1 FROM public.merchant_project_periods history
+                WHERE history.project_id = i.project_id
+                  AND history.owner_user_id = actor
+                  AND history.started_at <= i.paid_at
+                  AND (history.ended_at IS NULL
+                       OR history.ended_at > i.paid_at)
+              )
           ),
           per_rail_currency AS (
             SELECT kind, currency, count(*)::integer AS sold,
