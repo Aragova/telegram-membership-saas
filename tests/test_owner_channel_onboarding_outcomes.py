@@ -156,8 +156,10 @@ async def test_native_picker_has_one_result_and_one_inline_action(
     assert isinstance(sent.kwargs["reply_markup"], ReplyKeyboardRemove)
     assert ("✅" if success else "⚠️") in sent.args[1]
     thing = (
-        ("группа" if kind == "group" else "канал") if language == "ru"
-        else ("group" if kind == "group" else "channel")
+        ("группа" if success else "группу") if kind == "group" and language == "ru"
+        else "канал" if language == "ru"
+        else "group" if kind == "group"
+        else "channel"
     )
     assert thing in sent.args[1].lower()
     assert bot.edit_message_reply_markup.await_count == 1
@@ -209,6 +211,41 @@ async def test_manual_id_one_rich_result_and_correct_navigation(
             args["reply_markup"].inline_keyboard for item in row] == [
         "own:dashboard" if success else "own:resources",
     ]
+
+
+@pytest.mark.parametrize("language", ["ru", "en"])
+@pytest.mark.parametrize(("error","reason","expected"), [
+    ("Добавление нового канала временно ограничено из-за просроченного счёта ViMi Pay.",
+     "invoice", ("НЕОПЛАЧЕННЫЙ СЧЁТ", "OVERDUE BILL")),
+    ("Этот канал уже использовался в другом вашем подключении.",
+     "previous_connection", ("КАНАЛ УЖЕ ПОДКЛЮЧАЛСЯ", "CHANNEL ALREADY CONNECTED")),
+    ("У этого канала есть финансовая история в удалённом подключении.",
+     "archived_connection", ("СОХРАНЕНА ФИНАНСОВАЯ ИСТОРИЯ", "PAYMENT HISTORY PRESERVED")),
+    ("Шаг устарел. Откройте нужный раздел заново.",
+     "expired", ("ВЫБОР УСТАРЕЛ", "SELECTION EXPIRED")),
+])
+def test_business_blockers_show_correct_remedy_not_permissions(
+    language, error, reason, expected,
+):
+    from telegram_membership_saas.modules.owner_setup.channel_stage2_ui import (
+        connection_problem_code,
+    )
+    assert connection_problem_code(ValueError(error)) == reason
+    token = _language.set(language)
+    try:
+        rich = connection_result_rich(
+            success=False, kind="channel", username="vimitest21bot",
+            problem=reason,
+        )
+        classic = connection_result_classic(
+            success=False, kind="channel", username="vimitest21bot",
+            problem=reason,
+        )
+    finally:
+        _language.reset(token)
+    for rendered in (rich, classic):
+        assert expected[0 if language == "ru" else 1] in rendered
+        assert "1️⃣" not in rendered  # No misleading bot-rights checklist.
 
 
 @pytest.mark.parametrize("language", ["ru", "en"])
