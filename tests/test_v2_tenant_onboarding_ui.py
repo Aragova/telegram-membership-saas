@@ -90,7 +90,7 @@ async def test_admin_dashboard_guides_channel_then_payment_then_plans(monkeypatc
     bot = _bot()
     for snapshot, expected in [
         (_snapshot(project), "own:resources"),
-        (_snapshot(project, has_channel=True), "own:methods:guided"),
+        (_snapshot(project, has_channel=True), "own:methods"),
         (_snapshot(project, has_channel=True, has_method=True), "own:plans"),
     ]:
         overview.return_value = snapshot
