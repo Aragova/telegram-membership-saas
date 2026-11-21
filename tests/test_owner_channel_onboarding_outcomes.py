@@ -212,7 +212,12 @@ async def test_manual_id_one_rich_result_and_correct_navigation(
     args = render.await_args.kwargs
     assert "<h3>" in args["rich_html"]
     assert ("3/4" if success else "⚠️") in args["rich_html"]
-    assert "ПОДКЛЮЧЕНО" not in args["rich_html"]
+    # Do not mistake the legitimate "НЕ ПОДКЛЮЧЕНО" error heading
+    # for the now-removed successful-connection interstitial.
+    if success:
+        assert "ПОДКЛЮЧЕНО" not in args["rich_html"]
+    else:
+        assert "⚠️" in args["rich_html"]
     assert [item.callback_data for row in
             args["reply_markup"].inline_keyboard for item in row] == [
         "own:methods" if success else "own:resources",
