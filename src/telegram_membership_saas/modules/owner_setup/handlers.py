@@ -88,15 +88,15 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_method_screen,
     preview_offer_screen,
 )
-from telegram_membership_saas.modules.owner_setup.channel_management import (
-    read_channel_insights,
-    remove_channel_without_paid_purchases,
-)
 from telegram_membership_saas.modules.owner_setup.central_connection_flow_ui import (
     disconnect_card,
     obligations_card,
     rename_input_card,
     token_input_card,
+)
+from telegram_membership_saas.modules.owner_setup.channel_management import (
+    read_channel_insights,
+    remove_channel_without_paid_purchases,
 )
 from telegram_membership_saas.modules.owner_setup.connection_cards import (
     connection_management_classic,
