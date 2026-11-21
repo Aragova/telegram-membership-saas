@@ -119,6 +119,12 @@ async def test_english_retirement_inbox_preserves_money_and_actions(monkeypatch)
     monkeypatch.setattr(
         owner_ui, "list_owner_obligations", AsyncMock(return_value=snapshot),
     )
+    monkeypatch.setattr(
+        owner_ui, "setup_overview", AsyncMock(return_value=SimpleNamespace(
+            bot_instances=((uuid4(), "vimitest21bot", "registered"),),
+            can_delete_bot=True,
+        )),
+    )
     router = owner_ui.create_owner_setup_router(MagicMock())
     handler = next(
         item.callback for item in router.callback_query.handlers
@@ -138,22 +144,33 @@ async def test_english_retirement_inbox_preserves_money_and_actions(monkeypatch)
         await handler(query, bot)
         call = bot.send_message.await_args
         content = call.args[1]
-        assert "Outstanding obligations before removal" in content
-        assert "Payment requests: 1" in content
-        assert "19.99 EUR" in content
-        assert "Pending review" in content
-        assert "Premium &amp; VIP" in content
-        assert "Do not remove paid access" in content
+        assert "CUSTOMERS AND ACCESS" in content
+        assert "Purchases" in content and "subscriptions" in content
         buttons = [
             b for row in call.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert any(b.text.startswith("💳 Reject request") and
-                   b.callback_data.startswith("own:ob:pay:") for b in buttons)
-        assert any(b.text.startswith("📦 End subscription") and
-                   b.callback_data.startswith("own:ob:sub:") for b in buttons)
-        assert any(b.callback_data == "own:oblist" for b in buttons)
-        query.answer.assert_awaited_once()
+        assert any(b.callback_data == "own:oblist:pay" for b in buttons)
+        assert any(b.callback_data == "own:oblist:sub" for b in buttons)
+        query.data = "own:oblist:pay"
+        await handler(query, bot)
+        payment = bot.send_message.await_args
+        assert "19.99 EUR" in payment.args[1]
+        assert "Pending review" in payment.args[1]
+        assert any(
+            b.callback_data.startswith("own:ob:pay:")
+            for row in payment.kwargs["reply_markup"].inline_keyboard for b in row
+        )
+        query.data = "own:oblist:sub"
+        await handler(query, bot)
+        subscription = bot.send_message.await_args
+        assert "Premium &amp; VIP" in subscription.args[1]
+        assert "paid term" in subscription.args[1]
+        assert any(
+            b.callback_data.startswith("own:ob:sub:")
+            for row in subscription.kwargs["reply_markup"].inline_keyboard for b in row
+        )
+        assert query.answer.await_count == 3
     finally:
         _language.reset(token)
 
@@ -199,6 +216,12 @@ async def test_owner_obligation_notice_uses_customer_language(monkeypatch):
     )
     monkeypatch.setattr(
         owner_ui, "list_owner_obligations", AsyncMock(return_value=snapshot),
+    )
+    monkeypatch.setattr(
+        owner_ui, "setup_overview", AsyncMock(return_value=SimpleNamespace(
+            bot_instances=((uuid4(), "vimitest21bot", "registered"),),
+            can_delete_bot=True,
+        )),
     )
     end_subscription = AsyncMock(return_value=OwnerChange(True, 301, original))
     monkeypatch.setattr(owner_ui, "end_owner_subscription", end_subscription)
