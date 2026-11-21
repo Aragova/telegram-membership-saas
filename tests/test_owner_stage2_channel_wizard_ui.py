@@ -127,6 +127,8 @@ def _auth(monkeypatch, project):
                         AsyncMock(return_value=project))
     monkeypatch.setattr(ui, "setup_overview",
                         AsyncMock(return_value=_setup(project)))
+    monkeypatch.setattr(ui, "saas_price_profile",
+                        AsyncMock(return_value={"currency_selected": False}))
 
 
 @pytest.mark.parametrize("language", ["ru", "en"])
@@ -191,6 +193,7 @@ async def test_native_telegram_picker_preserves_request_chat_and_has_only_back(
     assert picker.request_title is True
     assert begin.await_args.kwargs["step"] == "chat_picker"
     assert begin.await_args.kwargs["payload"]["request_id"] == picker.request_id
+    assert begin.await_args.kwargs["payload"]["kind"] == kind
     assert begin.await_args.kwargs["bot_scope_id"] == 987
 
 
