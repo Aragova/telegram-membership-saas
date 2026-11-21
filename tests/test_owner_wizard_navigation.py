@@ -239,6 +239,61 @@ async def test_cancel_reports_native_keyboard_only_for_native_setup(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_expired_native_chat_picker_back_is_safe_but_new_form_survives(
+    monkeypatch,
+):
+    actor_id, project_id = uuid4(), uuid4()
+    old = datetime.now(UTC) - timedelta(minutes=20)
+    state = SimpleNamespace(
+        step="chat_picker", payload={"request_id": 19},
+        selected_project_id=project_id,
+        prompt_message_id=None, generation="expired-native",
+        expires_at=old,
+    )
+    session = SimpleNamespace(get=AsyncMock(return_value=state))
+
+    @asynccontextmanager
+    async def scope(*_args, **_kwargs):
+        yield session
+
+    monkeypatch.setattr(service, "tenant_session_scope", scope)
+
+    # Telegram's native Back still dismisses the matching picker after TTL.
+    flow = await service.consume_button_flow(
+        MagicMock(), actor_id=actor_id, expected_step="chat_picker",
+        bot_scope_id=900, discard=True, allow_expired_chat_picker=True,
+    )
+    assert flow.step == "chat_picker"
+    assert flow.project_id == project_id
+    assert state.step is None and state.generation is None
+
+    # A stale native Back must never destroy a newer non-picker form.
+    state.step = "plan_name"
+    state.generation = "new-text-input"
+    state.prompt_message_id = 88
+    state.expires_at = datetime.now(UTC) + timedelta(minutes=10)
+    with pytest.raises(ValueError):
+        await service.consume_button_flow(
+            MagicMock(), actor_id=actor_id, expected_step="chat_picker",
+            bot_scope_id=900, discard=True, allow_expired_chat_picker=True,
+        )
+    assert state.step == "plan_name" and state.generation == "new-text-input"
+
+    # Expired chat_shared completions still demand a valid request and TTL.
+    state.step = "chat_picker"
+    state.generation = "expired-native"
+    state.prompt_message_id = None
+    state.expires_at = old
+    with pytest.raises(ValueError):
+        await service.consume_button_flow(
+            MagicMock(), actor_id=actor_id, expected_step="chat_picker",
+            request_id=19, bot_scope_id=900,
+            allow_expired_chat_picker=True,
+        )
+    assert state.step == "chat_picker"
+
+
+@pytest.mark.asyncio
 async def test_back_command_routes_to_price_plan_without_modifying_price(monkeypatch):
     project_id, actor_id, plan_id = uuid4(), uuid4(), uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
