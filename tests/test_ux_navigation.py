@@ -46,7 +46,7 @@ def _bot():
 def test_roles_offer_only_implemented_commands_without_duplicates():
     expected_connected = ["menu", "subscription", "support"]
     # Central accounts need their historical invoices even with zero bots.
-    expected_central = ["menu", "bots", "billing", "help"]
+    expected_central = ["start", "bots", "billing"]
     for role in ("buyer", "owner"):
         for language in ("ru", "en"):
             commands = commands_for(role, language)
@@ -56,7 +56,7 @@ def test_roles_offer_only_implemented_commands_without_duplicates():
         for language in ("ru", "en"):
             commands = commands_for(role, language)
             assert [command.command for command in commands] == expected_central
-            assert len({command.command for command in commands}) == 4
+            assert len({command.command for command in commands}) == 3
     assert commands_for("buyer", "en")[1].description == "🧾 My subscriptions"
     assert commands_for("owner", "ru")[1].description == "🧾 Мои подписки"
     assert commands_for("buyer", "ru")[2].description == "🛟 Поддержка"
