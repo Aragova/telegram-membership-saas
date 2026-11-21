@@ -860,29 +860,65 @@ def create_owner_setup_router(
             bot, chat_id=user_id,
             rich_html=(
                 "<h3>" + tr("🔐 Платные подписки", "🔐 Paid subscriptions")
-                + "</h3><p>" + tr(
-                    "Продавайте доступ к закрытым каналам и группам, "
-                    "автоматически управляйте тарифами, платежами и сроками.",
-                    "Sell access to private channels and groups and manage "
-                    "plans, payments and access periods automatically.",
+                + "</h3><p><b>" + tr(
+                    "🤖 Выберите способ подключения Telegram-бота",
+                    "🤖 Choose how to connect your Telegram bot",
+                ) + "</b></p><p><b>" + tr(
+                    "✨ Создать бота", "✨ Create bot",
+                ) + "</b><br>" + tr(
+                    "Telegram предложит указать имя и @username. Подтвердите "
+                    "создание, и ViMi Pay подключит нового бота автоматически. "
+                    "Копировать API-токен не понадобится.",
+                    "Telegram will ask for a name and @username. Confirm "
+                    "creation, and ViMi Pay will connect the new bot "
+                    "automatically. No API token to copy.",
                 ) + "</p><p><b>" + tr(
-                    "Как создадим вашего бота?",
-                    "How should we create your bot?",
-                ) + "</b></p><p>" + tr(
-                    "✨ Автоматически через Telegram или 🔑 вручную через "
-                    "@BotFather. Для существующего бота выберите BotFather.",
-                    "✨ Automatically through Telegram or 🔑 manually using "
-                    "@BotFather. Select BotFather for an existing bot.",
+                    "🔑 Через BotFather", "🔑 Via BotFather",
+                ) + "</b><br>" + tr(
+                    "Для уже созданного бота или ручного создания нового:",
+                    "For an existing bot or to create a new one manually:",
+                ) + "</p><p>" + tr(
+                    "1. Откройте @BotFather: /mybots для существующего бота "
+                    "или /newbot для нового.<br>"
+                    "2. Получите API-токен и отправьте его в ViMi Pay.<br>"
+                    "3. Мы проверим токен и удалим сообщение с ним из чата.",
+                    "1. Open @BotFather: /mybots for an existing bot or "
+                    "/newbot for a new one.<br>"
+                    "2. Get the API token and send it to ViMi Pay.<br>"
+                    "3. We'll verify the token and delete its chat message.",
+                ) + "</p><p>" + tr(
+                    "После подключения откройте своего бота, чтобы настроить "
+                    "канал, тарифы и оплату.",
+                    "After connecting, open your own bot to configure "
+                    "your channel, plans and payments.",
                 ) + "</p>"
             ),
             classic_html=(
                 tr("🔐 <b>Платные подписки</b>", "🔐 <b>Paid subscriptions</b>")
-                + "\n\n" + tr(
-                    "Создайте бота для продажи доступа к каналам и группам. "
-                    "✨ Автоматическое создание или 🔑 подключение "
-                    "через BotFather.",
-                    "Create a bot to sell access to channels and groups. "
-                    "✨ Automatic creation or 🔑 connect through BotFather.",
+                + "\n\n<b>" + tr(
+                    "🤖 Выберите способ подключения Telegram-бота",
+                    "🤖 Choose how to connect your Telegram bot",
+                ) + "</b>\n\n<b>" + tr(
+                    "✨ Создать бота", "✨ Create bot",
+                ) + "</b>\n" + tr(
+                    "Укажите имя и @username в Telegram. ViMi Pay подключит "
+                    "бота автоматически, без копирования API-токена.",
+                    "Set the name and @username in Telegram. ViMi Pay "
+                    "connects the bot automatically, no token to copy.",
+                ) + "\n\n<b>" + tr(
+                    "🔑 Через BotFather", "🔑 Via BotFather",
+                ) + "</b>\n" + tr(
+                    "1. @BotFather → /mybots (существующий) или /newbot (новый).\n"
+                    "2. Получите и отправьте API-токен в ViMi Pay.\n"
+                    "3. Мы проверим токен и удалим сообщение с ним.",
+                    "1. @BotFather → /mybots (existing) or /newbot (new).\n"
+                    "2. Get the API token and send it to ViMi Pay.\n"
+                    "3. We verify the token and delete its message.",
+                ) + "\n\n" + tr(
+                    "После подключения откройте своего бота для настройки "
+                    "канала, тарифов и оплаты.",
+                    "After connecting, open your bot to configure "
+                    "the channel, plans and payments.",
                 )
             ),
             reply_markup=_markup(rows),
@@ -4047,7 +4083,8 @@ def create_owner_setup_router(
             return
         if fixed_project_id is None:
             is_registry_action = action in {
-                "new", "newmanaged", "substart", "onboardhome", "onboardlanguage",
+                "new", "newmanaged", "managedlaunch", "substart", "onboardhome",
+                "onboardlanguage",
                 "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
@@ -4070,7 +4107,8 @@ def create_owner_setup_router(
                 return
         else:
             if action in {
-                "new", "newmanaged", "substart", "onboardhome", "onboardlanguage",
+                "new", "newmanaged", "managedlaunch", "substart", "onboardhome",
+                "onboardlanguage",
                 "projects", "archives", "bots", "connect", "oblist",
             } or action.startswith((
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
@@ -4123,6 +4161,85 @@ def create_owner_setup_router(
                     )
                     await query.answer()
                     return
+                # Telegram's request_managed_bot exists ONLY on native reply
+                # keyboards. First explain the action in a clean Rich card.
+                # Do not show the system keyboard or create a flow yet.
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=(
+                        "<h3>" + tr(
+                            "✨ Создать бота через Telegram",
+                            "✨ Create a bot with Telegram",
+                        ) + "</h3><p>" + tr(
+                            "Нажмите «Продолжить создание». На следующем шаге "
+                            "появится временная системная кнопка Telegram. "
+                            "Нажмите её, выберите имя и @username нового бота "
+                            "и подтвердите создание.",
+                            "Tap Continue creation. On the next step, a "
+                            "temporary Telegram system button will appear. "
+                            "Tap it, choose the new bot's name and @username, "
+                            "then confirm creation.",
+                        ) + "</p><p>" + tr(
+                            "ViMi Pay получит токен автоматически, без отправки "
+                            "его в чат. @username должен заканчиваться на bot. "
+                            "После подтверждения подключения бот появится в списке.",
+                            "ViMi Pay receives the token automatically without "
+                            "sending it in chat. The @username must end in bot. "
+                            "Once connected, the bot will appear in your list.",
+                        ) + "</p><p>" + tr(
+                            "⏳ На завершение создания даётся 15 минут.",
+                            "⏳ You have 15 minutes to complete creation.",
+                        ) + "</p>"
+                    ),
+                    classic_html=tr(
+                        "✨ <b>Создать бота через Telegram</b>\n\n"
+                        "Нажмите «Продолжить создание». Появится временная "
+                        "системная кнопка Telegram. Нажмите её, выберите "
+                        "имя и @username нового бота и подтвердите создание.\n\n"
+                        "ViMi Pay получит токен автоматически, без отправки "
+                        "его в чат. @username должен заканчиваться на bot. "
+                        "После подтверждения подключения бот появится в списке.\n\n"
+                        "⏳ На создание даётся 15 минут.",
+                        "✨ <b>Create a bot with Telegram</b>\n\n"
+                        "Tap Continue creation. A temporary Telegram system "
+                        "button will appear. Tap it, choose a name and "
+                        "@username, then confirm creation.\n\n"
+                        "ViMi Pay receives the token without sending it in "
+                        "chat. The @username must end in bot. Once connected, "
+                        "the bot will appear in your list.\n\n"
+                        "⏳ You have 15 minutes to finish.",
+                    ),
+                    reply_markup=_markup([
+                        [_button(
+                            tr("✨ Продолжить создание", "✨ Continue creation"),
+                            "managedlaunch", "success",
+                        )],
+                        [_button(tr("⬅️ Назад", "⬅️ Back"), "substart", "primary")],
+                    ]),
+                )
+                await query.answer()
+                return
+            if action == "managedlaunch":
+                # The native Telegram creation dialog cannot be launched from
+                # InlineKeyboardButton or a Rich action. Request it only after
+                # the owner explicitly continues from the explanation card.
+                if get_settings().bot_token_encryption_key is None:
+                    raise ValueError(tr(
+                        "Подключение ботов пока недоступно",
+                        "Bot connections are unavailable",
+                    ))
+                identity = await bot.get_me()
+                if not identity.can_manage_bots:
+                    await bot.send_message(
+                        user_id, tr(
+                            "⚠️ Режим управления ботами отключён. "
+                            "Вернитесь к выбору способа подключения.",
+                            "⚠️ Bot Management Mode is disabled. "
+                            "Return to the connection method selector.",
+                        ),
+                    )
+                    await query.answer()
+                    return
                 request_id = randbelow(2_000_000_000) + 1
                 await set_flow(
                     factory, actor_id=actor_id, step="managed_bot_create",
@@ -4131,23 +4248,16 @@ def create_owner_setup_router(
                 await bot.send_message(
                     user_id,
                     tr(
-                        "✨ <b>Создать бота через Telegram</b>\n\n"
-                        "Нажмите кнопку ниже, выберите имя и @username "
-                        "нового бота и подтвердите создание в Telegram.\n\n"
-                        "ViMi Pay получит токен автоматически, без отправки его "
-                        "в чат. Имя пользователя должно заканчиваться на bot.\n"
-                        "После создания подключение появится в списке.\n\n"
+                        "👇 Нажмите системную кнопку Telegram "
+                        "«✨ Создать нового бота» под сообщением. "
+                        "Она нужна для безопасного создания бота.\n"
                         "⏳ Подтвердите создание в течение 15 минут. "
                         "Отмена: /cancel.",
-                        "✨ <b>Create a bot with Telegram</b>\n\n"
-                        "Tap the button below, choose a name and @username "
-                        "and approve creation in Telegram.\n\n"
-                        "ViMi Pay receives the token directly, without "
-                        "posting it to the chat. Username must end in bot.\n"
-                        "The connected bot then appears in your list.\n\n"
+                        "👇 Tap the Telegram system button "
+                        "“✨ Create new bot” below. Telegram requires this "
+                        "button for secure bot creation.\n"
                         "⏳ Confirm within 15 minutes. Cancel: /cancel.",
                     ),
-                    parse_mode="HTML",
                     reply_markup=ReplyKeyboardMarkup(
                         keyboard=[[
                             KeyboardButton(
