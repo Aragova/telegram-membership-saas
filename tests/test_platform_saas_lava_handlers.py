@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from aiogram.types import CallbackQuery
 
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.localization import _language
@@ -353,16 +354,18 @@ async def test_lava_cancel_callback_is_not_cleared_before_handler():
         invoice, 900, lava.monotonic() + 600,
     )
     navigation = lava.ClearPendingLavaOnNavigation()
-    query = SimpleNamespace(
-        from_user=SimpleNamespace(id=123),
-        message=SimpleNamespace(chat=SimpleNamespace(id=123, type="private")),
-        data="lava:cancel",
-    )
     callback = AsyncMock()
-    await navigation(callback, query, {})
+    def event(data):
+        return CallbackQuery.model_construct(
+            from_user=SimpleNamespace(id=123),
+            message=SimpleNamespace(
+                chat=SimpleNamespace(id=123, type="private"),
+            ),
+            data=data,
+        )
+    await navigation(callback, event("lava:cancel"), {})
     assert (123, 500) in lava._pending_lava
-    query.data = "own:projects"
-    await navigation(callback, query, {})
+    await navigation(callback, event("own:projects"), {})
     assert lava._pending_lava == {}
 
 
