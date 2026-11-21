@@ -171,7 +171,7 @@ async def test_start_or_menu_is_fleet_dashboard_not_last_bot(monkeypatch, comman
     assert [b.style for b in buttons[0]] == ["success", "success"]
     assert [b.style for b in buttons[1]] == ["primary", "primary"]
     assert buttons[2][0].callback_data == (
-        "own:saasbill:" + encode_uuid(invoice) + ":0"
+        "own:saasnearest:" + encode_uuid(invoice)
     )
     assert buttons[2][0].style == "primary"
     assert buttons[3][0].url == "https://t.me/vimi_support_bot"
@@ -224,7 +224,59 @@ async def test_summary_unavailable_never_invents_zeros(monkeypatch):
     await _home_handler()(_message(), instance)
     message = instance.send_message.await_args.args[1]
     assert "временно недоступна" in message
+    assert "<p>" not in message
+    assert "<h3>" not in message
     assert "0 ₽" not in message
     rows = instance.send_message.await_args.kwargs["reply_markup"].inline_keyboard
     assert rows[0][0].callback_data == "own:projects"
     assert rows[1][0].callback_data == "own:saasinvoices:0"
+
+
+
+async def test_nearest_invoice_callback_resolves_current_page_not_zero(monkeypatch):
+    """A fleet with many invoices must open exactly the payable one."""
+    owner, invoice = uuid4(), uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=owner))
+    lookup = AsyncMock(return_value=3)
+    monkeypatch.setattr(ui, "owner_invoice_statement_page", lookup)
+    statement = AsyncMock(return_value=SimpleNamespace(
+        invoices=({"id": str(invoice), "remaining_rub": "150.00"},),
+    ))
+    monkeypatch.setattr(ui, "merchant_saas_statements", statement)
+    monkeypatch.setattr(ui, "saas_invoice_currency_snapshot", AsyncMock(
+        return_value={},
+    ))
+    monkeypatch.setattr(ui, "saas_invoice_credit_history", AsyncMock(
+        return_value={},
+    ))
+    monkeypatch.setattr(ui, "saas_v2_invoice_balance", AsyncMock(
+        return_value={"remaining_rub": "150.00"},
+    ))
+    monkeypatch.setattr(ui, "saas_price_profile", AsyncMock(
+        return_value={"currency": "RUB"},
+    ))
+    monkeypatch.setattr(ui, "issued_invoice_rich", lambda *args: "<h3>Bill</h3>")
+    monkeypatch.setattr(ui, "issued_invoice_classic", lambda *args: "<b>Bill</b>")
+    router = ui.create_owner_setup_router(MagicMock())
+    callback = next(
+        x.callback for x in router.callback_query.handlers
+        if x.callback.__name__ == "owner_callback"
+    )
+    query = SimpleNamespace(
+        message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+        from_user=SimpleNamespace(id=123, username="owner", first_name="Owner"),
+        data="own:saasnearest:" + encode_uuid(invoice),
+        answer=AsyncMock(),
+    )
+    instance = _bot()
+    await callback(query, instance)
+    query.answer.assert_awaited_once()
+    lookup.assert_awaited_once()
+    assert lookup.await_args.kwargs["invoice_id"] == invoice
+    assert lookup.await_args.kwargs["actor_id"] == owner
+    assert statement.await_args.kwargs["page"] == 3
+    markup = instance.send_message.await_args.kwargs["reply_markup"]
+    assert any(
+        button.callback_data == "own:saasinvoices:3"
+        for row in markup.inline_keyboard for button in row
+    )
