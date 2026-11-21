@@ -8725,13 +8725,15 @@ def create_owner_setup_router(
                     actor_telegram_id=message.from_user.id,
                     project_id=project_id, chat_reference=reference,
                 )
-                await bot.send_message(
-                    message.chat.id,
-                    tr(f"✅ Канал «{escape(resource.name)}» подключён.",
-                       f"✅ Channel “{escape(resource.name)}” connected."),
-                    parse_mode="HTML",
+                resource_kind = (
+                    "group" if "group" in str(resource.resource_type).lower()
+                    else "channel"
                 )
-                await show_resources(bot, message.chat.id, actor_id, project_id)
+                await show_connection_result(
+                    bot, message.chat.id, actor_id, project_id,
+                    success=True, kind=resource_kind,
+                    resource_name=resource.name,
+                )
             elif flow.step == "plan_name":
                 if not 2 <= len(text) <= 120:
                     raise ValueError(tr("Название тарифа: от 2 до 120 символов",
@@ -8921,6 +8923,14 @@ def create_owner_setup_router(
                 )
                 await show_dashboard(bot, message.chat.id, actor_id, project_id)
         except (ValueError, PermissionError, RuntimeError) as exc:
+            if flow.step == "resource_reference" and flow.project_id is not None:
+                # One compact Rich error with a working Back, not a generic
+                # technical warning followed by the entire admin directory.
+                await show_connection_result(
+                    bot, message.chat.id, actor_id, flow.project_id,
+                    success=False, kind="chat",
+                )
+                return
             destination = {
                 "plan_name": "plans",
                 "stars_month_price": "starspage:0",
