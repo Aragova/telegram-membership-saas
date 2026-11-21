@@ -1,7 +1,7 @@
 """Owner-only, bounded-roundtrip network summary for the central ViMi Pay bot.
 
 Revision ID: 0105_owner_network_home
-Revises: 0104_saas_bot_native_sales_preview
+Revises: 0104_saas_native_sales
 
 Read-only: does not change invoices, balances, subscriptions, worker leases
 or checkout. Amounts are native historical gross receipts, NOT net profit.
@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "0105_owner_network_home"
-down_revision: str | None = "0104_saas_bot_native_sales_preview"
+down_revision: str | None = "0104_saas_native_sales"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
