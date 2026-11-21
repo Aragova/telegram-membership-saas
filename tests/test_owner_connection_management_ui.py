@@ -383,7 +383,7 @@ async def test_central_selected_connection_dashboard_has_invoice_entry(
     ) == 1
 
 
-async def test_archived_registry_keeps_direct_invoice_navigation(monkeypatch):
+async def test_archived_registry_has_home_and_connections_without_invoice_shortcut(monkeypatch):
     monkeypatch.setattr(
         ui, "list_archived_owner_connections", AsyncMock(return_value=()),
     )
