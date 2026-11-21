@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from telegram_membership_saas.modules.owner_setup import handlers as ui
-from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     ConnectionDisposition,
 )
@@ -13,6 +12,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     SetupFlow,
     SetupOverview,
 )
+from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
 
 def bot():
