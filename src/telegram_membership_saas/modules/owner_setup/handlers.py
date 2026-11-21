@@ -3960,6 +3960,12 @@ def create_owner_setup_router(
                 tr("⏸️ Отключить новые счета", "⏸️ Disable new invoices"),
                 "cryptoffask", "danger",
             )])
+            # A Crypto-only onboarding setup must be able to continue to
+            # plans without first creating an unrelated manual payment method.
+            rows.append([_button(
+                tr("➡️ Продолжить к тарифам", "➡️ Continue to plans"),
+                "plans", "primary",
+            )])
         rows.append([_button(
             tr("⬅️ Способы оплаты", "⬅️ Payment methods"), "methods",
         )])

@@ -202,3 +202,32 @@ async def test_new_manual_method_reveals_forward_to_stage_four(monkeypatch):
     assert callbacks.index("own:plans") < callbacks.index("own:setupback2")
     assert "own:setupback2" in callbacks
     assert "Страница 1" not in card["rich_html"]
+
+
+
+@pytest.mark.parametrize("lang", ["ru", "en"])
+async def test_connected_crypto_pay_can_continue_to_plans_without_manual_method(
+    monkeypatch, lang,
+):
+    project = uuid4()
+    _screen(monkeypatch, project)
+    monkeypatch.setattr(
+        ui, "read_crypto_pay_connection",
+        AsyncMock(return_value=SimpleNamespace(
+            app_label="Owner app", environment="mainnet",
+        )),
+    )
+    bot = _bot()
+    token = _language.set(lang)
+    try:
+        await _callback(project)(_query("cryptopay"), bot)
+    finally:
+        _language.reset(token)
+    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    buttons = [button for row in rows for button in row]
+    forward = next(b for b in buttons if b.callback_data == "own:plans")
+    assert forward.style == "primary"
+    assert forward.text == (
+        "➡️ Продолжить к тарифам" if lang == "ru" else "➡️ Continue to plans"
+    )
+    assert "own:methods" in [button.callback_data for button in buttons]
