@@ -1272,7 +1272,8 @@ def create_owner_setup_router(
                 # buttons on any of the 4 wizard steps.
                 wizard_rows = [[_button(
                     wizard_primary_label(action, label),
-                    action, wizard_primary_style(action),
+                    "methods:guided" if action == "methods" else action,
+                    wizard_primary_style(action),
                 )]]
                 await send_owner_rich(
                     bot, chat_id=user_id,
@@ -7897,7 +7898,7 @@ def create_owner_setup_router(
             elif action in ("methods", "methods:guided"):
                 await show_methods(
                     bot, user_id, actor_id, project_id,
-                    guided=True if action == "methods:guided" else None,
+                    guided=action == "methods:guided",
                     source_message_id=getattr(query.message, "message_id", None)
                     if fixed_project_id is not None else None,
                 )
