@@ -413,6 +413,7 @@ async def consume_button_flow(
     generation: str | None = None,
     bot_scope_id: int = 0,
     discard: bool = False,
+    allow_expired_chat_picker: bool = False,
 ) -> SetupFlow:
     """Consume a button step; optionally discard it atomically on Back.
 
@@ -421,9 +422,17 @@ async def consume_button_flow(
     """
     async with tenant_session_scope(factory, TenantContext(user_id=actor_id)) as session:
         state = await _current_session(session, actor_id, bot_scope_id)
+        # A native chat-picker's Back must still work after its TTL.
+        # Never lift expiry checks for normal forms, chat_shared completion,
+        # or callbacks that have no native Back action.
+        can_dismiss_expired_picker = (
+            allow_expired_chat_picker and expected_step == "chat_picker"
+            and discard and request_id is None and generation is None
+        )
         if (
             state.step != expected_step
-            or state.expires_at <= datetime.now(UTC)
+            or (state.expires_at <= datetime.now(UTC)
+                and not can_dismiss_expired_picker)
             or (generation is not None and state.generation != generation)
             or (
                 request_id is not None
