@@ -275,10 +275,9 @@ from telegram_membership_saas.modules.platform_saas_invoice_ui import (
 )
 from telegram_membership_saas.modules.platform_saas_payment_service import (
     merchant_saas_bill_summary,
-    merchant_saas_project_preview,
+    merchant_saas_bot_native_sales_preview,
     merchant_saas_statements,
     merchant_saas_trial_status,
-    merchant_saas_unified_monthly_preview,
 )
 from telegram_membership_saas.modules.platform_saas_settlement_service import (
     lock_saas_invoice_currency_expected,
@@ -1542,7 +1541,6 @@ def create_owner_setup_router(
 
         trial: dict | None = None
         sales: dict | None = None
-        currencies: dict | None = None
         if bill.get("invoice_id") is None:
             try:
                 trial = await merchant_saas_trial_status(
@@ -1558,11 +1556,7 @@ def create_owner_setup_router(
             # The live calendar-month preview is informational only. Never
             # mislabel it as the closed period of an issued commission invoice.
             try:
-                sales = await merchant_saas_unified_monthly_preview(
-                    factory, actor_user_id=actor_id,
-                    month=month, project_id=project_id,
-                )
-                currencies = await merchant_saas_project_preview(
+                sales = await merchant_saas_bot_native_sales_preview(
                     factory, actor_user_id=actor_id,
                     month=month, project_id=project_id,
                 )
@@ -1572,7 +1566,7 @@ def create_owner_setup_router(
                 logging.getLogger(__name__).warning(
                     "Current-month per-bot sales preview is unavailable"
                 )
-                sales = currencies = None
+                sales = None
 
         due = Decimal(str(bill.get("total_due_rub") or "0"))
         invoice_id = bill.get("invoice_id")
@@ -1589,7 +1583,7 @@ def create_owner_setup_router(
         )])
         args = dict(
             username=username, bill=bill, trial=trial,
-            timezone=info.timezone, sales=sales, currencies=currencies,
+            timezone=info.timezone, sales=sales,
             future_currency=future_currency,
         )
         await send_owner_rich(
