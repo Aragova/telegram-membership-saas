@@ -69,13 +69,22 @@ def account_bill_rich(statement, billing: dict) -> str:
         "<h4>" + tr("📊 ФИНАНСОВАЯ СВОДКА",
                     "📊 FINANCIAL SUMMARY") + "</h4>",
         "<table bordered compact>",
-        "<tr><th>" + tr("📋 Неоплаченных счетов", "📋 Unpaid invoices")
-        + "</th><td><b>" + str(data["unpaid"]) + "</b></td></tr>",
-        "<tr><th>" + tr("⏰ Просрочено", "⏰ Overdue") + "</th><td><b>"
+        "<tr><th>" + (
+            tr("📋 Счетов к оплате", "📋 Invoices to pay")
+            if data["unpaid"] else
+            tr("📋 Неоплаченных счетов", "📋 Unpaid invoices")
+        ) + "</th><td><b>" + str(data["unpaid"]) + "</b></td></tr>",
+        "<tr><th>" + (
+            tr("🔴 Просрочено", "🔴 Overdue")
+            if data["unpaid"] else tr("⏰ Просрочено", "⏰ Overdue")
+        ) + "</th><td><b>"
         + (str(data["overdue"]) + " · " + data["overdue_rub"]
            if data["overdue"] else tr("Нет", "None")) + "</b></td></tr>",
         "</table>",
-        "<p>💰 " + tr("ВСЕГО К ОПЛАТЕ", "TOTAL AMOUNT DUE") + "<br>"
+        "<p>" + (
+            tr("💳 ОБЩАЯ ЗАДОЛЖЕННОСТЬ", "💳 TOTAL OUTSTANDING")
+            if data["unpaid"] else tr("💰 ВСЕГО К ОПЛАТЕ", "💰 TOTAL AMOUNT DUE")
+        ) + "<br>"
         + "<b>" + data["due_rub"] + "</b></p>",
     ])
     next_due = data["nearest"]
@@ -135,12 +144,18 @@ def account_bill_classic(statement, billing: dict) -> str:
               "You have no outstanding ViMi Pay debt.")),
         "<b>" + tr("📊 ФИНАНСОВАЯ СВОДКА",
                     "📊 FINANCIAL SUMMARY") + "</b>\n"
-        + tr("📋 Неоплаченных счетов: ", "📋 Unpaid invoices: ")
-        + "<b>" + str(data["unpaid"]) + "</b>\n"
-        + tr("⏰ Просрочено: ", "⏰ Overdue: ") + "<b>"
+        + (
+            tr("📋 Счетов к оплате: ", "📋 Invoices to pay: ")
+            if data["unpaid"] else
+            tr("📋 Неоплаченных счетов: ", "📋 Unpaid invoices: ")
+        ) + "<b>" + str(data["unpaid"]) + "</b>\n"
+        + (tr("🔴 Просрочено: ", "🔴 Overdue: ") if data["unpaid"]
+           else tr("⏰ Просрочено: ", "⏰ Overdue: ")) + "<b>"
         + (str(data["overdue"]) + " · " + data["overdue_rub"]
            if data["overdue"] else tr("Нет", "None")) + "</b>",
-        "💰 " + tr("ВСЕГО К ОПЛАТЕ", "TOTAL AMOUNT DUE") + "\n<b>"
+        (tr("💳 ОБЩАЯ ЗАДОЛЖЕННОСТЬ", "💳 TOTAL OUTSTANDING")
+         if data["unpaid"] else
+         tr("💰 ВСЕГО К ОПЛАТЕ", "💰 TOTAL AMOUNT DUE")) + "\n<b>"
         + data["due_rub"] + "</b>",
     ]
     next_due = data["nearest"]
