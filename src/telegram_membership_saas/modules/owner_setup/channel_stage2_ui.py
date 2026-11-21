@@ -305,9 +305,16 @@ def connection_result_classic(
              else tr("группу", "group") if kind == "group"
              else tr("канал или группу", "channel or group"))
     if success:
+        heading = (
+            tr("✅ Канал подключён", "✅ Channel connected")
+            if kind == "channel" else
+            tr("✅ Группа подключена", "✅ Group connected")
+            if kind == "group" else
+            tr("✅ Подключено", "✅ Connected")
+        )
         return "\n\n".join([
-            "✅ <b>" + tr("Подключено: ", "Connected: ")
-            + escape(resource_name or "", quote=True) + "</b>",
+            "<b>" + heading + "</b>",
+            "<b>" + escape(resource_name or "", quote=True) + "</b>",
             tr("Подключение сохранено в ViMi Pay.",
                "Connection saved in ViMi Pay."),
             (tr("🚀 Следующий этап — оплата покупателей.",
