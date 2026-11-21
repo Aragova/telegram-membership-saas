@@ -56,13 +56,13 @@ async def test_central_has_archive_but_no_cross_bot_live_invoice(
     buttons = [b.callback_data for row in bot.send_message.await_args.kwargs[
         "reply_markup"].inline_keyboard for b in row]
     assert "own:saasbill:" + encode_uuid(invoice) + ":0" in buttons
-    assert "own:projects" in buttons
+    assert "own:onboardhome" in buttons
     # Account invoices remain accessible, but the service currency is
     # selected only in each connected bot's Bill menu.
     assert "own:saasprofile" not in buttons
     assert not any(x.startswith("own:spm:") for x in buttons)
     text_body = bot.send_message.await_args.args[1]
-    assert ("Счета ViMi Pay" if language == "ru" else "ViMi Pay invoices") in text_body
+    assert ("СЧЁТ АККАУНТА" if language == "ru" else "ACCOUNT BILL") in text_body
     assert ("Неоплачено: 1" if language == "ru"
             else "Unpaid: 1") in text_body
     invoice_button = next(

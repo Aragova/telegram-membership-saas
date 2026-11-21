@@ -117,6 +117,15 @@ async def test_english_central_welcome(monkeypatch) -> None:
         owner_ui, "has_explicit_language_choice", AsyncMock(return_value=True),
     )
     monkeypatch.setattr(owner_ui, "cancel_owner_flow", AsyncMock())
+    monkeypatch.setattr(owner_ui, "read_owner_network_home", AsyncMock(
+        return_value={
+            "network": {"connected": 0, "healthy": 0,
+                        "attention": 0, "down": 0},
+            "revenue": [],
+            "billing": {"unpaid": 0, "overdue": 0,
+                        "overdue_rub": "0", "next": None},
+        },
+    ))
     router = owner_ui.create_owner_setup_router(MagicMock())
     start = next(
         item.callback for item in router.message.handlers
@@ -135,13 +144,17 @@ async def test_english_central_welcome(monkeypatch) -> None:
     try:
         await start(message, bot)
         sent = bot.send_message.await_args
-        assert "Your channel. Your members. Your revenue." in sent.args[1]
-        assert "72 hours free" in sent.args[1]
+        assert "MAIN MENU" in sent.args[1]
+        assert "YOUR NETWORK" in sent.args[1]
+        assert "No confirmed sales yet" in sent.args[1]
         labels = [
             b.text for row in sent.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert labels == ["🔐 Paid subscriptions", "⬅️ Back"]
+        assert labels == [
+            "🤖 My connections", "✨ Add bot", "🧾 Account bill",
+            "🌐 Language / Язык", "🛟 Support",
+        ]
         assert "What will you create?" not in sent.args[1]
     finally:
         _language.reset(token)

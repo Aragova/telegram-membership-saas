@@ -15,6 +15,14 @@ from telegram_membership_saas.modules.owner_setup.service import (
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
 
+def _network_summary():
+    return {
+        "network": {"connected": 1, "healthy": 0, "attention": 1, "down": 0},
+        "revenue": [],
+        "billing": {"unpaid": 0, "overdue": 0, "overdue_rub": "0", "next": None},
+    }
+
+
 def bot():
     result = MagicMock()
     result.id = 1001001
@@ -256,6 +264,9 @@ async def test_last_archived_connection_is_reachable_from_central_start(monkeypa
     ))
     monkeypatch.setattr(ui, "set_chat_commands", AsyncMock())
     monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
+    monkeypatch.setattr(ui, "read_owner_network_home", AsyncMock(
+        return_value=_network_summary(),
+    ))
     router = ui.create_owner_setup_router(MagicMock())
     home_message = next(
         x.callback for x in router.message.handlers
@@ -270,8 +281,9 @@ async def test_last_archived_connection_is_reachable_from_central_start(monkeypa
     )
     instance = bot()
     await home_message(message, instance)
-    assert "own:archives" in buttons(instance.send_message.await_args)
-    assert "own:new" in buttons(instance.send_message.await_args)
+    # Main dashboard never auto-opens archive or hides it; entry via /bots.
+    assert "own:projects" in buttons(instance.send_message.await_args)
+    assert "own:substart" in buttons(instance.send_message.await_args)
     assert buttons(instance.send_message.await_args).count(
         "own:saasinvoices:0",
     ) == 1
@@ -330,7 +342,12 @@ async def test_central_selected_connection_dashboard_has_invoice_entry(
     )
     monkeypatch.setattr(
         ui, "setup_overview",
-        AsyncMock(return_value=overview(project_id, has_bot=True)),
+        AsyncMock(side_effect=AssertionError("Do not reopen selected bot")),
+    )
+    monkeypatch.setattr(
+        ui, "read_owner_network_home", AsyncMock(
+            return_value=_network_summary(),
+        ),
     )
     monkeypatch.setattr(
         ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
@@ -378,9 +395,12 @@ def test_central_native_telegram_menu_exposes_billing_but_customer_does_not():
             commands = commands_for(role, language)
             assert [c.command for c in commands].count("billing") == 1
             label = next(c.description for c in commands if c.command == "billing")
-            assert "Счета ViMi Pay" in label if language == "ru" else (
-                "ViMi Pay invoices" in label
+            assert "Счёт аккаунта" in label if language == "ru" else (
+                "Account bill" in label
             )
+            assert [c.command for c in commands] == [
+                "start", "bots", "billing",
+            ]
     for role in ("buyer", "owner", "payment_manager"):
         assert "billing" not in [c.command for c in commands_for(role, "ru")]
 
