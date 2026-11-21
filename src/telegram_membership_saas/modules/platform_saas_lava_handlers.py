@@ -119,21 +119,24 @@ async def send_platform_lava_email_prompt(
             "💳 <b>Lava.top · оплата ViMi Pay</b>\n"
             "К оплате: <b>{amount:.2f} ₽</b>\n\n"
             "Отправьте адрес email <b>обычным сообщением</b> "
-            "для выставления счёта. /cancel — отменить ввод. "
+            "для выставления счёта. "
             "Адрес передаётся Lava.top, а не владельцу канала. "
             "Это ещё не платёж.",
             "💳 <b>Lava.top · ViMi Pay payment</b>\n"
             "Amount: <b>{amount:.2f} RUB</b>\n\n"
             "Send your email address <b>as a normal message</b> "
-            "to create the checkout. /cancel — stop email entry. "
+            "to create the checkout. "
             "The address is sent to Lava.top, not the channel owner. "
             "No payment is made yet.",
         ).format(amount=remaining),
         parse_mode="HTML",
-        # ForceReply leaves the native "В ответ…" composer pinned in some
-        # Telegram clients. The next plain message is matched to the
-        # per-user, per-central-bot, 10-minute in-memory request instead.
-        reply_markup=ReplyKeyboardRemove(),
+        # One in-message cancel action, bound to this prompt's message_id.
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text=tr("✖️ Отмена", "✖️ Cancel"),
+                callback_data="lava:cancel", style="primary",
+            ),
+        ]]),
     )
     _pending_lava[(payer_telegram_id, prompt.message_id)] = _PendingEmail(
         invoice_id=invoice_id, central_bot_id=bot.id,
@@ -200,7 +203,10 @@ class ClearPendingLavaOnNavigation(BaseMiddleware):
             and chat.type == "private" and chat.id == user.id
         ):
             navigating = (
-                isinstance(event, CallbackQuery)
+                (
+                    isinstance(event, CallbackQuery)
+                    and event.data != "lava:cancel"
+                )
                 or (
                     isinstance(event, Message)
                     and isinstance(event.text, str)
