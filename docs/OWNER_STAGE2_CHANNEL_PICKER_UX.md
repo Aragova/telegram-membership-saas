@@ -32,9 +32,11 @@ is formatted in Telegram HTML and its two buttons are native Telegram
 controls (Telegram owns their actual colors). The directory and manual
 ID form use true Rich rendering and classic HTML fallback.
 
-The native Back button atomically discards **only** a current owner-scoped
-`chat_picker` step and removes its reply keyboard. An old Back cannot
-cancel a different newer input form. The existing `chat_shared` request ID
+The native Back button atomically discards **only** the current owner-scoped
+`chat_picker` step and removes its reply keyboard, **including when its
+15-minute expiry has elapsed**. An old Back cannot cancel a different
+newer input form. Normal `chat_shared` submissions still obey both the
+request ID and expiration checks. The existing `chat_shared` request ID
 check and `verify_channel_and_add` still verify the selected chat and the
 Telegram admin permissions `can_invite_users`, `can_restrict_members`,
 and the requesting owner role.
