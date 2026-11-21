@@ -48,8 +48,8 @@ async def test_six_rails_preserve_native_amounts_and_reject_foreign_owner():
                 ), {"id": folder, "project": project})
                 await conn.execute(text(
                     "INSERT INTO file_sale_products("
-                    "id,project_id,folder_id,telegram_bot_id,name,status) "
-                    "VALUES(:id,:project,:folder,:bot,'Preview file','published')"
+                    "id,project_id,folder_id,telegram_bot_id,name,stars_price,status) "
+                    "VALUES(:id,:project,:folder,:bot,'Preview file',200,'published')"
                 ), {"id": product, "project": project,
                     "folder": folder, "bot": telegram_bot_id})
                 await conn.execute(text(
