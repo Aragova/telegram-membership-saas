@@ -382,3 +382,96 @@ def test_central_native_telegram_menu_exposes_billing_but_customer_does_not():
             )
     for role in ("buyer", "owner", "payment_manager"):
         assert "billing" not in [c.command for c in commands_for(role, "ru")]
+
+
+async def test_registered_connection_has_rich_explanations_and_colored_two_column_rows(
+    monkeypatch,
+):
+    from telegram_membership_saas.localization import _language
+
+    project_id = uuid4()
+    cb = handler(monkeypatch, selected=project_id)
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(
+        return_value=overview(project_id, has_bot=True),
+    ))
+    for lang, heading, invoices in (
+        ("ru", "УПРАВЛЕНИЕ ПОДКЛЮЧЕНИЕМ", "Счета ViMi Pay"),
+        ("en", "MANAGE CONNECTION", "ViMi Pay invoices"),
+    ):
+        locale = _language.set(lang)
+        try:
+            instance = bot()
+            await cb(query("bots"), instance)
+            sent = instance.send_message.await_args
+            screen = sent.args[1]
+            rows = sent.kwargs["reply_markup"].inline_keyboard
+            assert heading in screen
+            assert invoices in screen
+            assert "СОСТОЯНИЕ ЗАПУСКА" in screen if lang == "ru" else (
+                "LAUNCH STATUS" in screen
+            )
+            assert "<b>" in screen and "<i>" in screen
+            assert "⚪" in screen  # Pending runtime isn't mislabeled as running.
+            assert [len(row) for row in rows] == [2, 2, 2, 1, 1]
+            assert [[b.style for b in row] for row in rows] == [
+                ["success", "success"],
+                ["primary", "primary"],
+                ["primary", "primary"],
+                ["primary"],
+                ["danger"],
+            ]
+            assert rows[0][0].url == "https://t.me/test_bot"
+            assert rows[0][1].callback_data == "own:bots"
+            assert rows[1][0].callback_data == "own:connect"
+            assert rows[1][1].callback_data.startswith("own:managedsync:")
+            assert rows[2][0].callback_data == "own:connrename:" + project_id.hex
+            assert rows[2][1].callback_data == "own:saasinvoices:0"
+            assert rows[3][0].callback_data == "own:projects"
+            assert rows[4][0].callback_data.startswith("own:drop:")
+            assert project_id.hex not in screen  # No technical IDs in content.
+        finally:
+            _language.reset(locale)
+
+
+async def test_botfather_first_connection_shows_only_success_with_manage_choice(
+    monkeypatch,
+):
+    project_id, actor_id = uuid4(), uuid4()
+    secret = "123456789:" + "A" * 40
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(
+        return_value=actor_id,
+    ))
+    monkeypatch.setattr(ui, "consume_flow", AsyncMock(return_value=SetupFlow(
+        "new_bot_token", None, {}, None, "secret-generation",
+    )))
+    monkeypatch.setattr(ui, "register_new_owner_bot", AsyncMock(
+        return_value=(project_id, SimpleNamespace(username="vimi_first_bot")),
+    ))
+    monkeypatch.setattr(ui, "get_project_import_status", AsyncMock(
+        return_value=None,
+    ))
+    instance = bot()
+    instance.delete_message = AsyncMock(return_value=True)
+    router = ui.create_owner_setup_router(MagicMock())
+    reply = next(
+        x.callback for x in router.message.handlers
+        if x.callback.__name__ == "owner_reply_handler"
+    )
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=123, first_name="Owner", username="owner"),
+        chat=SimpleNamespace(id=123, type="private"),
+        text=secret, message_id=200,
+        reply_to_message=None,
+    )
+    await reply(message, instance)
+    instance.delete_message.assert_awaited_once_with(123, 200)
+    assert instance.send_message.await_count == 1  # no auto-open management
+    sent = instance.send_message.await_args
+    assert "БОТ УСПЕШНО ПОДКЛЮЧЁН" in sent.args[1]
+    assert secret not in sent.args[1]
+    rows = sent.kwargs["reply_markup"].inline_keyboard
+    assert [len(row) for row in rows] == [1, 1]
+    assert rows[0][0].url == "https://t.me/vimi_first_bot"
+    assert rows[0][0].style == "success"
+    assert rows[1][0].callback_data == "own:select:" + project_id.hex
+    assert rows[1][0].style == "primary"

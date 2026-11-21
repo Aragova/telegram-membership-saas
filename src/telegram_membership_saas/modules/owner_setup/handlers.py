@@ -84,6 +84,12 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
+from telegram_membership_saas.modules.owner_setup.connection_cards import (
+    connection_management_classic,
+    connection_management_rich,
+    connection_success_classic,
+    connection_success_rich,
+)
 from telegram_membership_saas.modules.owner_setup.connection_management import (
     archive_owner_connection,
     get_connection_disposition,
@@ -2028,63 +2034,69 @@ def create_owner_setup_router(
 
 
     async def show_bots(bot: Bot, user_id: int, actor_id: UUID, project_id: UUID):
-        """One connection card, with actions based on its actual state."""
+        """Explain available connection actions without exposing owner-only actions."""
         data = await setup_overview(factory, actor_id=actor_id, project_id=project_id)
-        lines = [
-            tr("✦ <b>Управление подключением</b>",
-               "✦ <b>Manage connection</b>"),
-            f"<b>{escape(data.project_name)}</b>",
-            "",
-        ]
-        if not data.bots:
-            lines.append(tr("⚪ Telegram-бот не подключён.",
-                            "⚪ No Telegram bot connected."))
-        else:
-            for username, status in data.bots:
-                lines.append(
-                    f"🤖 <b>@{escape(username)}</b> — "
-                    + (tr("подключён", "connected") if status == "registered"
-                       else _status(status))
-                )
         retiring = any(status == "deleting" for _, _, status in data.bot_instances)
-        if retiring:
-            lines.append(tr(
-                "\n⏳ Бот отключается. Обновите статус после завершения.",
-                "\n⏳ Bot is being disconnected. Refresh its status afterward.",
-            ))
-        else:
-            lines.append("\n" + escape(owner_runtime_label(data.bot_runtime_label)))
-        rows: list[list[InlineKeyboardButton]] = []
         connected = next(
             (username for _, username, status in data.bot_instances
              if status == "registered"), None,
         )
+        rows: list[list[InlineKeyboardButton]] = []
+        # Green = main live actions. A status check does not force a restart.
+        quick_actions: list[InlineKeyboardButton] = []
         if connected:
-            rows.append([InlineKeyboardButton(
+            quick_actions.append(InlineKeyboardButton(
                 text=tr("🚀 Открыть бота", "🚀 Open bot"),
                 url="https://t.me/" + connected, style="success",
-            )])
+            ))
         if data.bot_instances:
-            rows.append([_button(tr("🔄 Обновить статус", "🔄 Refresh"), "bots")])
+            quick_actions.append(_button(
+                tr("🔄 Обновить статус", "🔄 Refresh status"),
+                "bots", "success",
+            ))
+        if quick_actions:
+            rows.append(quick_actions)
+
+        # Blue = setup, service and navigation. Keep two buttons per row
+        # where possible, without hiding any action for disconnected bots.
+        service_actions: list[InlineKeyboardButton] = []
         if not retiring and data.can_delete_bot:
-            rows.append([_button(
-                tr("🔑 Подключить / обновить токен", "🔑 Connect / update token"),
-                "connect",
-            )])
+            service_actions.append(_button(
+                tr("🔑 Обновить токен" if connected else "🔑 Подключить бота",
+                   "🔑 Update token" if connected else "🔑 Connect bot"),
+                "connect", "primary",
+            ))
             if connected:
-                rows.append([_button(
-                    tr("🔄 Managed Bot: синхронизировать токен",
-                       "🔄 Managed Bot: sync token"),
-                    "managedsync:" + encode_uuid(project_id),
-                )])
+                service_actions.append(_button(
+                    tr("🤖 Синхронизация", "🤖 Sync Managed Bot"),
+                    "managedsync:" + encode_uuid(project_id), "primary",
+                ))
         if data.can_delete_bot:
-            rows.append([_button(
-                tr("✏️ Переименовать подключение", "✏️ Rename connection"),
-                "connrename:" + project_id.hex,
-            )])
+            service_actions.append(_button(
+                tr("✏️ Переименовать", "✏️ Rename"),
+                "connrename:" + project_id.hex, "primary",
+            ))
+        # Account invoices remain separate from the connected bot's shop.
+        service_actions.append(_button(
+            tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+            "saasinvoices:0", "primary",
+        ))
+        service_actions.append(_button(
+            tr("⬅️ Все подключения", "⬅️ All connections"),
+            "projects", "primary",
+        ))
+        rows.extend(
+            service_actions[index:index + 2]
+            for index in range(0, len(service_actions), 2)
+        )
+
+        # Red = protected destructive flow, never mixed with blue or green.
+        danger_kind: str | None = None
+        if data.can_delete_bot:
             if data.bot_instances:
                 for instance_id, username, status in data.bot_instances:
                     if status != "deleting":
+                        danger_kind = "detach"
                         rows.append([_button(
                             tr("🗑 Отключить @", "🗑 Disconnect @") + username[:30],
                             "drop:" + encode_uuid(project_id)
@@ -2096,28 +2108,35 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id, project_id=project_id,
                 )
                 if disposition.has_history:
+                    danger_kind = "archive"
                     rows.append([_button(
                         tr("📦 Убрать в архив", "📦 Archive connection"),
                         "connarchive:" + project_id.hex, "danger",
                     )])
                 else:
+                    danger_kind = "delete"
                     rows.append([_button(
                         tr("🗑 Удалить подключение", "🗑 Delete connection"),
                         "connremove:" + project_id.hex, "danger",
                     )])
-        rows.append([_button(
-            tr("⬅️ Все подключения", "⬅️ All connections"), "projects",
-        )])
-        # Account bills are independent of the selected connected bot.
-        rows.append([_button(tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
-                     "saasinvoices:0")])
         if platform_navigation(user_id):
             rows.append(platform_navigation(user_id))
-        await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
+
+        card_args = dict(
+            project_name=data.project_name,
+            bots=data.bots,
+            runtime_label=owner_runtime_label(data.bot_runtime_label),
+            retiring=retiring,
+            has_instances=bool(data.bot_instances),
+            editable=data.can_delete_bot,
+            danger_kind=danger_kind,
+        )
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=connection_management_rich(**card_args),
+            classic_html=connection_management_classic(**card_args),
             reply_markup=_markup(rows),
         )
-
 
     def subscriber_label(user_id: int, username: str | None,
                          first_name: str | None) -> str:
@@ -4530,16 +4549,27 @@ def create_owner_setup_router(
                         ),
                     )
                     return
-                await bot.send_message(
-                    user_id, tr(
-                        "✅ Managed Bot подключён.",
-                        "✅ Managed Bot connected.",
-                    ),
+                # Telegram's mandatory system keyboard needs a native
+                # ReplyKeyboardRemove. Delete the short service message once
+                # the one actual success card has been delivered.
+                keyboard_notice = await bot.send_message(
+                    user_id, tr("⌨️ Клавиатура закрыта.",
+                                "⌨️ Keyboard closed."),
                     reply_markup=ReplyKeyboardRemove(),
                 )
-                await send_connected_bot(
-                    bot, user_id, actor_id, result.project_id, result.username,
-                )
+                try:
+                    await send_connected_bot(
+                        bot, user_id, actor_id, result.project_id, result.username,
+                    )
+                finally:
+                    try:
+                        await bot.delete_message(
+                            user_id, keyboard_notice.message_id,
+                        )
+                    except AiogramError:
+                        logging.getLogger(__name__).warning(
+                            "Could not delete managed-bot keyboard cleanup message"
+                        )
                 return
             if action.startswith("managedsync:"):
                 if get_settings().bot_token_encryption_key is None:
@@ -7917,48 +7947,42 @@ def create_owner_setup_router(
         imported = await get_project_import_status(
             factory, actor_id=actor_id, project_id=project_id,
         )
-        details = (
-            tr(
-                "\n\n📁 Профиль сети применён: тарифы созданы как черновики, "
-                "способы оплаты выключены. Привяжите канал, проверьте "
-                "реквизиты и включите продажи.",
-                "\n\n📁 Network profile applied: plans are drafts and "
-                "payments are disabled. Connect a channel, verify bank "
-                "details and enable sales.",
-            ) if imported == "applied" else (
-                tr(
-                    "\n\n⚠️ Настройки профиля не скопированы. Бот подключён "
-                    "без шаблона, настройте его вручную.",
-                    "\n\n⚠️ The profile could not be imported. The bot "
-                    "connected without the template; configure it manually.",
-                ) if imported == "failed" else ""
-            )
+        rows = [
+            [InlineKeyboardButton(
+                text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
+                url="https://t.me/" + username,
+                style="success",
+            )],
+            [_button(
+                tr("⚙️ Управление подключением", "⚙️ Manage connection"),
+                # Selecting the exact newly registered project is essential:
+                # other existing owner connections may be currently selected.
+                "select:" + project_id.hex, "primary",
+            )],
+        ]
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=connection_success_rich(
+                username=username, imported=imported,
+            ),
+            classic_html=connection_success_classic(
+                username=username, imported=imported,
+            ),
+            reply_markup=_markup(rows),
         )
-        await bot.send_message(
-            user_id,
-            tr(
-                f"✅ <b>@{escape(username)} подключён</b>\n\n"
-                "Настройка в ViMi Pay завершена.\n"
-                "Перейдите в свой бот и добавьте канал, "
-                "способы оплаты и тарифы.",
-                f"✅ <b>@{escape(username)} connected</b>\n\n"
-                "Your bot is connected to ViMi Pay.\n"
-                "Open it to configure channels, payment methods and plans.",
-            ) + details,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(
-                    text=tr("🚀 Перейти к своему боту", "🚀 Open my bot"),
-                    url="https://t.me/" + username,
-                    style="success",
-                ),
-            ]]),
-        )
-        await show_bots(bot, user_id, actor_id, project_id)
+        # Do NOT immediately open management after a new connection.
+        # The owner continues onboarding inside their bot; management is
+        # available only if they explicitly choose the second button.
 
     async def finish_bot_connection(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID, token: str,
     ) -> None:
+        before = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        was_connected = any(
+            status == "registered" for _, status in before.bots
+        )
         result = await register_customer_bot(
             factory, project_id=project_id,
             actor_telegram_user_id=user_id, token=token,
@@ -7969,9 +7993,13 @@ def create_owner_setup_router(
             factory, actor_id=actor_id, project_id=project_id,
             username=result.username,
         )
-        await send_connected_bot(
-            bot, user_id, actor_id, project_id, result.username,
-        )
+        if was_connected:
+            # Rotating a token is maintenance, not first-time onboarding.
+            await show_bots(bot, user_id, actor_id, project_id)
+        else:
+            await send_connected_bot(
+                bot, user_id, actor_id, project_id, result.username,
+            )
 
     @router.message(SetupReplyFilter(factory, fixed_project_id))
     async def owner_reply_handler(message: Message, bot: Bot) -> None:

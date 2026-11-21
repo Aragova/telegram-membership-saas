@@ -16,6 +16,7 @@ def _bot(*, manager=True):
         return_value=SimpleNamespace(id=888, can_manage_bots=manager),
     )
     bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=515))
+    bot.delete_message = AsyncMock(return_value=True)
     return bot
 
 
@@ -310,11 +311,18 @@ async def test_managed_confirm_callback_connects_selected_bot_and_clears_keyboar
     called.assert_awaited_once()
     assert called.await_args.kwargs["managed_bot_id"] == 111222333
     assert called.await_args.kwargs["generation"] == "gen"
-    assert bot.send_message.await_count >= 2
-    messages = [call.args[1] for call in bot.send_message.await_args_list]
-    assert any("подключён" in text for text in messages)
-    assert isinstance(bot.send_message.await_args_list[0].kwargs["reply_markup"],
-                      ReplyKeyboardRemove)
+    assert bot.send_message.await_count == 2
+    cleanup, success = bot.send_message.await_args_list
+    assert isinstance(cleanup.kwargs["reply_markup"], ReplyKeyboardRemove)
+    assert "БОТ УСПЕШНО ПОДКЛЮЧЁН" in success.args[1]
+    assert "УПРАВЛЕНИЕ ПОДКЛЮЧЕНИЕМ" not in success.args[1]
+    assert bot.delete_message.await_args.args == (123, 515)
+    rows = success.kwargs["reply_markup"].inline_keyboard
+    assert [len(row) for row in rows] == [1, 1]
+    assert rows[0][0].url == "https://t.me/fresh_vimi_bot"
+    assert rows[0][0].style == "success"
+    assert rows[1][0].callback_data == "own:select:" + project.hex
+    assert rows[1][0].style == "primary"
 
 
 
