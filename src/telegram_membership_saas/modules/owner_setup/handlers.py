@@ -1514,7 +1514,10 @@ def create_owner_setup_router(
             project_id=project_id,
         )
         if str(bill.get("project_id")) != str(project_id):
-            raise RuntimeError("Per-bot statement did not match selected project")
+            raise ValueError(tr(
+                "Данные счёта не совпадают с выбранным ботом. Откройте подключение заново.",
+                "Invoice data do not match the selected bot. Reopen the connection.",
+            ))
         info = await setup_overview(
             factory, actor_id=actor_id, project_id=project_id,
         )
@@ -1532,7 +1535,10 @@ def create_owner_setup_router(
         )
         future_currency = str(profile["currency"])
         if future_currency not in ("RUB", "USD"):
-            raise RuntimeError("Unsupported bot service currency")
+            raise ValueError(tr(
+                "Валюта обслуживания этого бота недоступна.",
+                "This bot's service currency is unavailable.",
+            ))
 
         trial: dict | None = None
         sales: dict | None = None
