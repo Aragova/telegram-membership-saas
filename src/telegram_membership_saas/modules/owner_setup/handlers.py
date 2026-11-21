@@ -4050,6 +4050,8 @@ def create_owner_setup_router(
             )
         elif prior.step in ("method_name", "method_instruction"):
             await show_methods(bot, user_id, actor_id, project_id)
+        elif prior.step == "crypto_pay_token":
+            await show_crypto_pay(bot, user_id, actor_id, project_id)
         elif prior.step in ("chat_picker", "resource_reference"):
             await show_resources(bot, user_id, actor_id, project_id)
         elif prior.step in ("bot_token", "connection_rename") and fixed_project_id is None:
