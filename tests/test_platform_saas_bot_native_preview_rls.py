@@ -140,6 +140,20 @@ async def test_six_rails_preserve_native_amounts_and_reject_foreign_owner():
                             ZoneInfo("Europe/Moscow")
                         ).date(), "fee": amount * Decimal("0.05")})
 
+                # A third paid invoice has NO USD valuation/capture evidence.
+                # Native turnover must still include it exactly once.
+                await conn.execute(text(
+                    "INSERT INTO crypto_pay_invoices("
+                    "id,project_id,app_id,telegram_bot_id,telegram_user_id,"
+                    "kind,product_id,name_snapshot,amount,currency_code,"
+                    "currency_type,payload,provider_invoice_id,status,paid_at)"
+                    " VALUES(:id,:project,:app,:bot,123456,'file',:product,"
+                    "'Unvalued native Crypto',7.25,'USDT','crypto',"
+                    ":payload,98765003,'paid',:at)"
+                ), {"id": uuid4(), "project": project, "app": app,
+                    "bot": telegram_bot_id, "product": uuid4(),
+                    "payload": str(uuid4()), "at": now})
+
                 # Runtime has no raw table grants. Read the narrowly scoped RPC.
                 await conn.execute(text("SET LOCAL ROLE membership_runtime"))
                 await conn.execute(text(
@@ -151,17 +165,15 @@ async def test_six_rails_preserve_native_amounts_and_reject_foreign_owner():
                 ).columns(report=JSONB), {
                     "project": project, "month": month,
                 })).scalar_one()
-                kinds = {row["kind"]: row for row in snapshot["rows"]}
-                assert kinds["file_manual"]["currency"] == "RUB"
-                assert Decimal(kinds["file_manual"]["gross"]) == 120
-                assert kinds["file_stars"]["currency"] == "XTR"
-                assert Decimal(kinds["file_stars"]["gross"]) == 120
-                assert kinds["subscription_stars"]["currency"] == "XTR"
-                assert Decimal(kinds["subscription_stars"]["gross"]) == 250
-                assert kinds["file_crypto"]["currency"] == "TON"
-                assert Decimal(kinds["file_crypto"]["gross"]) == Decimal("0.5")
-                assert kinds["subscription_crypto"]["currency"] == "USDT"
-                assert Decimal(kinds["subscription_crypto"]["gross"]) == Decimal("4.25")
+                kinds = {(row["kind"], row["currency"]): row
+                         for row in snapshot["rows"]}
+                assert Decimal(kinds["file_manual", "RUB"]["gross"]) == 120
+                assert Decimal(kinds["file_stars", "XTR"]["gross"]) == 120
+                assert Decimal(kinds["subscription_stars", "XTR"]["gross"]) == 250
+                assert Decimal(kinds["file_crypto", "TON"]["gross"]) == Decimal("0.5")
+                assert Decimal(kinds["subscription_crypto", "USDT"]["gross"]) == Decimal("4.25")
+                assert Decimal(kinds["file_crypto", "USDT"]["gross"]) == Decimal("7.25")
+                assert kinds["file_crypto", "USDT"]["sold"] == 1
                 assert snapshot["preview_only"] is True
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id',:id,true)"
