@@ -198,8 +198,9 @@ def connection_result_rich(
     parts = ["<h3>" + head + " · " + thing + "</h3>"]
     if success:
         parts.append("<p>✅ <b>" + escape(resource_name or "", quote=True)
-                     + "</b> " + tr("сохранён в ViMi Pay.",
-                                     "has been saved in ViMi Pay.") + "</p>")
+                     + "</b></p>")
+        parts.append("<p>" + tr("Подключение сохранено в ViMi Pay.",
+                                "Connection saved in ViMi Pay.") + "</p>")
         parts.append("<p>🚀 " + (
             tr("Следующий этап — <b>оплата покупателей</b>.",
                "Next: <b>buyer payments</b>.")
@@ -242,9 +243,8 @@ def connection_result_classic(
         return "\n\n".join([
             "✅ <b>" + tr("Подключено: ", "Connected: ")
             + escape(resource_name or "", quote=True) + "</b>",
-            tr("Теперь ", "This ") + thing + tr(
-                " подключён к ViMi Pay.", " is connected to ViMi Pay.",
-            ),
+            tr("Подключение сохранено в ViMi Pay.",
+               "Connection saved in ViMi Pay."),
             (tr("🚀 Следующий этап — оплата покупателей.",
                 "🚀 Next: buyer payments.")
              if onboarding else tr(
