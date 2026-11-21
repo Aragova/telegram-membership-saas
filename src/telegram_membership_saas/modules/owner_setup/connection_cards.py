@@ -277,4 +277,4 @@ def connection_management_classic(
         "«Все подключения» вернёт к списку.",
         "“All connections” returns to your list.",
     ) + "</i>"])
-    return "\n\n".join(lines)
+    return "\n".join(lines)
