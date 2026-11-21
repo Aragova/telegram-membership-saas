@@ -46,8 +46,9 @@ def connection_registry_rich(
         )
     else:
         headline = tr("📂 МОИ ПОДКЛЮЧЕНИЯ", "📂 MY CONNECTIONS")
+        connected = "подключён" if total % 10 == 1 and total % 100 != 11 else "подключено"
         count = tr(
-            f"🤖 У вас подключено <b>{_ru_count(total, archived=False)}</b>.",
+            f"🤖 У вас {connected} <b>{_ru_count(total, archived=False)}</b>.",
             f"🤖 You have <b>{total} connected bot{'s' if total != 1 else ''}</b>.",
         )
         next_step = tr(
@@ -89,8 +90,9 @@ def connection_registry_classic(
         empty = tr("📭 Архив пока пуст.", "📭 No archived connections yet.")
     else:
         heading = tr("📂 МОИ ПОДКЛЮЧЕНИЯ", "📂 MY CONNECTIONS")
+        connected = "подключён" if total % 10 == 1 and total % 100 != 11 else "подключено"
         count = tr(
-            f"🤖 У вас подключено <b>{_ru_count(total, archived=False)}</b>.",
+            f"🤖 У вас {connected} <b>{_ru_count(total, archived=False)}</b>.",
             f"🤖 You have <b>{total} connected bot{'s' if total != 1 else ''}</b>.",
         )
         next_step = tr(
