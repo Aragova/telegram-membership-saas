@@ -269,6 +269,43 @@ def create_platform_saas_lava_router(
                 ),
             )
 
+    @router.callback_query(F.data == "lava:cancel")
+    async def cancel_lava_email_button(query: CallbackQuery, bot: Bot) -> None:
+        """Cancel only this prompt; never disarm a newer invoice's email input."""
+        if (
+            query.message is None
+            or query.message.chat.type != "private"
+            or query.from_user is None
+            or query.message.chat.id != query.from_user.id
+        ):
+            await query.answer(tr("Нет доступа", "Access denied"), show_alert=True)
+            return
+        current = _current_prompt(query.from_user.id, bot.id)
+        message_id = getattr(query.message, "message_id", None)
+        if (
+            current is None or current[0][1] != message_id
+            or monotonic() >= current[1].expires_at
+        ):
+            await query.answer(
+                tr("Форма устарела", "This form has expired"), show_alert=True,
+            )
+            return
+        _pending_lava.pop(current[0], None)
+        await query.answer()
+        await bot.send_message(
+            query.from_user.id,
+            tr(
+                "✅ Ввод email для Lava.top отменён. Счёт не изменён.",
+                "✅ Lava.top email entry cancelled. Invoice unchanged.",
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text=tr("🧾 Счета ViMi Pay", "🧾 ViMi Pay invoices"),
+                    callback_data="own:saasinvoices:0", style="primary",
+                ),
+            ]]),
+        )
+
     @router.message(_LavaCancelFilter())
     async def cancel_lava_email(message: Message, bot: Bot) -> None:
         if message.from_user is None:
