@@ -101,6 +101,8 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     remove_channel_without_paid_purchases,
 )
 from telegram_membership_saas.modules.owner_setup.channel_stage2_ui import (
+    connection_result_classic,
+    connection_result_rich,
     directory_classic,
     directory_rich,
     manual_classic,
@@ -3154,40 +3156,104 @@ def create_owner_setup_router(
             )
 
 
+    async def initial_setup_active(actor_id: UUID, project_id: UUID, data=None) -> bool:
+        """Use the real initial-setup flag, never assume every bot is new."""
+        if fixed_project_id is None:
+            return False
+        if data is None:
+            data = await setup_overview(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+        if not any(status == "registered" for _, _, status in data.bot_instances):
+            return False
+        try:
+            profile = await saas_price_profile(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+        except PermissionError:
+            return False
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "ViMi Pay setup state unavailable"
+            )
+            return not data.sales_configured
+        return profile.get("currency_selected") is False
+
     async def show_resources(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
     ) -> None:
-        """Stage 2/4: connected channels, one Back, no premature dashboard."""
+        """No resource/statistics buttons in the initial setup catalog."""
         data = await setup_overview(
             factory, actor_id=actor_id, project_id=project_id,
         )
-        rows = [
-            [_button("📢 " + name[:43], "resourceview:" + encode_uuid(rid))]
-            for rid, name, _ in data.resources
-        ]
+        onboarding = await initial_setup_active(actor_id, project_id, data)
+        rows = (
+            [] if onboarding else [
+                [_button("📢 " + name[:43], "resourceview:" + encode_uuid(rid))]
+                for rid, name, _ in data.resources
+            ]
+        )
         rows.extend([
-            [_button(
-                tr("➕ Добавить канал", "➕ Add channel"),
-                "pick:channel", "success",
-            )],
-            [_button(
-                tr("➕ Добавить группу", "➕ Add group"),
-                "pick:group", "success",
-            )],
-            [_button(
-                tr("✍️ Добавить по ID", "✍️ Add by ID"),
-                "resource:manual", "primary",
-            )],
-            # The dashboard itself chooses wizard step 1/4 until setup
-            # completes. Never link to the unready admin panel here.
+            [_button(tr("➕ Добавить канал", "➕ Add channel"),
+                     "pick:channel", "success")],
+            [_button(tr("➕ Добавить группу", "➕ Add group"),
+                     "pick:group", "success")],
+            [_button(tr("✍️ Добавить по ID", "✍️ Add by ID"),
+                     "resource:manual", "primary")],
             [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
         ])
         await send_owner_rich(
             bot, chat_id=user_id,
-            rich_html=directory_rich(len(data.resources)),
-            classic_html=directory_classic(len(data.resources)),
+            rich_html=directory_rich(len(data.resources), onboarding=onboarding),
+            classic_html=directory_classic(len(data.resources), onboarding=onboarding),
             reply_markup=_markup(rows),
         )
+
+    async def show_connection_result(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, success: bool, kind: str, resource_name: str | None = None,
+        native_picker: bool = False,
+    ) -> None:
+        """Single result message with one continuation or back action."""
+        onboarding = await initial_setup_active(actor_id, project_id)
+        username = await connected_bot_handle(actor_id, project_id)
+        rows = [[_button(
+            (tr("➡️ Этап 3 · Настроить оплату", "➡️ Step 3 · Set up payments")
+             if success and onboarding else
+             tr("⬅️ Каналы и группы", "⬅️ Channels and groups")),
+            "dashboard" if success and onboarding else "resources",
+            "primary",
+        )]]
+        rich = connection_result_rich(
+            success=success, kind=kind, username=username,
+            resource_name=resource_name, onboarding=onboarding,
+        )
+        classic = connection_result_classic(
+            success=success, kind=kind, username=username,
+            resource_name=resource_name, onboarding=onboarding,
+        )
+        if not native_picker:
+            await send_owner_rich(
+                bot, chat_id=user_id,
+                rich_html=rich, classic_html=classic,
+                reply_markup=_markup(rows),
+            )
+            return
+        # Telegram requires separate reply-keyboard removal and inline
+        # markup types. Edit the *same* bot message to attach its one action.
+        sent = await bot.send_message(
+            user_id, classic, parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=user_id, message_id=sent.message_id,
+                reply_markup=_markup(rows),
+            )
+        except AiogramError:
+            logging.getLogger(__name__).exception(
+                "ViMi Pay channel result button unavailable"
+            )
 
     async def connected_bot_handle(
         actor_id: UUID, project_id: UUID,
@@ -7026,7 +7092,7 @@ def create_owner_setup_router(
                 request_id = randbelow(2**31 - 2) + 1
                 await set_flow(
                     factory, actor_id=actor_id, step="chat_picker",
-                    payload={"request_id": request_id},
+                    payload={"request_id": request_id, "kind": kind},
                     bot_scope_id=bot.id if fixed_project_id else 0,
                 )
                 # request_chat can only be shown on a native reply keyboard;
