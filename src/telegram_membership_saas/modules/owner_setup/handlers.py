@@ -88,10 +88,6 @@ from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
     remove_channel_without_paid_purchases,
 )
-from telegram_membership_saas.modules.owner_setup.connection_registry_ui import (
-    connection_registry_classic,
-    connection_registry_rich,
-)
 from telegram_membership_saas.modules.owner_setup.connection_cards import (
     connection_management_classic,
     connection_management_rich,
@@ -105,6 +101,10 @@ from telegram_membership_saas.modules.owner_setup.connection_management import (
     remove_unused_connection,
     rename_owner_connection,
     restore_owner_connection,
+)
+from telegram_membership_saas.modules.owner_setup.connection_registry_ui import (
+    connection_registry_classic,
+    connection_registry_rich,
 )
 from telegram_membership_saas.modules.owner_setup.conversations import (
     ADMIN_MESSAGE_HEADER,
