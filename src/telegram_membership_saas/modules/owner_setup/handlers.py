@@ -8254,7 +8254,7 @@ def create_owner_setup_router(
                 page = int(action.split(":", 1)[1])
                 await show_methods(
                     bot, user_id, actor_id, project_id, page=page,
-                    guided=True if action.startswith("methodwizardpage:") else None,
+                    guided=action.startswith("methodwizardpage:"),
                     source_message_id=getattr(query.message, "message_id", None)
                     if fixed_project_id is not None else None,
                 )
