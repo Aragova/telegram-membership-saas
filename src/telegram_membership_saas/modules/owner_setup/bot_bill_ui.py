@@ -30,85 +30,96 @@ def _safe_number(value: object) -> str:
     return number.rstrip("0").rstrip(".") if "." in number else number
 
 
-def _preview_details(
-    *, sales: dict | None, currencies: dict | None, rich: bool,
-) -> str:
-    """The previews describe the current CALENDAR month, not the issued bill."""
-    if sales is None or currencies is None:
+def _preview_details(*, sales: dict | None, rich: bool) -> str:
+    """One authoritative native preview across manual, Stars and Crypto Pay.
+
+    Never add values from different original currencies or use preliminary
+    charge estimates as an issued invoice.
+    """
+    if sales is None:
         note = tr(
             "⚠️ Статистика продаж временно недоступна. Сумму долга это не меняет.",
             "⚠️ Sales statistics are temporarily unavailable. "
             "Your invoiced balance is unaffected.",
         )
         return "<p><i>" + note + "</i></p>" if rich else "<i>" + note + "</i>"
-    rails = sales["rails"]
+    rows = sales["rows"]
     grouped = {"subscription": 0, "file": 0}
-    for item in rails:
+    turnover: list[tuple[str, str, str]] = []
+    for item in rows:
         kind = str(item["kind"])
-        if kind.startswith("subscription"):
-            grouped["subscription"] += int(item["sold"])
-        elif kind.startswith("file"):
-            grouped["file"] += int(item["sold"])
+        group = (
+            "subscription" if kind.startswith("subscription")
+            else "file" if kind.startswith("file") else None
+        )
+        if group is None:
+            raise ValueError("Unknown native sales kind")
+        grouped[group] += int(item["sold"])
+        turnover.append((
+            group, str(item["currency"]), _safe_number(item["gross"]),
+        ))
     month = escape(str(sales.get("month") or "")[:7], quote=True)
     heading = tr("📊 ПРОДАЖИ ТЕКУЩЕГО МЕСЯЦА",
                  "📊 SALES THIS CALENDAR MONTH")
     sales_note = tr(
-        "ℹ️ Показаны подтверждённые продажи. Это справочная статистика, "
-        "не выставленная комиссия.",
-        "ℹ️ Verified sales, for information only. "
-        "This is not an issued commission charge.",
+        "ℹ️ Подтверждённые продажи по всем способам оплаты. "
+        "Оборот показан в исходных валютах, без пересчёта и выставления долга.",
+        "ℹ️ Verified sales across all payment rails. "
+        "Turnover is shown in native currencies, without FX or debt issuance.",
     )
     captions = (
         (tr("📢 Подписки", "📢 Subscriptions"), grouped["subscription"]),
         (tr("📁 Файлы", "📁 Files"), grouped["file"]),
     )
-    turnover = [
-        (str(row["currency"]), _safe_number(row["gross"]))
-        for row in currencies["rows"]
-    ]
     if rich:
-        rows = [
+        html = [
             "<h4>" + heading + "</h4>",
             "<p><i>" + month + "</i></p>",
             "<table bordered compact>",
         ]
         for label, sold in captions:
-            rows.append(
+            html.append(
                 "<tr><th>" + label + "</th><td>"
                 + str(sold) + " "
                 + tr("покупок", "sales") + "</td></tr>"
             )
-        for currency, gross in turnover:
-            rows.append(
-                "<tr><th>" + tr("💰 Оборот", "💰 Turnover")
+        for group, currency, gross in turnover:
+            title = (
+                tr("📢 Подписки", "📢 Subscriptions")
+                if group == "subscription" else tr("📁 Файлы", "📁 Files")
+            )
+            html.append(
+                "<tr><th>💰 " + title
                 + " · " + escape(display_currency(currency), quote=True)
                 + "</th><td>" + escape(gross, quote=True) + "</td></tr>"
             )
-        rows.append("</table>")
+        html.append("</table>")
         if not turnover:
-            rows.append("<p><i>" + tr(
-                "Оборот по валютам пока не отражён.",
-                "Currency turnover is not yet available.",
+            html.append("<p><i>" + tr(
+                "Подтверждённых продаж пока нет.",
+                "No verified sales yet.",
             ) + "</i></p>")
-        rows.append("<p><i>" + sales_note + "</i></p>")
-        return "\n".join(rows)
-    rows = ["<b>" + heading + "</b>" + (" · " + month if month else "")]
-    rows.extend(
+        html.append("<p><i>" + sales_note + "</i></p>")
+        return "\n".join(html)
+    output = ["<b>" + heading + "</b>" + (" · " + month if month else "")]
+    output.extend(
         label + ": " + str(sold) + " " + tr("покупок", "sales")
         for label, sold in captions
     )
-    rows.extend(
-        tr("💰 Оборот", "💰 Turnover") + " · "
-        + escape(display_currency(currency), quote=True)
-        + ": " + escape(gross, quote=True)
-        for currency, gross in turnover
-    )
+    for group, currency, gross in turnover:
+        title = (
+            tr("📢 Подписки", "📢 Subscriptions")
+            if group == "subscription" else tr("📁 Файлы", "📁 Files")
+        )
+        output.append(
+            "💰 " + title + " · " + escape(display_currency(currency), quote=True)
+            + ": " + escape(gross, quote=True)
+        )
     if not turnover:
-        rows.append(tr("Оборот по валютам пока не отражён.",
-                       "Currency turnover is not yet available."))
-    rows.append("<i>" + sales_note + "</i>")
-    return "\n".join(rows)
-
+        output.append(tr("Подтверждённых продаж пока нет.",
+                         "No verified sales yet."))
+    output.append("<i>" + sales_note + "</i>")
+    return "\n".join(output)
 
 def _trial_note(trial: dict | None, *, timezone: str, rich: bool) -> str:
     if trial is None:
@@ -123,7 +134,7 @@ def _trial_note(trial: dict | None, *, timezone: str, rich: bool) -> str:
 
 def bot_bill_rich(
     *, username: str, bill: dict, trial: dict | None, timezone: str,
-    sales: dict | None, currencies: dict | None,
+    sales: dict | None,
     future_currency: str,
 ) -> str:
     heading = "<h3>" + tr("🧾 СЧЁТ БОТА", "🧾 BOT BILL") + "</h3>"
@@ -146,7 +157,7 @@ def bot_bill_rich(
                 "The current-month sales below are not part of this bill.",
             ) + "</i></p>")
             lines.append(_preview_details(
-                sales=sales, currencies=currencies, rich=True,
+                sales=sales, rich=True,
             ))
         return "\n".join(lines)
 
@@ -163,6 +174,10 @@ def bot_bill_rich(
             "и оплата не требуется.",
             "✨ While the free trial is active, no invoice has been issued "
             "and no payment is required.",
+        ) + "</i></p>")
+        lines.append("<p><i>" + tr(
+            "📈 Комиссия ViMi Pay: в пробный период не начисляется.",
+            "📈 ViMi Pay commission is not charged during the free trial.",
         ) + "</i></p>")
     else:
         lines.extend("<p>" + entry + "</p>" for entry in _bill_status(bill))
@@ -184,7 +199,7 @@ def bot_bill_rich(
             "👑 Platform-owned bots are exempt from service fees.",
         ) + "</i></p>")
     lines.append(_preview_details(
-        sales=sales, currencies=currencies, rich=True,
+        sales=sales, rich=True,
     ))
     lines.extend([
         "<h4>" + tr("💰 ФИНАНСОВЫЙ ИТОГ",
@@ -206,7 +221,7 @@ def bot_bill_rich(
 
 def bot_bill_classic(
     *, username: str, bill: dict, trial: dict | None, timezone: str,
-    sales: dict | None, currencies: dict | None,
+    sales: dict | None,
     future_currency: str,
 ) -> str:
     lines = [
@@ -226,7 +241,7 @@ def bot_bill_classic(
                 "🌱 The first issued bill is service-only. "
                 "The sales below are not part of this invoice.",
             ) + "</i>", "", _preview_details(
-                sales=sales, currencies=currencies, rich=False,
+                sales=sales, rich=False,
             )])
         return "\n".join(lines)
     if trial is not None and trial.get("state") == "trial":
@@ -241,6 +256,10 @@ def bot_bill_classic(
             "✨ Пробный период активен: платить пока не нужно.",
             "✨ Free trial is active: no payment is due yet.",
         ) + "</i>"])
+        lines.append("<i>" + tr(
+            "📈 Комиссия ViMi Pay в пробный период не начисляется.",
+            "📈 No ViMi Pay commission during the free trial.",
+        ) + "</i>")
     else:
         lines.extend(_bill_status(bill))
     rate = (
@@ -253,7 +272,7 @@ def bot_bill_classic(
                "🤖 <b>BOT SERVICE</b>"),
         tr("💳 Будущая абонплата: ", "💳 Future service fee: ")
         + "<b>" + rate + "</b>",
-        "", _preview_details(sales=sales, currencies=currencies, rich=False),
+        "", _preview_details(sales=sales, rich=False),
         "", tr("💰 <b>ФИНАНСОВЫЙ ИТОГ</b>",
                "💰 <b>FINANCIAL SUMMARY</b>"),
         tr("Начислено по текущему счёту: 0 ₽",
