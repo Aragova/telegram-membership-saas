@@ -326,6 +326,21 @@ def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def remove_native_owner_keyboard(bot: Bot, user_id: int) -> None:
+    """Hide a Telegram reply keyboard when leaving a native picker flow."""
+    try:
+        await bot.send_message(
+            user_id,
+            tr("⌨️ Системная клавиатура закрыта.",
+               "⌨️ Telegram system keyboard closed."),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    except AiogramError:
+        logging.getLogger(__name__).warning(
+            "Failed to hide stale native owner keyboard"
+        )
+
+
 def _statistics_amount(amount: Decimal) -> str:
     """Preserve integer trailing zeroes while trimming fractional padding."""
     value = format(amount, "f")
@@ -677,10 +692,13 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 self.factory, telegram_id=user.id,
                 username=user.username, first_name=user.first_name,
             )
-            await cancel_owner_flow(
+            was_native = await cancel_owner_flow(
                 self.factory, actor_id=actor_id,
                 bot_scope_id=bot.id if self.fixed_project_id else 0,
+                report_native_keyboard=True,
             )
+            if was_native is True:
+                await remove_native_owner_keyboard(bot, user.id)
             if self.fixed_project_id is not None:
                 await cancel_draft(
                     self.factory, project_id=self.fixed_project_id,
@@ -3910,10 +3928,13 @@ def create_owner_setup_router(
             )
         # /menu exits the old text-entry wizard; the next casual message
         # must never be mistaken for old payment instructions or a plan title.
-        await cancel_owner_flow(
+        was_native = await cancel_owner_flow(
             factory, actor_id=actor_id,
             bot_scope_id=bot.id if fixed_project_id else 0,
+            report_native_keyboard=True,
         )
+        if was_native is True:
+            await remove_native_owner_keyboard(bot, message.chat.id)
         command = (
             (getattr(message, "text", None) or "/start")
             .split(maxsplit=1)[0].split("@")[0].lower()
