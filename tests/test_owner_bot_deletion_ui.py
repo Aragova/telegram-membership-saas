@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from telegram_membership_saas.modules.bots.deletion_service import RetirementBlockers
 from telegram_membership_saas.modules.owner_setup import handlers as ui
+from telegram_membership_saas.modules.owner_setup.obligations import OwnerObligations
 from telegram_membership_saas.modules.owner_setup.service import SetupOverview
 from telegram_membership_saas.modules.telegram_commerce.service import encode_uuid
 
@@ -57,6 +59,12 @@ async def test_owner_bot_page_has_confirmed_deletion_and_from_zero_link(monkeypa
         ui, "setup_overview",
         AsyncMock(return_value=_ui(instance_id, project_id)),
     )
+    monkeypatch.setattr(
+        ui, "list_owner_obligations", AsyncMock(return_value=OwnerObligations(
+            blockers=RetirementBlockers(), payments=(), subscriptions=(),
+            grants=(), access=(),
+        )),
+    )
     bot = _bot()
     await _handler()(_callback("bots"), bot)
     sent = bot.send_message.await_args
@@ -74,7 +82,8 @@ async def test_owner_bot_page_has_confirmed_deletion_and_from_zero_link(monkeypa
 
     await _handler()(_callback(delete.removeprefix("own:")), bot)
     confirmation = bot.send_message.await_args
-    assert "Удалить @my_buyer_bot" in confirmation.args[1]
+    assert "ОТКЛЮЧЕНИЕ БОТА" in confirmation.args[1]
+    assert "@my_buyer_bot" in confirmation.args[1]
     assert "история платежей" in confirmation.args[1]
     callbacks = [
         b.callback_data
