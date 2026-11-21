@@ -83,11 +83,14 @@ def test_management_dispatcher_routes_owner_first_buyer_separately():
     assert "telegram-commerce" not in [r.name for r in central.sub_routers]
 
 
-async def test_first_start_has_direct_bot_connection_button(monkeypatch):
+async def test_first_start_shows_only_language_choices(monkeypatch):
     uid = uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
     monkeypatch.setattr(
         ui, "owner_home", AsyncMock(return_value=OwnerHome((), None))
+    )
+    monkeypatch.setattr(
+        ui, "has_explicit_language_choice", AsyncMock(return_value=False),
     )
     monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
@@ -96,13 +99,89 @@ async def test_first_start_has_direct_bot_connection_button(monkeypatch):
     assert "Ваш Telegram-канал. Ваши подписчики. Ваш доход." in sent.args[1]
     assert "72 часа бесплатно" in sent.args[1]
     buttons = [
-        button.text for row in sent.kwargs["reply_markup"].inline_keyboard
+        (button.text, button.callback_data)
+        for row in sent.kwargs["reply_markup"].inline_keyboard
         for button in row
     ]
-    assert "🔐 Платные подписки" in buttons
-    assert "🇷🇺 Русский" in buttons
-    assert "🇬🇧 English" in buttons
-    assert "✨ Создать бота" not in buttons
+    assert buttons == [
+        ("🇷🇺 Русский", "lng:set:ru"),
+        ("🇬🇧 English", "lng:set:en"),
+    ]
+    assert "Что будем создавать?" not in sent.args[1]
+
+
+async def test_first_start_after_language_has_only_subscription_and_back(monkeypatch):
+    uid = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
+    monkeypatch.setattr(
+        ui, "owner_home", AsyncMock(return_value=OwnerHome((), None))
+    )
+    monkeypatch.setattr(
+        ui, "has_explicit_language_choice", AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
+    bot = _bot()
+    await _handler("home_message")(_message("/menu"), bot)
+    sent = bot.send_message.await_args
+    buttons = [
+        (button.text, button.callback_data)
+        for row in sent.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    assert buttons == [
+        ("🔐 Платные подписки", "own:substart"),
+        ("⬅️ Назад", "lng:menu"),
+    ]
+    assert "Что будем создавать?" not in sent.args[1]
+    assert "Выберите «🔐 Платные подписки»" not in sent.args[1]
+
+
+async def test_subscription_back_returns_without_existing_project(monkeypatch):
+    from telegram_membership_saas.localization import _language
+
+    uid = uuid4()
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
+    monkeypatch.setattr(
+        ui, "owner_home", AsyncMock(return_value=OwnerHome((), None)),
+    )
+    monkeypatch.setattr(
+        ui, "has_explicit_language_choice", AsyncMock(return_value=True),
+    )
+    selected = AsyncMock(side_effect=AssertionError("No project exists yet"))
+    monkeypatch.setattr(ui, "get_selected_project", selected)
+    bot = _bot()
+    handler = _handler("owner_callback", callback=True)
+
+    def query(data):
+        return SimpleNamespace(
+            message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+            from_user=_user(), data=data, answer=AsyncMock(),
+        )
+
+    token = _language.set("en")
+    try:
+        choice = query("own:substart")
+        await handler(choice, bot)
+        callbacks = [
+            b.callback_data for row in
+            bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+            for b in row
+        ]
+        assert callbacks == ["own:newmanaged", "own:new", "own:onboardhome"]
+        assert choice.answer.await_count == 1
+
+        go_back = query("own:onboardhome")
+        await handler(go_back, bot)
+        callbacks = [
+            b.callback_data for row in
+            bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+            for b in row
+        ]
+        assert callbacks == ["own:substart", "lng:menu"]
+        assert go_back.answer.await_count == 1
+        selected.assert_not_awaited()
+    finally:
+        _language.reset(token)
 
 
 async def test_central_start_shows_connection_registry_without_raw_uuids(monkeypatch):
