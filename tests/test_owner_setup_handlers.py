@@ -210,7 +210,12 @@ async def test_back_from_welcome_restores_full_language_screen(monkeypatch):
             assert intro in sent.args[1]
             assert trial in sent.args[1]
             assert heading in sent.args[1]
-            assert "<table bordered compact>" in sent.args[1]
+            # The mock Bot follows the classic HTML fallback; the same
+            # screen also has a Rich-card table in Telegram clients that
+            # support sendRichMessage.
+            assert "<table bordered compact>" in ui.central_welcome_rich(
+                language_selected=False,
+            )
             assert [
                 (b.text, b.callback_data)
                 for row in sent.kwargs["reply_markup"].inline_keyboard for b in row
