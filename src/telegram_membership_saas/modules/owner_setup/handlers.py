@@ -3224,6 +3224,23 @@ def create_owner_setup_router(
         )
         return not overview.resources
 
+    async def delete_native_chat_picker_card(
+        bot: Bot, user_id: int, flow: SetupFlow | None,
+    ) -> None:
+        """Remove only the old instruction message of a matched picker flow."""
+        if (
+            flow is None or flow.step != "chat_picker"
+            or flow.project_id != fixed_project_id
+            or not isinstance(flow.prompt_message_id, int)
+            or flow.prompt_message_id <= 0
+        ):
+            return
+        try:
+            await bot.delete_message(user_id, flow.prompt_message_id)
+        except (AiogramError, TypeError):
+            # Deletion can fail for an old message. Still deliver the result.
+            pass
+
     async def show_connection_result(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, success: bool, kind: str, resource_name: str | None = None,
@@ -4410,6 +4427,8 @@ def create_owner_setup_router(
                 "Настройка другого бота недоступна",
                 "You cannot manage another bot's setup",
             ))
+        # Back disposes the matched picker before returning to channels.
+        await delete_native_chat_picker_card(bot, message.chat.id, previous)
         # Telegram reply keyboards do not disappear reliably on one_time.
         # Hide only after the correct active picker was atomically dismissed.
         await bot.send_message(
@@ -4487,6 +4506,7 @@ def create_owner_setup_router(
             return True
         project_id = prior.project_id
         if prior.step == "chat_picker":
+            await delete_native_chat_picker_card(bot, user_id, prior)
             await bot.send_message(
                 user_id,
                 tr("Выбор чата закрыт.", "Chat selection closed."),
@@ -7131,7 +7151,7 @@ def create_owner_setup_router(
                     raise ValueError(tr("Неизвестный тип чата", "Unsupported chat type"))
                 request_id = randbelow(2**31 - 2) + 1
                 guided = await guided_channel_selection(actor_id, project_id)
-                await set_flow(
+                generation = await set_flow(
                     factory, actor_id=actor_id, step="chat_picker",
                     payload={
                         "request_id": request_id, "kind": kind,
@@ -7143,7 +7163,7 @@ def create_owner_setup_router(
                 # Rich inline buttons cannot invoke Telegram's picker.
                 # Use one fully formatted Telegram HTML message with
                 # exactly two native actions: Select chat and Back.
-                await bot.send_message(
+                picker_message = await bot.send_message(
                     user_id,
                     picker_classic(
                         kind, await connected_bot_handle(actor_id, project_id),
@@ -7169,6 +7189,23 @@ def create_owner_setup_router(
                         one_time_keyboard=True,
                     ),
                 )
+                try:
+                    # Bind the bot-owned picker message to this exact flow.
+                    await bind_prompt(
+                        factory, actor_id=actor_id, step="chat_picker",
+                        message_id=picker_message.message_id,
+                        generation=generation, bot_scope_id=bot.id,
+                    )
+                except ValueError:
+                    # A newer flow replaced it before binding; clean up
+                    # only the stale instruction message, not the new flow.
+                    try:
+                        await bot.delete_message(
+                            user_id, picker_message.message_id,
+                        )
+                    except (AiogramError, TypeError):
+                        pass
+                    raise
             elif action == "resource:manual":
                 username = await connected_bot_handle(actor_id, project_id)
                 await prompt(
@@ -8448,6 +8485,7 @@ def create_owner_setup_router(
         kind = "channel"
         problem = "permissions"
         guided = False
+        flow: SetupFlow | None = None
         try:
             flow = await consume_button_flow(
                 factory, actor_id=actor_id, expected_step="chat_picker",
@@ -8473,8 +8511,9 @@ def create_owner_setup_router(
             success = False
             chat = None
             problem = connection_problem_code(exc)
-        # A Telegram chat_shared service bubble is separate from our
-        # message. Delete it when Telegram permits; never block the result.
+        # The native instructions and Telegram's chat_shared service
+        # event are separate messages. Remove both when allowed.
+        await delete_native_chat_picker_card(bot, message.chat.id, flow)
         try:
             await bot.delete_message(message.chat.id, message.message_id)
         except (AiogramError, TypeError):

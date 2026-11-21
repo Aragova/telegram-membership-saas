@@ -81,6 +81,7 @@ def _bot():
     bot = MagicMock()
     bot.id = 987
     bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=111))
+    bot.delete_message = AsyncMock()
     return bot
 
 
@@ -172,6 +173,8 @@ async def test_native_telegram_picker_preserves_request_chat_and_has_only_back(
     _auth(monkeypatch, project)
     begin = AsyncMock(return_value="new-gen")
     monkeypatch.setattr(ui, "set_flow", begin)
+    bound = AsyncMock()
+    monkeypatch.setattr(ui, "bind_prompt", bound)
     handler, _ = _handlers(project)
     bot = _bot()
     token = _language.set(language)
@@ -195,6 +198,11 @@ async def test_native_telegram_picker_preserves_request_chat_and_has_only_back(
     assert begin.await_args.kwargs["payload"]["request_id"] == picker.request_id
     assert begin.await_args.kwargs["payload"]["kind"] == kind
     assert begin.await_args.kwargs["bot_scope_id"] == 987
+    bound.assert_awaited_once()
+    assert bound.await_args.kwargs["step"] == "chat_picker"
+    assert bound.await_args.kwargs["message_id"] == 111
+    assert bound.await_args.kwargs["generation"] == "new-gen"
+    assert bound.await_args.kwargs["bot_scope_id"] == 987
 
 
 async def test_back_from_native_picker_disposes_only_current_flow(monkeypatch):
@@ -202,7 +210,7 @@ async def test_back_from_native_picker_disposes_only_current_flow(monkeypatch):
     _auth(monkeypatch, project)
     flow = SetupFlow(
         step="chat_picker", project_id=project, payload={"request_id": 42},
-        prompt_message_id=None, generation="native-gen",
+        prompt_message_id=222, generation="native-gen",
     )
     consumed = AsyncMock(return_value=flow)
     monkeypatch.setattr(ui, "consume_button_flow", consumed)
@@ -216,6 +224,7 @@ async def test_back_from_native_picker_disposes_only_current_flow(monkeypatch):
     assert consumed.await_args.kwargs["discard"] is True
     assert consumed.await_args.kwargs["allow_expired_chat_picker"] is True
     assert consumed.await_args.kwargs["bot_scope_id"] == 987
+    bot.delete_message.assert_awaited_once_with(345, 222)
     assert isinstance(
         bot.send_message.await_args.kwargs["reply_markup"], ReplyKeyboardRemove,
     )
@@ -236,6 +245,7 @@ async def test_stale_native_back_does_not_cancel_newer_form(monkeypatch):
     await back(_message("⬅️ Back"), bot)
     assert "⚠️" in bot.send_message.await_args.args[1]
     assert bot.send_message.await_count == 1
+    bot.delete_message.assert_not_awaited()
     ui.send_owner_rich.assert_not_awaited()
 
 

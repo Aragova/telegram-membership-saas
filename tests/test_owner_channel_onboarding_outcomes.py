@@ -128,7 +128,7 @@ async def test_native_picker_has_one_result_and_one_inline_action(
     consumed = AsyncMock(return_value=SetupFlow(
         project_id=project, step="chat_picker",
         payload={"request_id": 19, "kind": kind}, generation="native",
-        prompt_message_id=None,
+        prompt_message_id=451,
     ))
     monkeypatch.setattr(ui, "consume_button_flow", consumed)
     verify = AsyncMock(
@@ -168,7 +168,9 @@ async def test_native_picker_has_one_result_and_one_inline_action(
         "own:dashboard" if success else "own:resources"
     )
     assert consumed.await_args.kwargs["discard"] is True
-    assert bot.delete_message.await_count == 1
+    assert [call.args for call in bot.delete_message.await_args_list] == [
+        (345, 451), (345, 223),
+    ]
 
 
 @pytest.mark.parametrize("language", ["ru", "en"])
@@ -281,6 +283,7 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
     _setup(monkeypatch, project, resources=(), first_run=False)
     set_flow = AsyncMock(return_value="next")
     monkeypatch.setattr(ui, "set_flow", set_flow)
+    monkeypatch.setattr(ui, "bind_prompt", AsyncMock())
     render = AsyncMock(return_value=SimpleNamespace(message_id=451))
     monkeypatch.setattr(ui, "send_owner_rich", render)
     native = _bot()
@@ -299,7 +302,7 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
             return_value=SetupFlow(
                 project_id=project, step="chat_picker",
                 payload=payload, generation="next",
-                prompt_message_id=None,
+                prompt_message_id=450,
             ),
         ))
         monkeypatch.setattr(ui, "verify_channel_and_add", AsyncMock(
@@ -311,6 +314,9 @@ async def test_reconnecting_empty_finished_bot_keeps_guided_stage3(monkeypatch, 
             )), native,
         )
         assert render.await_count == 1
+        assert [call.args for call in native.delete_message.await_args_list] == [
+            (345, 450), (345, 223),
+        ]
         result = render.await_args.kwargs
         assert result["reply_markup"].inline_keyboard[0][0].callback_data == (
             "own:setupstep3"
