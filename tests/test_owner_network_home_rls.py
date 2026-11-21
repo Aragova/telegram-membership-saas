@@ -135,6 +135,11 @@ async def test_network_home_is_owner_scoped_and_shows_native_sales_and_due_bot()
                 assert UUID(upcoming["invoice_id"]) in (first, second)
                 assert upcoming["same_day_count"] == 2
                 assert Decimal(upcoming["remaining_rub"]) == 150
+                # Resolve the current page for the exact issued invoice.
+                page = (await conn.execute(text(
+                    "SELECT public.platform_saas_owner_invoice_page(:invoice)"
+                ), {"invoice": UUID(upcoming["invoice_id"])})).scalar_one()
+                assert page == 0
 
                 # Outsider gets only their own one disconnected-from-runtime
                 # project, not the first owner's money or invoice references.
@@ -149,6 +154,14 @@ async def test_network_home_is_owner_scoped_and_shows_native_sales_and_due_bot()
                 assert stranger["billing"]["next"] is None
                 assert stranger["billing"]["unpaid"] == 0
                 assert other_project != project
+                with pytest.raises(DBAPIError) as denied_other_invoice:
+                    async with conn.begin_nested():
+                        await conn.execute(text(
+                            "SELECT public.platform_saas_owner_invoice_page(:invoice)"
+                        ), {"invoice": first})
+                assert getattr(
+                    denied_other_invoice.value.orig, "sqlstate", None,
+                ) == "42501"
 
                 await conn.execute(text(
                     "SELECT set_config('app.current_user_id','',true)"
