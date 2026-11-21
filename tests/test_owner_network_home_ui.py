@@ -277,6 +277,6 @@ async def test_nearest_invoice_callback_resolves_current_page_not_zero(monkeypat
     assert statement.await_args.kwargs["page"] == 3
     markup = instance.send_message.await_args.kwargs["reply_markup"]
     assert any(
-        button.callback_data == "own:saasinvoices:3"
+        button.callback_data == "own:saasaccountlist:3"
         for row in markup.inline_keyboard for button in row
     )

@@ -37,6 +37,13 @@ def _bot():
     return bot
 
 
+def _setup_overview():
+    return SimpleNamespace(
+        bot_instances=((uuid4(), "vimitest21bot", "registered"),),
+        can_delete_bot=True,
+    )
+
+
 def _snapshot(payment_id, subscription_id):
     return OwnerObligations(
         blockers=RetirementBlockers(requests=1, subscriptions=1, grants=1, access=2),
@@ -59,20 +66,29 @@ async def test_owner_sees_remediation_links_and_warning(monkeypatch):
         ui, "list_owner_obligations",
         AsyncMock(return_value=_snapshot(payment_id, subscription_id)),
     )
+    monkeypatch.setattr(ui, "setup_overview",
+                        AsyncMock(return_value=_setup_overview()))
     bot = _bot()
     await _handler()(_callback("oblist"), bot)
     sent = bot.send_message.await_args
-    assert "Обязательства" in sent.args[1]
-    assert "Заявки: 1" in sent.args[1]
+    assert "ПОКУПАТЕЛИ И ДОСТУПЫ" in sent.args[1]
+    assert "Проверить покупки" in str(sent.kwargs["reply_markup"])
+    assert "Проверить подписки" in str(sent.kwargs["reply_markup"])
     callbacks = [
         b.callback_data
         for row in sent.kwargs["reply_markup"].inline_keyboard
         for b in row if b.callback_data
     ]
-    assert "own:ob:pay:" + encode_uuid(project_id) + ":" + encode_uuid(payment_id) in callbacks
-    assert "own:ob:sub:" + encode_uuid(project_id) + ":" + encode_uuid(subscription_id) in callbacks
+    assert "own:oblist:pay" in callbacks
+    assert "own:oblist:sub" in callbacks
     assert all(len(x.encode()) <= 64 for x in callbacks)
 
+    bot.reset_mock()
+    await _handler()(_callback("oblist:sub"), bot)
+    buttons = [b.callback_data for row in
+               bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+               for b in row]
+    assert "own:ob:sub:" + encode_uuid(project_id) + ":" + encode_uuid(subscription_id) in buttons
     bot.reset_mock()
     await _handler()(
         _callback("ob:sub:" + encode_uuid(project_id) + ":" + encode_uuid(subscription_id)),
@@ -113,6 +129,8 @@ async def test_confirm_payment_uses_tenant_scoped_service(monkeypatch):
     )
     close = AsyncMock(return_value=OwnerChange(True, None, "Closed"))
     monkeypatch.setattr(ui, "close_owner_payment", close)
+    monkeypatch.setattr(ui, "setup_overview",
+                        AsyncMock(return_value=_setup_overview()))
     bot = _bot()
     await _handler()(
         _callback("obok:pay:" + encode_uuid(project) + ":" + encode_uuid(payment)),
@@ -124,7 +142,7 @@ async def test_confirm_payment_uses_tenant_scoped_service(monkeypatch):
         "actor_id": actor, "project_id": project, "request_id": payment,
     }
     assert "Состояние сохранено" in bot.send_message.await_args_list[0].args[1]
-    assert "Обязательства" in bot.send_message.await_args_list[-1].args[1]
+    assert "ПОКУПАТЕЛИ И ДОСТУПЫ" in bot.send_message.await_args_list[-1].args[1]
 
 
 async def test_stale_payment_confirmation_fails_closed(monkeypatch):
@@ -153,7 +171,7 @@ async def test_paginated_owner_obligations_preserve_page_in_confirmation(monkeyp
             uuid4(), 900 + i, "x" * 64,
             "waiting_review", "9" * 35, "RUB",
         )
-        for i in range(5)
+        for i in range(12)
     )
     snapshot = OwnerObligations(
         blockers=RetirementBlockers(requests=12),
@@ -164,18 +182,20 @@ async def test_paginated_owner_obligations_preserve_page_in_confirmation(monkeyp
     monkeypatch.setattr(ui, "get_selected_project", AsyncMock(return_value=project))
     listing = AsyncMock(return_value=snapshot)
     monkeypatch.setattr(ui, "list_owner_obligations", listing)
+    monkeypatch.setattr(ui, "setup_overview",
+                        AsyncMock(return_value=_setup_overview()))
     bot = _bot()
-    await _handler()(_callback("oblist"), bot)
+    await _handler()(_callback("oblist:pay"), bot)
     first = bot.send_message.await_args
     assert len(first.args[1]) < 4096
     controls = [
         b.callback_data for row in first.kwargs["reply_markup"].inline_keyboard
         for b in row if b.callback_data
     ]
-    assert "own:obpage:" + encode_uuid(project) + ":1" in controls
+    assert "own:obpage:" + encode_uuid(project) + ":pay:1" in controls
 
     await _handler()(
-        _callback("obpage:" + encode_uuid(project) + ":1"), bot,
+        _callback("obpage:" + encode_uuid(project) + ":pay:1"), bot,
     )
     sent = bot.send_message.await_args
     assert "Страница 2" in sent.args[1]

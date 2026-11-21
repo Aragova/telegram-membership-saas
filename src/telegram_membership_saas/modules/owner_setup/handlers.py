@@ -70,6 +70,10 @@ from telegram_membership_saas.modules.owner_notifications import (
     read_owner_settings,
     set_owner_setting,
 )
+from telegram_membership_saas.modules.owner_setup.account_bill_ui import (
+    account_bill_classic,
+    account_bill_rich,
+)
 from telegram_membership_saas.modules.owner_setup.bot_bill_ui import (
     bot_bill_classic,
     bot_bill_rich,
@@ -83,6 +87,12 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_crypto_method_screen,
     preview_method_screen,
     preview_offer_screen,
+)
+from telegram_membership_saas.modules.owner_setup.central_connection_flow_ui import (
+    disconnect_card,
+    obligations_card,
+    rename_input_card,
+    token_input_card,
 )
 from telegram_membership_saas.modules.owner_setup.channel_management import (
     read_channel_insights,
@@ -1468,73 +1478,108 @@ def create_owner_setup_router(
             reply_markup=keyboard,
         )
 
+    async def show_account_invoice_list(
+        bot: Bot, user_id: int, actor_id: UUID, *, page: int = 0,
+    ) -> None:
+        """Account-wide historical invoices, including retired bot debts."""
+        report = await merchant_saas_statements(
+            factory, actor_user_id=actor_id, page=page,
+        )
+        if page > 0 and page * 6 >= report.total:
+            raise ValueError(tr("Эта страница больше не существует.",
+                                "This invoice page is no longer available."))
+        rows: list[list[InlineKeyboardButton]] = []
+        for item in report.invoices:
+            due = Decimal(str(item.get("remaining_rub", item["amount_rub"])))
+            if item.get("status") == "paid":
+                due = Decimal("0")
+            label = (
+                (tr("🔴 К оплате", "🔴 Due") + " · "
+                 + format(due, ".2f") + " ₽")
+                if due > 0 else
+                (tr("✅ Оплачено", "✅ Paid") + " · "
+                 + format(Decimal(str(item["amount_rub"])), ".2f") + " ₽")
+            )
+            due_day = str(item.get("due_at") or "")[:10]
+            if len(due_day) == 10 and due_day[4:5] == "-":
+                label += " · " + due_day[8:10] + "." + due_day[5:7] + "." + due_day[:4]
+            rows.append([_button(
+                label, "saasbill:" + encode_uuid(UUID(str(item["id"])))
+                + ":" + str(page), "primary",
+            )])
+        if not report.invoices:
+            empty = tr("📋 Счетов пока нет.", "📋 No invoices yet.")
+        else:
+            empty = tr("Выберите счёт, чтобы открыть его подробности.",
+                       "Choose an invoice to view its details.")
+        nav: list[InlineKeyboardButton] = []
+        if page:
+            nav.append(_button("⬅️", "saasaccountlist:" + str(page - 1)))
+        if (page + 1) * 6 < report.total:
+            nav.append(_button("➡️", "saasaccountlist:" + str(page + 1)))
+        if nav:
+            rows.append(nav)
+        rows.append([_button(
+            tr("⬅️ Счёт аккаунта", "⬅️ Account bill"),
+            "saasinvoices:0", "primary",
+        )])
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=(
+                "<h3>" + tr("📋 ВЫСТАВЛЕННЫЕ СЧЕТА",
+                            "📋 ISSUED INVOICES") + "</h3>"
+                "<p><i>" + empty + "</i></p><p><b>"
+                + tr("📄 Страница ", "📄 Page ") + str(page + 1)
+                + " / " + str(max(1, (report.total + 5) // 6))
+                + "</b></p>"
+            ),
+            classic_html=(
+                "<b>" + tr("📋 ВЫСТАВЛЕННЫЕ СЧЕТА",
+                           "📋 ISSUED INVOICES") + "</b>\n"
+                + empty + "\n" + tr("Страница ", "Page ")
+                + str(page + 1) + " / " + str(max(1, (report.total + 5) // 6))
+            ),
+            reply_markup=_markup(rows),
+        )
+
     async def show_saas_statements(
         bot: Bot, user_id: int, actor_id: UUID,
         project_id: UUID | None, *, page: int = 0,
     ) -> None:
         """One issued invoice per bot; never sum another bot's finances."""
         if project_id is None:
-            # Preserve original historical account receipts after a transfer.
-            # Current per-bot statements are opened INSIDE each connected bot.
             report = await merchant_saas_statements(
-                factory, actor_user_id=actor_id, page=page,
+                factory, actor_user_id=actor_id, page=0,
             )
+            # Only real issued invoices and the owner-scoped fleet ledger
+            # contribute figures. Never manufacture future obligations.
+            home = await read_owner_network_home(factory, actor_id=actor_id)
+            billing = home["billing"]
             rows: list[list[InlineKeyboardButton]] = []
-            for item in report.invoices:
-                # Issued debt remains payable after physical bot retirement.
-                # Never disguise an outstanding amount as a paid "archive".
-                due = Decimal(str(item.get("remaining_rub", item["amount_rub"])))
-                if item.get("status") == "paid":
-                    due = Decimal("0")
-                label = (
-                    tr("🔴 К оплате", "🔴 Amount due") + " · "
-                    + format(due, ".2f") + " ₽"
-                    if due > 0 else tr("✅ Оплачено", "✅ Paid") + " · "
-                    + format(Decimal(str(item["amount_rub"])), ".2f") + " ₽"
-                )
-                service_day = str(item.get("period_start") or "")[:10]
-                if len(service_day) == 10 and service_day[4:5] == "-":
-                    label += (" · " + service_day[8:10] + "."
-                              + service_day[5:7] + "." + service_day[:4])
+            nearest = billing.get("next") if report.unpaid else None
+            if isinstance(nearest, dict) and nearest.get("invoice_id"):
                 rows.append([_button(
-                    label,
-                    "saasbill:" + encode_uuid(UUID(str(item["id"])))
-                    + ":" + str(page),
+                    tr("💳 Открыть ближайший счёт",
+                       "💳 Open next invoice"),
+                    "saasnearest:" + encode_uuid(UUID(str(nearest["invoice_id"]))),
+                    "success",
                 )])
-            nav: list[InlineKeyboardButton] = []
-            if page:
-                nav.append(_button("⬅️", "saasinvoices:" + str(page - 1)))
-            if (page + 1) * 6 < report.total:
-                nav.append(_button("➡️", "saasinvoices:" + str(page + 1)))
-            if nav:
-                rows.append(nav)
-            rows.append([_button(
-                tr("🏠 Главное меню", "🏠 Main menu"), "onboardhome",
-            )])
-            amount = format(report.outstanding_rub, ".2f") + " ₽"
-            count = str(report.unpaid)
-            title = tr("🧾 СЧЁТ АККАУНТА", "🧾 ACCOUNT BILL")
-            table = (
-                "<table bordered compact><tr><th>"
-                + tr("Неоплачено", "Unpaid") + "</th><td><b>"
-                + count + " · " + amount + "</b></td></tr></table>"
-            )
+            if report.unpaid:
+                rows.append([_button(
+                    tr("📋 Все выставленные счета",
+                       "📋 All issued invoices"),
+                    "saasaccountlist:0", "primary",
+                )])
+            rows.append([
+                _button(tr("📂 Мои подключения", "📂 My connections"),
+                        "projects", "primary"),
+                _button(tr("🏠 Главное меню", "🏠 Main menu"),
+                        "onboardhome", "primary"),
+            ])
             await send_owner_rich(
                 bot, chat_id=user_id,
-                rich_html="<h3>" + title + "</h3>" + table + "<p>" + tr(
-                    "Каждый бот имеет собственный счёт и валюту. Изменить валюту "
-                    "можно в разделе «🧾 Счёт» соответствующего бота.",
-                    "Every bot has its own invoice and currency. Change it from "
-                    "that bot's 🧾 Bill section.",
-                ) + "</p>",
-                classic_html=(
-                    "<b>" + title + "</b>\n\n"
-                    + tr("Неоплачено: ", "Unpaid: ") + count + " · " + amount
-                    + "\n\n" + tr(
-                        "Валюта выбирается отдельно в каждом боте.",
-                        "Set the currency separately in each bot.",
-                    )
-                ),
+                rich_html=account_bill_rich(report, billing),
+                classic_html=account_bill_classic(report, billing),
                 reply_markup=_markup(rows),
             )
             return
@@ -1720,7 +1765,8 @@ def create_owner_setup_router(
         # currency snapshots remain visible, but no new legacy lock is offered.
         buttons.append([_button(
             tr("⬅️ К счетам", "⬅️ Invoices"),
-            "saasinvoices:" + str(page),
+            ("saasaccountlist:" if fixed_project_id is None
+             else "saasinvoices:") + str(page),
         )])
         await send_owner_rich(
             bot, chat_id=user_id,
@@ -2827,162 +2873,235 @@ def create_owner_setup_router(
 
     async def show_obligations(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
-        page: int = 0,
+        page: int = 0, *, section: str = "overview",
     ) -> None:
+        """Owner-friendly buyer checks, with 12 entries per category page."""
+        if section not in ("overview", "pay", "sub", "grant", "sync"):
+            raise ValueError(tr("Неизвестный раздел", "Unknown section"))
+        if not 0 <= page <= 200:
+            raise ValueError(tr("Недопустимая страница", "Invalid page"))
         snapshot = await list_owner_obligations(
             factory, actor_id=actor_id, project_id=project_id, page=page,
         )
         counts = snapshot.blockers
-        lines = [
-            tr("🧾 <b>Обязательства перед отключением</b>",
-               "🧾 <b>Outstanding obligations before removal</b>"),
-            tr("Страница ", "Page ") + str(page + 1)
-            + tr(" · до 5 записей каждого типа", " · up to 5 records per category"),
-            "",
-            tr("Заявки: ", "Payment requests: ") + str(counts.requests)
-            + tr(" · Подписки: ", " · Subscriptions: ") + str(counts.subscriptions)
-            + tr(" · Права: ", " · Grants: ") + str(counts.grants),
-            tr("Доступы: ", "Access states: ") + str(counts.access)
-            + tr(" · Действия: ", " · Actions: ") + str(counts.access_actions)
-            + tr(" · Приглашения: ", " · Invites: ") + str(counts.join_tickets),
-            "",
-            tr(
-                "Все действия выполняются отдельно с подтверждением. "
-                "Оплаченный доступ нельзя отключать без урегулирования "
-                "обязательств перед покупателем.",
-                "Each action requires individual confirmation. "
-                "Do not remove paid access without resolving your "
-                "obligations to customers.",
-            ),
-        ]
-        rows: list[list[InlineKeyboardButton]] = []
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        active_bot = next((
+            (instance_id, name) for instance_id, name, status
+            in overview.bot_instances if status != "deleting"
+        ), None)
+        username = active_bot[1] if active_bot else None
         project_ref = encode_uuid(project_id)
-        for item in snapshot.payments:
-            label = (
-                tr("Отклонить", "Reject")
-                if item.status == "waiting_review"
-                else tr("Закрыть", "Close")
-            )
-            lines.append(
-                "💳 " + escape(item.username or str(item.telegram_user_id))
-                + " · " + escape(item.amount + " " + item.currency)
-                + " · " + escape(obligation_status(item.status))
-            )
-            rows.append([_button(
-                "💳 " + label + tr(" заявку ", " request ")
-                + str(item.telegram_user_id),
-                "ob:pay:" + project_ref + ":" + encode_uuid(item.id)
-                + (":" + str(page) if page else ""), "danger",
-            )])
-        for item in snapshot.subscriptions:
-            end = (
-                item.period_end.strftime("%d.%m.%Y")
-                if item.period_end else tr("бессрочно", "lifetime")
-            )
-            lines.append(
-                "📦 " + escape(item.plan_name) + " · "
-                + escape(item.username or str(item.telegram_user_id))
-                + tr(" · до ", " · until ") + end
-            )
-            rows.append([_button(
-                tr("📦 Завершить подписку ", "📦 End subscription ")
-                + str(item.telegram_user_id),
-                "ob:sub:" + project_ref + ":" + encode_uuid(item.id)
-                + (":" + str(page) if page else ""), "danger",
-            )])
-        for item in snapshot.grants:
-            if item.source in ("payment", "stars_payment"):
-                continue
-            lines.append(
-                "🔑 " + escape(item.source) + " · " + str(item.telegram_user_id)
-            )
-            rows.append([_button(
-                tr("🔑 Отозвать ", "🔑 Revoke ")
-                + item.source[:12] + " · " + str(item.telegram_user_id),
-                "ob:grant:" + project_ref + ":" + encode_uuid(item.id)
-                + (":" + str(page) if page else ""), "danger",
-            )])
-        if snapshot.access:
-            lines.append(tr(
-                "🔄 Доступы требуют подтверждения фактического отзыва в Telegram. "
-                "Они не очищаются принудительно.",
-                "🔄 Access revocations must be confirmed in Telegram. "
-                "Access states are never forcibly cleared.",
-            ))
-            for item in snapshot.access[:12]:
+        back_action = (
+            "drop:" + project_ref + ":" + encode_uuid(active_bot[0])
+            if active_bot else "bots"
+        )
+        rows: list[list[InlineKeyboardButton]] = []
+        records: list[str] = []
+        visible = 0
+        if section == "overview":
+            if counts.requests:
                 rows.append([_button(
-                    tr("🔄 Синхронизировать доступ · ", "🔄 Sync access · ")
-                    + obligation_status(item.actual),
-                    "ob:sync:" + project_ref + ":" + encode_uuid(item.id)
-                    + (":" + str(page) if page else ""),
+                    tr("💳 Проверить покупки · ", "💳 Review purchases · ")
+                    + str(counts.requests), "oblist:pay", "primary",
                 )])
-        if counts.access_actions or counts.join_tickets:
-            lines.append(tr(
-                "⏳ Действия доступа и приглашения обрабатывает клиентский бот; "
-                "проверьте состояние после завершения.",
-                "⏳ The connected bot processes access actions and invitations. "
-                "Check the status again when processing completes.",
-            ))
-        if (
-            counts.access_actions > 0
-            and not any((
-                counts.requests, counts.subscriptions, counts.grants,
-                counts.access, counts.join_tickets,
-            ))
-        ):
-            lines.append(tr(
-                "\n⚠️ Если бот окончательно удалён в BotFather и не может "
-                "выполнить эту команду, владелец может отдельно подтвердить "
-                "его отключение. Статус реального доступа в Telegram "
-                "не будет подменён. История сохранится.",
-                "\n⚠️ If the bot was permanently deleted in BotFather and "
-                "cannot process this command, the owner may explicitly "
-                "authorize retirement. Actual Telegram access will NOT be "
-                "marked as verified. History is preserved.",
-            ))
-            overview = await setup_overview(
-                factory, actor_id=actor_id, project_id=project_id,
-            )
-            if overview.can_delete_bot:
+            if counts.subscriptions:
+                rows.append([_button(
+                    tr("🎟 Проверить подписки · ", "🎟 Review subscriptions · ")
+                    + str(counts.subscriptions), "oblist:sub", "primary",
+                )])
+            if counts.grants:
+                rows.append([_button(
+                    tr("🔑 Другие доступы · ", "🔑 Other access · ")
+                    + str(counts.grants), "oblist:grant", "primary",
+                )])
+            if counts.access or counts.access_actions or counts.join_tickets:
+                rows.append([_button(
+                    tr("🔄 Проверить доступы", "🔄 Review access"),
+                    "oblist:sync", "primary",
+                )])
+            if (
+                counts.access_actions > 0 and not any((
+                    counts.requests, counts.file_orders,
+                    counts.stars_checkouts, counts.native_paid_links,
+                    counts.subscriptions, counts.grants,
+                    counts.access, counts.join_tickets,
+                )) and overview.can_delete_bot and active_bot
+            ):
+                # A deleted/unreachable BotFather bot can leave access
+                # operations stuck. Keep the existing explicit, owner-only
+                # exception discoverable from the overview. The callback
+                # validates the same safety conditions again.
+                rows.append([_button(
+                    tr("🗑 Отключить недоступного бота",
+                       "🗑 Retire unreachable bot"),
+                    "orphanask:" + project_ref + ":"
+                    + encode_uuid(active_bot[0]), "danger",
+                )])
+            if (counts.file_orders or counts.stars_checkouts
+                    or counts.native_paid_links) and username:
+                rows.append([InlineKeyboardButton(
+                    text=tr("🚀 Открыть бота и проверить продажи",
+                            "🚀 Open bot and review sales"),
+                    url="https://t.me/" + username,
+                    style="success",
+                )])
+            rows.append([_button(
+                tr("⬅️ К отключению", "⬅️ Back to disconnection"),
+                back_action, "primary",
+            )])
+        elif section == "pay":
+            for item in snapshot.payments:
+                visible += 1
+                identity = ("@" + item.username
+                            if item.username else str(item.telegram_user_id))
+                records.append(
+                    "💳 <b>" + escape(identity, quote=True) + "</b> · "
+                    + escape(item.amount + " " + item.currency, quote=True)
+                    + " · " + escape(obligation_status(item.status), quote=True)
+                )
+                rows.append([_button(
+                    (tr("💳 Отклонить покупку · ", "💳 Reject purchase · ")
+                     if item.status == "waiting_review"
+                     else tr("💳 Закрыть покупку · ", "💳 Close purchase · "))
+                    + identity[:24],
+                    "ob:pay:" + project_ref + ":" + encode_uuid(item.id)
+                    + (":" + str(page) if page else ""), "danger",
+                )])
+        elif section == "sub":
+            for item in snapshot.subscriptions:
+                visible += 1
+                identity = ("@" + item.username
+                            if item.username else str(item.telegram_user_id))
+                period = (item.period_end.strftime("%d.%m.%Y")
+                          if item.period_end else tr("без срока", "no expiry"))
+                records.append(
+                    "🎟 <b>" + escape(identity, quote=True) + "</b> · "
+                    + escape(item.plan_name, quote=True) + " · "
+                    + tr("до ", "until ") + period
+                )
+                rows.append([_button(
+                    tr("🎟 Завершить подписку · ", "🎟 End subscription · ")
+                    + identity[:24],
+                    "ob:sub:" + project_ref + ":" + encode_uuid(item.id)
+                    + (":" + str(page) if page else ""), "danger",
+                )])
+        elif section == "grant":
+            for item in snapshot.grants:
+                if item.source in ("payment", "stars_payment"):
+                    continue
+                visible += 1
+                records.append(
+                    tr("🔑 Дополнительный доступ пользователя ",
+                       "🔑 Additional access for user ")
+                    + "<b>" + str(item.telegram_user_id) + "</b>"
+                )
+                rows.append([_button(
+                    tr("🔑 Проверить отзыв · ", "🔑 Review revocation · ")
+                    + str(item.telegram_user_id),
+                    "ob:grant:" + project_ref + ":" + encode_uuid(item.id)
+                    + (":" + str(page) if page else ""), "danger",
+                )])
+        elif section == "sync":
+            for item in snapshot.access:
+                visible += 1
+                records.append(
+                    tr("🔄 Состояние доступа", "🔄 Access status")
+                    + ": <b>" + escape(obligation_status(item.actual),
+                                       quote=True) + "</b>"
+                )
+                rows.append([_button(
+                    tr("🔄 Перепроверить доступ", "🔄 Recheck access"),
+                    "ob:sync:" + project_ref + ":" + encode_uuid(item.id)
+                    + (":" + str(page) if page else ""), "primary",
+                )])
+            if counts.access_actions or counts.join_tickets:
+                records.append(
+                    "⏳ " + tr(
+                        "Бот ещё обрабатывает изменения доступа и приглашения. "
+                        "Проверяйте состояние после завершения.",
+                        "The bot is still processing access changes and invites. "
+                        "Check again after processing finishes.",
+                    )
+                )
+            if (
+                counts.access_actions and not any((
+                    counts.requests, counts.subscriptions, counts.grants,
+                    counts.access, counts.join_tickets,
+                )) and overview.can_delete_bot
+            ):
                 for instance_id, _name, status in overview.bot_instances:
                     if status != "deleting":
+                        records.append("⚠️ " + tr(
+                            "Только для бота, окончательно недоступного "
+                            "в BotFather: отдельное подтверждение остановки "
+                            "без ложного отчёта об успешной доставке доступа.",
+                            "Only if the bot is permanently unavailable in "
+                            "BotFather: separately approve retirement without "
+                            "claiming successful access delivery.",
+                        ))
                         rows.append([_button(
                             tr("🗑 Отключить недоступного бота",
                                "🗑 Retire unreachable bot"),
-                            "orphanask:" + project_ref + ":" + encode_uuid(instance_id),
-                            "danger",
+                            "orphanask:" + project_ref + ":"
+                            + encode_uuid(instance_id), "danger",
                         )])
-        if not counts.has_blockers:
-            lines.append(tr(
-                "\n✅ Блокировок больше нет. Можно вернуться к удалению.",
-                "\n✅ No outstanding blockers. You can return to bot removal.",
-            ))
-        nav = []
-        if page > 0:
-            nav.append(_button(
-                "⬅️ Назад", "obpage:" + project_ref + ":" + str(page - 1),
-            ))
-        if page < 200 and any(
-            len(items) == 5
-            for items in (
-                snapshot.payments, snapshot.subscriptions,
-                snapshot.grants, snapshot.access,
-            )
-        ):
-            nav.append(_button(
-                "➡️ Далее", "obpage:" + project_ref + ":" + str(page + 1),
-            ))
-        if nav:
-            rows.append(nav)
-        rows.extend([
-            [_button("🔄 Обновить обязательства", "oblist")],
-            [_button("⬅️ Мои боты", "bots")],
-        ])
-        await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
+        if section != "overview":
+            if not visible:
+                records.append(tr(
+                    "✅ На этой странице нет записей для ручной проверки. "
+                    "Если отключение всё ещё заблокировано, "
+                    "ожидайте завершения обработки доступа.",
+                    "✅ No items need manual review on this page. "
+                    "If disconnection remains blocked, wait for access "
+                    "processing to finish.",
+                ))
+            nav: list[InlineKeyboardButton] = []
+            if page:
+                nav.append(_button(
+                    "⬅️", "obpage:" + project_ref + ":"
+                    + section + ":" + str(page - 1), "primary",
+                ))
+            # Pagination follows source rows, not only editable rows.
+            # Paid grants can appear alongside manual grants and are skipped
+            # as actions; they must not accidentally hide subsequent pages.
+            source_size = {
+                "pay": len(snapshot.payments),
+                "sub": len(snapshot.subscriptions),
+                "grant": len(snapshot.grants),
+                "sync": len(snapshot.access),
+            }[section]
+            if source_size == 12 and page < 200:
+                nav.append(_button(
+                    "➡️", "obpage:" + project_ref + ":"
+                    + section + ":" + str(page + 1), "primary",
+                ))
+            if nav:
+                rows.append(nav)
+            rows.append([_button(
+                tr("⬅️ Покупатели и доступы", "⬅️ Customers and access"),
+                "oblist", "primary",
+            )])
+        base_rich = obligations_card(
+            username=username, blockers=counts, section=section,
+            page=page, rich=True,
+        )
+        base_classic = obligations_card(
+            username=username, blockers=counts, section=section,
+            page=page, rich=False,
+        )
+        await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=(
+                base_rich + "".join("<p>" + record + "</p>"
+                                    for record in records)
+            ),
+            classic_html=base_classic + (
+                "\n\n" + "\n".join(records) if records else ""
+            ),
             reply_markup=_markup(rows),
         )
-
 
     async def notify_buyer(
         central_bot: Bot, owner_tg_id: int, actor_id: UUID,
@@ -4338,14 +4457,14 @@ def create_owner_setup_router(
                 "projects", "archives", "dashboard",
                 "bots", "connect", "help", "oblist", "cancel",
             } or action.startswith((
-                "promptback:", "promptcancel:",
+                "oblist:", "promptback:", "promptcancel:",
                 "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "managedcancel:",
                 "connrename:", "connremove:", "connremoveok:",
                 "connarchive:", "connarchiveok:", "saasbotbill:",
-                "saasnearest:", "saasinvoices:", "saaspaychoices:",
+                "saasnearest:", "saasinvoices:", "saasaccountlist:", "saaspaychoices:",
                 "saasprofile", "saasprice:", "saasbill:", "saasbillchoose:",
                 "saasbillquote:", "sl:",
                 "saasv2pay:", "saasv2amount:", "saasv2create:",
@@ -4364,7 +4483,7 @@ def create_owner_setup_router(
                 "onboardlanguage",
                 "projects", "archives", "bots", "connect", "oblist",
             } or action.startswith((
-                "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
+                "oblist:", "select:", "drop:", "dropok:", "ob:", "obok:", "obpage:",
                 "orphanask:", "orphanok:",
                 "projects:", "archives:", "archview:", "restore:",
                 "managedsync:", "managedconfirm:", "managedcancel:",
@@ -5400,6 +5519,17 @@ def create_owner_setup_router(
                 )
                 await query.answer()
                 return
+            if action.startswith("saasaccountlist:"):
+                if fixed_project_id is not None:
+                    raise PermissionError("Account invoices belong to central ViMi Pay")
+                page_text = action.split(":", 1)[1]
+                if not page_text.isascii() or not page_text.isdecimal():
+                    raise ValueError("Invalid invoice page")
+                await show_account_invoice_list(
+                    bot, user_id, actor_id, page=int(page_text),
+                )
+                await query.answer()
+                return
             if action.startswith("saasinvoices:"):
                 # Historical debts belong to the Telegram account, even after
                 # its last project has been transferred away.
@@ -6187,18 +6317,18 @@ def create_owner_setup_router(
                 await get_connection_disposition(
                     factory, actor_id=actor_id, project_id=target_id,
                 )
+                data = await setup_overview(
+                    factory, actor_id=actor_id, project_id=target_id,
+                )
+                username = next((
+                    name for _, name, status in data.bot_instances
+                    if status == "registered"
+                ), None)
                 await prompt(
                     bot, user_id, actor_id, step="connection_rename",
-                    text=tr(
-                        "✏️ <b>Новое название подключения</b>\n\n"
-                        "Это название видно только в ViMi Pay. "
-                        "Имя Telegram-бота в BotFather не изменится.\n"
-                        "Введите название от 2 до 120 символов.",
-                        "✏️ <b>Rename connection</b>\n\n"
-                        "This is an internal ViMi Pay label. "
-                        "It does not rename your Telegram bot.\n"
-                        "Enter 2–120 characters.",
-                    ),
+                    text=rename_input_card(username=username, rich=False),
+                    rich_html=rename_input_card(username=username, rich=True),
+                    show_main_menu=False,
                 )
             elif action.startswith(("connremove:", "connremoveok:",
                                     "connarchive:", "connarchiveok:")):
@@ -6426,36 +6556,37 @@ def create_owner_setup_router(
                 if name is None or not data.can_delete_bot:
                     raise PermissionError(tr("Этот бот не доступен для удаления",
                                             "This bot cannot be removed."))
-                await bot.send_message(
-                    user_id,
-                    tr("🗑 <b>Удалить @", "🗑 <b>Remove @") + escape(name)
-                    + "?</b>\n\n"
-                    + tr(
-                        "ViMi Pay отключит обработку покупателей, затем удалит "
-                        "подключение, сохранённый токен и состояние запуска.\n\n"
-                        "Настройки проекта и история платежей останутся: они "
-                        "не принадлежат токену бота. Повторно подключить этот "
-                        "Telegram-бот можно после завершения удаления.\n\n"
-                        "При незавершённых оплатах или действующих подписках "
-                        "удаление не начнётся, чтобы не оставить людей без "
-                        "управления доступом.",
-                        "ViMi Pay will stop serving buyers, then remove this "
-                        "connection, saved token and runtime state.\n\n"
-                        "Project settings and payment history are preserved. "
-                        "You can reconnect this Telegram bot after removal finishes.\n\n"
-                        "Removal will be blocked while payments or paid subscriptions "
-                        "remain unsettled, so buyers do not lose access management.",
+                blockers = (await list_owner_obligations(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )).blockers
+                # Never show a destructive confirmation when the current
+                # owner-scoped snapshot still has protected buyer obligations.
+                rows = []
+                if not blockers.has_blockers:
+                    rows.append([_button(
+                        tr("🗑 Да, отключить бота",
+                           "🗑 Yes, disconnect bot"),
+                        "dropok:" + project_ref + ":" + instance_ref,
+                        "danger",
+                    )])
+                else:
+                    rows.append([_button(
+                        tr("👥 Покупатели и доступы",
+                           "👥 Customers and access"),
+                        "oblist", "primary",
+                    )])
+                rows.append([_button(
+                    tr("⬅️ Отмена", "⬅️ Cancel"), "bots", "primary",
+                )])
+                await send_owner_rich(
+                    bot, chat_id=user_id,
+                    rich_html=disconnect_card(
+                        username=name, blockers=blockers, rich=True,
                     ),
-                    parse_mode="HTML",
-                    reply_markup=_markup([
-                        [_button(
-                            "🗑 Да, удалить бота",
-                            "dropok:" + project_ref + ":" + instance_ref,
-                            "danger",
-                        )],
-                        [_button("🧾 Управлять обязательствами", "oblist")],
-                        [_button("Отмена", "bots")],
-                    ]),
+                    classic_html=disconnect_card(
+                        username=name, blockers=blockers, rich=False,
+                    ),
+                    reply_markup=_markup(rows),
                 )
             elif action.startswith("dropok:"):
                 _, project_ref, instance_ref = action.split(":", 2)
@@ -6596,15 +6727,29 @@ def create_owner_setup_router(
                         ),
                     )
                     await show_bots(bot, user_id, actor_id, project_id)
-            elif action == "oblist":
-                await show_obligations(bot, user_id, actor_id, project_id)
+            elif action == "oblist" or action.startswith("oblist:"):
+                section = (action.split(":", 1)[1]
+                           if action.startswith("oblist:") else "overview")
+                await show_obligations(
+                    bot, user_id, actor_id, project_id, section=section,
+                )
             elif action.startswith("obpage:"):
-                _, project_ref, page_number = action.split(":", 2)
+                fields = action.split(":")
+                if len(fields) == 3:
+                    _, project_ref, page_number = fields
+                    section = "overview"  # Stale old keyboard: go to summary.
+                elif len(fields) == 4:
+                    _, project_ref, section, page_number = fields
+                else:
+                    raise ValueError(tr("Недопустимая страница", "Invalid page"))
                 if decode_uuid(project_ref) != project_id:
                     raise ValueError(tr("Открыто меню другого проекта",
                                         "Another project menu is open."))
+                if not page_number.isascii() or not page_number.isdecimal():
+                    raise ValueError(tr("Недопустимая страница", "Invalid page"))
                 await show_obligations(
-                    bot, user_id, actor_id, project_id, page=int(page_number),
+                    bot, user_id, actor_id, project_id,
+                    page=int(page_number), section=section,
                 )
             elif action.startswith(("ob:", "obok:")):
                 parts = action.split(":")
@@ -6666,12 +6811,15 @@ def create_owner_setup_router(
                         + escape(warnings[kind]),
                         parse_mode="HTML", reply_markup=_markup([
                             [_button(
-                                "✅ Подтверждаю действие",
+                                tr("✅ Подтверждаю действие",
+                                   "✅ Confirm action"),
                                 "obok:" + kind + ":" + project_ref + ":" + object_ref
                                 + (":" + str(page) if page else ""),
                                 "danger" if kind != "sync" else "success",
                             )],
-                            [_button("Отмена", "oblist")],
+                            [_button(tr("⬅️ Отмена", "⬅️ Cancel"),
+                                     "obpage:" + project_ref + ":"
+                                     + kind + ":" + str(page))],
                         ]),
                     )
                 else:
@@ -6708,30 +6856,28 @@ def create_owner_setup_router(
                             ),
                         )
                         await notify_buyer(bot, user_id, actor_id, project_id, change)
-                    await show_obligations(bot, user_id, actor_id, project_id)
+                    await show_obligations(
+                        bot, user_id, actor_id, project_id,
+                        page=page, section=kind,
+                    )
             elif action == "bots":
                 await show_bots(bot, user_id, actor_id, project_id)
             elif action == "connect":
                 if get_settings().bot_token_encryption_key is None:
                     raise ValueError(tr("Подключение ботов временно недоступно",
                                         "Bot connections are temporarily unavailable"))
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                username = next((
+                    name for _, name, status in overview.bot_instances
+                    if status == "registered"
+                ), None)
                 await prompt(
                     bot, user_id, actor_id, step="bot_token",
-                    text=(
-                        tr(
-                            "🤖 <b>Подключение вашего бота</b>\n\n"
-                            "1. Создайте бота в @BotFather.\n"
-                            "2. Ответьте на это сообщение токеном.\n"
-                            "3. ViMi Pay сразу удалит ваше сообщение и проверит токен.\n\n"
-                            "Бот пока не начнёт принимать покупателей.",
-                            "🤖 <b>Connect your bot</b>\n\n"
-                            "1. Create a bot in @BotFather.\n"
-                            "2. Reply to this message with its token.\n"
-                            "3. ViMi Pay deletes your message immediately and verifies "
-                            "the token.\n\n"
-                            "Buyers cannot purchase until setup is finished.",
-                        )
-                    ),
+                    text=token_input_card(username=username, rich=False),
+                    rich_html=token_input_card(username=username, rich=True),
+                    show_main_menu=False,
                 )
             elif action == "resources":
                 await show_resources(bot, user_id, actor_id, project_id)
