@@ -219,6 +219,7 @@ class ClearPendingLavaOnNavigation(BaseMiddleware):
                     # before this input can be cleared by navigation.
                     and not (event.data or "").startswith((
                         "own:promptback:", "own:promptcancel:",
+                        "own:managedcancel:",
                     ))
                 )
                 or (
