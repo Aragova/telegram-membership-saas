@@ -109,7 +109,8 @@ async def test_native_launch_checks_management_permission_again(monkeypatch):
         _query("managedlaunch"), bot,
     )
     ui.set_flow.assert_not_awaited()
-    assert "отключён" in bot.send_message.await_args.args[1]
+    text = bot.send_message.await_args.args[1]
+    assert "Bot Management Mode" in text or "Режим управления ботами" in text
 
 
 async def test_botfather_fallback_when_manager_permission_is_off(monkeypatch):
