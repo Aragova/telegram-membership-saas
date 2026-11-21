@@ -351,6 +351,7 @@ from telegram_membership_saas.payment_review_ui import (
     rich_subscription_review,
     send_payment_review,
 )
+from telegram_membership_saas.rich_messages import RICH_ACTIONS_MARKER
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.telegram_menus import set_chat_commands
 from telegram_membership_saas.tenant_context import TenantContext
@@ -3207,8 +3208,12 @@ def create_owner_setup_router(
                      "resource:manual", "primary")],
             [_button(tr("⬅️ Назад", "⬅️ Back"), "dashboard", "primary")],
         ])
-        await replace_owner_rich(
-            bot, chat_id=user_id, message_id=source_message_id,
+        render = send_owner_rich if source_message_id is None else replace_owner_rich
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
             rich_html=directory_rich(len(data.resources), onboarding=onboarding),
             classic_html=directory_classic(len(data.resources), onboarding=onboarding),
             reply_markup=_markup(rows),
@@ -3229,8 +3234,12 @@ def create_owner_setup_router(
                         "➡️ Step 3/4 · Payment methods"),
                      "setupstep3", "primary")],
         ]
-        await replace_owner_rich(
-            bot, chat_id=user_id, message_id=source_message_id,
+        render = send_owner_rich if source_message_id is None else replace_owner_rich
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
             rich_html=setup_stage_two_rich(len(data.resources)),
             classic_html=setup_stage_two_classic(len(data.resources)),
             reply_markup=_markup(rows),
@@ -3292,8 +3301,12 @@ def create_owner_setup_router(
                      if state == "registered"), "")
             or overview.project_name
         )
-        await replace_owner_rich(
-            bot, chat_id=user_id, message_id=source_message_id,
+        render = send_owner_rich if source_message_id is None else replace_owner_rich
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
             rich_html=owner_setup_step_rich(
                 bot_name=bot_name, timezone=overview.timezone,
                 action="methods",
@@ -3764,8 +3777,12 @@ def create_owner_setup_router(
                      "setupback2" if guided else "dashboard", "primary")],
         ])
         rich_parts.append(RICH_ACTIONS_MARKER)
-        await replace_owner_rich(
-            bot, chat_id=user_id, message_id=source_message_id,
+        render = send_owner_rich if source_message_id is None else replace_owner_rich
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
             rich_html="\n".join(rich_parts),
             classic_html="\n\n".join(classic_parts),
             reply_markup=_markup(rows),
