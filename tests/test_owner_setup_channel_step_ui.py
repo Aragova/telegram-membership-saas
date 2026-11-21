@@ -113,7 +113,7 @@ def test_other_wizard_steps_preserve_existing_content_and_contextual_button():
     token = _language.set("en")
     try:
         for action, expected in (
-            ("methods", "Buyer payments"),
+            ("methods", "Payment methods"),
             ("plans", "First plan"),
             ("saasprofile", "Service currency"),
         ):
@@ -130,5 +130,29 @@ def test_other_wizard_steps_preserve_existing_content_and_contextual_button():
             assert label.startswith({
                 "methods": "💳", "plans": "📦", "saasprofile": "💱",
             }[action])
+    finally:
+        _language.reset(token)
+
+
+
+@pytest.mark.parametrize(("language", "title", "button"), [
+    ("ru", "💳 Способы оплаты", "💳 Настроить способы оплаты"),
+    ("en", "💳 Payment methods", "💳 Set up payment methods"),
+])
+def test_payment_methods_is_exactly_stage_3_of_4(language, title, button):
+    token = _language.set(language)
+    try:
+        rich = owner_setup_step_rich(
+            bot_name="vimitest21bot", timezone="Europe/Moscow",
+            action="methods",
+        )
+        classic = owner_setup_step_classic(
+            bot_name="vimitest21bot", timezone="Europe/Moscow",
+            action="methods",
+        )
+        assert "<td>3/4</td>" in rich
+        assert "3/4" in classic
+        assert title in rich
+        assert wizard_primary_label("methods", "unused") == button
     finally:
         _language.reset(token)
