@@ -3773,9 +3773,19 @@ def create_owner_setup_router(
             ],
             [_button(tr("➕ Добавить ручной способ", "➕ Add manual method"),
                      "newmethod", "primary")],
-            [_button(tr("⬅️ Назад", "⬅️ Back"),
-                     "setupback2" if guided else "dashboard", "primary")],
         ])
+        if methods:
+            # Owner must be able to advance to stage 4 after adding a manual
+            # payment method; Back alone would strand onboarding at stage 3.
+            rows.append([_button(
+                tr("➡️ Этап 4/4 · Создать тариф",
+                   "➡️ Step 4/4 · Create a plan"),
+                "plans", "primary",
+            )])
+        rows.append([_button(
+            tr("⬅️ Назад", "⬅️ Back"),
+            "setupback2" if guided else "dashboard", "primary",
+        )])
         rich_parts.append(RICH_ACTIONS_MARKER)
         render = send_owner_rich if source_message_id is None else replace_owner_rich
         await render(

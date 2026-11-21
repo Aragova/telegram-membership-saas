@@ -67,12 +67,17 @@ async def test_deploy_repairs_existing_owner_chat_menu_without_start(monkeypatch
         yield session
 
     monkeypatch.setattr(telegram_menus, "system_project_session_scope", scope)
+    stored_locale = AsyncMock(return_value="en")
+    monkeypatch.setattr(telegram_menus, "read_language", stored_locale)
     bot = MagicMock()
     bot.set_my_commands = AsyncMock()
     await sync_project_owner_commands(bot, MagicMock(), project_id=project_id)
     assert seen_projects == [project_id]
     assert session.scalar.await_count == 2
+    stored_locale.assert_awaited_once()
+    assert stored_locale.await_args.args[1:] == (345, "ru")
     assert bot.set_my_commands.await_count == 2
     for call in bot.set_my_commands.await_args_list:
         assert call.kwargs["scope"].chat_id == 345
         assert [cmd.command for cmd in call.kwargs["commands"]] == ["start"]
+        assert call.kwargs["commands"][0].description == "🏠 Main menu"

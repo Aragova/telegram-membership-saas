@@ -182,3 +182,22 @@ async def test_selecting_stars_retires_the_previous_chooser(monkeypatch):
     await _callback(project)(_query("starspage:0", message_id=777), bot)
     ui.show_stars_payments.assert_awaited_once()
     bot.delete_message.assert_awaited_once_with(345, 777)
+
+
+
+async def test_new_manual_method_reveals_forward_to_stage_four(monkeypatch):
+    project = uuid4()
+    _screen(monkeypatch, project)
+    manual = SimpleNamespace(
+        id=uuid4(), name="Bank transfer", status="active", currencies=("RUB",),
+    )
+    monkeypatch.setattr(ui, "list_owner_methods", AsyncMock(return_value=[manual]))
+    edited = AsyncMock()
+    monkeypatch.setattr(ui, "replace_owner_rich", edited)
+    await _callback(project)(_query("methods:guided"), _bot())
+    card = edited.await_args.kwargs
+    callbacks = _callbacks(card)
+    assert "own:plans" in callbacks
+    assert callbacks.index("own:plans") < callbacks.index("own:setupback2")
+    assert "own:setupback2" in callbacks
+    assert "Страница 1" not in card["rich_html"]

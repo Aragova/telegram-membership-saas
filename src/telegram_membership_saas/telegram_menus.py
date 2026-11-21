@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
 from telegram_membership_saas.db import system_project_session_scope
+from telegram_membership_saas.localization import read_language
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.projects import Project
 
@@ -180,6 +181,9 @@ async def sync_project_owner_commands(
             if owner_id is not None else None
         )
     if telegram_id is not None:
+        # Respect the manually selected RU/EN locale (or last observed
+        # Telegram language) when restoring commands after a restart.
+        language = await read_language(factory, telegram_id, "ru")
         await set_chat_commands(
-            bot, chat_id=telegram_id, role="owner", language="ru",
+            bot, chat_id=telegram_id, role="owner", language=language,
         )
