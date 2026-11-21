@@ -181,8 +181,8 @@ async def test_start_or_menu_is_fleet_dashboard_not_last_bot(monkeypatch, comman
     ]
     assert buttons[1][0].callback_data == "own:saasinvoices:0"
     assert buttons[1][1].callback_data == "lng:menu"
-    spy.assert_awaited_once_with(ui.factory if hasattr(ui, "factory") else
-                                 spy.await_args.args[0], actor_id=owner)
+    spy.assert_awaited_once()
+    assert spy.await_args.kwargs["actor_id"] == owner
     setup_overview.assert_not_awaited()
 
 
