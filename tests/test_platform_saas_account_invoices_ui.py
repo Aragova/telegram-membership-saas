@@ -93,8 +93,10 @@ async def test_account_without_debt_has_no_fake_nearest_bill(monkeypatch, langua
                         AsyncMock(return_value=uuid4()))
     monkeypatch.setattr(ui, "merchant_saas_statements", AsyncMock(
         return_value=MerchantSaasStatements(
-            total=0, unpaid=0, outstanding_rub=Decimal("0"),
-            configured=False, instructions=None, invoices=(), page=0,
+            total=1, unpaid=0, outstanding_rub=Decimal("0"),
+            configured=False, instructions=None,
+            invoices=({"id": str(uuid4()), "status": "paid",
+                       "amount_rub": "150.00"},), page=0,
         ),
     ))
     monkeypatch.setattr(ui, "read_owner_network_home", AsyncMock(
