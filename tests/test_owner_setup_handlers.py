@@ -110,7 +110,7 @@ async def test_first_start_shows_only_language_choices(monkeypatch):
     assert "Что будем создавать?" not in sent.args[1]
 
 
-async def test_first_start_after_language_has_only_subscription_and_back(monkeypatch):
+async def test_first_start_after_language_has_subscription_and_back(monkeypatch):
     uid = uuid4()
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uid))
     monkeypatch.setattr(
@@ -121,17 +121,18 @@ async def test_first_start_after_language_has_only_subscription_and_back(monkeyp
     )
     monkeypatch.setattr(ui, "cancel_owner_flow", AsyncMock())
     bot = _bot()
-    await _handler("home_message")(_message("/menu"), bot)
-    sent = bot.send_message.await_args
-    buttons = [
-        (button.text, button.callback_data)
-        for row in sent.kwargs["reply_markup"].inline_keyboard
-        for button in row
-    ]
-    assert buttons == [
-        ("🔐 Платные подписки", "own:substart"),
-        ("⬅️ Назад", "lng:menu"),
-    ]
+    for command in ("/start", "/menu"):
+        await _handler("home_message")(_message(command), bot)
+        sent = bot.send_message.await_args
+        buttons = [
+            (button.text, button.callback_data)
+            for row in sent.kwargs["reply_markup"].inline_keyboard
+            for button in row
+        ]
+        assert buttons == [
+            ("🔐 Платные подписки", "own:substart"),
+            ("⬅️ Назад", "own:onboardlanguage"),
+        ]
     assert "Что будем создавать?" not in sent.args[1]
     assert "Выберите «🔐 Платные подписки»" not in sent.args[1]
 
@@ -177,11 +178,54 @@ async def test_subscription_back_returns_without_existing_project(monkeypatch):
             bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
             for b in row
         ]
-        assert callbacks == ["own:substart", "lng:menu"]
+        assert callbacks == ["own:substart", "own:onboardlanguage"]
         assert go_back.answer.await_count == 1
         selected.assert_not_awaited()
     finally:
         _language.reset(token)
+
+
+async def test_back_from_welcome_restores_full_language_screen(monkeypatch):
+    """Screen 2 Back must render screen 1, never the brief lng:menu prompt."""
+    from telegram_membership_saas.localization import _language
+
+    monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()))
+    router_callback = _handler("owner_callback", callback=True)
+    bot = _bot()
+
+    for language, heading, intro, trial in (
+        ("ru", "Выберите язык интерфейса:", "Ваш Telegram-канал.", "72 часа бесплатно"),
+        ("en", "Choose your interface language:", "Your channel.", "72 hours free"),
+    ):
+        callback = SimpleNamespace(
+            data="own:onboardlanguage",
+            message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+            from_user=_user(),
+            answer=AsyncMock(),
+        )
+        token = _language.set(language)
+        try:
+            await router_callback(callback, bot)
+            sent = bot.send_message.await_args
+            assert intro in sent.args[1]
+            assert trial in sent.args[1]
+            assert heading in sent.args[1]
+            # The mock Bot follows the classic HTML fallback; the same
+            # screen also has a Rich-card table in Telegram clients that
+            # support sendRichMessage.
+            assert "<table bordered compact>" in ui.central_welcome_rich(
+                language_selected=False,
+            )
+            assert [
+                (b.text, b.callback_data)
+                for row in sent.kwargs["reply_markup"].inline_keyboard for b in row
+            ] == [
+                ("🇷🇺 Русский", "lng:set:ru"),
+                ("🇬🇧 English", "lng:set:en"),
+            ]
+            callback.answer.assert_awaited_once()
+        finally:
+            _language.reset(token)
 
 
 async def test_central_start_shows_connection_registry_without_raw_uuids(monkeypatch):

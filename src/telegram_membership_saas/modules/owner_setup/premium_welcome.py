@@ -37,7 +37,7 @@ def central_welcome_rich(*, language_selected: bool = False) -> str:
              "5% of verified purchases after your trial") + "</td></tr>",
         "</table>",
         *([] if language_selected else [
-            "<h4>" + tr("🌐 Выберите язык", "🌐 Choose your language")
+            "<h4>" + tr("🌐 Выберите язык интерфейса:", "🌐 Choose your interface language:")
             + "</h4>",
         ]),
         "__VIMI_RICH_ACTIONS__",
@@ -67,7 +67,7 @@ def central_welcome_classic(*, language_selected: bool = False) -> str:
             "Connect a bot, set up plans, payments and file sales.",
         ),
         *([] if language_selected else [
-            tr("🌐 Выберите язык интерфейса", "🌐 Choose your interface language"),
+            tr("🌐 Выберите язык интерфейса:", "🌐 Choose your interface language:"),
         ]),
     ])
 
