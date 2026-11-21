@@ -280,8 +280,14 @@ async def cancel_owner_flow(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, bot_scope_id: int = 0,
     expected_generation: str | None = None,
+    report_native_keyboard: bool = False,
 ) -> bool:
-    """Invalidate the exact bot-scoped pending wizard without touching project data."""
+    """Invalidate a bot-scoped wizard and optionally signal native keyboard cleanup.
+
+    Telegram's request_chat/request_managed_bot reply keyboards persist after
+    an inline navigation. The caller can remove one only if the cancelled
+    wizard actually displayed a native keyboard.
+    """
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id),
     ) as session:
@@ -299,12 +305,13 @@ async def cancel_owner_flow(
         # A consumed step may have an in-flight continuation. Its generation
         # must be invalidated too, or advance_flow() could resurrect the wizard.
         was_active = bool(state.step or state.generation or state.prompt_message_id)
+        was_native = state.step in ("chat_picker", "managed_bot_create")
         state.step = None
         state.payload = {}
         state.prompt_message_id = None
         state.generation = None
         state.expires_at = datetime.now(UTC)
-        return was_active
+        return was_native if report_native_keyboard else was_active
 
 
 async def set_flow(
