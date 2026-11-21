@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from aiogram.types import ReplyKeyboardRemove
 
 from telegram_membership_saas import localization
 from telegram_membership_saas.modules.owner_setup import handlers as ui
@@ -88,10 +87,10 @@ async def test_new_plan_starts_at_duration_and_custom_name_is_optional(monkeypat
     monkeypatch.setattr(ui, "bind_prompt", bind)
     await callback(owner_query("planname:gen1"), bot)
     assert ui.advance_flow.await_args.kwargs["step"] == "plan_name"
-    assert isinstance(
-        bot.send_message.await_args.kwargs["reply_markup"],
-        ReplyKeyboardRemove,
-    )
+    markup = bot.send_message.await_args.kwargs["reply_markup"]
+    assert [b.callback_data for row in markup.inline_keyboard for b in row] == [
+        "own:promptback:gen2", "own:promptcancel:gen2",
+    ]
     bind.assert_awaited_once()
 
 
