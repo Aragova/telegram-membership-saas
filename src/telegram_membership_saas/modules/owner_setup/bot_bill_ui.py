@@ -224,11 +224,17 @@ def bot_bill_classic(
                 "🌱 Первый выставленный счёт содержит только обслуживание. "
                 "Продажи ниже не входят в текущий счёт.",
                 "🌱 The first issued bill is service-only. "
-                "The sales below are not in this invoice.",
+                "The sales below are not part of this invoice.",
             ) + "</i>", "", _preview_details(
                 sales=sales, currencies=currencies, rich=False,
             )])
         return "\n".join(lines)
+    if trial is not None and trial.get("state") == "trial":
+        lines.append(tr("🎁 <b>ПРОБНЫЙ ПЕРИОД</b>",
+                        "🎁 <b>FREE TRIAL</b>"))
+    else:
+        lines.append(tr("📋 <b>СТАТУС ОБСЛУЖИВАНИЯ</b>",
+                        "📋 <b>SERVICE STATUS</b>"))
     lines.append(_trial_note(trial, timezone=timezone, rich=False))
     if trial is not None and trial.get("state") == "trial":
         lines.extend(["", "<i>" + tr(
