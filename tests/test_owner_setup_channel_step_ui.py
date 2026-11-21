@@ -103,9 +103,10 @@ def test_channel_setup_escapes_bot_username_and_timezone(locale):
         )
 
 
-def test_only_first_setup_connect_button_is_blue():
-    assert wizard_primary_style("resources") == "primary"
-    for action in ("methods", "plans", "saasprofile"):
+def test_setup_and_payment_buttons_are_blue():
+    for action in ("resources", "methods"):
+        assert wizard_primary_style(action) == "primary"
+    for action in ("plans", "saasprofile"):
         assert wizard_primary_style(action) == "success"
 
 
@@ -150,7 +151,11 @@ def test_payment_methods_is_exactly_stage_3_of_4(language, title, button):
             bot_name="vimitest21bot", timezone="Europe/Moscow",
             action="methods",
         )
-        assert "<td>3/4</td>" in rich
+        assert "<td><b>3/4</b></td>" in rich
+        assert "vimitest21bot" not in rich
+        assert "Europe/Moscow" not in rich
+        assert "vimitest21bot" not in classic
+        assert "Europe/Moscow" not in classic
         assert "3/4" in classic
         assert title in rich
         assert wizard_primary_label("methods", "unused") == button
