@@ -369,6 +369,8 @@ async def test_lava_cancel_callback_is_not_cleared_before_handler():
     assert (123, 500) in lava._pending_lava
     await navigation(callback, event("own:promptcancel:old"), {})
     assert (123, 500) in lava._pending_lava
+    await navigation(callback, event("own:managedcancel:old"), {})
+    assert (123, 500) in lava._pending_lava
     await navigation(callback, event("own:projects"), {})
     assert lava._pending_lava == {}
 

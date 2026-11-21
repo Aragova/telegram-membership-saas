@@ -12,7 +12,7 @@ from html import escape
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramNotFound
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, Message
 
 from telegram_membership_saas.currency_display import display_currency, display_price
 from telegram_membership_saas.localization import tr
@@ -341,7 +341,7 @@ def rich_subscriber_invoices(data: SubscriberInvoicePage, *, who: str) -> str:
 async def send_owner_rich(
     bot: Bot, *, chat_id: int, rich_html: str, classic_html: str,
     reply_markup: InlineKeyboardMarkup,
-) -> None:
+) -> Message:
     """Use explicit Rich tables or unchanged classic HTML on unsupported API.
 
     Do not retry on transport errors: an admin message may already be delivered.
@@ -354,7 +354,7 @@ async def send_owner_rich(
     ):
         try:
             inside = rich_with_inline_actions(rich_html, reply_markup)
-            await sender(
+            return await sender(
                 chat_id=chat_id,
                 rich_message=InputRichMessage(
                     html=inside if inside is not None else strip_rich_action_markers(rich_html),
@@ -374,6 +374,6 @@ async def send_owner_rich(
                 raise
             log.info("sendRichMessage unavailable, using classic HTML")
     with classic_messages():
-        await bot.send_message(
+        return await bot.send_message(
             chat_id, classic_html, parse_mode="HTML", reply_markup=reply_markup,
         )

@@ -102,15 +102,57 @@ async def test_botfather_secret_prompt_uses_rich_back_and_menu(monkeypatch):
     await callback(query, bot)
     sent = bot.send_message.await_args
     assert "BotFather" in sent.args[1]
+    assert "ВЕРНИТЕСЬ В ЭТОТ ЧАТ" in sent.args[1]
+    assert "«Сообщение…»" in sent.args[1]
+    assert "➤ ОТПРАВИТЬ" in sent.args[1]
     assert "/back" not in sent.args[1] and "/cancel" not in sent.args[1]
     buttons = [
         button.callback_data
         for row in sent.kwargs["reply_markup"].inline_keyboard
         for button in row
     ]
-    assert buttons == ["own:promptback:gen-123", "own:promptcancel:gen-123"]
+    assert buttons == ["own:promptback:gen-123"]
     assert bound.await_args.kwargs["message_id"] == 1357
     query.answer.assert_awaited_once()
+
+
+async def test_botfather_rich_instructions_in_ru_and_en(monkeypatch):
+    from telegram_membership_saas.localization import _language
+
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ui, "set_flow", AsyncMock(return_value="gen-ru-en"))
+    monkeypatch.setattr(ui, "bind_prompt", AsyncMock())
+    monkeypatch.setattr(
+        ui, "get_settings",
+        lambda: SimpleNamespace(bot_token_encryption_key="configured"),
+    )
+    callback = _handler("owner_callback", callback=True)
+    for language, title, instruction, box, send in (
+        ("ru", "🔑 Подключение Telegram-бота",
+         "ВЕРНИТЕСЬ В ЭТОТ ЧАТ", "Сообщение…", "ОТПРАВИТЬ"),
+        ("en", "🔑 Connect your Telegram bot",
+         "RETURN TO THIS ViMi Pay CHAT", "Message…", "SEND"),
+    ):
+        token = _language.set(language)
+        try:
+            bot = _bot()
+            query = SimpleNamespace(
+                message=SimpleNamespace(chat=SimpleNamespace(type="private")),
+                from_user=_user(), data="own:new", answer=AsyncMock(),
+            )
+            await callback(query, bot)
+            sent = bot.send_message.await_args
+            rendered = sent.args[1].replace("<b>", "").replace("</b>", "")
+            for phrase in (title, instruction, box, send, "@BotFather",
+                           "/mybots", "/newbot", "API"):
+                assert phrase in rendered
+            buttons = sent.kwargs["reply_markup"].inline_keyboard
+            assert len(buttons) == 1
+            assert buttons[0][0].callback_data == "own:promptback:gen-ru-en"
+        finally:
+            _language.reset(token)
 
 
 async def test_botfather_prompt_back_returns_to_subscription_choices(monkeypatch):

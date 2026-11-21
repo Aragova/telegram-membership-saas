@@ -36,7 +36,7 @@ def _handler(router, name, *, observer="callback_query"):
 
 async def test_rich_creation_step_precedes_temporary_native_button(monkeypatch):
     actor_id = uuid4()
-    flow = AsyncMock()
+    flow = AsyncMock(return_value="managed-gen-123")
     monkeypatch.setattr(ui, "ensure_telegram_actor", AsyncMock(return_value=actor_id))
     monkeypatch.setattr(ui, "set_flow", flow)
     monkeypatch.setattr(
@@ -65,7 +65,16 @@ async def test_rich_creation_step_precedes_temporary_native_button(monkeypatch):
 
     # Only the explicit second click reveals Telegram's required reply button.
     second = _query("managedlaunch")
+    count_before = bot.send_message.await_count
     await handler(second, bot)
+    assert bot.send_message.await_count == count_before + 2
+    rich_card = bot.send_message.await_args_list[-2]
+    assert "СОЗДАЙТЕ СВОЕГО БОТА" in rich_card.args[1]
+    assert "БЕЗ ПЕРЕДАЧИ ТОКЕНА" in rich_card.args[1]
+    rich_buttons = rich_card.kwargs["reply_markup"].inline_keyboard
+    assert len(rich_buttons) == 1
+    assert rich_buttons[0][0].text == "✖️ Отменить создание"
+    assert rich_buttons[0][0].callback_data == "own:managedcancel:managed-gen-123"
     flow.assert_awaited_once()
     assert flow.await_args.kwargs["actor_id"] == actor_id
     assert flow.await_args.kwargs["step"] == "managed_bot_create"
@@ -80,6 +89,97 @@ async def test_rich_creation_step_precedes_temporary_native_button(monkeypatch):
     assert native.request_id == flow.await_args.kwargs["payload"]["request_id"]
     assert "token" not in str(flow.await_args.kwargs["payload"]).lower()
     second.answer.assert_awaited_once()
+
+
+async def test_managed_creation_cancel_hides_native_button(monkeypatch):
+    owner_id = uuid4()
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=owner_id),
+    )
+    consumed = AsyncMock(return_value=SimpleNamespace(step="managed_bot_create"))
+    monkeypatch.setattr(ui, "consume_button_flow", consumed)
+    lava_cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", lava_cleanup,
+    )
+    bot = _bot()
+    callback = _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")
+    query = _query("managedcancel:my-generation")
+    await callback(query, bot)
+    assert consumed.await_args.kwargs == {
+        "actor_id": owner_id,
+        "expected_step": "managed_bot_create",
+        "generation": "my-generation",
+        "bot_scope_id": 0,
+        "discard": True,
+    }
+    lava_cleanup.assert_called_once_with(
+        payer_id=123, central_bot_id=bot.id,
+    )
+    assert isinstance(
+        bot.send_message.await_args_list[0].kwargs["reply_markup"],
+        ReplyKeyboardRemove,
+    )
+    assert [
+        button.callback_data
+        for row in bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+        for button in row
+    ] == ["own:newmanaged", "own:new", "own:onboardhome"]
+    query.answer.assert_awaited_once()
+
+
+async def test_stale_managed_cancel_cannot_clear_new_creation(monkeypatch):
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    consume = AsyncMock(side_effect=ValueError("stale"))
+    monkeypatch.setattr(ui, "consume_button_flow", consume)
+    lava_cleanup = MagicMock()
+    monkeypatch.setattr(
+        ui.lava_ui, "clear_pending_lava_after_owner_navigation", lava_cleanup,
+    )
+    bot = _bot()
+    query = _query("managedcancel:previous-generation")
+    await _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")(
+        query, bot,
+    )
+    assert consume.await_count == 1
+    lava_cleanup.assert_not_called()
+    assert bot.send_message.await_count == 0
+    assert query.answer.await_args.kwargs["show_alert"] is True
+
+
+async def test_managed_creation_instructions_in_both_languages(monkeypatch):
+    from telegram_membership_saas.localization import _language
+
+    monkeypatch.setattr(
+        ui, "ensure_telegram_actor", AsyncMock(return_value=uuid4()),
+    )
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(
+        bot_token_encryption_key="configured",
+    ))
+    monkeypatch.setattr(
+        ui, "set_flow", AsyncMock(return_value="generation-i18n"),
+    )
+    handler = _handler(ui.create_owner_setup_router(MagicMock()), "owner_callback")
+    for language, heading, secret, cancel in (
+        ("ru", "СОЗДАЙТЕ СВОЕГО БОТА", "БЕЗ ПЕРЕДАЧИ ТОКЕНА",
+         "✖️ Отменить создание"),
+        ("en", "CREATE YOUR BOT", "NO TOKEN SHARING",
+         "✖️ Cancel creation"),
+    ):
+        token = _language.set(language)
+        try:
+            bot = _bot()
+            await handler(_query("managedlaunch"), bot)
+            card = bot.send_message.await_args_list[-2]
+            assert heading in card.args[1]
+            assert secret in card.args[1]
+            assert card.kwargs["reply_markup"].inline_keyboard[0][0].text == cancel
+            system = bot.send_message.await_args_list[-1]
+            assert system.kwargs["reply_markup"].one_time_keyboard
+        finally:
+            _language.reset(token)
 
 
 async def test_rich_creation_back_returns_to_subscription_choices(monkeypatch):
