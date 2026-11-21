@@ -665,6 +665,7 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 # Managed bot confirmation must retain the staged candidate
                 # and generation until atomic registration consumes them.
                 "own:managedconfirm:",
+                "own:promptback:", "own:promptcancel:",
             ))
             and bot is not None
             and event.message is not None
@@ -1880,17 +1881,18 @@ def create_owner_setup_router(
                 step=step, payload=payload or {},
                 bot_scope_id=bot.id if fixed_project_id else 0,
             )
+        # RichUiBot places inline Back/Menu inside the message when supported.
+        # Each action is bound to this form generation so old cards are harmless.
         sent = await bot.send_message(
-            user_id,
-            text + tr(
-                "\n\n↩ /back — назад · /cancel — в меню.",
-                "\n\n↩ /back — back · /cancel — main menu.",
-            ),
-            parse_mode="HTML",
-            # Do not force Telegram's persistent "В ответ…" composer.
-            # The next plain text message is safely matched to this
-            # user's live, bot-scoped setup flow instead.
-            reply_markup=ReplyKeyboardRemove(),
+            user_id, text, parse_mode="HTML",
+            reply_markup=_markup([
+                [_button(
+                    tr("⬅️ Назад", "⬅️ Back"), "promptback:" + generation,
+                )],
+                [_button(
+                    tr("✖️ В меню", "✖️ Main menu"), "promptcancel:" + generation,
+                )],
+            ]),
         )
         await bind_prompt(
             factory, actor_id=actor_id, step=step,
@@ -5278,11 +5280,10 @@ def create_owner_setup_router(
                     text=tr(
                         "✉️ <b>Сообщение покупателю</b>\n\n"
                         "Отправьте текст, эмодзи или Telegram-ссылку. "
-                        "Сообщение будет отправлено только этому покупателю. "
-                        "Чтобы отменить, используйте /cancel.",
+                        "Сообщение будет отправлено только этому покупателю.",
                         "✉️ <b>Message customer</b>\n\n"
                         "Send text, emoji or Telegram links. "
-                        "Only this buyer receives it. /cancel to exit.",
+                        "Only this buyer receives it.",
                     ),
                 )
             elif action.startswith("subactivate:"):
@@ -6512,10 +6513,10 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, step="plan_name", source_flow=flow,
                     text=tr(
                         "✏️ Введите название тарифа (2–120 символов). "
-                        "Для тарифа без названия нажмите /back и создайте его "
-                        "через выбор срока.",
+                        "Для тарифа без названия вернитесь назад и "
+                        "выберите срок.",
                         "✏️ Enter an optional plan name (2–120 characters). "
-                        "For an unnamed plan, use /back and choose its duration.",
+                        "For an unnamed plan, go Back and choose its duration.",
                     ),
                 )
             elif action.startswith("duration:"):
@@ -7204,11 +7205,11 @@ def create_owner_setup_router(
                         "🔐 <b>Отправьте API-токен вашего приложения Crypto Pay.</b>\n"
                         "Сообщение будет удалено до проверки. Никому не передавайте "
                         "токен. При ошибке удаления токен придётся сменить.\n"
-                        "Нажмите /cancel, чтобы выйти.",
+                        "Для выхода нажмите «В меню».",
                         "🔐 <b>Send your Crypto Pay app API token.</b>\n"
                         "Your message will be deleted before verification. "
                         "Never share the token. If deletion fails, rotate it.\n"
-                        "Use /cancel to exit.",
+                        "Tap Main menu to exit.",
                     ),
                 )
                 remember_crypto_pay_owner(
