@@ -62,6 +62,14 @@ from telegram_membership_saas.modules.broadcasts.service import cancel_draft
 from telegram_membership_saas.modules.crypto_pay.owner_token_router import (
     remember_crypto_pay_owner,
 )
+from telegram_membership_saas.modules.owner_setup.crypto_pay_owner_ui import (
+    crypto_network_classic,
+    crypto_network_rich,
+    crypto_overview_classic,
+    crypto_overview_rich,
+    crypto_token_classic,
+    crypto_token_rich,
+)
 from telegram_membership_saas.modules.crypto_pay.service import (
     connect_crypto_pay,
     disconnect_crypto_pay,
@@ -375,6 +383,23 @@ def _button(label: str, data: str, style: str = "primary") -> InlineKeyboardButt
 
 def _markup(rows: list[list[InlineKeyboardButton]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def retire_crypto_owner_card(
+    bot: Bot, user_id: int, message_id: int,
+) -> None:
+    """Remove an obsolete Crypto Pay prompt without breaking Back on failure."""
+    try:
+        await bot.delete_message(user_id, message_id)
+    except AiogramError:
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=user_id, message_id=message_id, reply_markup=None,
+            )
+        except AiogramError:
+            logging.getLogger(__name__).warning(
+                "Could not retire obsolete Crypto Pay setup card"
+            )
 
 
 async def remove_native_owner_keyboard(bot: Bot, user_id: int) -> None:
@@ -3934,18 +3959,13 @@ def create_owner_setup_router(
 
     async def show_crypto_pay(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None,
     ) -> None:
-        """One owner-only Crypto Pay setup screen for subscriptions and files."""
+        """Crypto Pay overview: one RU/EN Rich card with a classic fallback."""
         if fixed_project_id != project_id:
             raise PermissionError("Configure merchant payments in the connected bot")
         app = await read_crypto_pay_connection(
             factory, project_id=project_id, bot_id=bot.id, actor_id=actor_id,
-        )
-        status = (
-            tr("🟢 Подключено", "🟢 Connected") + " · "
-            + escape(app.app_label) + " · " + escape(app.environment)
-            if app is not None else
-            tr("⚪ Не подключено", "⚪ Not connected")
         )
         rows = [
             [_button(
@@ -3960,33 +3980,59 @@ def create_owner_setup_router(
                 tr("⏸️ Отключить новые счета", "⏸️ Disable new invoices"),
                 "cryptoffask", "danger",
             )])
-            # A Crypto-only onboarding setup must be able to continue to
-            # plans without first creating an unrelated manual payment method.
+            # This lets a Crypto-only onboarding proceed without a manual method.
             rows.append([_button(
                 tr("➡️ Продолжить к тарифам", "➡️ Continue to plans"),
                 "plans", "primary",
             )])
         rows.append([_button(
-            tr("⬅️ Способы оплаты", "⬅️ Payment methods"), "methods",
+            tr("⬅️ Способы оплаты", "⬅️ Payment methods"),
+            "methods", "primary",
         )])
-        await bot.send_message(
-            user_id, tr(
-                "💎 <b>Crypto Pay</b>\n",
-                "💎 <b>Crypto Pay</b>\n",
-            ) + status + tr(
-                "\n\nПолучите API-токен в @CryptoBot → Crypto Pay → "
-                "Создать приложение. Средства поступают непосредственно "
-                "в Crypto Pay вашего аккаунта. Для тестов используйте "
-                "@CryptoTestnetBot.\n\n"
-                "Подключение не включает оплату у покупателей до запуска "
-                "полной автоматической выдачи подписок и файлов.",
-                "\n\nCreate an API token in @CryptoBot → Crypto Pay → "
-                "Create App. Funds go directly to your own Crypto Pay app. "
-                "Use @CryptoTestnetBot for testing.\n\n"
-                "Connecting the app will not activate buyer checkout until "
-                "verified subscription and file delivery are deployed.",
-            ),
-            parse_mode="HTML", reply_markup=_markup(rows),
+        render = send_owner_rich if source_message_id is None else replace_owner_rich
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
+            rich_html=crypto_overview_rich(app) + RICH_ACTIONS_MARKER,
+            classic_html=crypto_overview_classic(app),
+            reply_markup=_markup(rows),
+        )
+
+    async def show_crypto_network_selector(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None,
+    ) -> None:
+        """Explain mainnet/testnet before ever asking for a merchant secret."""
+        if fixed_project_id != project_id:
+            raise PermissionError("Open the connected administrator bot")
+        await read_crypto_pay_connection(
+            factory, project_id=project_id,
+            bot_id=bot.id, actor_id=actor_id,
+        )
+        rows = [
+            [_button(
+                tr("💰 Реальные оплаты · @CryptoBot",
+                   "💰 Real payments · @CryptoBot"),
+                "cryptonet:mainnet", "success",
+            )],
+            [_button(
+                tr("🧪 Тестовый режим · @CryptoTestnetBot",
+                   "🧪 Test mode · @CryptoTestnetBot"),
+                "cryptonet:testnet", "primary",
+            )],
+            [_button(tr("⬅️ Назад", "⬅️ Back"), "cryptopay", "primary")],
+        ]
+        render = send_owner_rich if source_message_id is None else replace_owner_rich
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
+            rich_html=crypto_network_rich() + RICH_ACTIONS_MARKER,
+            classic_html=crypto_network_classic(),
+            reply_markup=_markup(rows),
         )
 
     async def show_method_card(
@@ -4724,7 +4770,16 @@ def create_owner_setup_router(
         elif prior.step in ("method_name", "method_instruction"):
             await show_methods(bot, user_id, actor_id, project_id)
         elif prior.step == "crypto_pay_token":
-            await show_crypto_pay(bot, user_id, actor_id, project_id)
+            # Back returns to the environment choice, not past it.
+            await show_crypto_network_selector(
+                bot, user_id, actor_id, project_id,
+            )
+            # Only retire the bound token-prompt card after the next
+            # screen exists. A stale callback cannot reach this branch.
+            if prior.prompt_message_id is not None:
+                await retire_crypto_owner_card(
+                    bot, user_id, prior.prompt_message_id,
+                )
         elif prior.step in ("chat_picker", "resource_reference"):
             await show_resources(bot, user_id, actor_id, project_id)
         elif prior.step in ("bot_token", "connection_rename") and fixed_project_id is None:
@@ -8176,28 +8231,14 @@ def create_owner_setup_router(
                         bot, user_id, actor_id, project_id, page=page,
                     )
             elif action == "cryptopay":
-                await show_crypto_pay(bot, user_id, actor_id, project_id)
-            elif action == "cryptonet":
-                if fixed_project_id != project_id:
-                    raise PermissionError("Open the connected administrator bot")
-                # An actual provider token is requested only after owner
-                # chooses the correct API environment.
-                await read_crypto_pay_connection(
-                    factory, project_id=project_id,
-                    bot_id=bot.id, actor_id=actor_id,
+                await show_crypto_pay(
+                    bot, user_id, actor_id, project_id,
+                    source_message_id=getattr(query.message, "message_id", None),
                 )
-                await bot.send_message(
-                    user_id,
-                    tr("💎 <b>Выберите сеть Crypto Pay</b>",
-                       "💎 <b>Choose Crypto Pay environment</b>"),
-                    parse_mode="HTML",
-                    reply_markup=_markup([
-                        [_button("💎 Crypto Pay · @CryptoBot",
-                                 "cryptonet:mainnet", "success")],
-                        [_button("🧪 Testnet · @CryptoTestnetBot",
-                                 "cryptonet:testnet")],
-                        [_button(tr("⬅️ Назад", "⬅️ Back"), "cryptopay")],
-                    ]),
+            elif action == "cryptonet":
+                await show_crypto_network_selector(
+                    bot, user_id, actor_id, project_id,
+                    source_message_id=getattr(query.message, "message_id", None),
                 )
             elif action.startswith("cryptonet:"):
                 env = action.split(":", 1)[1]
@@ -8209,19 +8250,15 @@ def create_owner_setup_router(
                     factory, project_id=project_id,
                     bot_id=bot.id, actor_id=actor_id,
                 )
+                # The bound prompt message ID is required for the protected
+                # secret filter. Send the prompt first, then retire the
+                # outgoing selector only after successfully binding it.
                 await prompt(
                     bot, user_id, actor_id,
                     step="crypto_pay_token", payload={"environment": env},
-                    text=tr(
-                        "🔐 <b>Отправьте API-токен вашего приложения Crypto Pay.</b>\n"
-                        "Сообщение будет удалено до проверки. Никому не передавайте "
-                        "токен. При ошибке удаления токен придётся сменить.\n"
-                        "Для выхода нажмите «В меню».",
-                        "🔐 <b>Send your Crypto Pay app API token.</b>\n"
-                        "Your message will be deleted before verification. "
-                        "Never share the token. If deletion fails, rotate it.\n"
-                        "Tap Main menu to exit.",
-                    ),
+                    text=crypto_token_classic(env),
+                    rich_html=crypto_token_rich(env) + RICH_ACTIONS_MARKER,
+                    show_main_menu=False,
                 )
                 remember_crypto_pay_owner(
                     project_id=project_id, bot_id=bot.id,
@@ -8596,8 +8633,8 @@ def create_owner_setup_router(
         # Method submenus still send their own cards; retire the originating
         # selection card after the new one exists. Do not apply this to
         # payment mutations, receipts, or arbitrary admin callbacks.
-        if action in {"newmethod", "cryptopay"} or action.startswith((
-            "starspage:", "method:",
+        if action == "newmethod" or action.startswith((
+            "starspage:", "method:", "cryptonet:",
         )):
             old_id = getattr(query.message, "message_id", None)
             if (
