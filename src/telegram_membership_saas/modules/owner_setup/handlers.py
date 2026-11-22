@@ -275,6 +275,7 @@ from telegram_membership_saas.modules.owner_setup.service import (
     owner_home,
     publish_owner_plan,
     register_new_owner_bot,
+    restore_button_flow,
     save_owner_price,
     set_default_project_name_from_bot,
     set_flow,
@@ -778,6 +779,8 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 # Managed bot confirmation must retain the staged candidate
                 # and generation until atomic registration consumes them.
                 "own:managedconfirm:", "own:managedcancel:",
+                # Native Stars confirmation is an in-progress button wizard.
+                "own:starsnativecreate:",
                 "own:promptback:", "own:promptcancel:",
             ))
             and bot is not None
@@ -8343,24 +8346,16 @@ def create_owner_setup_router(
                             )
                         raise
                 except Exception:
-                    # Do not strand Back / Create paid link after a temporary
-                    # Telegram error or a rolled-back DB transaction.
+                    # Keep the ORIGINAL generation in Telegram's existing
+                    # confirm/Back buttons; do not leave stale buttons after
+                    # a temporary provider or database failure.
                     try:
-                        regenerated = await advance_flow(
+                        await restore_button_flow(
                             factory, actor_id=actor_id, source=flow,
-                            step="stars_native_confirm",
-                            payload=flow.payload, bot_scope_id=bot.id,
+                            bot_scope_id=bot.id,
                         )
-                        prompt_id = getattr(query.message, "message_id", None)
-                        if isinstance(prompt_id, int):
-                            await bind_prompt(
-                                factory, actor_id=actor_id,
-                                step="stars_native_confirm",
-                                message_id=prompt_id, generation=regenerated,
-                                bot_scope_id=bot.id,
-                            )
                     except (ValueError, PermissionError):
-                        pass  # A different, newer wizard won the race.
+                        pass  # A newer or expired wizard cannot be revived.
                     raise
                 await show_stars_setup_success(
                     bot, user_id, mode="channel", amount=amount,
