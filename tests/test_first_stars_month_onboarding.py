@@ -207,6 +207,29 @@ async def test_first_native_channel_plan_is_atomic_and_group_is_rejected():
                         Plan.project_id == project,
                     ))).all()
 
+                # Sending text must not invalidate a button-only confirmation
+                # or strand its Create link / Back callbacks.
+                confirmation = await setup.set_flow(
+                    factory, actor_id=owner, project_id=project,
+                    step="stars_native_confirm",
+                    payload={"resource_id": channel_id.hex, "stars": 77},
+                )
+                await setup.bind_prompt(
+                    factory, actor_id=owner, step="stars_native_confirm",
+                    message_id=1203, generation=confirmation,
+                )
+                assert not await setup.is_expected_prompt(
+                    factory, actor_id=owner, reply_message_id=None,
+                )
+                assert await setup.consume_flow(
+                    factory, actor_id=owner, reply_message_id=None,
+                ) is None
+                assert (await setup.consume_button_flow(
+                    factory, actor_id=owner,
+                    expected_step="stars_native_confirm",
+                    generation=confirmation, discard=True,
+                )).payload["stars"] == 77
+
                 plan_id = await setup.create_one_month_stars_plan(
                     factory, actor_id=owner, project_id=project,
                     resource_id=channel_id, stars_amount="77",
