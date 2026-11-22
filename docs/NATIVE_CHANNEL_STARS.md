@@ -1,5 +1,40 @@
 # Telegram Stars: bot balance and native channel subscriptions
 
+## Recipient-first new Stars plan onboarding (2026-11-22)
+
+When there are **no plans**, the connected-bot Stars screen offers one
+**Create a plan** action. This now opens a distinct choice before asking for
+an amount:
+
+- **Bot balance:** one-month ViMi Pay price of 1–250000 whole Stars. ViMi Pay
+  owns buyer checkout, entitlement delivery and purchase accounting.
+- **Channel balance:** one 30-day Telegram-owned subscription price of
+  1–10000 whole Stars. Only a linked private **channel** with bot invite
+  permissions qualifies; Telegram owns renewals and membership.
+  A supergroup is not an eligible native target.
+
+The private channel and rights are verified again after price confirmation.
+Creating a channel paid invite happens *before* an atomic, authorized write
+that saves the native link and publishes the first plan together. On any
+database failure the just-issued invite is revoked; failed revocation is
+reported to the administrator with its URL. Double submissions cannot
+publish another plan and must not convert a channel choice into a bot-invoice
+price. The owner must confirm native activation; prior payments and active
+legacy plans are never auto-migrated.
+
+Merchant-facing cards do **not** discuss the internal platform commission
+reconciliation gap. That constraint remains internal to this document and
+the existing financial controls below. No invoice or commission accounting
+changes are part of this UI onboarding PR.
+
+This first-plan wizard uses Rich RU/EN cards with classic HTML fallback.
+Each arrow advances one screen, which edits or retires the previous
+bot-owned card. Text inputs have one bound **Back** button only; no
+unrelated **Main menu** action is shown.
+
+---
+
+
 This is an **opt-in** checkout rail. No existing Telegram Stars invoice,
 confirmed payment, subscriber grant, subscription history, or commission
 ledger is migrated or modified.
