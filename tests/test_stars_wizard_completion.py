@@ -72,9 +72,11 @@ async def test_published_stars_has_forward_for_bot_and_channel(
     card = render.await_args.kwargs
     assert card["message_id"] == 111
     assert "200 ⭐" in card["rich_html"]
-    assert ("Канал" if native else "Бот") in card["rich_html"] if lang == "ru" else (
-        ("Channel" if native else "Bot") in card["rich_html"]
+    expected_recipient = (
+        ("Канал" if native else "Бот") if lang == "ru"
+        else ("Channel" if native else "Bot")
     )
+    assert expected_recipient in card["rich_html"]
     assert ("Тариф создан" if lang == "ru" else "Plan created") in card["rich_html"]
     callbacks = _callbacks(card)
     assert "own:setupnext" in callbacks
