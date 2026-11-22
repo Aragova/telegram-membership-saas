@@ -222,10 +222,8 @@ async def test_failed_native_plan_save_revokes_telegram_invite(monkeypatch):
         ui, "create_one_month_stars_plan",
         AsyncMock(side_effect=ValueError("Plan already exists")),
     )
-    retry = AsyncMock(return_value="new-generation")
-    binder = AsyncMock()
-    monkeypatch.setattr(ui, "advance_flow", retry)
-    monkeypatch.setattr(ui, "bind_prompt", binder)
+    restore = AsyncMock()
+    monkeypatch.setattr(ui, "restore_button_flow", restore)
     bot = _bot()
     bot.get_chat = AsyncMock(return_value=SimpleNamespace(
         type="channel", username=None,
@@ -243,9 +241,8 @@ async def test_failed_native_plan_save_revokes_telegram_invite(monkeypatch):
     query = _query("starsnativecreate:confirmed")
     query.message.message_id = 400
     await _callback(project)(query, bot)
-    retry.assert_awaited_once()
-    binder.assert_awaited_once()
-    assert binder.await_args.kwargs["message_id"] == 400
+    restore.assert_awaited_once()
+    assert restore.await_args.kwargs["source"].generation == "confirmed"
     bot.revoke_chat_invite_link.assert_awaited_once_with(
         -100123456, "https://t.me/+test_url",
     )
@@ -280,3 +277,29 @@ def test_older_native_plan_setup_progress_is_unchanged():
         line.startswith("✅") and "Способ оплаты" in line
         for line in ui._progress(native)
     )
+
+
+
+async def test_native_confirmation_callback_is_not_cancelled_by_middleware(
+    monkeypatch,
+):
+    """Exercise actual dispatcher middleware, not only the direct callback."""
+    project = uuid4()
+    _auth(monkeypatch, project)
+    cancel = AsyncMock()
+    monkeypatch.setattr(ui, "cancel_owner_flow", cancel)
+    middleware = ui.ClearOwnerInputOnNavigation(
+        object(), fixed_project_id=project,
+    )
+    bot = _bot()
+    called = AsyncMock()
+    event = SimpleNamespace(
+        data="own:starsnativecreate:confirmed",
+        message=SimpleNamespace(
+            chat=SimpleNamespace(type="private", id=7777),
+        ),
+        from_user=SimpleNamespace(id=7777, username="owner", first_name="Owner"),
+    )
+    await middleware(called, event, {"bot": bot})
+    called.assert_awaited_once()
+    cancel.assert_not_awaited()
