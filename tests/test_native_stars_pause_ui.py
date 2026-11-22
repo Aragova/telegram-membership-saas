@@ -146,6 +146,14 @@ async def test_confirm_pause_revokes_native_link_without_bot_fallback(
     )
     pause = AsyncMock(return_value=(True, (-100123456789, link)))
     monkeypatch.setattr(ui, "pause_owner_stars_price", pause)
+    # After the successful DB transaction there is no active XTR price.
+    monkeypatch.setattr(
+        ui, "get_owner_plan_info",
+        AsyncMock(return_value=SimpleNamespace(
+            prices=(), native_channel_eligible=True,
+            duration_value=1, duration_unit="month",
+        )),
+    )
     bot = _bot()
     bot.revoke_chat_invite_link = AsyncMock()
     token = _language.set(lang)
@@ -180,6 +188,13 @@ async def test_pause_provider_revoke_failure_warns_owner_in_same_card(
     monkeypatch.setattr(
         ui, "pause_owner_stars_price",
         AsyncMock(return_value=(True, (-100123456789, link))),
+    )
+    monkeypatch.setattr(
+        ui, "get_owner_plan_info",
+        AsyncMock(return_value=SimpleNamespace(
+            prices=(), native_channel_eligible=True,
+            duration_value=1, duration_unit="month",
+        )),
     )
     bot = _bot()
     bot.revoke_chat_invite_link = AsyncMock(
