@@ -174,15 +174,29 @@ async def test_back_replaces_methods_with_stage_two_not_admin_panel(monkeypatch,
     assert "Панель администратора" not in card["rich_html"]
 
 
-async def test_selecting_crypto_retires_the_previous_chooser(monkeypatch):
+@pytest.mark.parametrize("lang", ["ru", "en"])
+async def test_selecting_crypto_replaces_chooser_without_deleting_new_card(
+    monkeypatch, lang,
+):
     project = uuid4()
     _screen(monkeypatch, project)
     monkeypatch.setattr(ui, "read_crypto_pay_connection", AsyncMock(return_value=None))
-    monkeypatch.setattr(ui, "send_owner_rich", AsyncMock())
+    edited = AsyncMock()
+    monkeypatch.setattr(ui, "replace_owner_rich", edited)
     bot = _bot()
-    await _callback(project)(_query("cryptopay", message_id=777), bot)
+    token = _language.set(lang)
+    try:
+        await _callback(project)(_query("cryptopay", message_id=777), bot)
+    finally:
+        _language.reset(token)
     ui.read_crypto_pay_connection.assert_awaited_once()
-    bot.delete_message.assert_awaited_once_with(345, 777)
+    edited.assert_awaited_once()
+    card = edited.await_args.kwargs
+    assert card["message_id"] == 777
+    assert ("КАК ПОДКЛЮЧИТЬ" if lang == "ru" else "HOW TO CONNECT") in card["rich_html"]
+    assert ("НЕ ПОДКЛЮЧЕНО" if lang == "ru" else "NOT CONNECTED") in card["classic_html"]
+    assert _callbacks(card) == ["own:cryptonet", "own:methods"]
+    bot.delete_message.assert_not_awaited()
 
 
 
@@ -218,12 +232,14 @@ async def test_connected_crypto_pay_can_continue_to_plans_without_manual_method(
         )),
     )
     bot = _bot()
+    edited = AsyncMock()
+    monkeypatch.setattr(ui, "replace_owner_rich", edited)
     token = _language.set(lang)
     try:
         await _callback(project)(_query("cryptopay"), bot)
     finally:
         _language.reset(token)
-    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    rows = edited.await_args.kwargs["reply_markup"].inline_keyboard
     buttons = [button for row in rows for button in row]
     forward = next(b for b in buttons if b.callback_data == "own:plans")
     assert forward.style == "primary"
