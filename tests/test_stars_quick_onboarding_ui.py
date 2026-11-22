@@ -64,7 +64,9 @@ async def test_no_plan_overview_and_recipient_choice_before_price(monkeypatch, l
         assert start.await_count == 0
         create.assert_not_awaited()
 
-        await handler(_query("starsmode:bot"), bot)
+        selection = _query("starsmode:bot")
+        selection.message.message_id = 701
+        await handler(selection, bot)
         pricing = bot.send_message.await_args
         assert ("250 000" if lang == "ru" else "250 000") in pricing.args[1]
         assert "own:promptback:fresh-generation" in _callbacks(
