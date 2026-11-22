@@ -1113,6 +1113,42 @@ def create_owner_setup_router(
             reply_markup=_markup(rows),
         )
 
+    async def show_setup_completion(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None, overview=None,
+    ) -> None:
+        """Final onboarding step: short Rich card, never repeat bot/timezone."""
+        if fixed_project_id != project_id:
+            raise PermissionError("Setup is available only in the connected bot")
+        data = overview
+        if data is None:
+            data = await setup_overview(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+        if _next_setup_step(data) is not None:
+            raise ValueError(tr(
+                "Не все настройки завершены. Продолжите с текущего этапа.",
+                "Setup is incomplete. Continue from the current step.",
+            ))
+        render = send_owner_rich if source_message_id is None else replace_owner_rich
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
+            rich_html=owner_setup_step_rich(
+                bot_name="", timezone="", action="saasprofile",
+            ),
+            classic_html=owner_setup_step_classic(
+                bot_name="", timezone="", action="saasprofile",
+            ),
+            reply_markup=_markup([[_button(
+                tr("💱 Выбрать валюту и завершить",
+                   "💱 Choose currency and finish"),
+                "saasprofile", "success",
+            )]]),
+        )
+
     async def show_dashboard(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
     ) -> None:
@@ -1305,11 +1341,10 @@ def create_owner_setup_router(
             # dense dashboard; all actions reuse established handlers.
             if profile is not None and profile.get("currency_selected") is False:
                 if next_step is None:
-                    next_step = (
-                        tr("💱 4/4 · Валюта обслуживания",
-                           "💱 4/4 · Service currency"),
-                        "saasprofile",
+                    await show_setup_completion(
+                        bot, user_id, actor_id, project_id, overview=data,
                     )
+                    return
                 label, action = next_step
                 bot_name = (
                     data.live_bot_username
@@ -3236,6 +3271,21 @@ def create_owner_setup_router(
             return not data.sales_configured
         return profile.get("currency_selected") is False
 
+    async def has_active_stars_plan(
+        actor_id: UUID, project_id: UUID, overview,
+    ) -> bool:
+        """Read actual active XTR prices; manual/Crypto is not Stars."""
+        for plan_id, _name, status in overview.plans:
+            if status != "active":
+                continue
+            info = await get_owner_plan_info(
+                factory, actor_id=actor_id, project_id=project_id,
+                plan_id=plan_id,
+            )
+            if any(price.currency == "XTR" for price in info.prices):
+                return True
+        return False
+
     async def show_resources(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, source_message_id: int | None = None,
@@ -3874,6 +3924,7 @@ def create_owner_setup_router(
                 tr("✨ Создать тариф", "✨ Create a plan"),
                 "starsnew", "success",
             )])
+        published_stars = False
         for plan_id, plan_name, plan_status in current:
             info = await get_owner_plan_info(
                 factory, actor_id=actor_id, project_id=project_id,
@@ -3886,6 +3937,9 @@ def create_owner_setup_router(
             price_label = (
                 format_amount(stars_price.amount, stars_price.precision) + " ⭐"
                 if stars_price is not None else tr("нет цены", "no price")
+            )
+            published_stars = published_stars or (
+                stars_price is not None and plan_status == "active"
             )
             native_active = bool(
                 stars_price is not None and stars_price.native_stars_active
@@ -3925,6 +3979,13 @@ def create_owner_setup_router(
             nav.append(_button("➡️", "starspage:" + str(page + 1)))
         if nav:
             rows.append(nav)
+        if published_stars and await initial_setup_active(
+            actor_id, project_id, overview,
+        ):
+            rows.append([_button(
+                tr("➡️ Продолжить настройку", "➡️ Continue setup"),
+                "setupnext", "success",
+            )])
         rows.append([_button(
             tr("⬅️ Способы оплаты", "⬅️ Payment methods"),
             "methods", "primary",
@@ -4146,13 +4207,19 @@ def create_owner_setup_router(
         )
 
     async def show_stars_setup_success(
-        bot: Bot, user_id: int, *, mode: str, amount: int,
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, mode: str, amount: int,
         source_message_id: int | None = None,
     ) -> None:
         rows = [[_button(
             tr("⭐ Мои тарифы Stars", "⭐ My Stars plans"),
-            "starspage:0", "success",
+            "starspage:0", "primary",
         )]]
+        if await initial_setup_active(actor_id, project_id):
+            rows.insert(0, [_button(
+                tr("➡️ Продолжить настройку", "➡️ Continue setup"),
+                "setupnext", "success",
+            )])
         render = (
             send_owner_rich if source_message_id is None
             else replace_owner_rich
@@ -6929,6 +6996,50 @@ def create_owner_setup_router(
                     bot, user_id, actor_id, project_id,
                     source_message_id=getattr(query.message, "message_id", None),
                 )
+            elif action == "setupnext":
+                # Never trust a stale card to skip payment, plan or service
+                # currency. Evaluate the actual wizard readiness on click.
+                if fixed_project_id != project_id:
+                    raise PermissionError("Use the connected bot for setup")
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                previous_message = getattr(query.message, "message_id", None)
+                if not await initial_setup_active(actor_id, project_id, overview):
+                    # An old callback may be tapped after setup completed.
+                    # Do not restart any stage or create a duplicate plan.
+                    await show_dashboard(bot, user_id, actor_id, project_id)
+                    if isinstance(previous_message, int):
+                        await retire_crypto_owner_card(
+                            bot, user_id, previous_message,
+                        )
+                else:
+                    next_step = _next_setup_step(overview)
+                    action_needed = next_step[1] if next_step else "saasprofile"
+                    if action_needed == "resources":
+                        await show_resources(
+                            bot, user_id, actor_id, project_id,
+                            source_message_id=previous_message,
+                        )
+                    elif action_needed == "methods":
+                        await show_methods(
+                            bot, user_id, actor_id, project_id, guided=True,
+                            source_message_id=previous_message,
+                        )
+                    elif action_needed == "plans":
+                        await show_plans(
+                            bot, user_id, actor_id, project_id,
+                        )
+                        if isinstance(previous_message, int):
+                            await retire_crypto_owner_card(
+                                bot, user_id, previous_message,
+                            )
+                    else:
+                        await show_setup_completion(
+                            bot, user_id, actor_id, project_id,
+                            source_message_id=previous_message,
+                            overview=overview,
+                        )
             elif action.startswith("connrename:"):
                 target_id = UUID(hex=action.split(":", 1)[1])
                 if target_id != project_id:
@@ -8358,7 +8469,8 @@ def create_owner_setup_router(
                         pass  # A newer or expired wizard cannot be revived.
                     raise
                 await show_stars_setup_success(
-                    bot, user_id, mode="channel", amount=amount,
+                    bot, user_id, actor_id, project_id,
+                    mode="channel", amount=amount,
                     source_message_id=getattr(
                         query.message, "message_id", None,
                     ),
@@ -9481,7 +9593,8 @@ def create_owner_setup_router(
                         stars_amount=text,
                     )
                     await show_stars_setup_success(
-                        bot, message.chat.id, mode="bot", amount=int(text),
+                        bot, message.chat.id, actor_id, project_id,
+                        mode="bot", amount=int(text),
                     )
                 if flow.prompt_message_id is not None:
                     await retire_crypto_owner_card(
