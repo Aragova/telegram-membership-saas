@@ -4064,8 +4064,12 @@ def create_owner_setup_router(
             **({} if source_message_id is None else {
                 "message_id": source_message_id,
             }),
-            rich_html=overview_rich(plans=entries) + RICH_ACTIONS_MARKER,
-            classic_html=overview_classic(plans=entries),
+            rich_html=overview_rich(
+                plans=entries, published=published_stars,
+            ) + RICH_ACTIONS_MARKER,
+            classic_html=overview_classic(
+                plans=entries, published=published_stars,
+            ),
             reply_markup=_markup(rows),
         )
 
