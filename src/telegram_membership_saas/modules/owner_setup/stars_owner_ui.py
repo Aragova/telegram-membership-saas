@@ -176,9 +176,10 @@ def price_rich(*, mode: str, warning: bool = False) -> str:
         "<tr><td>📅 " + tr("Срок", "Period") + "</td><td><b>"
         + (tr("30 дней", "30 days") if channel else tr("1 месяц", "1 month"))
         + "</b></td></tr>",
-        "<tr><td>" + tr("📢 Получатель", "📢 Recipient")
-        if channel else "<tr><td>" + tr("🤖 Получатель", "🤖 Recipient"),
-        "</td><td><b>" + (
+        "<tr><td>" + (
+            tr("📢 Получатель", "📢 Recipient")
+            if channel else tr("🤖 Получатель", "🤖 Recipient")
+        ) + "</td><td><b>" + (
             tr("Баланс канала", "Channel balance")
             if channel else tr("Баланс бота", "Bot balance")
         ) + "</b></td></tr>",
@@ -299,6 +300,17 @@ def native_confirm_classic(*, stars: int) -> str:
 
 def success_rich(*, mode: str, stars: int) -> str:
     channel = mode == "channel"
+    recipient = tr(
+        "📢 Звёзды поступают на баланс канала. "
+        "Доступ и продления обслуживает Telegram.",
+        "📢 Stars go to the channel balance. "
+        "Telegram manages access and renewals.",
+    ) if channel else tr(
+        "🤖 Звёзды поступают на баланс бота. "
+        "ViMi Pay управляет доступом.",
+        "🤖 Stars go to the bot balance. "
+        "ViMi Pay manages access.",
+    )
     return "\n".join([
         "<h3>" + tr(
             "✅ Платная ссылка создана!" if channel
@@ -308,18 +320,7 @@ def success_rich(*, mode: str, stars: int) -> str:
         ) + "</h3>",
         "<p>⭐ " + tr("Цена: ", "Price: ")
         + "<b>" + str(stars) + " ⭐</b></p>",
-        "<p>" + tr(
-            "📢 Звёзды поступают на баланс канала. "
-            "Доступ и продления обслуживает Telegram.",
-            "📢 Stars go to the channel balance. "
-            "Telegram manages access and renewals.",
-        ) if channel else
-        "<p>" + tr(
-            "🤖 Звёзды поступают на баланс бота. "
-            "ViMi Pay управляет доступом.",
-            "🤖 Stars go to the bot balance. "
-            "ViMi Pay manages access.",
-        ) + "</p>",
+        "<p>" + recipient + "</p>",
     ])
 
 
