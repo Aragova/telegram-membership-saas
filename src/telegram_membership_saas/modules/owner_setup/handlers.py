@@ -4045,7 +4045,14 @@ def create_owner_setup_router(
 
     async def ensure_private_stars_channel(bot: Bot, chat_id: int) -> None:
         """Live Bot API check before creating a new paid invitation."""
-        chat = await bot.get_chat(chat_id)
+        try:
+            chat = await bot.get_chat(chat_id)
+        except AiogramError as exc:
+            raise ValueError(tr(
+                "Не удалось проверить канал в Telegram. "
+                "Попробуйте снова позже.",
+                "Could not verify the channel in Telegram. Try again later.",
+            )) from exc
         chat_type = getattr(
             getattr(chat, "type", None), "value", getattr(chat, "type", None),
         )
@@ -4062,7 +4069,14 @@ def create_owner_setup_router(
                 "Paid invitations require a private channel. "
                 "Make it private or choose bot balance.",
             ))
-        admin = await bot.get_chat_member(chat_id, bot.id)
+        try:
+            admin = await bot.get_chat_member(chat_id, bot.id)
+        except AiogramError as exc:
+            raise ValueError(tr(
+                "Не удалось проверить права бота в Telegram. "
+                "Попробуйте ещё раз.",
+                "Could not check bot permissions in Telegram. Try again.",
+            )) from exc
         status = getattr(
             getattr(admin, "status", None),
             "value", getattr(admin, "status", None),
