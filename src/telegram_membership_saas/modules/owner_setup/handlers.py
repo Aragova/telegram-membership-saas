@@ -153,8 +153,8 @@ from telegram_membership_saas.modules.owner_setup.crypto_pay_owner_ui import (
     crypto_token_rich,
 )
 from telegram_membership_saas.modules.owner_setup.currencies import (
-    disable_owner_stars_price,
     enable_owner_currency,
+    pause_owner_stars_price,
 )
 from telegram_membership_saas.modules.owner_setup.customer_shortcodes import (
     parse_customer_command,
@@ -196,6 +196,7 @@ from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
     NATIVE_PERIOD_SECONDS,
     activate_native_stars_link,
     deactivate_native_stars_link,
+    native_price_allowed,
     read_native_stars_target,
 )
 from telegram_membership_saas.modules.owner_setup.network_home_service import (
@@ -4002,6 +4003,7 @@ def create_owner_setup_router(
     async def show_stars_payments(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         *, page: int = 0, source_message_id: int | None = None,
+        notice: str | None = None,
     ) -> None:
         """Compact Rich screen; preserve existing plan settings and pricing."""
         if not 0 <= page <= 10000:
@@ -4059,9 +4061,17 @@ def create_owner_setup_router(
                     "danger",
                 ))
             rows.append(row)
-            if stars_price is not None and (
-                plan_status == "active" or native_active
-            ):
+            eligible_for_channel = (
+                plan_status == "active"
+                and stars_price is not None
+                and getattr(info, "native_channel_eligible", False)
+                and native_price_allowed(
+                    duration_value=info.duration_value,
+                    duration_unit=info.duration_unit,
+                    amount=stars_price.amount,
+                )
+            )
+            if native_active or eligible_for_channel:
                 rows.append([_button(
                     tr("↩️ Вернуть оплату боту", "↩️ Return Stars to bot")
                     if native_active else
@@ -4099,9 +4109,13 @@ def create_owner_setup_router(
             }),
             rich_html=overview_rich(
                 plans=entries, published=published_stars,
+            ) + (
+                "<p>" + escape(notice) + "</p>" if notice else ""
             ) + RICH_ACTIONS_MARKER,
             classic_html=overview_classic(
                 plans=entries, published=published_stars,
+            ) + (
+                "\n\n" + escape(notice) if notice else ""
             ),
             reply_markup=_markup(rows),
         )
@@ -8645,17 +8659,106 @@ def create_owner_setup_router(
                     ),
                     show_main_menu=False,
                 )
-            elif action.startswith("starsoff:"):
-                _, plan_hex, page_token = action.split(":", 2)
+            elif action.startswith(("starsoff:", "starsoffok:")):
+                part, plan_hex, page_token = action.split(":", 2)
                 if not page_token.isascii() or not page_token.isdecimal():
                     raise ValueError("Invalid Stars page")
-                await disable_owner_stars_price(
+                page = int(page_token)
+                if not 0 <= page <= 10000:
+                    raise ValueError("Invalid Stars page")
+                plan_id = UUID(hex=plan_hex)
+                if part == "starsoff":
+                    info = await get_owner_plan_info(
+                        factory, actor_id=actor_id,
+                        project_id=project_id, plan_id=plan_id,
+                    )
+                    price = next((
+                        p for p in info.prices if p.currency == "XTR"
+                    ), None)
+                    if price is not None and price.native_stars_active:
+                        markup = _markup([
+                            [_button(
+                                tr("⏸️ Поставить на паузу",
+                                   "⏸️ Pause this price"),
+                                "starsoffok:" + plan_id.hex + ":" + str(page),
+                                "danger",
+                            )],
+                            [_button(
+                                tr("⬅️ Назад", "⬅️ Back"),
+                                "starspage:" + str(page), "primary",
+                            )],
+                        ])
+                        await replace_owner_rich(
+                            bot, chat_id=user_id,
+                            message_id=getattr(query.message, "message_id", None),
+                            rich_html=(
+                                "<h3>" + tr(
+                                    "⏸️ Приостановить тариф Stars?",
+                                    "⏸️ Pause this Stars plan?",
+                                ) + "</h3><p>" + tr(
+                                    "Платная ссылка канала будет отозвана. "
+                                    "Новые покупки остановятся. "
+                                    "<b>Уже оплаченные подписки сохраняются.</b>",
+                                    "The channel's paid invite will be revoked. "
+                                    "New purchases will stop. "
+                                    "<b>Existing paid subscriptions remain.</b>",
+                                ) + "</p>" + RICH_ACTIONS_MARKER
+                            ),
+                            classic_html=tr(
+                                "⏸️ <b>Приостановить тариф Stars?</b>\n\n"
+                                "Платная ссылка канала будет отозвана. "
+                                "Новые покупки остановятся. "
+                                "<b>Оплаченные подписки сохраняются.</b>",
+                                "⏸️ <b>Pause this Stars plan?</b>\n\n"
+                                "The channel's paid invite will be revoked. "
+                                "New purchases stop. "
+                                "<b>Paid subscriptions remain.</b>",
+                            ),
+                            reply_markup=markup,
+                        )
+                        return
+                paused, link = await pause_owner_stars_price(
                     factory, actor_id=actor_id, project_id=project_id,
-                    plan_id=UUID(hex=plan_hex),
+                    plan_id=plan_id, bot_id=bot.id,
                 )
+                notice = (
+                    tr("⏸️ Цена Stars поставлена на паузу.",
+                       "⏸️ Stars price paused.")
+                    if paused else tr(
+                        "ℹ️ Цена Stars уже отключена.",
+                        "ℹ️ Stars price is already disabled.",
+                    )
+                )
+                if link is not None:
+                    chat_id, url = link
+                    try:
+                        await bot.revoke_chat_invite_link(
+                            chat_id=chat_id, invite_link=url,
+                        )
+                        notice = tr(
+                            "⏸️ Цена Stars выключена. "
+                            "Новые покупки через ссылку остановлены. "
+                            "Ранее оплаченные подписки сохраняются.",
+                            "⏸️ Stars price disabled. "
+                            "The paid invite is revoked; "
+                            "existing paid subscriptions remain.",
+                        )
+                    except AiogramError:
+                        logging.getLogger(__name__).exception(
+                            "Native Stars invite revocation failed on pause"
+                        )
+                        notice = tr(
+                            "⚠️ Тариф выключен в ViMi Pay, но Telegram "
+                            "не подтвердил отзыв ссылки. Отзовите "
+                            "её вручную в настройках канала:",
+                            "⚠️ ViMi Pay stopped this price but Telegram "
+                            "did not confirm link revocation. Revoke "
+                            "this link manually in channel settings:",
+                        ) + "\n" + url
                 await show_stars_payments(
-                    bot, user_id, actor_id, project_id,
-                    page=int(page_token),
+                    bot, user_id, actor_id, project_id, page=page,
+                    source_message_id=getattr(query.message, "message_id", None),
+                    notice=notice,
                 )
             elif action.startswith(("starsnative:", "starsnativeok:",
                                     "starsnativeoff:")):
@@ -8677,29 +8780,20 @@ def create_owner_setup_router(
                     if target.active:
                         await show_stars_payments(
                             bot, user_id, actor_id, project_id, page=page,
+                            source_message_id=getattr(
+                                query.message, "message_id", None,
+                            ),
                         )
                     else:
-                        await bot.send_message(
-                            user_id,
-                            tr(
-                                "⭐ <b>Платная ссылка Telegram-канала</b>\n\n"
-                                "Подписка: <b>30 дней</b>, "
-                                "автоматическое продление.\n"
-                                "Цена: <b>",
-                                "⭐ <b>Telegram channel paid invitation</b>\n\n"
-                                "Subscription: <b>30 days</b>, "
-                                "automatic renewal.\n"
-                                "Price: <b>",
-                            ) + str(target.amount) + " ⭐</b>\n\n"
-                            + tr(
-                                "Звёзды поступят на баланс канала. "
-                                "Telegram будет управлять доступом и продлениями.\n\n"
-                                "Подтвердить создание платной ссылки?",
-                                "Stars will go to the channel balance. "
-                                "Telegram will manage access and renewals.\n\n"
-                                "Create the paid link?",
+                        await replace_owner_rich(
+                            bot, chat_id=user_id,
+                            message_id=getattr(query.message, "message_id", None),
+                            rich_html=native_confirm_rich(
+                                stars=target.amount,
+                            ) + RICH_ACTIONS_MARKER,
+                            classic_html=native_confirm_classic(
+                                stars=target.amount,
                             ),
-                            parse_mode="HTML",
                             reply_markup=_markup([
                                 [_button(
                                     tr("✅ Создать ссылку", "✅ Create link"),
@@ -8707,8 +8801,8 @@ def create_owner_setup_router(
                                     "success",
                                 )],
                                 [_button(
-                                    tr("⬅️ Отмена", "⬅️ Cancel"),
-                                    "starspage:" + str(page),
+                                    tr("⬅️ Назад", "⬅️ Back"),
+                                    "starspage:" + str(page), "primary",
                                 )],
                             ]),
                         )
@@ -8716,6 +8810,9 @@ def create_owner_setup_router(
                     if target.active:
                         await show_stars_payments(
                             bot, user_id, actor_id, project_id, page=page,
+                            source_message_id=getattr(
+                                query.message, "message_id", None,
+                            ),
                         )
                     else:
                         chat = await bot.get_chat(target.chat_id)
@@ -8764,6 +8861,9 @@ def create_owner_setup_router(
                             raise
                         await show_stars_payments(
                             bot, user_id, actor_id, project_id, page=page,
+                            source_message_id=getattr(
+                                query.message, "message_id", None,
+                            ),
                         )
                 else:
                     old = await deactivate_native_stars_link(
