@@ -13,7 +13,6 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
-
 from test_platform_saas_commercial_holds import _switch
 from test_platform_saas_invoice_rls import _tid
 
