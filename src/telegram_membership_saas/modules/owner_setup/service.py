@@ -10,7 +10,7 @@ from uuid import UUID
 from aiogram import Bot
 from cryptography.fernet import InvalidToken
 from pydantic import SecretStr
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -869,10 +869,77 @@ async def create_owner_plan(
         return plan.id
 
 
+async def list_native_stars_setup_channels(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, telegram_bot_id: int,
+) -> tuple[tuple[UUID, str], ...]:
+    """Only connected Telegram *channels*, never groups or other tenants."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        exists = await session.scalar(select(BotInstance.id).where(
+            BotInstance.project_id == project_id,
+            BotInstance.telegram_bot_id == telegram_bot_id,
+            BotInstance.status == "registered",
+        ))
+        if exists is None:
+            raise PermissionError("Подключённый бот больше не доступен")
+        channels = (await session.scalars(select(Resource).where(
+            Resource.project_id == project_id,
+            Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.resource_type == ResourceType.TELEGRAM_CHANNEL.value,
+            Resource.removed_at.is_(None),
+        ).order_by(Resource.created_at, Resource.id))).all()
+        return tuple((channel.id, channel.name) for channel in channels)
+
+
+async def native_stars_setup_chat(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, resource_id: UUID,
+    telegram_bot_id: int,
+) -> int:
+    """Authorize and resolve the exact channel before any Telegram mutation."""
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        bot_id = await session.scalar(select(BotInstance.id).where(
+            BotInstance.project_id == project_id,
+            BotInstance.telegram_bot_id == telegram_bot_id,
+            BotInstance.status == "registered",
+        ))
+        if bot_id is None:
+            raise PermissionError("Подключённый бот больше не доступен")
+        resource = await session.scalar(select(Resource).where(
+            Resource.id == resource_id, Resource.project_id == project_id,
+            Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
+        ))
+        if resource is None:
+            raise ValueError("Канал отключён. Выберите его заново.")
+        if resource.resource_type != ResourceType.TELEGRAM_CHANNEL.value:
+            raise ValueError(
+                "⭐ На баланс канала можно получать только в приватном канале. "
+                "Для группы выберите оплату на баланс бота."
+            )
+        try:
+            return int(resource.external_id)
+        except ValueError as exc:
+            raise ValueError("Неверный идентификатор Telegram-канала") from exc
+
+
 async def create_one_month_stars_plan(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID, project_id: UUID, resource_id: UUID,
     stars_amount: str,
+    native_invite_link: str | None = None,
+    native_bot_id: int | None = None,
+    native_chat_id: int | None = None,
 ) -> UUID:
     """Publish the first month-long Stars plan in one authorized transaction.
 
@@ -881,10 +948,23 @@ async def create_one_month_stars_plan(
     a second tariff. No Stars price is invented on behalf of the owner.
     """
     price = stars_amount.strip()
+    native = native_invite_link is not None
+    ceiling = 10000 if native else 250000
     if not price.isascii() or not price.isdecimal() or not (
-        1 <= int(price) <= 250000
+        1 <= int(price) <= ceiling
     ):
-        raise ValueError("Укажите целое число звёзд от 1 до 250000")
+        raise ValueError(
+            "Укажите целое число звёзд от 1 до " + str(ceiling)
+        )
+    if native:
+        if native_bot_id is None or native_chat_id is None or not (
+            native_invite_link.startswith(
+                ("https://t.me/+", "https://t.me/joinchat/")
+            )
+        ):
+            raise ValueError("Telegram не вернул корректную платную ссылку")
+    elif native_bot_id is not None or native_chat_id is not None:
+        raise ValueError("Выбран неполный режим оплаты Telegram Stars")
     async with tenant_session_scope(
         factory, TenantContext(user_id=actor_id, project_id=project_id)
     ) as session:
@@ -904,7 +984,7 @@ async def create_one_month_stars_plan(
         ).limit(1))
         if existing is not None:
             raise ValueError("Тариф уже создан. Настройте Stars в его карточке")
-        channel = await session.scalar(select(Resource.id).where(
+        channel = await session.scalar(select(Resource).where(
             Resource.id == resource_id,
             Resource.project_id == project_id,
             Resource.status == ResourceStatus.ACTIVE.value,
@@ -912,6 +992,30 @@ async def create_one_month_stars_plan(
         ))
         if channel is None:
             raise ValueError("Сначала выберите подключённый активный канал")
+        if native:
+            if (
+                channel.resource_type != ResourceType.TELEGRAM_CHANNEL.value
+                or channel.external_id != str(native_chat_id)
+            ):
+                raise ValueError(
+                    "Платная ссылка может вести только в выбранный канал"
+                )
+            registered = await session.scalar(select(BotInstance.id).where(
+                BotInstance.project_id == project_id,
+                BotInstance.telegram_bot_id == native_bot_id,
+                BotInstance.status == "registered",
+            ))
+            if registered is None:
+                raise PermissionError("Подключённый бот больше не доступен")
+            gate = await session.scalar(text(
+                "SELECT public.platform_saas_project_commerce_state("
+                ":project,:bot)"
+            ), {"project": project_id, "bot": registered})
+            if gate not in ("clear", "disabled"):
+                raise PermissionError(
+                    "Новые продажи пока ограничены обслуживанием ViMi Pay. "
+                    "Платную ссылку можно создать после активации."
+                )
         plan = Plan(
             project_id=project_id,
             name=default_period_plan_name(1, "month"),
@@ -927,6 +1031,21 @@ async def create_one_month_stars_plan(
             session, project_id=project_id, plan_id=plan.id,
             currency_code="XTR", amount=price,
         )
+        if native:
+            stars_price = await session.scalar(select(PlanPrice).where(
+                PlanPrice.project_id == project_id,
+                PlanPrice.plan_id == plan.id,
+                PlanPrice.currency_code == "XTR",
+                PlanPrice.status == PlanPriceStatus.ACTIVE.value,
+            ).with_for_update())
+            if stars_price is None:
+                raise ValueError("Не удалось сохранить цену в звёздах")
+            stars_price.native_subscription_link = native_invite_link
+            stars_price.native_subscription_chat_id = str(native_chat_id)
+            stars_price.native_subscription_bot_id = native_bot_id
+            stars_price.native_subscription_active = True
+        # Native route becomes visible only after its paid invitation exists.
+        # Bot route keeps its previous one-transaction publication behavior.
         plan.status = "active"
         await session.flush()
         return plan.id
