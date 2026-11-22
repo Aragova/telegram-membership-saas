@@ -256,24 +256,34 @@ def create_crypto_secret_router(
                         callback_data="own:promptback:" + flow.generation,
                         style="primary",
                     )],
-                    [InlineKeyboardButton(
-                        text=tr("✖️ В меню", "✖️ Main menu"),
-                        callback_data="own:promptcancel:" + flow.generation,
-                        style="primary",
-                    )],
                 ]),
             )
             return
         # Only the original generation may be cleared. Never erase a
         # different form started while the external API call was pending.
+        consumed = False
         try:
             await consume_button_flow(
                 factory, actor_id=actor, expected_step="crypto_pay_token",
                 generation=flow.generation, bot_scope_id=bot.id,
                 discard=True,
             )
+            consumed = True
         except ValueError:
             pass  # A newer owner form replaced this one during verification.
+        # Retire only the confirmed, generation-bound prompt. Never delete a
+        # newer wizard card or the buyer's message on an API verification error.
+        if consumed and flow.prompt_message_id is not None:
+            try:
+                await bot.delete_message(uid, flow.prompt_message_id)
+            except AiogramError:
+                try:
+                    await bot.edit_message_reply_markup(
+                        chat_id=uid, message_id=flow.prompt_message_id,
+                        reply_markup=None,
+                    )
+                except AiogramError:
+                    pass
         await bot.send_message(
             uid,
             tr("✅ Crypto Pay проверен и защищённо подключён.",
