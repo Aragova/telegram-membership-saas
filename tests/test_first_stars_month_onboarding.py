@@ -224,6 +224,16 @@ async def test_first_native_channel_plan_is_atomic_and_group_is_rejected():
                 assert await setup.consume_flow(
                     factory, actor_id=owner, reply_message_id=None,
                 ) is None
+                attempted = await setup.consume_button_flow(
+                    factory, actor_id=owner,
+                    expected_step="stars_native_confirm",
+                    generation=confirmation, discard=False,
+                )
+                # A failed API request restores the SAME callback token
+                # displayed on Telegram's original Create/Back buttons.
+                await setup.restore_button_flow(
+                    factory, actor_id=owner, source=attempted,
+                )
                 assert (await setup.consume_button_flow(
                     factory, actor_id=owner,
                     expected_step="stars_native_confirm",
