@@ -4963,6 +4963,22 @@ def create_owner_setup_router(
             )
         elif prior.step in ("method_name", "method_instruction"):
             await show_methods(bot, user_id, actor_id, project_id)
+        elif prior.step in ("stars_month_price", "stars_native_confirm"):
+            # Back from price or link confirmation is never Main menu.
+            # The previous prompt is retired only after the next is sent.
+            if prior.step == "stars_native_confirm":
+                await prompt_first_stars_month(
+                    bot, user_id, actor_id,
+                    UUID(hex=prior.payload["resource_id"]), mode="channel",
+                )
+            else:
+                await show_stars_recipient(
+                    bot, user_id, actor_id, project_id,
+                )
+            if prior.prompt_message_id is not None:
+                await retire_crypto_owner_card(
+                    bot, user_id, prior.prompt_message_id,
+                )
         elif prior.step == "crypto_pay_token":
             # Back returns to the environment choice, not past it.
             await show_crypto_network_selector(
@@ -9394,33 +9410,43 @@ def create_owner_setup_router(
                 else:
                     raise ValueError("Шаг выбора валюты устарел")
             elif flow.step == "stars_month_price":
+                mode = flow.payload.get("mode", "bot")
+                if mode not in ("bot", "channel"):
+                    raise ValueError("Invalid Stars recipient")
+                ceiling = 10000 if mode == "channel" else 250000
                 valid_stars = (
                     text.isascii() and text.isdecimal()
-                    and 1 <= int(text) <= 250000
+                    and 1 <= int(text) <= ceiling
                 )
                 if not valid_stars:
                     await prompt_first_stars_month(
                         bot, message.chat.id, actor_id,
                         UUID(hex=flow.payload["resource_id"]),
-                        source_flow=flow, retry=True,
+                        mode=mode, source_flow=flow, retry=True,
                     )
+                    if flow.prompt_message_id is not None:
+                        await retire_crypto_owner_card(
+                            bot, message.chat.id, flow.prompt_message_id,
+                        )
                     return
-                plan_id = await create_one_month_stars_plan(
-                    factory, actor_id=actor_id, project_id=project_id,
-                    resource_id=UUID(hex=flow.payload["resource_id"]),
-                    stars_amount=text,
-                )
-                await bot.send_message(
-                    message.chat.id,
-                    tr(
-                        "✅ <b>Тариф на 1 месяц опубликован!</b>\n⭐ Цена: ",
-                        "✅ <b>1-month plan published!</b>\n⭐ Price: ",
-                    ) + escape(text.strip()) + " ⭐",
-                    parse_mode="HTML",
-                )
-                await show_stars_payments(
-                    bot, message.chat.id, actor_id, project_id,
-                )
+                if mode == "channel":
+                    await show_stars_native_confirmation(
+                        bot, message.chat.id, actor_id,
+                        source_flow=flow, amount=int(text),
+                    )
+                else:
+                    await create_one_month_stars_plan(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        resource_id=UUID(hex=flow.payload["resource_id"]),
+                        stars_amount=text,
+                    )
+                    await show_stars_setup_success(
+                        bot, message.chat.id, mode="bot", amount=int(text),
+                    )
+                if flow.prompt_message_id is not None:
+                    await retire_crypto_owner_card(
+                        bot, message.chat.id, flow.prompt_message_id,
+                    )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
                 await save_owner_price(
