@@ -271,7 +271,9 @@ def price_classic(*, mode: str, warning: bool = False) -> str:
     return "\n\n".join(parts)
 
 
-def native_confirm_rich(*, stars: int) -> str:
+def native_confirm_rich(
+    *, stars: int, already_published: bool = False,
+) -> str:
     return "\n".join([
         "<h3>" + tr(
             "📢 Создать платную ссылку?", "📢 Create a paid invite?",
@@ -290,14 +292,23 @@ def native_confirm_rich(*, stars: int) -> str:
             "Telegram будет управлять доступом и продлениями.",
             "Telegram will manage access and renewals.",
         ) + "</p>",
-        "<p>" + tr(
-            "До подтверждения тариф не публикуется.",
-            "The plan will not be published before confirmation.",
+        "<p>" + (
+            tr(
+                "Тариф уже активен. После подтверждения новые покупки "
+                "будут идти через платную ссылку канала.",
+                "The plan is already active. After confirmation, "
+                "new purchases will use the channel's paid invite.",
+            ) if already_published else tr(
+                "До подтверждения тариф не публикуется.",
+                "The plan will not be published before confirmation.",
+            )
         ) + "</p>",
     ])
 
 
-def native_confirm_classic(*, stars: int) -> str:
+def native_confirm_classic(
+    *, stars: int, already_published: bool = False,
+) -> str:
     return "\n\n".join([
         "📢 <b>" + tr(
             "Создать платную ссылку?", "Create a paid invite?",
@@ -305,10 +316,17 @@ def native_confirm_classic(*, stars: int) -> str:
         tr("⭐ На баланс канала · 30 дней · ",
            "⭐ To channel balance · 30 days · ")
         + f"<b>{stars} ⭐</b>",
-        tr("Доступом и продлениями управляет Telegram. "
-           "До подтверждения тариф не публикуется.",
-           "Telegram manages access and renewals. "
-           "Nothing is published before confirmation."),
+        tr(
+            "Тариф уже активен. После подтверждения новые покупки "
+            "пойдут через платную ссылку канала.",
+            "The plan is already active. After confirmation, "
+            "new purchases will use the channel's paid invite.",
+        ) if already_published else tr(
+            "Доступом и продлениями управляет Telegram. "
+            "До подтверждения тариф не публикуется.",
+            "Telegram manages access and renewals. "
+            "Nothing is published before confirmation.",
+        ),
     ])
 
 
