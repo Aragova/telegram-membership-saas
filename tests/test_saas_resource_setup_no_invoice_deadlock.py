@@ -24,7 +24,6 @@ from telegram_membership_saas.db import (
     tenant_session_scope,
 )
 from telegram_membership_saas.modules.bots import BotInstance
-from telegram_membership_saas.modules.owner_setup.models import OwnerSetupSession
 from telegram_membership_saas.modules.owner_setup.service import (
     create_owner_project,
     ensure_telegram_actor,
