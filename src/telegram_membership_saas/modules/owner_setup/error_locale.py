@@ -166,20 +166,31 @@ _KNOWN_EN_ERRORS = frozenset(_ERROR_EN.values()) | {
 # Native channel paid invitations have strict Telegram duration and resource
 # requirements. Keep service-layer errors stable but show local, helpful
 # explanations instead of raw English validation in Russian admin screens.
-_NATIVE_STARS_EN_RU = {
-    "Channel Stars require a 1-month plan priced at 1–10000 whole Stars":
+_NATIVE_STARS_LOCALE = {
+    "Channel Stars require a 1-month plan priced at 1–10000 whole Stars": (
         "📅 Для оплаты ⭐ на баланс канала нужен тариф на 1 месяц "
         "с ценой от 1 до 10 000 целых звёзд. "
         "Для тарифа «Навсегда» используйте оплату на баланс бота.",
-    "Channel Stars require exactly one active private channel per plan":
+        "📅 Channel Stars require a 30-day plan priced from 1 to "
+        "10,000 whole Stars. Use the bot balance for lifetime plans.",
+    ),
+    "Channel Stars require exactly one active private channel per plan": (
         "📢 Для оплаты ⭐ на баланс канала выберите один "
         "подключённый приватный Telegram-канал, не группу.",
-    "Disable and revoke the channel subscription link before retiring Stars price":
+        "📢 Choose one connected private channel, not a group, "
+        "to receive channel Stars.",
+    ),
+    "Disable and revoke the channel subscription link before retiring Stars price": (
         "⏸️ Перед отключением цены необходимо отозвать "
         "платную ссылку канала. Используйте кнопку паузы "
         "в разделе Telegram Stars.",
-    "The subscription plan is no longer active":
+        "⏸️ Revoke the channel's paid invite first. "
+        "Use Pause in Telegram Stars to do this safely.",
+    ),
+    "The subscription plan is no longer active": (
         "Этот тариф больше не активен. Обновите список.",
+        "This plan is no longer active. Refresh the list.",
+    ),
 }
 
 
@@ -214,8 +225,8 @@ def _price_error(message: str) -> str | None:
 
 def owner_error(message: str) -> str:
     """Preserve safe, already localized errors; redact unknown English exceptions."""
-    if message in _NATIVE_STARS_EN_RU:
-        return tr(_NATIVE_STARS_EN_RU[message], message)
+    if message in _NATIVE_STARS_LOCALE:
+        return tr(*_NATIVE_STARS_LOCALE[message])
     price_message = _price_error(message)
     if price_message is not None:
         return price_message
