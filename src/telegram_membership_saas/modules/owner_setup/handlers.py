@@ -8266,78 +8266,101 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id,
                     expected_step="stars_native_confirm",
                     generation=generation, bot_scope_id=bot.id,
-                    discard=True,
+                    discard=False,
                 )
-                if flow.project_id != project_id or (
-                    flow.payload.get("mode") != "channel"
-                ):
-                    raise PermissionError(tr(
-                        "Подтверждение относится к другому боту.",
-                        "Confirmation belongs to another bot.",
-                    ))
-                amount = flow.payload.get("stars")
-                if (
-                    not isinstance(amount, int)
-                    or isinstance(amount, bool)
-                    or not 1 <= amount <= 10000
-                ):
-                    raise ValueError("Invalid channel Stars amount")
-                resource_id = UUID(hex=flow.payload["resource_id"])
-                chat_id = await native_stars_setup_chat(
-                    factory, actor_id=actor_id, project_id=project_id,
-                    resource_id=resource_id, telegram_bot_id=bot.id,
-                )
-                await ensure_private_stars_channel(bot, chat_id)
-                invite = await bot.create_chat_subscription_invite_link(
-                    chat_id=chat_id, name="ViMi Pay",
-                    subscription_period=NATIVE_PERIOD_SECONDS,
-                    subscription_price=amount,
-                )
-                url = getattr(invite, "invite_link", "")
-                if (
-                    not isinstance(url, str)
-                    or not url.startswith(
-                        ("https://t.me/+", "https://t.me/joinchat/")
+                # The generation is left reusable only on a recoverable
+                # failure. Text cannot consume this button-only step.
+                try:
+                    if flow.project_id != project_id or (
+                        flow.payload.get("mode") != "channel"
+                    ):
+                        raise PermissionError(tr(
+                            "Подтверждение относится к другому боту.",
+                            "Confirmation belongs to another bot.",
+                        ))
+                    amount = flow.payload.get("stars")
+                    if (
+                        not isinstance(amount, int)
+                        or isinstance(amount, bool)
+                        or not 1 <= amount <= 10000
+                    ):
+                        raise ValueError("Invalid channel Stars amount")
+                    resource_id = UUID(hex=flow.payload["resource_id"])
+                    chat_id = await native_stars_setup_chat(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        resource_id=resource_id, telegram_bot_id=bot.id,
                     )
-                    or invite.subscription_price != amount
-                    or invite.subscription_period != NATIVE_PERIOD_SECONDS
-                ):
-                    if isinstance(url, str) and url.startswith("https://t.me/"):
+                    await ensure_private_stars_channel(bot, chat_id)
+                    invite = await bot.create_chat_subscription_invite_link(
+                        chat_id=chat_id, name="ViMi Pay",
+                        subscription_period=NATIVE_PERIOD_SECONDS,
+                        subscription_price=amount,
+                    )
+                    url = getattr(invite, "invite_link", "")
+                    if (
+                        not isinstance(url, str)
+                        or not url.startswith(
+                            ("https://t.me/+", "https://t.me/joinchat/")
+                        )
+                        or invite.subscription_price != amount
+                        or invite.subscription_period != NATIVE_PERIOD_SECONDS
+                    ):
+                        if isinstance(url, str) and url.startswith("https://t.me/"):
+                            try:
+                                await bot.revoke_chat_invite_link(chat_id, url)
+                            except AiogramError:
+                                logging.getLogger(__name__).exception(
+                                    "Unexpected native Stars invite cleanup failed"
+                                )
+                        raise ValueError(tr(
+                            "Telegram не подтвердил параметры платной ссылки.",
+                            "Telegram did not confirm the paid link parameters.",
+                        ))
+                    try:
+                        await create_one_month_stars_plan(
+                            factory, actor_id=actor_id, project_id=project_id,
+                            resource_id=resource_id, stars_amount=str(amount),
+                            native_invite_link=url, native_bot_id=bot.id,
+                            native_chat_id=chat_id,
+                        )
+                    except Exception:
                         try:
                             await bot.revoke_chat_invite_link(chat_id, url)
                         except AiogramError:
                             logging.getLogger(__name__).exception(
-                                "Unexpected native Stars invite cleanup failed"
+                                "Orphan native Stars invite could not be revoked"
                             )
-                    raise ValueError(tr(
-                        "Telegram не подтвердил параметры платной ссылки.",
-                        "Telegram did not confirm the paid link parameters.",
-                    ))
-                try:
-                    await create_one_month_stars_plan(
-                        factory, actor_id=actor_id, project_id=project_id,
-                        resource_id=resource_id, stars_amount=str(amount),
-                        native_invite_link=url, native_bot_id=bot.id,
-                        native_chat_id=chat_id,
-                    )
+                            await bot.send_message(
+                                user_id, tr(
+                                    "⚠️ Тариф не сохранён, но Telegram не "
+                                    "подтвердил отзыв платной ссылки. "
+                                    "Отзовите её в настройках канала:",
+                                    "⚠️ The plan was not saved and Telegram "
+                                    "could not revoke the paid link. "
+                                    "Revoke it in the channel settings:",
+                                ) + "\n" + escape(url),
+                                parse_mode="HTML",
+                            )
+                        raise
                 except Exception:
+                    # Do not strand Back / Create paid link after a temporary
+                    # Telegram error or a rolled-back DB transaction.
                     try:
-                        await bot.revoke_chat_invite_link(chat_id, url)
-                    except AiogramError:
-                        logging.getLogger(__name__).exception(
-                            "Orphan native Stars invite could not be revoked"
+                        regenerated = await advance_flow(
+                            factory, actor_id=actor_id, source=flow,
+                            step="stars_native_confirm",
+                            payload=flow.payload, bot_scope_id=bot.id,
                         )
-                        await bot.send_message(
-                            user_id, tr(
-                                "⚠️ Тариф не сохранён, но Telegram не "
-                                "подтвердил отзыв платной ссылки. "
-                                "Отзовите её в настройках канала:",
-                                "⚠️ The plan was not saved and Telegram "
-                                "could not revoke the paid link. "
-                                "Revoke it in the channel settings:",
-                            ) + "\n" + escape(url),
-                            parse_mode="HTML",
-                        )
+                        prompt_id = getattr(query.message, "message_id", None)
+                        if isinstance(prompt_id, int):
+                            await bind_prompt(
+                                factory, actor_id=actor_id,
+                                step="stars_native_confirm",
+                                message_id=prompt_id, generation=regenerated,
+                                bot_scope_id=bot.id,
+                            )
+                    except (ValueError, PermissionError):
+                        pass  # A different, newer wizard won the race.
                     raise
                 await show_stars_setup_success(
                     bot, user_id, mode="channel", amount=amount,
