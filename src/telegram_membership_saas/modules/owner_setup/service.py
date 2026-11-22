@@ -460,6 +460,43 @@ async def consume_button_flow(
         return flow
 
 
+async def restore_button_flow(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, source: SetupFlow, bot_scope_id: int = 0,
+) -> None:
+    """Restore a failed button-only attempt without changing its callbacks.
+
+    The original confirmation card still contains source.generation in its
+    buttons. Reusing it is safe ONLY when the owner, project, bot scope,
+    generation, TTL and inactive consumed step all match under the row lock.
+    Do not permit a newer or cancelled flow to be revived.
+    """
+    if (
+        source.step != "stars_native_confirm"
+        or source.generation is None
+        or source.project_id is None
+        or source.prompt_message_id is None
+    ):
+        raise ValueError("Это подтверждение уже недоступно")
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id),
+    ) as session:
+        state = await _current_session(session, actor_id, bot_scope_id)
+        if (
+            state.step is not None
+            or state.selected_project_id != source.project_id
+            or state.generation != source.generation
+            or state.expires_at <= datetime.now(UTC)
+        ):
+            raise ValueError("Подтверждение устарело. Откройте раздел заново.")
+        await _require_project_manager(
+            session, project_id=source.project_id, actor_user_id=actor_id,
+        )
+        state.step = source.step
+        state.payload = dict(source.payload)
+        state.prompt_message_id = source.prompt_message_id
+
+
 async def advance_flow(
     factory: async_sessionmaker[AsyncSession], *,
     actor_id: UUID,
