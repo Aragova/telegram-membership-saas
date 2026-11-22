@@ -198,7 +198,9 @@ async def test_completion_replaces_instruction_with_one_success_list(monkeypatch
     create = AsyncMock()
     monkeypatch.setattr(ui, "create_owner_payment_method", create)
     monkeypatch.setattr(ui, "list_owner_methods", AsyncMock(return_value=[]))
-    monkeypatch.setattr(ui, "initial_setup_active", AsyncMock(return_value=False))
+    monkeypatch.setattr(ui, "setup_overview", AsyncMock(return_value=SimpleNamespace(
+        bot_instances=(), sales_configured=False,
+    )))
     replace = AsyncMock(return_value=SimpleNamespace(message_id=61))
     monkeypatch.setattr(ui, "replace_owner_rich", replace)
     msg = SimpleNamespace(
