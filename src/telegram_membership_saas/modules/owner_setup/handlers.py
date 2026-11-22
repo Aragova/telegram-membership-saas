@@ -3276,9 +3276,17 @@ def create_owner_setup_router(
         if fixed_project_id is None:
             return False
         if data is None:
-            data = await setup_overview(
-                factory, actor_id=actor_id, project_id=project_id,
-            )
+            try:
+                data = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+            except Exception:
+                # A missing status read must not break the normal payment
+                # menu. It simply cannot claim first-run guided state.
+                logging.getLogger(__name__).warning(
+                    "ViMi Pay initial setup overview unavailable"
+                )
+                return False
         if not any(status == "registered" for _, _, status in data.bot_instances):
             return False
         try:
