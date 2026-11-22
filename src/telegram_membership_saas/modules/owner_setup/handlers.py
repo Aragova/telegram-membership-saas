@@ -8716,6 +8716,7 @@ def create_owner_setup_router(
                             ),
                             reply_markup=markup,
                         )
+                        await query.answer()
                         return
                 paused, link = await pause_owner_stars_price(
                     factory, actor_id=actor_id, project_id=project_id,
