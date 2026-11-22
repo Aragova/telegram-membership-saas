@@ -1151,6 +1151,7 @@ def create_owner_setup_router(
 
     async def show_dashboard(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None,
     ) -> None:
         data = await setup_overview(
             factory, actor_id=actor_id, project_id=project_id,
@@ -1342,7 +1343,8 @@ def create_owner_setup_router(
             if profile is not None and profile.get("currency_selected") is False:
                 if next_step is None:
                     await show_setup_completion(
-                        bot, user_id, actor_id, project_id, overview=data,
+                        bot, user_id, actor_id, project_id,
+                        source_message_id=source_message_id, overview=data,
                     )
                     return
                 label, action = next_step
@@ -1360,8 +1362,15 @@ def create_owner_setup_router(
                     "methods:guided" if action == "methods" else action,
                     wizard_primary_style(action),
                 )]]
-                await send_owner_rich(
+                render = (
+                    send_owner_rich if source_message_id is None
+                    else replace_owner_rich
+                )
+                await render(
                     bot, chat_id=user_id,
+                    **({} if source_message_id is None else {
+                        "message_id": source_message_id,
+                    }),
                     rich_html=owner_setup_step_rich(
                         bot_name=bot_name, timezone=data.timezone,
                         action=action,
@@ -1444,9 +1453,17 @@ def create_owner_setup_router(
                 ],
             ])
         if fixed_project_id is not None:
-            await send_owner_rich(
-                bot, chat_id=user_id, rich_html=rich_html,
-                classic_html=text, reply_markup=_markup(rows),
+            render = (
+                send_owner_rich if source_message_id is None
+                else replace_owner_rich
+            )
+            await render(
+                bot, chat_id=user_id,
+                **({} if source_message_id is None else {
+                    "message_id": source_message_id,
+                }),
+                rich_html=rich_html, classic_html=text,
+                reply_markup=_markup(rows),
             )
 
     async def show_settings(
@@ -1475,6 +1492,7 @@ def create_owner_setup_router(
 
     async def show_saas_service_profile(
         bot: Bot, user_id: int, actor_id: UUID,
+        *, source_message_id: int | None = None,
     ) -> None:
         """Only each connected bot selects its own future service currency."""
         if fixed_project_id is None:
@@ -1558,8 +1576,15 @@ def create_owner_setup_router(
             "💱 4/4 · Choose service currency" if first_choice
             else "💱 Service currency",
         )
-        await send_owner_rich(
+        render = (
+            send_owner_rich if source_message_id is None
+            else replace_owner_rich
+        )
+        await render(
             bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
             rich_html=(
                 "<h3>" + heading + "</h3>"
                 "<table bordered compact>"
@@ -6175,7 +6200,12 @@ def create_owner_setup_router(
                 await query.answer()
                 return
             if action == "saasprofile":
-                await show_saas_service_profile(bot, user_id, actor_id)
+                await show_saas_service_profile(
+                    bot, user_id, actor_id,
+                    source_message_id=getattr(
+                        query.message, "message_id", None,
+                    ) if fixed_project_id is not None else None,
+                )
                 await query.answer()
                 return
             if action.startswith("saasprice:"):
@@ -6219,9 +6249,17 @@ def create_owner_setup_router(
                 if was_initial:
                     await show_dashboard(
                         bot, user_id, actor_id, fixed_project_id,
+                        source_message_id=getattr(
+                            query.message, "message_id", None,
+                        ),
                     )
                 else:
-                    await show_saas_service_profile(bot, user_id, actor_id)
+                    await show_saas_service_profile(
+                        bot, user_id, actor_id,
+                        source_message_id=getattr(
+                            query.message, "message_id", None,
+                        ),
+                    )
                 await query.answer(tr(
                     "✅ Валюта обслуживания выбрана.",
                     "✅ Service currency selected.",
@@ -7051,7 +7089,12 @@ def create_owner_setup_router(
             elif action == "settings":
                 await show_settings(bot, user_id)
             elif action == "dashboard":
-                await show_dashboard(bot, user_id, actor_id, project_id)
+                await show_dashboard(
+                    bot, user_id, actor_id, project_id,
+                    source_message_id=getattr(
+                        query.message, "message_id", None,
+                    ) if fixed_project_id is not None else None,
+                )
             elif action == "setupback2":
                 if fixed_project_id != project_id:
                     raise PermissionError("Open the connected administrator bot")
