@@ -121,7 +121,7 @@ async def test_priority_handler_deletes_token_before_authentication_and_never_ec
     bot.send_message = AsyncMock()
     router = crypto.create_crypto_secret_router(MagicMock(), project_id=project)
     await _router_handler(router)(_message(), bot)
-    assert called == ["deleted", "read", "connected", "consumed"]
+    assert called == ["deleted", "read", "connected", "consumed", "deleted"]
     assert "123456:" not in str(bot.send_message.await_args_list)
 
 
@@ -194,7 +194,7 @@ async def test_quoted_padded_merchant_secret_is_deleted_before_connect(
     await _router_handler(
         crypto.create_crypto_secret_router(MagicMock(), project_id=project),
     )(message, bot)
-    bot.delete_message.assert_awaited_once()
+    assert bot.delete_message.await_count == 2
     assert connected.await_args.kwargs["api_token"] == pasted.strip()
     assert pasted.strip() not in str(bot.send_message.await_args_list)
 
