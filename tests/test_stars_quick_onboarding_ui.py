@@ -190,7 +190,9 @@ async def test_native_link_confirmation_creates_plan_and_no_duplicate_cards(
         ),
     )
     bot.revoke_chat_invite_link = AsyncMock()
-    await _callback(project)(_query("starsnativecreate:confirmed"), bot)
+    query = _query("starsnativecreate:confirmed")
+    query.message.message_id = 400
+    await _callback(project)(query, bot)
     save.assert_awaited_once()
     assert save.await_args.kwargs["resource_id"] == resource
     assert save.await_args.kwargs["native_chat_id"] == -100123456
