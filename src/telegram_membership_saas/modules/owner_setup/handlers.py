@@ -8790,10 +8790,10 @@ def create_owner_setup_router(
                             bot, chat_id=user_id,
                             message_id=getattr(query.message, "message_id", None),
                             rich_html=native_confirm_rich(
-                                stars=target.amount,
+                                stars=target.amount, already_published=True,
                             ) + RICH_ACTIONS_MARKER,
                             classic_html=native_confirm_classic(
-                                stars=target.amount,
+                                stars=target.amount, already_published=True,
                             ),
                             reply_markup=_markup([
                                 [_button(
