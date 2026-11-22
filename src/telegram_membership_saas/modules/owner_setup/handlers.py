@@ -269,15 +269,32 @@ from telegram_membership_saas.modules.owner_setup.service import (
     ensure_telegram_actor,
     get_selected_project,
     is_expected_prompt,
+    list_native_stars_setup_channels,
+    native_stars_setup_chat,
     owner_available_currencies,
     owner_home,
     publish_owner_plan,
     register_new_owner_bot,
+    restore_button_flow,
     save_owner_price,
     set_default_project_name_from_bot,
     set_flow,
     setup_overview,
     verify_channel_and_add,
+)
+from telegram_membership_saas.modules.owner_setup.stars_owner_ui import (
+    channel_picker_classic,
+    channel_picker_rich,
+    native_confirm_classic,
+    native_confirm_rich,
+    overview_classic,
+    overview_rich,
+    price_classic,
+    price_rich,
+    recipient_classic,
+    recipient_rich,
+    success_classic,
+    success_rich,
 )
 from telegram_membership_saas.modules.owner_setup.statistics import read_owner_statistics
 from telegram_membership_saas.modules.owner_setup.subscribers import (
@@ -762,6 +779,8 @@ class ClearOwnerInputOnNavigation(BaseMiddleware):
                 # Managed bot confirmation must retain the staged candidate
                 # and generation until atomic registration consumes them.
                 "own:managedconfirm:", "own:managedcancel:",
+                # Native Stars confirmation is an in-progress button wizard.
+                "own:starsnativecreate:",
                 "own:promptback:", "own:promptcancel:",
             ))
             and bot is not None
@@ -3834,9 +3853,9 @@ def create_owner_setup_router(
 
     async def show_stars_payments(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
-        *, page: int = 0,
+        *, page: int = 0, source_message_id: int | None = None,
     ) -> None:
-        """One native payment method screen. XTR historical prices stay intact."""
+        """Compact Rich screen; preserve existing plan settings and pricing."""
         if not 0 <= page <= 10000:
             raise ValueError("Invalid Telegram Stars page")
         overview = await setup_overview(
@@ -3848,37 +3867,13 @@ def create_owner_setup_router(
         )
         page_size = 8
         current = plans[page * page_size:(page + 1) * page_size]
-        lines = [
-            "⭐ <b>Telegram Stars</b>",
-            tr(
-                "Нативная оплата Telegram, без банковских реквизитов.",
-                "Native Telegram payments, without bank instructions.",
-            ),
-            tr(
-                "Настройте цену в звёздах для нужных тарифов или отключите "
-                "новые покупки. Прошлые платежи и подписки сохраняются.",
-                "Set a Stars price for each plan or disable new purchases. "
-                "Previous payments and subscriptions are preserved.",
-            ),
-            "",
-        ]
+        entries: list[tuple[str, str, str]] = []
         rows: list[list[InlineKeyboardButton]] = []
         if not plans:
-            lines.append(tr(
-                "📦 Тарифов пока нет.\n\n"
-                "Создайте первый тариф на <b>1 месяц</b> с оплатой ⭐ Stars. "
-                "Цену вы укажете сами. После сохранения тариф будет опубликован.",
-                "📦 No plans yet.\n\n"
-                "Create your first <b>1-month</b> plan with ⭐ Stars. "
-                "You set the price; the plan is published after saving.",
-            ))
             rows.append([_button(
-                tr("✨ Создать тариф на 1 месяц", "✨ Create 1-month plan"),
+                tr("✨ Создать тариф", "✨ Create a plan"),
                 "starsnew", "success",
             )])
-        elif not current:
-            lines.append(tr("На этой странице тарифов нет.",
-                            "No plans on this page."))
         for plan_id, plan_name, plan_status in current:
             info = await get_owner_plan_info(
                 factory, actor_id=actor_id, project_id=project_id,
@@ -3890,19 +3885,18 @@ def create_owner_setup_router(
             )
             price_label = (
                 format_amount(stars_price.amount, stars_price.precision) + " ⭐"
-                if stars_price is not None
-                else tr("не настроено", "not configured")
+                if stars_price is not None else tr("нет цены", "no price")
             )
             native_active = bool(
                 stars_price is not None and stars_price.native_stars_active
             )
             name = plan_name or tr("Без названия", "Unnamed")
-            lines.append(
-                "• <b>" + escape(name) + "</b> · "
-                + escape(price_label) + " · " + _status(plan_status)
-                + (" · " + tr("⭐ Баланс канала", "⭐ Channel balance")
-                   if native_active else "")
+            recipient = (
+                tr("📢 Канал", "📢 Channel") if native_active
+                else tr("🤖 Бот", "🤖 Bot")
             )
+            entries.append((name, price_label, recipient + " · "
+                            + _status(plan_status)))
             row = [_button(
                 "⚙️ " + name[:30],
                 "starsprice:" + plan_id.hex + ":" + str(page),
@@ -3919,7 +3913,7 @@ def create_owner_setup_router(
                 rows.append([_button(
                     tr("↩️ Вернуть оплату боту", "↩️ Return Stars to bot")
                     if native_active else
-                    tr("⭐ На баланс канала", "⭐ To channel balance"),
+                    tr("📢 На баланс канала", "📢 To channel balance"),
                     ("starsnativeoff:" if native_active else "starsnative:")
                     + plan_id.hex + ":" + str(page),
                     "success" if not native_active else "danger",
@@ -3932,35 +3926,246 @@ def create_owner_setup_router(
         if nav:
             rows.append(nav)
         rows.append([_button(
-            tr("⬅️ Способы оплаты", "⬅️ Payment methods"), "methods",
+            tr("⬅️ Способы оплаты", "⬅️ Payment methods"),
+            "methods", "primary",
         )])
-        await bot.send_message(
-            user_id, "\n".join(lines), parse_mode="HTML",
+        renderer = (
+            send_owner_rich if source_message_id is None
+            else replace_owner_rich
+        )
+        await renderer(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
+            rich_html=overview_rich(plans=entries) + RICH_ACTIONS_MARKER,
+            classic_html=overview_classic(plans=entries),
             reply_markup=_markup(rows),
         )
 
+    async def show_stars_recipient(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, source_message_id: int | None = None,
+    ) -> None:
+        overview = await setup_overview(
+            factory, actor_id=actor_id, project_id=project_id,
+        )
+        if overview.plans:
+            await show_stars_payments(
+                bot, user_id, actor_id, project_id,
+                source_message_id=source_message_id,
+            )
+            return
+        rows = [
+            [_button(tr("🤖 Получать на баланс бота",
+                        "🤖 Receive to bot balance"),
+                     "starsmode:bot", "success")],
+            [_button(tr("📢 Получать на баланс канала",
+                        "📢 Receive to channel balance"),
+                     "starsmode:channel", "primary")],
+            [_button(tr("⬅️ Назад", "⬅️ Back"),
+                     "starspage:0", "primary")],
+        ]
+        render = (
+            send_owner_rich if source_message_id is None
+            else replace_owner_rich
+        )
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
+            rich_html=recipient_rich() + RICH_ACTIONS_MARKER,
+            classic_html=recipient_classic(),
+            reply_markup=_markup(rows),
+        )
+
+    async def show_stars_channel_picker(
+        bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
+        *, mode: str, source_message_id: int | None = None,
+    ) -> None:
+        if mode not in ("bot", "channel"):
+            raise ValueError("Invalid Stars recipient")
+        if mode == "channel":
+            resources = list(await list_native_stars_setup_channels(
+                factory, actor_id=actor_id, project_id=project_id,
+                telegram_bot_id=bot.id,
+            ))
+        else:
+            overview = await setup_overview(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+            resources = [
+                (rid, name) for rid, name, status in overview.resources
+                if status == "active"
+            ]
+        if not resources:
+            rich = channel_picker_rich(mode=mode)
+            classic = channel_picker_classic(mode=mode)
+            if mode == "channel":
+                detail = tr(
+                    "⚠️ Нет подключённых каналов. Для этого способа "
+                    "нужен приватный Telegram-канал. Группы не подходят.",
+                    "⚠️ No channels connected. This method requires "
+                    "a private Telegram channel, not a group.",
+                )
+            else:
+                detail = tr(
+                    "⚠️ Сначала подключите канал или группу.",
+                    "⚠️ Connect a channel or group first.",
+                )
+            rows = [[_button(
+                tr("⬅️ Выбор получателя", "⬅️ Recipient choice"),
+                "starsnew", "primary",
+            )]]
+            rich += "<p>" + detail + "</p>"
+            classic += "\n\n" + detail
+        else:
+            rich = channel_picker_rich(mode=mode)
+            classic = channel_picker_classic(mode=mode)
+            rows = [[_button(
+                "📢 " + name[:38],
+                "starsselect:" + mode + ":" + rid.hex,
+                "success" if i == 0 else "primary",
+            )] for i, (rid, name) in enumerate(resources)]
+            rows.append([_button(
+                tr("⬅️ Назад", "⬅️ Back"),
+                "starsnew", "primary",
+            )])
+        render = (
+            send_owner_rich if source_message_id is None
+            else replace_owner_rich
+        )
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
+            rich_html=rich + RICH_ACTIONS_MARKER,
+            classic_html=classic,
+            reply_markup=_markup(rows),
+        )
+
+    async def ensure_private_stars_channel(bot: Bot, chat_id: int) -> None:
+        """Live Bot API check before creating a new paid invitation."""
+        try:
+            chat = await bot.get_chat(chat_id)
+        except AiogramError as exc:
+            raise ValueError(tr(
+                "Не удалось проверить канал в Telegram. "
+                "Попробуйте снова позже.",
+                "Could not verify the channel in Telegram. Try again later.",
+            )) from exc
+        chat_type = getattr(
+            getattr(chat, "type", None), "value", getattr(chat, "type", None),
+        )
+        if chat_type != "channel":
+            raise ValueError(tr(
+                "На баланс канала можно принимать ⭐ только "
+                "в приватном Telegram-канале, не группе.",
+                "Channel Stars require a private Telegram channel, not a group.",
+            ))
+        if getattr(chat, "username", None):
+            raise ValueError(tr(
+                "Платные приглашения работают только для приватных каналов. "
+                "Сделайте канал приватным или выберите баланс бота.",
+                "Paid invitations require a private channel. "
+                "Make it private or choose bot balance.",
+            ))
+        try:
+            admin = await bot.get_chat_member(chat_id, bot.id)
+        except AiogramError as exc:
+            raise ValueError(tr(
+                "Не удалось проверить права бота в Telegram. "
+                "Попробуйте ещё раз.",
+                "Could not check bot permissions in Telegram. Try again.",
+            )) from exc
+        status = getattr(
+            getattr(admin, "status", None),
+            "value", getattr(admin, "status", None),
+        )
+        if status not in ("administrator", "creator") or (
+            status != "creator" and not getattr(
+                admin, "can_invite_users", False,
+            )
+        ):
+            raise ValueError(tr(
+                "Выдайте подключённому боту права администратора "
+                "на приглашение пользователей в этот канал.",
+                "Allow the connected bot to invite users as "
+                "a channel administrator.",
+            ))
+
     async def prompt_first_stars_month(
         bot: Bot, user_id: int, actor_id: UUID, resource_id: UUID,
-        *, source_flow: SetupFlow | None = None, retry: bool = False,
+        *, mode: str = "bot", source_flow: SetupFlow | None = None,
+        retry: bool = False,
     ) -> None:
-        warning = (
-            tr("⚠️ Цена должна быть целым числом от 1 до 250000.\n\n",
-               "⚠️ Enter a whole number between 1 and 250000.\n\n")
-            if retry else ""
-        )
+        if mode not in ("bot", "channel"):
+            raise ValueError("Invalid Stars recipient")
         await prompt(
             bot, user_id, actor_id,
             step="stars_month_price",
             source_flow=source_flow,
-            payload={"resource_id": resource_id.hex},
-            text=warning + tr(
-                "⭐ <b>Тариф «1 месяц»</b>\n\n"
-                "Введите цену подписки в звёздах: целое число от 1 до 250000. "
-                "После сохранения тариф автоматически появится в продаже.",
-                "⭐ <b>1-month plan</b>\n\n"
-                "Enter a whole number of Stars from 1 to 250000. "
-                "Saving will publish the plan automatically.",
-            ),
+            payload={"resource_id": resource_id.hex, "mode": mode},
+            text=price_classic(mode=mode, warning=retry),
+            rich_html=price_rich(mode=mode, warning=retry)
+            + RICH_ACTIONS_MARKER,
+            show_main_menu=False,
+        )
+
+    async def show_stars_native_confirmation(
+        bot: Bot, user_id: int, actor_id: UUID, *,
+        source_flow: SetupFlow, amount: int,
+    ) -> None:
+        generation = await advance_flow(
+            factory, actor_id=actor_id, source=source_flow,
+            step="stars_native_confirm",
+            payload={
+                "resource_id": source_flow.payload["resource_id"],
+                "mode": "channel", "stars": amount,
+            },
+            bot_scope_id=bot.id,
+        )
+        rows = [
+            [_button(tr("✅ Создать платную ссылку", "✅ Create paid link"),
+                     "starsnativecreate:" + generation, "success")],
+            [_button(tr("⬅️ Назад", "⬅️ Back"),
+                     "promptback:" + generation, "primary")],
+        ]
+        sent = await send_owner_rich(
+            bot, chat_id=user_id,
+            rich_html=native_confirm_rich(stars=amount) + RICH_ACTIONS_MARKER,
+            classic_html=native_confirm_classic(stars=amount),
+            reply_markup=_markup(rows),
+        )
+        await bind_prompt(
+            factory, actor_id=actor_id, step="stars_native_confirm",
+            message_id=sent.message_id, generation=generation,
+            bot_scope_id=bot.id,
+        )
+
+    async def show_stars_setup_success(
+        bot: Bot, user_id: int, *, mode: str, amount: int,
+        source_message_id: int | None = None,
+    ) -> None:
+        rows = [[_button(
+            tr("⭐ Мои тарифы Stars", "⭐ My Stars plans"),
+            "starspage:0", "success",
+        )]]
+        render = (
+            send_owner_rich if source_message_id is None
+            else replace_owner_rich
+        )
+        await render(
+            bot, chat_id=user_id,
+            **({} if source_message_id is None else {
+                "message_id": source_message_id,
+            }),
+            rich_html=success_rich(mode=mode, stars=amount)
+            + RICH_ACTIONS_MARKER,
+            classic_html=success_classic(mode=mode, stars=amount),
+            reply_markup=_markup(rows),
         )
 
     async def show_crypto_pay(
@@ -4775,6 +4980,22 @@ def create_owner_setup_router(
             )
         elif prior.step in ("method_name", "method_instruction"):
             await show_methods(bot, user_id, actor_id, project_id)
+        elif prior.step in ("stars_month_price", "stars_native_confirm"):
+            # Back from price or link confirmation is never Main menu.
+            # The previous prompt is retired only after the next is sent.
+            if prior.step == "stars_native_confirm":
+                await prompt_first_stars_month(
+                    bot, user_id, actor_id,
+                    UUID(hex=prior.payload["resource_id"]), mode="channel",
+                )
+            else:
+                await show_stars_recipient(
+                    bot, user_id, actor_id, project_id,
+                )
+            if prior.prompt_message_id is not None:
+                await retire_crypto_owner_card(
+                    bot, user_id, prior.prompt_message_id,
+                )
         elif prior.step == "crypto_pay_token":
             # Back returns to the environment choice, not past it.
             await show_crypto_network_selector(
@@ -7969,99 +8190,188 @@ def create_owner_setup_router(
                     source_message_id=getattr(query.message, "message_id", None)
                     if fixed_project_id is not None else None,
                 )
-            elif action == "starsnew":
-                overview = await setup_overview(
-                    factory, actor_id=actor_id, project_id=project_id,
+            elif action in ("starsnew", "starsnewok") or action.startswith(
+                "starsnewres:"
+            ):
+                # Legacy callbacks never skip the recipient choice.
+                await show_stars_recipient(
+                    bot, user_id, actor_id, project_id,
+                    source_message_id=getattr(query.message, "message_id", None),
                 )
-                if overview.plans:
-                    await show_stars_payments(
-                        bot, user_id, actor_id, project_id,
+            elif action in ("starsmode:bot", "starsmode:channel"):
+                mode = action.split(":", 1)[1]
+                if mode == "channel":
+                    resources = await list_native_stars_setup_channels(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        telegram_bot_id=bot.id,
                     )
                 else:
-                    await bot.send_message(
-                        user_id,
-                        tr(
-                            "⭐ <b>Создать тариф на 1 месяц?</b>\n\n"
-                            "После ввода вашей цены в звёздах ViMi Pay "
-                            "создаст тариф, привяжет его к каналу "
-                            "и включит для новых покупок. "
-                            "До ввода цены ничего не создаётся.",
-                            "⭐ <b>Create a 1-month plan?</b>\n\n"
-                            "Once you enter your Stars price, ViMi Pay "
-                            "will create the plan, link it to a channel, "
-                            "and enable new purchases. Nothing is "
-                            "created until you enter the price.",
-                        ),
-                        parse_mode="HTML",
-                        reply_markup=_markup([
-                            [_button(
-                                tr("✅ Продолжить", "✅ Continue"),
-                                "starsnewok", "success",
-                            )],
-                            [_button(
-                                tr("⬅️ Отмена", "⬅️ Cancel"), "starspage:0",
-                            )],
-                        ]),
+                    overview = await setup_overview(
+                        factory, actor_id=actor_id, project_id=project_id,
                     )
-            elif action == "starsnewok" or action.startswith("starsnewres:"):
-                overview = await setup_overview(
-                    factory, actor_id=actor_id, project_id=project_id,
-                )
-                if overview.plans:
-                    await show_stars_payments(
-                        bot, user_id, actor_id, project_id,
-                    )
-                else:
                     resources = [
                         (rid, name) for rid, name, status in overview.resources
                         if status == "active"
                     ]
-                    if not resources:
-                        await bot.send_message(
-                            user_id, tr(
-                                "📢 Сначала подключите канал для этого тарифа.",
-                                "📢 Connect a channel before creating a plan.",
-                            ),
-                            reply_markup=_markup([[_button(
-                                tr("📢 Подключить канал", "📢 Connect channel"),
-                                "resources", "success",
-                            )], [_button(
-                                tr("⬅️ Назад", "⬅️ Back"), "starspage:0",
-                            )]]),
+                if len(resources) != 1:
+                    await show_stars_channel_picker(
+                        bot, user_id, actor_id, project_id, mode=mode,
+                        source_message_id=getattr(
+                            query.message, "message_id", None,
+                        ),
+                    )
+                else:
+                    selected = resources[0][0]
+                    if mode == "channel":
+                        chat_id = await native_stars_setup_chat(
+                            factory, actor_id=actor_id, project_id=project_id,
+                            resource_id=selected, telegram_bot_id=bot.id,
                         )
-                    elif action == "starsnewok" and len(resources) > 1:
-                        await bot.send_message(
-                            user_id,
-                            tr("📢 Какой канал откроет тариф на 1 месяц?",
-                               "📢 Which channel will the 1-month plan unlock?"),
-                            reply_markup=_markup([
-                                [_button(
-                                    "📢 " + name[:38], "starsnewres:" + rid.hex,
-                                )] for rid, name in resources
-                            ] + [[_button(
-                                tr("⬅️ Назад", "⬅️ Back"), "starspage:0",
-                            )]]),
+                        await ensure_private_stars_channel(bot, chat_id)
+                    await prompt_first_stars_month(
+                        bot, user_id, actor_id, selected, mode=mode,
+                    )
+                    old_id = getattr(query.message, "message_id", None)
+                    if old_id is not None:
+                        await retire_crypto_owner_card(bot, user_id, old_id)
+            elif action.startswith("starsselect:"):
+                parts = action.split(":", 2)
+                if len(parts) != 3 or parts[1] not in ("bot", "channel"):
+                    raise ValueError("Invalid Stars selection")
+                _, mode, resource_hex = parts
+                resource_id = UUID(hex=resource_hex)
+                overview = await setup_overview(
+                    factory, actor_id=actor_id, project_id=project_id,
+                )
+                if overview.plans or resource_id not in {
+                    rid for rid, _, status in overview.resources
+                    if status == "active"
+                }:
+                    raise ValueError(tr(
+                        "Выбор устарел. Откройте Telegram Stars заново.",
+                        "Selection changed. Reopen Telegram Stars.",
+                    ))
+                if mode == "channel":
+                    chat_id = await native_stars_setup_chat(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        resource_id=resource_id, telegram_bot_id=bot.id,
+                    )
+                    await ensure_private_stars_channel(bot, chat_id)
+                await prompt_first_stars_month(
+                    bot, user_id, actor_id, resource_id, mode=mode,
+                )
+                old_id = getattr(query.message, "message_id", None)
+                if old_id is not None:
+                    await retire_crypto_owner_card(bot, user_id, old_id)
+            elif action.startswith("starsnativecreate:"):
+                generation = action.split(":", 1)[1]
+                flow = await consume_button_flow(
+                    factory, actor_id=actor_id,
+                    expected_step="stars_native_confirm",
+                    generation=generation, bot_scope_id=bot.id,
+                    discard=False,
+                )
+                # The generation is left reusable only on a recoverable
+                # failure. Text cannot consume this button-only step.
+                try:
+                    if flow.project_id != project_id or (
+                        flow.payload.get("mode") != "channel"
+                    ):
+                        raise PermissionError(tr(
+                            "Подтверждение относится к другому боту.",
+                            "Confirmation belongs to another bot.",
+                        ))
+                    amount = flow.payload.get("stars")
+                    if (
+                        not isinstance(amount, int)
+                        or isinstance(amount, bool)
+                        or not 1 <= amount <= 10000
+                    ):
+                        raise ValueError("Invalid channel Stars amount")
+                    resource_id = UUID(hex=flow.payload["resource_id"])
+                    chat_id = await native_stars_setup_chat(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        resource_id=resource_id, telegram_bot_id=bot.id,
+                    )
+                    await ensure_private_stars_channel(bot, chat_id)
+                    invite = await bot.create_chat_subscription_invite_link(
+                        chat_id=chat_id, name="ViMi Pay",
+                        subscription_period=NATIVE_PERIOD_SECONDS,
+                        subscription_price=amount,
+                    )
+                    url = getattr(invite, "invite_link", "")
+                    if (
+                        not isinstance(url, str)
+                        or not url.startswith(
+                            ("https://t.me/+", "https://t.me/joinchat/")
                         )
-                    else:
-                        selected = (
-                            UUID(hex=action.split(":", 1)[1])
-                            if action.startswith("starsnewres:")
-                            else resources[0][0]
+                        or invite.subscription_price != amount
+                        or invite.subscription_period != NATIVE_PERIOD_SECONDS
+                    ):
+                        if isinstance(url, str) and url.startswith("https://t.me/"):
+                            try:
+                                await bot.revoke_chat_invite_link(chat_id, url)
+                            except AiogramError:
+                                logging.getLogger(__name__).exception(
+                                    "Unexpected native Stars invite cleanup failed"
+                                )
+                        raise ValueError(tr(
+                            "Telegram не подтвердил параметры платной ссылки.",
+                            "Telegram did not confirm the paid link parameters.",
+                        ))
+                    try:
+                        await create_one_month_stars_plan(
+                            factory, actor_id=actor_id, project_id=project_id,
+                            resource_id=resource_id, stars_amount=str(amount),
+                            native_invite_link=url, native_bot_id=bot.id,
+                            native_chat_id=chat_id,
                         )
-                        if selected not in {rid for rid, _ in resources}:
-                            raise ValueError(tr(
-                                "Канал изменился. Выберите действующий канал.",
-                                "Channel changed. Select an active channel.",
-                            ))
-                        await prompt_first_stars_month(
-                            bot, user_id, actor_id, selected,
+                    except Exception:
+                        try:
+                            await bot.revoke_chat_invite_link(chat_id, url)
+                        except AiogramError:
+                            logging.getLogger(__name__).exception(
+                                "Orphan native Stars invite could not be revoked"
+                            )
+                            await bot.send_message(
+                                user_id, tr(
+                                    "⚠️ Тариф не сохранён, но Telegram не "
+                                    "подтвердил отзыв платной ссылки. "
+                                    "Отзовите её в настройках канала:",
+                                    "⚠️ The plan was not saved and Telegram "
+                                    "could not revoke the paid link. "
+                                    "Revoke it in the channel settings:",
+                                ) + "\n" + escape(url),
+                                parse_mode="HTML",
+                            )
+                        raise
+                except Exception:
+                    # Keep the ORIGINAL generation in Telegram's existing
+                    # confirm/Back buttons; do not leave stale buttons after
+                    # a temporary provider or database failure.
+                    try:
+                        await restore_button_flow(
+                            factory, actor_id=actor_id, source=flow,
+                            bot_scope_id=bot.id,
                         )
+                    except (ValueError, PermissionError):
+                        pass  # A newer or expired wizard cannot be revived.
+                    raise
+                await show_stars_setup_success(
+                    bot, user_id, mode="channel", amount=amount,
+                    source_message_id=getattr(
+                        query.message, "message_id", None,
+                    ),
+                )
             elif action.startswith("starspage:"):
                 page_token = action.split(":", 1)[1]
                 if not page_token.isascii() or not page_token.isdecimal():
                     raise ValueError("Invalid Stars page")
                 await show_stars_payments(
                     bot, user_id, actor_id, project_id, page=int(page_token),
+                    source_message_id=getattr(
+                        query.message, "message_id", None,
+                    ),
                 )
             elif action.startswith("starsprice:"):
                 _, plan_hex, page_token = action.split(":", 2)
@@ -8080,12 +8390,24 @@ def create_owner_setup_router(
                     },
                     text=tr(
                         "⭐ <b>Цена Telegram Stars</b>\n\n"
-                        "Введите целое число звёзд от 1 до 250000. "
-                        "Оно будет списано Telegram при покупке.",
+                        "➡️ Отправьте новую цену прямо сюда.\n"
+                        "Целое число от 1 до 250 000 ⭐.",
                         "⭐ <b>Telegram Stars price</b>\n\n"
-                        "Enter a whole number of Stars from 1 to 250000. "
-                        "Telegram will charge this amount for the purchase.",
+                        "➡️ Send the new price here.\n"
+                        "Whole number from 1 to 250,000 ⭐.",
                     ),
+                    rich_html=(
+                        "<h3>⭐ " + tr("Цена Telegram Stars",
+                                         "Telegram Stars price")
+                        + "</h3><p>➡️ " + tr(
+                            "Отправьте новую цену <b>прямо в этот чат</b>.",
+                            "Send the new price <b>right here in this chat</b>.",
+                        ) + "</p><p>"
+                        + tr("Целое число от 1 до 250 000 ⭐.",
+                             "Whole number from 1 to 250,000 ⭐.")
+                        + "</p>" + RICH_ACTIONS_MARKER
+                    ),
+                    show_main_menu=False,
                 )
             elif action.startswith("starsoff:"):
                 _, plan_hex, page_token = action.split(":", 2)
@@ -8134,15 +8456,11 @@ def create_owner_setup_router(
                                 "Price: <b>",
                             ) + str(target.amount) + " ⭐</b>\n\n"
                             + tr(
-                                "Звёзды получит канал, а не бот. "
-                                "Telegram управляет выдачей доступа и продлениями. "
-                                "ViMi Pay пока не видит транзакции баланса канала "
-                                "и не включает их в подтверждённую выручку и 5%.\n\n"
-                                "Подтвердить создание ссылки?",
-                                "Stars will go to the channel, not the bot. "
-                                "Telegram manages access and renewals. "
-                                "ViMi Pay cannot yet verify channel transactions "
-                                "and will not report them as confirmed 5% revenue.\n\n"
+                                "Звёзды поступят на баланс канала. "
+                                "Telegram будет управлять доступом и продлениями.\n\n"
+                                "Подтвердить создание платной ссылки?",
+                                "Stars will go to the channel balance. "
+                                "Telegram will manage access and renewals.\n\n"
                                 "Create the paid link?",
                             ),
                             parse_mode="HTML",
@@ -8640,7 +8958,7 @@ def create_owner_setup_router(
         # selection card after the new one exists. Do not apply this to
         # payment mutations, receipts, or arbitrary admin callbacks.
         if action == "newmethod" or action.startswith((
-            "starspage:", "method:", "cryptonet:",
+            "method:", "cryptonet:",
         )):
             old_id = getattr(query.message, "message_id", None)
             if (
@@ -9132,33 +9450,43 @@ def create_owner_setup_router(
                 else:
                     raise ValueError("Шаг выбора валюты устарел")
             elif flow.step == "stars_month_price":
+                mode = flow.payload.get("mode", "bot")
+                if mode not in ("bot", "channel"):
+                    raise ValueError("Invalid Stars recipient")
+                ceiling = 10000 if mode == "channel" else 250000
                 valid_stars = (
                     text.isascii() and text.isdecimal()
-                    and 1 <= int(text) <= 250000
+                    and 1 <= int(text) <= ceiling
                 )
                 if not valid_stars:
                     await prompt_first_stars_month(
                         bot, message.chat.id, actor_id,
                         UUID(hex=flow.payload["resource_id"]),
-                        source_flow=flow, retry=True,
+                        mode=mode, source_flow=flow, retry=True,
                     )
+                    if flow.prompt_message_id is not None:
+                        await retire_crypto_owner_card(
+                            bot, message.chat.id, flow.prompt_message_id,
+                        )
                     return
-                plan_id = await create_one_month_stars_plan(
-                    factory, actor_id=actor_id, project_id=project_id,
-                    resource_id=UUID(hex=flow.payload["resource_id"]),
-                    stars_amount=text,
-                )
-                await bot.send_message(
-                    message.chat.id,
-                    tr(
-                        "✅ <b>Тариф на 1 месяц опубликован!</b>\n⭐ Цена: ",
-                        "✅ <b>1-month plan published!</b>\n⭐ Price: ",
-                    ) + escape(text.strip()) + " ⭐",
-                    parse_mode="HTML",
-                )
-                await show_stars_payments(
-                    bot, message.chat.id, actor_id, project_id,
-                )
+                if mode == "channel":
+                    await show_stars_native_confirmation(
+                        bot, message.chat.id, actor_id,
+                        source_flow=flow, amount=int(text),
+                    )
+                else:
+                    await create_one_month_stars_plan(
+                        factory, actor_id=actor_id, project_id=project_id,
+                        resource_id=UUID(hex=flow.payload["resource_id"]),
+                        stars_amount=text,
+                    )
+                    await show_stars_setup_success(
+                        bot, message.chat.id, mode="bot", amount=int(text),
+                    )
+                if flow.prompt_message_id is not None:
+                    await retire_crypto_owner_card(
+                        bot, message.chat.id, flow.prompt_message_id,
+                    )
             elif flow.step == "price_amount":
                 plan_id = UUID(hex=flow.payload["plan_id"])
                 await save_owner_price(
