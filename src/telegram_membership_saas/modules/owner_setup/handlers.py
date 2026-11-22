@@ -393,6 +393,119 @@ DURATIONS = {
 }
 
 
+
+def manual_method_name_copy(currency: str, *, previous_name: str | None = None) -> tuple[str, str]:
+    """Buyer-facing manual-method label prompt; classic and Rich stay aligned."""
+    code = escape(currency)
+    previous_classic = (
+        tr("\n🔁 <b>Было:</b> ", "\n🔁 <b>Previous:</b> ")
+        + escape(previous_name) + "\n"
+        if previous_name else ""
+    )
+    previous_rich = (
+        "<p>🔁 <b>" + tr("Было: ", "Previous: ")
+        + escape(previous_name) + "</b></p>\n"
+        if previous_name else ""
+    )
+    classic = tr(
+        "💳 <b>НОВЫЙ СПОСОБ ОПЛАТЫ</b>\n\n"
+        "💱 <b>Валюта:</b> ",
+        "💳 <b>NEW PAYMENT METHOD</b>\n\n"
+        "💱 <b>Currency:</b> ",
+    ) + code + "\n\n" + previous_classic + tr(
+        "✍️ Напишите название, которое покупатель увидит при оплате.\n"
+        "Например: <b>СБП</b> или <b>Банковский перевод</b>.\n\n"
+        "👇 <b>Отправьте название одним сообщением.</b>",
+        "✍️ Enter the name buyers will see at checkout.\n"
+        "For example: <b>Bank transfer</b> or <b>Fast payment</b>.\n\n"
+        "👇 <b>Send the name in one message.</b>",
+    )
+    rich = (
+        "<h3>" + tr("💳 НОВЫЙ СПОСОБ ОПЛАТЫ", "💳 NEW PAYMENT METHOD")
+        + "</h3>\n"
+        "<p>💱 <b>" + tr("Валюта: ", "Currency: ") + code + "</b></p>\n"
+        + previous_rich
+        + "<p>" + tr(
+            "✍️ Напишите <b>название способа</b>, которое покупатель "
+            "увидит при оплате.",
+            "✍️ Enter the <b>payment method name</b> shown to buyers.",
+        ) + "</p>\n"
+        "<p>💡 " + tr(
+            "Например: <b>СБП</b> или <b>Банковский перевод</b>.",
+            "For example: <b>Bank transfer</b> or <b>Fast payment</b>.",
+        ) + "</p>\n"
+        "<p>👇 <b>" + tr(
+            "Отправьте название одним сообщением.",
+            "Send the name in one message.",
+        ) + "</b></p>\n"
+        + RICH_ACTIONS_MARKER
+    )
+    return classic, rich
+
+
+def manual_method_instruction_copy(currency: str, name: str) -> tuple[str, str]:
+    """Explain actual payment details and template tokens before capture."""
+    label = escape(name)
+    code = escape(currency)
+    example = tr(
+        "Переведите {amount} {currency} по СБП на номер +7 XXX XXX-XX-XX. "
+        "Получатель: И. И.",
+        "Transfer {amount} {currency} to account XXXX-XXXX. "
+        "Recipient: Account holder.",
+    )
+    classic = (
+        tr(
+            "📝 <b>ИНСТРУКЦИЯ ДЛЯ ПОКУПАТЕЛЯ</b>\n\n",
+            "📝 <b>BUYER PAYMENT INSTRUCTIONS</b>\n\n",
+        )
+        + "💳 <b>" + label + "</b> · " + code + "\n\n"
+        + tr(
+            "Укажите, <b>куда и как</b> покупатель должен перевести деньги. "
+            "Это сообщение он увидит перед оплатой.\n\n"
+            "✍️ <b>ПРИМЕР</b>\n",
+            "Tell buyers <b>where and how</b> to send the money. "
+            "They will see this before paying.\n\n"
+            "✍️ <b>EXAMPLE</b>\n",
+        )
+        + example
+        + tr(
+            "\n\n🧩 <b>Автоподстановка:</b>\n"
+            "{amount} — сумма · {currency} — валюта\n"
+            "{plan} — тариф · {period} — срок\n\n"
+            "👇 <b>Отправьте инструкцию одним сообщением.</b>",
+            "\n\n🧩 <b>Automatic fields:</b>\n"
+            "{amount} — amount · {currency} — currency\n"
+            "{plan} — plan · {period} — duration\n\n"
+            "👇 <b>Send the instructions in one message.</b>",
+        )
+    )
+    rich = (
+        "<h3>" + tr(
+            "📝 ИНСТРУКЦИЯ ДЛЯ ПОКУПАТЕЛЯ",
+            "📝 BUYER PAYMENT INSTRUCTIONS",
+        ) + "</h3>\n"
+        "<p>💳 <b>" + label + "</b> · " + code + "</p>\n"
+        "<p>" + tr(
+            "Укажите, <b>куда и как</b> перевести деньги. "
+            "Покупатель увидит эти реквизиты перед оплатой.",
+            "Explain <b>where and how</b> to pay. "
+            "Buyers see these details before checkout.",
+        ) + "</p>\n"
+        "<h4>✍️ " + tr("ПРИМЕР", "EXAMPLE") + "</h4>\n"
+        "<p>" + escape(example) + "</p>\n"
+        "<h4>🧩 " + tr("АВТОПОДСТАНОВКА", "AUTOMATIC FIELDS") + "</h4>\n"
+        "<p><b>{amount}</b> · <b>{currency}</b> · "
+        "<b>{plan}</b> · <b>{period}</b></p>\n"
+        "<p>👇 <b>" + tr(
+            "Отправьте инструкцию одним сообщением.",
+            "Send the instructions in one message.",
+        ) + "</b></p>\n"
+        + RICH_ACTIONS_MARKER
+    )
+    return classic, rich
+
+
+
 def _button(label: str, data: str, style: str = "primary") -> InlineKeyboardButton:
     return InlineKeyboardButton(
         text=owner_button_label(label), callback_data="own:" + data, style=style,
@@ -2240,118 +2353,6 @@ def create_owner_setup_router(
             reply_markup=_markup(buttons),
         )
 
-
-
-
-def manual_method_name_copy(currency: str, *, previous_name: str | None = None) -> tuple[str, str]:
-    """Buyer-facing manual-method label prompt; classic and Rich stay aligned."""
-    code = escape(currency)
-    previous_classic = (
-        tr("\n🔁 <b>Было:</b> ", "\n🔁 <b>Previous:</b> ")
-        + escape(previous_name) + "\n"
-        if previous_name else ""
-    )
-    previous_rich = (
-        "<p>🔁 <b>" + tr("Было: ", "Previous: ")
-        + escape(previous_name) + "</b></p>\n"
-        if previous_name else ""
-    )
-    classic = tr(
-        "💳 <b>НОВЫЙ СПОСОБ ОПЛАТЫ</b>\n\n"
-        "💱 <b>Валюта:</b> ",
-        "💳 <b>NEW PAYMENT METHOD</b>\n\n"
-        "💱 <b>Currency:</b> ",
-    ) + code + "\n\n" + previous_classic + tr(
-        "✍️ Напишите название, которое покупатель увидит при оплате.\n"
-        "Например: <b>СБП</b> или <b>Банковский перевод</b>.\n\n"
-        "👇 <b>Отправьте название одним сообщением.</b>",
-        "✍️ Enter the name buyers will see at checkout.\n"
-        "For example: <b>Bank transfer</b> or <b>Fast payment</b>.\n\n"
-        "👇 <b>Send the name in one message.</b>",
-    )
-    rich = (
-        "<h3>" + tr("💳 НОВЫЙ СПОСОБ ОПЛАТЫ", "💳 NEW PAYMENT METHOD")
-        + "</h3>\n"
-        "<p>💱 <b>" + tr("Валюта: ", "Currency: ") + code + "</b></p>\n"
-        + previous_rich
-        + "<p>" + tr(
-            "✍️ Напишите <b>название способа</b>, которое покупатель "
-            "увидит при оплате.",
-            "✍️ Enter the <b>payment method name</b> shown to buyers.",
-        ) + "</p>\n"
-        "<p>💡 " + tr(
-            "Например: <b>СБП</b> или <b>Банковский перевод</b>.",
-            "For example: <b>Bank transfer</b> or <b>Fast payment</b>.",
-        ) + "</p>\n"
-        "<p>👇 <b>" + tr(
-            "Отправьте название одним сообщением.",
-            "Send the name in one message.",
-        ) + "</b></p>\n"
-        + RICH_ACTIONS_MARKER
-    )
-    return classic, rich
-
-
-def manual_method_instruction_copy(currency: str, name: str) -> tuple[str, str]:
-    """Explain actual payment details and template tokens before capture."""
-    label = escape(name)
-    code = escape(currency)
-    example = tr(
-        "Переведите {amount} {currency} по СБП на номер +7 XXX XXX-XX-XX. "
-        "Получатель: И. И.",
-        "Transfer {amount} {currency} to account XXXX-XXXX. "
-        "Recipient: Account holder.",
-    )
-    classic = (
-        tr(
-            "📝 <b>ИНСТРУКЦИЯ ДЛЯ ПОКУПАТЕЛЯ</b>\n\n",
-            "📝 <b>BUYER PAYMENT INSTRUCTIONS</b>\n\n",
-        )
-        + "💳 <b>" + label + "</b> · " + code + "\n\n"
-        + tr(
-            "Укажите, <b>куда и как</b> покупатель должен перевести деньги. "
-            "Это сообщение он увидит перед оплатой.\n\n"
-            "✍️ <b>ПРИМЕР</b>\n",
-            "Tell buyers <b>where and how</b> to send the money. "
-            "They will see this before paying.\n\n"
-            "✍️ <b>EXAMPLE</b>\n",
-        )
-        + example
-        + tr(
-            "\n\n🧩 <b>Автоподстановка:</b>\n"
-            "{amount} — сумма · {currency} — валюта\n"
-            "{plan} — тариф · {period} — срок\n\n"
-            "👇 <b>Отправьте инструкцию одним сообщением.</b>",
-            "\n\n🧩 <b>Automatic fields:</b>\n"
-            "{amount} — amount · {currency} — currency\n"
-            "{plan} — plan · {period} — duration\n\n"
-            "👇 <b>Send the instructions in one message.</b>",
-        )
-    )
-    rich = (
-        "<h3>" + tr(
-            "📝 ИНСТРУКЦИЯ ДЛЯ ПОКУПАТЕЛЯ",
-            "📝 BUYER PAYMENT INSTRUCTIONS",
-        ) + "</h3>\n"
-        "<p>💳 <b>" + label + "</b> · " + code + "</p>\n"
-        "<p>" + tr(
-            "Укажите, <b>куда и как</b> перевести деньги. "
-            "Покупатель увидит эти реквизиты перед оплатой.",
-            "Explain <b>where and how</b> to pay. "
-            "Buyers see these details before checkout.",
-        ) + "</p>\n"
-        "<h4>✍️ " + tr("ПРИМЕР", "EXAMPLE") + "</h4>\n"
-        "<p>" + escape(example) + "</p>\n"
-        "<h4>🧩 " + tr("АВТОПОДСТАНОВКА", "AUTOMATIC FIELDS") + "</h4>\n"
-        "<p><b>{amount}</b> · <b>{currency}</b> · "
-        "<b>{plan}</b> · <b>{period}</b></p>\n"
-        "<p>👇 <b>" + tr(
-            "Отправьте инструкцию одним сообщением.",
-            "Send the instructions in one message.",
-        ) + "</b></p>\n"
-        + RICH_ACTIONS_MARKER
-    )
-    return classic, rich
 
 
     async def prompt(
