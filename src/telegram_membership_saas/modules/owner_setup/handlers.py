@@ -62,14 +62,6 @@ from telegram_membership_saas.modules.broadcasts.service import cancel_draft
 from telegram_membership_saas.modules.crypto_pay.owner_token_router import (
     remember_crypto_pay_owner,
 )
-from telegram_membership_saas.modules.owner_setup.crypto_pay_owner_ui import (
-    crypto_network_classic,
-    crypto_network_rich,
-    crypto_overview_classic,
-    crypto_overview_rich,
-    crypto_token_classic,
-    crypto_token_rich,
-)
 from telegram_membership_saas.modules.crypto_pay.service import (
     connect_crypto_pay,
     disconnect_crypto_pay,
@@ -151,6 +143,14 @@ from telegram_membership_saas.modules.owner_setup.conversations import (
     find_buyer_conversation,
     is_admin_message,
     parse_buyer_notification,
+)
+from telegram_membership_saas.modules.owner_setup.crypto_pay_owner_ui import (
+    crypto_network_classic,
+    crypto_network_rich,
+    crypto_overview_classic,
+    crypto_overview_rich,
+    crypto_token_classic,
+    crypto_token_rich,
 )
 from telegram_membership_saas.modules.owner_setup.currencies import (
     disable_owner_stars_price,
