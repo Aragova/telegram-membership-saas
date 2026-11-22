@@ -220,6 +220,10 @@ async def test_failed_native_plan_save_revokes_telegram_invite(monkeypatch):
         ui, "create_one_month_stars_plan",
         AsyncMock(side_effect=ValueError("Plan already exists")),
     )
+    retry = AsyncMock(return_value="new-generation")
+    binder = AsyncMock()
+    monkeypatch.setattr(ui, "advance_flow", retry)
+    monkeypatch.setattr(ui, "bind_prompt", binder)
     bot = _bot()
     bot.get_chat = AsyncMock(return_value=SimpleNamespace(
         type="channel", username=None,
@@ -235,7 +239,11 @@ async def test_failed_native_plan_save_revokes_telegram_invite(monkeypatch):
     )
     bot.revoke_chat_invite_link = AsyncMock()
     query = _query("starsnativecreate:confirmed")
+    query.message.message_id = 400
     await _callback(project)(query, bot)
+    retry.assert_awaited_once()
+    binder.assert_awaited_once()
+    assert binder.await_args.kwargs["message_id"] == 400
     bot.revoke_chat_invite_link.assert_awaited_once_with(
         -100123456, "https://t.me/+test_url",
     )
