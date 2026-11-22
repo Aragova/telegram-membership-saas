@@ -1510,14 +1510,12 @@ def create_owner_setup_router(
         )
         caption = (
             tr(
-                "Последний шаг настройки. Выберите валюту счёта именно "
-                "этого бота: 150 ₽ или $5 в месяц. Первый счёт содержит "
-                "только абонплату; далее +5% подтверждённых продаж. "
-                "Показанная сейчас валюта пока не подтверждена.",
-                "Final setup step. Choose this bot's service invoice currency: "
-                "RUB 150 or USD 5 monthly. The first invoice is service-only; "
-                "later invoices add 5% of confirmed sales. The suggested "
-                "currency has not yet been confirmed.",
+                "Выберите валюту обслуживания этого бота. "
+                "Первый счёт — только обслуживание, "
+                "в последующие периоды добавляется 5% подтверждённых продаж.",
+                "Choose this bot's service currency. "
+                "The first bill is service-only; later bills include "
+                "5% of confirmed sales.",
             )
             if first_choice else tr(
                 "Только будущие счета этого бота. "
@@ -3758,6 +3756,16 @@ def create_owner_setup_router(
             raise ValueError("Invalid payment-method page")
         if guided is None:
             guided = await initial_setup_active(actor_id, project_id)
+        setup_data = None
+        stars_ready = False
+        if guided:
+            setup_data = await setup_overview(
+                factory, actor_id=actor_id, project_id=project_id,
+            )
+            if setup_data.sales_configured:
+                stars_ready = await has_active_stars_plan(
+                    actor_id, project_id, setup_data,
+                )
         methods = await list_owner_methods(
             factory, actor_id=actor_id, project_id=project_id, page=page,
         )
@@ -3787,36 +3795,85 @@ def create_owner_setup_router(
                                 "🚀 SETUP STEP · 3/4") + "</b></p>"
             )
             classic_parts.append(tr("🚀 Этап 3/4", "🚀 Step 3/4"))
-        rich_parts.extend([
-            "<h4>" + tr("📋 ЧТО НУЖНО СДЕЛАТЬ?",
-                           "📋 WHAT TO DO?") + "</h4>",
-            "<p>" + tr(
-                "Подключите <b>хотя бы один способ оплаты</b>, "
-                "чтобы покупатели могли оплачивать подписки и файлы.",
-                "Enable <b>at least one payment method</b> "
-                "so buyers can pay for subscriptions and files.",
-            ) + "</p>",
-            "<p>" + tr(
-                "⭐ <b>Telegram Stars</b> · 💎 <b>Crypto Pay</b> · "
-                "✍️ <b>Полуавтомат</b>",
-                "⭐ <b>Telegram Stars</b> · 💎 <b>Crypto Pay</b> · "
-                "✍️ <b>Manual transfer</b>",
-            ) + "</p>",
-            "<p>💡 " + tr(
-                "Остальные способы можно подключить позже.",
-                "You can add other methods later.",
-            ) + "</p>",
-        ])
-        classic_parts.extend([
-            tr("Подключите <b>хотя бы один способ</b> для "
-               "оплаты подписок и файлов.",
-               "Enable <b>at least one method</b> to sell "
-               "subscriptions and files."),
-            tr("⭐ Telegram Stars · 💎 Crypto Pay · ✍️ Полуавтомат",
-               "⭐ Telegram Stars · 💎 Crypto Pay · ✍️ Manual transfer"),
-            tr("💡 Остальные способы можно добавить позже.",
-               "💡 You can add the others later."),
-        ])
+        if stars_ready:
+            rich_parts.extend([
+                "<p>✅ <b>" + tr(
+                    "Telegram Stars настроены",
+                    "Telegram Stars configured",
+                ) + "</b></p>",
+                "<p>" + tr(
+                    "Покупатели могут оплачивать подписку в звёздах.",
+                    "Buyers can pay for subscriptions in Stars.",
+                ) + "</p>",
+                "<h4>" + tr(
+                    "➕ ДОПОЛНИТЕЛЬНЫЕ СПОСОБЫ",
+                    "➕ OPTIONAL PAYMENT METHODS",
+                ) + "</h4>",
+                "<p>" + tr(
+                    "При необходимости подключите Crypto Pay или ручную "
+                    "оплату. Это можно сделать позже.",
+                    "Connect Crypto Pay or manual transfers if needed. "
+                    "You can do this later.",
+                ) + "</p>",
+            ])
+            classic_parts.extend([
+                "✅ <b>" + tr(
+                    "Telegram Stars настроены",
+                    "Telegram Stars configured",
+                ) + "</b>",
+                tr(
+                    "Покупатели могут оплачивать подписку в звёздах.",
+                    "Buyers can pay for subscriptions in Stars.",
+                ),
+                "<b>" + tr(
+                    "➕ ДОПОЛНИТЕЛЬНЫЕ СПОСОБЫ",
+                    "➕ OPTIONAL PAYMENT METHODS",
+                ) + "</b>\n" + tr(
+                    "При необходимости подключите Crypto Pay или "
+                    "ручную оплату. Можно позже.",
+                    "Connect Crypto Pay or manual transfers if needed. "
+                    "You can do that later.",
+                ),
+            ])
+        else:
+            rich_parts.extend([
+                "<h4>" + tr(
+                    "📋 ЧТО НУЖНО СДЕЛАТЬ?",
+                    "📋 WHAT TO DO?",
+                ) + "</h4>",
+                "<p>" + tr(
+                    "Подключите <b>хотя бы один способ оплаты</b>, "
+                    "чтобы покупатели могли оплачивать подписки и файлы.",
+                    "Enable <b>at least one payment method</b> "
+                    "so buyers can pay for subscriptions and files.",
+                ) + "</p>",
+                "<p>" + tr(
+                    "⭐ <b>Telegram Stars</b> · 💎 <b>Crypto Pay</b> · "
+                    "✍️ <b>Полуавтомат</b>",
+                    "⭐ <b>Telegram Stars</b> · 💎 <b>Crypto Pay</b> · "
+                    "✍️ <b>Manual transfer</b>",
+                ) + "</p>",
+                "<p>💡 " + tr(
+                    "Остальные способы можно подключить позже.",
+                    "You can add other methods later.",
+                ) + "</p>",
+            ])
+            classic_parts.extend([
+                tr(
+                    "Подключите <b>хотя бы один способ</b> для оплаты "
+                    "подписок и файлов.",
+                    "Enable <b>at least one method</b> to sell "
+                    "subscriptions and files.",
+                ),
+                tr(
+                    "⭐ Telegram Stars · 💎 Crypto Pay · ✍️ Полуавтомат",
+                    "⭐ Telegram Stars · 💎 Crypto Pay · ✍️ Manual transfer",
+                ),
+                tr(
+                    "💡 Остальные способы можно добавить позже.",
+                    "💡 You can add the others later.",
+                ),
+            ])
         rows: list[list[InlineKeyboardButton]] = []
         if methods:
             rich_parts.append("<h4>" + tr(
@@ -3876,9 +3933,17 @@ def create_owner_setup_router(
             [_button(tr("➕ Добавить ручной способ", "➕ Add manual method"),
                      "newmethod", "primary")],
         ])
-        if methods:
-            # Owner must be able to advance to stage 4 after adding a manual
-            # payment method; Back alone would strand onboarding at stage 3.
+        if (
+            guided and setup_data is not None
+            and setup_data.sales_configured
+            and any(state == "active" for _, _, state in setup_data.plans)
+        ):
+            rows.append([_button(
+                tr("➡️ Продолжить настройку", "➡️ Continue setup"),
+                "setupnext", "success",
+            )])
+        elif methods:
+            # A manually added payment still needs an active tariff.
             rows.append([_button(
                 tr("➡️ Этап 4/4 · Создать тариф",
                    "➡️ Step 4/4 · Create a plan"),
@@ -8295,9 +8360,13 @@ def create_owner_setup_router(
                 )
                 await show_plans(bot, user_id, actor_id, project_id)
             elif action in ("methods", "methods:guided"):
+                # Returning from Stars during initial setup must not show
+                # the generic "connect a method" instruction again.
+                guided = action == "methods:guided" or await initial_setup_active(
+                    actor_id, project_id,
+                )
                 await show_methods(
-                    bot, user_id, actor_id, project_id,
-                    guided=action == "methods:guided",
+                    bot, user_id, actor_id, project_id, guided=guided,
                     source_message_id=getattr(query.message, "message_id", None)
                     if fixed_project_id is not None else None,
                 )
