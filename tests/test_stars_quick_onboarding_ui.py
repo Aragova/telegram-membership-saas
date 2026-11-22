@@ -164,6 +164,12 @@ async def test_native_link_confirmation_creates_plan_and_no_duplicate_cards(
 ):
     project, resource = uuid4(), uuid4()
     _auth(monkeypatch, project)
+    # A saved native plan may be followed by an onboarding continuation;
+    # this legacy test fixture has no registered bot and is not in setup.
+    monkeypatch.setattr(
+        ui, "setup_overview",
+        AsyncMock(return_value=_snapshot(project, has_channel=True)),
+    )
     monkeypatch.setattr(
         ui, "consume_button_flow", AsyncMock(return_value=SetupFlow(
             "stars_native_confirm", project,
