@@ -37,7 +37,11 @@ from telegram_membership_saas.modules.pricing import (
     PlanPrice,
     PlanPriceStatus,
 )
-from telegram_membership_saas.modules.resources import Resource
+from telegram_membership_saas.modules.resources import (
+    Resource,
+    ResourceStatus,
+    ResourceType,
+)
 from telegram_membership_saas.modules.telegram_admin.service import (
     _require_project_manager,
 )
@@ -76,6 +80,7 @@ class PlanInfo:
     has_history: bool = False
     has_purchase: bool = False
     revision: str = ""
+    native_channel_eligible: bool = False
 
 
 METHOD_PAGE_SIZE = 8
@@ -251,8 +256,13 @@ async def get_owner_plan_info(
         )
         if plan is None:
             raise ValueError("Тариф не найден в этом проекте")
-        resource_name = await session.scalar(
-            select(Resource.name)
+        associated_resources = (await session.execute(
+            select(
+                Resource.name,
+                Resource.resource_type,
+                Resource.status,
+                Resource.removed_at,
+            )
             .join(
                 PlanResource,
                 and_(
@@ -263,7 +273,19 @@ async def get_owner_plan_info(
             .where(
                 PlanResource.project_id == project_id,
                 PlanResource.plan_id == plan_id,
-            ).limit(1)
+            )
+        )).all()
+        resource_name = (
+            associated_resources[0].name if associated_resources else None
+        )
+        # A Telegram channel subscription must target exactly one active
+        # channel. Groups and multi-resource plans must never advertise it.
+        native_channel_eligible = (
+            len(associated_resources) == 1
+            and associated_resources[0].resource_type
+            == ResourceType.TELEGRAM_CHANNEL.value
+            and associated_resources[0].status == ResourceStatus.ACTIVE.value
+            and associated_resources[0].removed_at is None
         )
         prices = (await session.execute(
             select(
@@ -309,6 +331,7 @@ async def get_owner_plan_info(
                 session, project_id=project_id, plan_id=plan_id,
             ),
             revision=plan_revision(plan),
+            native_channel_eligible=native_channel_eligible,
             prices=tuple(
                 PriceInfo(
                     currency=code, amount=amount, precision=precision,

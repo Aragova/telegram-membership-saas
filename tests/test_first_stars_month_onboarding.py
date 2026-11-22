@@ -268,6 +268,40 @@ async def test_first_native_channel_plan_is_atomic_and_group_is_rejected():
                         native_invite_link="https://t.me/+valid-test",
                         native_bot_id=telegram_bot_id, native_chat_id=chat_id,
                     )
+                # Pause must retire the XTR price AND hide its native paid
+                # link atomically, never silently turn buyers onto bot Stars.
+                from telegram_membership_saas.modules.owner_setup.currencies import (
+                    pause_owner_stars_price,
+                )
+
+                changed, snapshot = await pause_owner_stars_price(
+                    factory, actor_id=owner, project_id=project,
+                    plan_id=plan_id, bot_id=telegram_bot_id,
+                )
+                assert changed is True
+                assert snapshot == (chat_id, "https://t.me/+valid-test")
+                async with tenant_session_scope(
+                    factory, TenantContext(user_id=owner, project_id=project),
+                ) as session:
+                    saved = await session.scalar(select(PlanPrice).where(
+                        PlanPrice.project_id == project,
+                        PlanPrice.plan_id == plan_id,
+                        PlanPrice.currency_code == "XTR",
+                    ))
+                    assert saved.status == "retired"
+                    assert saved.native_subscription_active is False
+                    assert saved.native_subscription_link == "https://t.me/+valid-test"
+                    assert not (await session.scalars(select(PlanPrice).where(
+                        PlanPrice.project_id == project,
+                        PlanPrice.plan_id == plan_id,
+                        PlanPrice.currency_code == "XTR",
+                        PlanPrice.status == "active",
+                    ))).all()
+                assert await pause_owner_stars_price(
+                    factory, actor_id=owner, project_id=project,
+                    plan_id=plan_id, bot_id=telegram_bot_id,
+                ) == (False, None)
+
             finally:
                 await tx.rollback()
         async with admin.connect() as verify:

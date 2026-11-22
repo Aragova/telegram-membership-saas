@@ -15,10 +15,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import tenant_session_scope
+from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.payments import PaymentMethodCurrency
+from telegram_membership_saas.modules.plans import Plan
 from telegram_membership_saas.modules.pricing import (
     CurrencyAsset,
     PlanPrice,
+    PlanPriceStatus,
     ProjectEnabledCurrency,
 )
 from telegram_membership_saas.modules.pricing.service import retire_active_plan_price
@@ -179,3 +182,75 @@ async def disable_owner_stars_price(
             plan_id=plan_id, currency_code="XTR",
         )
         return retired is not None
+
+
+async def pause_owner_stars_price(
+    factory: async_sessionmaker[AsyncSession], *,
+    actor_id: UUID, project_id: UUID, plan_id: UUID, bot_id: int,
+) -> tuple[bool, tuple[int, str] | None]:
+    """Atomically retire XTR price and unpublish any native channel invite.
+
+    Return its channel/invite snapshot for a *post-commit* Telegram revoke.
+    A failed provider revocation is reported to the owner; it must never
+    silently switch a paid channel plan into bot invoice sales.
+    This does not revoke existing memberships or delete payment history.
+    """
+    async with tenant_session_scope(
+        factory, TenantContext(user_id=actor_id, project_id=project_id),
+    ) as session:
+        await checkout_retirement_lock(session, project_id)
+        await _require_project_manager(
+            session, project_id=project_id, actor_user_id=actor_id,
+        )
+        # Match pricing.service lock order (plan, then price) so price
+        # replacement cannot deadlock against pausing a native link.
+        plan = await session.scalar(select(Plan).where(
+            Plan.id == plan_id, Plan.project_id == project_id,
+            Plan.removed_at.is_(None),
+        ).with_for_update())
+        if plan is None:
+            raise ValueError("Тариф больше не доступен в этом подключении")
+        price = await session.scalar(select(PlanPrice).where(
+            PlanPrice.project_id == project_id,
+            PlanPrice.plan_id == plan_id,
+            PlanPrice.currency_code == "XTR",
+            PlanPrice.status == PlanPriceStatus.ACTIVE.value,
+        ).with_for_update())
+        if price is None:
+            return False, None
+        snapshot: tuple[int, str] | None = None
+        if price.native_subscription_active:
+            registered = await session.scalar(select(BotInstance.id).where(
+                BotInstance.project_id == project_id,
+                BotInstance.telegram_bot_id == bot_id,
+                BotInstance.status == "registered",
+            ))
+            if (
+                registered is None
+                or price.native_subscription_bot_id != bot_id
+            ):
+                raise PermissionError(
+                    "Платная ссылка принадлежит другому подключению"
+                )
+            if (
+                not price.native_subscription_link
+                or not price.native_subscription_chat_id
+            ):
+                raise ValueError(
+                    "У платной ссылки отсутствуют данные для отзыва"
+                )
+            snapshot = (
+                int(price.native_subscription_chat_id),
+                price.native_subscription_link,
+            )
+            # This flag gates buyer catalog publication. Both changes are
+            # committed together; no instant bot-balance fallback.
+            price.native_subscription_active = False
+            await session.flush()
+        retired = await retire_active_plan_price(
+            session, project_id=project_id,
+            plan_id=plan_id, currency_code="XTR",
+        )
+        if retired is None:
+            raise ValueError("Цена Stars изменилась. Обновите тариф")
+        return True, snapshot
