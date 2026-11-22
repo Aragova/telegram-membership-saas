@@ -2241,11 +2241,125 @@ def create_owner_setup_router(
         )
 
 
+
+
+def manual_method_name_copy(currency: str, *, previous_name: str | None = None) -> tuple[str, str]:
+    """Buyer-facing manual-method label prompt; classic and Rich stay aligned."""
+    code = escape(currency)
+    previous_classic = (
+        tr("\n🔁 <b>Было:</b> ", "\n🔁 <b>Previous:</b> ")
+        + escape(previous_name) + "\n"
+        if previous_name else ""
+    )
+    previous_rich = (
+        "<p>🔁 <b>" + tr("Было: ", "Previous: ")
+        + escape(previous_name) + "</b></p>\n"
+        if previous_name else ""
+    )
+    classic = tr(
+        "💳 <b>НОВЫЙ СПОСОБ ОПЛАТЫ</b>\n\n"
+        "💱 <b>Валюта:</b> ",
+        "💳 <b>NEW PAYMENT METHOD</b>\n\n"
+        "💱 <b>Currency:</b> ",
+    ) + code + "\n\n" + previous_classic + tr(
+        "✍️ Напишите название, которое покупатель увидит при оплате.\n"
+        "Например: <b>СБП</b> или <b>Банковский перевод</b>.\n\n"
+        "👇 <b>Отправьте название одним сообщением.</b>",
+        "✍️ Enter the name buyers will see at checkout.\n"
+        "For example: <b>Bank transfer</b> or <b>Fast payment</b>.\n\n"
+        "👇 <b>Send the name in one message.</b>",
+    )
+    rich = (
+        "<h3>" + tr("💳 НОВЫЙ СПОСОБ ОПЛАТЫ", "💳 NEW PAYMENT METHOD")
+        + "</h3>\n"
+        "<p>💱 <b>" + tr("Валюта: ", "Currency: ") + code + "</b></p>\n"
+        + previous_rich
+        + "<p>" + tr(
+            "✍️ Напишите <b>название способа</b>, которое покупатель "
+            "увидит при оплате.",
+            "✍️ Enter the <b>payment method name</b> shown to buyers.",
+        ) + "</p>\n"
+        "<p>💡 " + tr(
+            "Например: <b>СБП</b> или <b>Банковский перевод</b>.",
+            "For example: <b>Bank transfer</b> or <b>Fast payment</b>.",
+        ) + "</p>\n"
+        "<p>👇 <b>" + tr(
+            "Отправьте название одним сообщением.",
+            "Send the name in one message.",
+        ) + "</b></p>\n"
+        + RICH_ACTIONS_MARKER
+    )
+    return classic, rich
+
+
+def manual_method_instruction_copy(currency: str, name: str) -> tuple[str, str]:
+    """Explain actual payment details and template tokens before capture."""
+    label = escape(name)
+    code = escape(currency)
+    example = tr(
+        "Переведите {amount} {currency} по СБП на номер +7 XXX XXX-XX-XX. "
+        "Получатель: И. И.",
+        "Transfer {amount} {currency} to account XXXX-XXXX. "
+        "Recipient: Account holder.",
+    )
+    classic = (
+        tr(
+            "📝 <b>ИНСТРУКЦИЯ ДЛЯ ПОКУПАТЕЛЯ</b>\n\n",
+            "📝 <b>BUYER PAYMENT INSTRUCTIONS</b>\n\n",
+        )
+        + "💳 <b>" + label + "</b> · " + code + "\n\n"
+        + tr(
+            "Укажите, <b>куда и как</b> покупатель должен перевести деньги. "
+            "Это сообщение он увидит перед оплатой.\n\n"
+            "✍️ <b>ПРИМЕР</b>\n",
+            "Tell buyers <b>where and how</b> to send the money. "
+            "They will see this before paying.\n\n"
+            "✍️ <b>EXAMPLE</b>\n",
+        )
+        + example
+        + tr(
+            "\n\n🧩 <b>Автоподстановка:</b>\n"
+            "{amount} — сумма · {currency} — валюта\n"
+            "{plan} — тариф · {period} — срок\n\n"
+            "👇 <b>Отправьте инструкцию одним сообщением.</b>",
+            "\n\n🧩 <b>Automatic fields:</b>\n"
+            "{amount} — amount · {currency} — currency\n"
+            "{plan} — plan · {period} — duration\n\n"
+            "👇 <b>Send the instructions in one message.</b>",
+        )
+    )
+    rich = (
+        "<h3>" + tr(
+            "📝 ИНСТРУКЦИЯ ДЛЯ ПОКУПАТЕЛЯ",
+            "📝 BUYER PAYMENT INSTRUCTIONS",
+        ) + "</h3>\n"
+        "<p>💳 <b>" + label + "</b> · " + code + "</p>\n"
+        "<p>" + tr(
+            "Укажите, <b>куда и как</b> перевести деньги. "
+            "Покупатель увидит эти реквизиты перед оплатой.",
+            "Explain <b>where and how</b> to pay. "
+            "Buyers see these details before checkout.",
+        ) + "</p>\n"
+        "<h4>✍️ " + tr("ПРИМЕР", "EXAMPLE") + "</h4>\n"
+        "<p>" + escape(example) + "</p>\n"
+        "<h4>🧩 " + tr("АВТОПОДСТАНОВКА", "AUTOMATIC FIELDS") + "</h4>\n"
+        "<p><b>{amount}</b> · <b>{currency}</b> · "
+        "<b>{plan}</b> · <b>{period}</b></p>\n"
+        "<p>👇 <b>" + tr(
+            "Отправьте инструкцию одним сообщением.",
+            "Send the instructions in one message.",
+        ) + "</b></p>\n"
+        + RICH_ACTIONS_MARKER
+    )
+    return classic, rich
+
+
     async def prompt(
         bot: Bot, user_id: int, actor_id: UUID,
         *, step: str, text: str, payload: dict | None = None,
         source_flow: SetupFlow | None = None,
         rich_html: str | None = None, show_main_menu: bool = True,
+        replace_message_id: int | None = None,
     ) -> None:
         if source_flow is None:
             generation = await set_flow(
@@ -2269,19 +2383,27 @@ def create_owner_setup_router(
                 "promptcancel:" + generation,
             )])
         if rich_html is not None:
-            # Keep the real sent message ID for secure token capture while
-            # rendering the full Rich message and its classic fallback.
-            sent = await send_owner_rich(
+            render = (
+                send_owner_rich if replace_message_id is None
+                else replace_owner_rich
+            )
+            sent = await render(
                 bot, chat_id=user_id, rich_html=rich_html,
                 classic_html=text, reply_markup=_markup(rows),
+                **({} if replace_message_id is None else {
+                    "message_id": replace_message_id,
+                }),
             )
         else:
             sent = await bot.send_message(
                 user_id, text, parse_mode="HTML", reply_markup=_markup(rows),
             )
+        # Rich edit may return True for an unchanged card. In that case
+        # the original message remains the secured reply target.
+        message_id = getattr(sent, "message_id", None) or replace_message_id
         await bind_prompt(
             factory, actor_id=actor_id, step=step,
-            message_id=sent.message_id, generation=generation,
+            message_id=message_id, generation=generation,
             bot_scope_id=bot.id if fixed_project_id else 0,
         )
 
@@ -3784,6 +3906,7 @@ def create_owner_setup_router(
         bot: Bot, user_id: int, actor_id: UUID, project_id: UUID,
         page: int = 0, *, guided: bool | None = None,
         source_message_id: int | None = None,
+        notice: str | None = None,
     ) -> None:
         """Concise payment-method lesson and real manual-method pagination."""
         if not 0 <= page <= 10000:
@@ -3908,6 +4031,9 @@ def create_owner_setup_router(
                     "💡 You can add the others later.",
                 ),
             ])
+        if notice:
+            rich_parts.insert(1, "<p><b>" + escape(notice) + "</b></p>")
+            classic_parts.insert(1, "<b>" + escape(notice) + "</b>")
         rows: list[list[InlineKeyboardButton]] = []
         if methods:
             rich_parts.append("<h4>" + tr(
@@ -5161,8 +5287,28 @@ def create_owner_setup_router(
                 bot, user_id, actor_id, project_id,
                 UUID(hex=prior.payload["method_id"]),
             )
-        elif prior.step in ("method_name", "method_instruction"):
-            await show_methods(bot, user_id, actor_id, project_id)
+        elif prior.step == "method_name":
+            # Method name's immediate parent is currency selection.
+            await currency_picker(
+                bot, user_id, actor_id, project_id=project_id, mode="method",
+            )
+            if prior.prompt_message_id is not None:
+                await retire_crypto_owner_card(
+                    bot, user_id, prior.prompt_message_id,
+                )
+        elif prior.step == "method_instruction":
+            # Reopen name input with the same currency and the entered name.
+            # A new generation invalidates old Back buttons.
+            currency = prior.payload["currency"]
+            classic, rich = manual_method_name_copy(
+                currency, previous_name=prior.payload.get("name"),
+            )
+            await prompt(
+                bot, user_id, actor_id, step="method_name",
+                payload={"currency": currency}, text=classic,
+                rich_html=rich, show_main_menu=False,
+                replace_message_id=prior.prompt_message_id,
+            )
         elif prior.step in ("stars_month_price", "stars_native_confirm"):
             # Back from price or link confirmation is never Main menu.
             # The previous prompt is retired only after the next is sent.
@@ -9201,15 +9347,11 @@ def create_owner_setup_router(
                     factory, actor_id=actor_id, project_id=project_id,
                 ):
                     raise ValueError(tr("Неизвестная валюта", "Unsupported currency"))
+                classic, rich = manual_method_name_copy(code)
                 await prompt(
                     bot, user_id, actor_id, step="method_name",
-                    payload={"currency": code},
-                    text=tr(
-                        f"💳 Название способа оплаты для {code}:\n"
-                        "Например: СБП или Банковский перевод.",
-                        f"💳 Payment method name for {code}:\n"
-                        "For example: Bank transfer.",
-                    ),
+                    payload={"currency": code}, text=classic,
+                    rich_html=rich, show_main_menu=False,
                 )
             elif action == "timezone":
                 rows = [
@@ -9295,7 +9437,7 @@ def create_owner_setup_router(
         # selection card after the new one exists. Do not apply this to
         # payment mutations, receipts, or arbitrary admin callbacks.
         if action == "newmethod" or action.startswith((
-            "method:", "cryptonet:",
+            "method:", "methodcurrency:", "cryptonet:",
         )):
             old_id = getattr(query.message, "message_id", None)
             if (
@@ -9759,16 +9901,13 @@ def create_owner_setup_router(
                         ),
                     )
                 elif mode == "method":
+                    classic, rich = manual_method_name_copy(code)
                     await prompt(
                         bot, message.chat.id, actor_id, step="method_name",
                         source_flow=flow,
-                        payload={"currency": code},
-                        text=tr(
-                            f"💳 Название способа оплаты для {code}:\n"
-                            "Например: Перевод на карту или Банковский перевод.",
-                            f"💳 Name a payment method for {code}:\n"
-                            "For example: Bank transfer.",
-                        ),
+                        payload={"currency": code}, text=classic,
+                        rich_html=rich, show_main_menu=False,
+                        replace_message_id=flow.prompt_message_id,
                     )
                 elif mode == "attach":
                     method_id = UUID(hex=target)
@@ -9872,22 +10011,15 @@ def create_owner_setup_router(
                 if not 2 <= len(text) <= 120:
                     raise ValueError(tr("Название способа оплаты: от 2 до 120 символов",
                                         "Payment method name must be 2–120 characters"))
+                classic, rich = manual_method_instruction_copy(
+                    flow.payload["currency"], text,
+                )
                 await prompt(
                     bot, message.chat.id, actor_id,
-                    step="method_instruction",
-                    source_flow=flow,
+                    step="method_instruction", source_flow=flow,
                     payload={"currency": flow.payload["currency"], "name": text},
-                    text=(
-                        tr(
-                            "💳 Отправьте инструкцию покупателю: куда и как переводить "
-                            "деньги.\n\nМожно использовать {amount}, {currency}, "
-                            "{plan}, {period}.\n"
-                            "Например: Переведите {amount} {currency} по СБП на ...",
-                            "💳 Send the instructions that buyers should follow.\n\n"
-                            "You can use {amount}, {currency}, {plan}, {period}.\n"
-                            "For example: Transfer {amount} {currency} to ...",
-                        )
-                    ),
+                    text=classic, rich_html=rich, show_main_menu=False,
+                    replace_message_id=flow.prompt_message_id,
                 )
             elif flow.step == "method_instruction":
                 await create_owner_payment_method(
@@ -9895,11 +10027,14 @@ def create_owner_setup_router(
                     name=flow.payload["name"],
                     currency_code=flow.payload["currency"], instruction=text,
                 )
-                await bot.send_message(
-                    message.chat.id,
-                    tr("✅ Способ оплаты добавлен.", "✅ Payment method added."),
+                await show_methods(
+                    bot, message.chat.id, actor_id, project_id,
+                    source_message_id=flow.prompt_message_id,
+                    notice=tr(
+                        "✅ Способ оплаты добавлен.",
+                        "✅ Payment method added.",
+                    ),
                 )
-                await show_methods(bot, message.chat.id, actor_id, project_id)
             elif flow.step == "timezone":
                 await change_project_timezone(
                     factory, project_id=project_id,
