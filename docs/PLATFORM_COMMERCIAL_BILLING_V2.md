@@ -1,3 +1,23 @@
+> **2026-11-22 — resource onboarding vs unissued service bill (migration 0106).**
+>
+> An expired owner-level 72h trial may cause a **per-bot checkout hold**
+> before the periodic worker issues that bot's first service invoice. In this
+> interval the central account bill correctly shows **zero issued debt**,
+> but earlier resource INSERT guards also raised the generic overdue error,
+> preventing channel/group setup and all later onboarding screens.
+>
+> **Policy:** channel/group creation is configuration, not a sale. A resource
+> INSERT is blocked only when its existing registered bot is held **and** the
+> liable account has a genuine overdue, issued and unpaid invoice outside
+> the protected first-proof review window. Otherwise setup may proceed.
+> Bot registration stays blocked by genuine network overdue debt, and new
+> buyer checkouts, file sales and manual grants **still respect the original
+> per-bot hold**, including unissued/expired service coverage. Issuing and
+> settling invoices, accounting, credits and previously purchased access
+> remain unchanged. This is not a free trial reset or a payment waiver.
+>
+---
+
 > **2026-11-20 — PR #199: exact per-bot service obligation and native provider quote.**
 >
 > One bot = one separately issued invoice and cash ledger. A parent owning

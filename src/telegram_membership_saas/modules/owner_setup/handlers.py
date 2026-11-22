@@ -589,11 +589,17 @@ def _sales_status_text(*, configured: bool, hold_state: str | None) -> str:
             "Complete the setup steps. Saved settings will remain intact.",
         )
     if hold_state == "held":
+        # A bot can be held before its first service invoice is issued;
+        # calling that an overdue debt would contradict the account bill.
         return tr(
-            "⛔ Новые продажи приостановлены до погашения долга "
-            "ViMi Pay. Ранее оплаченный доступ сохраняется.",
-            "⛔ New sales are on hold until the ViMi Pay debt is "
-            "settled. Previously paid access remains valid.",
+            "⛔ Новые продажи приостановлены: период обслуживания ещё не "
+            "активирован или есть просроченный счёт ViMi Pay. "
+            "Если в «Счёте аккаунта» 0 ₽, новый счёт может ещё "
+            "формироваться. Ранее оплаченный доступ сохраняется.",
+            "⛔ New sales are on hold: service coverage is not active "
+            "yet or a ViMi Pay invoice is overdue. If your Account bill "
+            "shows 0 due, a new service invoice may not have been issued "
+            "yet. Previously paid access remains valid.",
         )
     if hold_state not in {"clear", "disabled"}:
         return tr(
