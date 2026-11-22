@@ -116,7 +116,7 @@ def test_other_wizard_steps_preserve_existing_content_and_contextual_button():
         for action, expected in (
             ("methods", "Payment methods"),
             ("plans", "First plan"),
-            ("saasprofile", "Service currency"),
+            ("saasprofile", "ONE FINAL STEP"),
         ):
             rich = owner_setup_step_rich(
                 bot_name="bot", timezone="Europe/Moscow", action=action,
@@ -125,7 +125,8 @@ def test_other_wizard_steps_preserve_existing_content_and_contextual_button():
                 bot_name="bot", timezone="Europe/Moscow", action=action,
             )
             assert expected in rich
-            assert "ViMi Pay setup" in classic
+            assert ("Finish setting up ViMi Pay" if action == "saasprofile"
+                    else "ViMi Pay setup") in classic
             label = wizard_primary_label(action, expected)
             assert label != expected
             assert label.startswith({

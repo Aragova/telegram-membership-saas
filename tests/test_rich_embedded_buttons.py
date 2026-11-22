@@ -125,7 +125,10 @@ def test_admin_dashboard_has_approved_four_rows_service_stars_and_action_slot():
 
 
 def test_first_time_wizard_is_bilingual_and_uses_only_existing_actions():
-    for language, label in [("ru", "Последний шаг"), ("en", "Final step")]:
+    for language, label in [
+        ("ru", "ОСТАЛСЯ ПОСЛЕДНИЙ ШАГ"),
+        ("en", "ONE FINAL STEP"),
+    ]:
         token = _language.set(language)
         try:
             card = owner_setup_step_rich(

@@ -122,6 +122,56 @@ def owner_setup_step_rich(
 ) -> str:
     if action == "resources":
         return _channel_step_rich(bot_name=bot_name, timezone=timezone)
+    if action == "saasprofile":
+        # The Stars flow can create a live plan while setting up a payment
+        # method. Do not present an already-completed plan stage again.
+        return "\n".join([
+            "<h3>" + tr(
+                "✨ Завершение настройки ViMi Pay",
+                "✨ Finish setting up ViMi Pay",
+            ) + "</h3>",
+            "<p>✅ <b>" + tr(
+                "ОСНОВНЫЕ ЭТАПЫ ВЫПОЛНЕНЫ",
+                "MAIN SETUP STEPS COMPLETE",
+            ) + "</b></p>",
+            "<p>✅ " + tr(
+                "Канал или группа подключены.",
+                "Channel or group connected.",
+            ) + "<br>✅ " + tr(
+                "Способ оплаты настроен.",
+                "Payment method configured.",
+            ) + "<br>✅ " + tr(
+                "Первый тариф создан и активирован.",
+                "First plan created and activated.",
+            ) + "</p>",
+            "<h4>" + tr(
+                "💱 ОСТАЛСЯ ПОСЛЕДНИЙ ШАГ",
+                "💱 ONE FINAL STEP",
+            ) + "</h4>",
+            "<p>" + tr(
+                "Выберите валюту, в которой будете оплачивать "
+                "<b>обслуживание ViMi Pay</b>.",
+                "Choose the currency for your "
+                "<b>ViMi Pay service bills</b>.",
+            ) + "</p>",
+            "<table bordered compact><tr><th>🇷🇺 RUB</th>"
+            "<th>🇺🇸 USD</th></tr><tr><td><b>150 ₽/"
+            + tr("мес.", "month") + "</b></td><td><b>$5/"
+            + tr("мес.", "month") + "</b></td></tr></table>",
+            "<p>" + tr(
+                "Первый счёт — только обслуживание. "
+                "Со следующего периода добавляется 5% подтверждённых продаж.",
+                "The first bill is service-only. "
+                "Later bills include 5% of confirmed sales.",
+            ) + "</p>",
+            "<p>➡️ " + tr(
+                "После выбора валюты откроется <b>полная панель "
+                "администратора</b>.",
+                "After choosing a currency, the <b>full admin "
+                "dashboard</b> will open.",
+            ) + "</p>",
+            RICH_ACTIONS_MARKER,
+        ])
     if action == "methods":
         # The owner is already inside their own bot. Avoid repeating its
         # username/timezone and keep the actual 3/4 lesson short.
@@ -202,6 +252,45 @@ def owner_setup_step_rich(
 def owner_setup_step_classic(
     *, bot_name: str, timezone: str, action: str,
 ) -> str:
+    if action == "saasprofile":
+        return "\n\n".join([
+            tr(
+                "✨ <b>Завершение настройки ViMi Pay</b>",
+                "✨ <b>Finish setting up ViMi Pay</b>",
+            ),
+            "✅ <b>" + tr(
+                "ОСНОВНЫЕ ЭТАПЫ ВЫПОЛНЕНЫ",
+                "MAIN SETUP STEPS COMPLETE",
+            ) + "</b>\n" + tr(
+                "✅ Канал или группа подключены.\n"
+                "✅ Способ оплаты настроен.\n"
+                "✅ Первый тариф создан и активирован.",
+                "✅ Channel or group connected.\n"
+                "✅ Payment method configured.\n"
+                "✅ First plan created and activated.",
+            ),
+            "<b>" + tr(
+                "💱 ОСТАЛСЯ ПОСЛЕДНИЙ ШАГ",
+                "💱 ONE FINAL STEP",
+            ) + "</b>\n" + tr(
+                "Выберите валюту обслуживания ViMi Pay.",
+                "Choose your ViMi Pay service currency.",
+            ),
+            "🇷🇺 <b>RUB · 150 ₽/"
+            + tr("мес.", "month") + "</b>\n"
+            + "🇺🇸 <b>USD · $5/"
+            + tr("мес.", "month") + "</b>",
+            tr(
+                "Первый счёт — обслуживание. Со следующего периода "
+                "добавляется 5% подтверждённых продаж.",
+                "First bill: service only. Later bills include "
+                "5% of confirmed sales.",
+            ),
+            tr(
+                "После выбора валюты откроется полная панель администратора.",
+                "After choosing a currency, the full admin dashboard opens.",
+            ),
+        ])
     if action == "resources":
         return _channel_step_classic(bot_name=bot_name, timezone=timezone)
     if action == "methods":
