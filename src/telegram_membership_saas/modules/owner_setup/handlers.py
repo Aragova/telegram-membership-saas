@@ -8395,12 +8395,24 @@ def create_owner_setup_router(
                     },
                     text=tr(
                         "⭐ <b>Цена Telegram Stars</b>\n\n"
-                        "Введите целое число звёзд от 1 до 250000. "
-                        "Оно будет списано Telegram при покупке.",
+                        "➡️ Отправьте новую цену прямо сюда.\n"
+                        "Целое число от 1 до 250 000 ⭐.",
                         "⭐ <b>Telegram Stars price</b>\n\n"
-                        "Enter a whole number of Stars from 1 to 250000. "
-                        "Telegram will charge this amount for the purchase.",
+                        "➡️ Send the new price here.\n"
+                        "Whole number from 1 to 250,000 ⭐.",
                     ),
+                    rich_html=(
+                        "<h3>⭐ " + tr("Цена Telegram Stars",
+                                         "Telegram Stars price")
+                        + "</h3><p>➡️ " + tr(
+                            "Отправьте новую цену <b>прямо в этот чат</b>.",
+                            "Send the new price <b>right here in this chat</b>.",
+                        ) + "</p><p>"
+                        + tr("Целое число от 1 до 250 000 ⭐.",
+                             "Whole number from 1 to 250,000 ⭐.")
+                        + "</p>" + RICH_ACTIONS_MARKER
+                    ),
+                    show_main_menu=False,
                 )
             elif action.startswith("starsoff:"):
                 _, plan_hex, page_token = action.split(":", 2)
