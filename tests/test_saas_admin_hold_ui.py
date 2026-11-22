@@ -11,9 +11,10 @@ from telegram_membership_saas.modules.owner_setup.handlers import (
 def test_russian_dashboard_reports_hold_without_new_buttons():
     token = _language.set("ru")
     try:
-        assert "приостановлены" in _sales_status_text(
-            configured=True, hold_state="held",
-        )
+        held = _sales_status_text(configured=True, hold_state="held")
+        assert "приостановлены" in held
+        assert "0 ₽" in held
+        assert "ещё не" in held
         assert "Продажи доступны" in _sales_status_text(
             configured=True, hold_state="clear",
         )
@@ -27,9 +28,10 @@ def test_russian_dashboard_reports_hold_without_new_buttons():
 def test_english_dashboard_reports_hold_without_new_buttons():
     token = _language.set("en")
     try:
-        assert "on hold" in _sales_status_text(
-            configured=True, hold_state="held",
-        )
+        held = _sales_status_text(configured=True, hold_state="held")
+        assert "on hold" in held
+        assert "0 due" in held
+        assert "not active" in held
         assert "Sales available" in _sales_status_text(
             configured=True, hold_state="clear",
         )
