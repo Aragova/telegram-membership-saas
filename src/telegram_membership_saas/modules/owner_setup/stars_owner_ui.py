@@ -10,7 +10,9 @@ from html import escape
 from telegram_membership_saas.localization import tr
 
 
-def overview_rich(*, plans: list[tuple[str, str, str]]) -> str:
+def overview_rich(
+    *, plans: list[tuple[str, str, str]], published: bool = False,
+) -> str:
     lines = [
         "<h3>⭐ Telegram Stars</h3>",
         "<p>" + tr(
@@ -38,10 +40,17 @@ def overview_rich(*, plans: list[tuple[str, str, str]]) -> str:
                 + escape(price) + "</td><td>" + escape(status) + "</td></tr>"
             )
         lines.append("</table>")
+    if published:
+        lines.append("<p>✅ <b>" + tr(
+            "Тариф создан и активирован.",
+            "Plan created and activated.",
+        ) + "</b></p>")
     return "\n".join(lines)
 
 
-def overview_classic(*, plans: list[tuple[str, str, str]]) -> str:
+def overview_classic(
+    *, plans: list[tuple[str, str, str]], published: bool = False,
+) -> str:
     lines = [
         "⭐ <b>Telegram Stars</b>",
         tr("Принимайте оплату подписок в звёздах Telegram.",
@@ -62,6 +71,11 @@ def overview_classic(*, plans: list[tuple[str, str, str]]) -> str:
                "Create your first plan and choose <b>where Stars "
                "will be credited</b>."),
         ])
+    if published:
+        lines.append("✅ <b>" + tr(
+            "Тариф создан и активирован.",
+            "Plan created and activated.",
+        ) + "</b>")
     return "\n\n".join(lines)
 
 
