@@ -8412,15 +8412,11 @@ def create_owner_setup_router(
                                 "Price: <b>",
                             ) + str(target.amount) + " ⭐</b>\n\n"
                             + tr(
-                                "Звёзды получит канал, а не бот. "
-                                "Telegram управляет выдачей доступа и продлениями. "
-                                "ViMi Pay пока не видит транзакции баланса канала "
-                                "и не включает их в подтверждённую выручку и 5%.\n\n"
-                                "Подтвердить создание ссылки?",
-                                "Stars will go to the channel, not the bot. "
-                                "Telegram manages access and renewals. "
-                                "ViMi Pay cannot yet verify channel transactions "
-                                "and will not report them as confirmed 5% revenue.\n\n"
+                                "Звёзды поступят на баланс канала. "
+                                "Telegram будет управлять доступом и продлениями.\n\n"
+                                "Подтвердить создание платной ссылки?",
+                                "Stars will go to the channel balance. "
+                                "Telegram will manage access and renewals.\n\n"
                                 "Create the paid link?",
                             ),
                             parse_mode="HTML",
