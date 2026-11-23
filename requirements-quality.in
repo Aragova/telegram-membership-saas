@@ -1,0 +1,7 @@
+# Audit tools only. Resolve into requirements-quality.lock on Python 3.12.
+# code2flow 2.5.1 has no official PyPI wheel; this trusted universal wheel
+# from piwheels is fixed by its published SHA-256, avoiding sdist setup scripts.
+mypy>=1.15,<2
+bandit>=1.8,<2
+radon==6.0.1
+code2flow @ https://archive1.piwheels.org/simple/code2flow/code2flow-2.5.1-py3-none-any.whl#sha256=e6f20d606724cae73da55b205c2a04b5fca91f7fcbd2f607ddf032afef897a22
