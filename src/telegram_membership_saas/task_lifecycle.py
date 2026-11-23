@@ -19,13 +19,17 @@ async def complete_cleanup(operation: Awaitable[None]) -> None:
     The original cancellation of the caller will propagate out of its finally.
     """
     cleanup = asyncio.create_task(operation)
+    cancelled_during_cleanup = False
     while not cleanup.done():
         try:
             await asyncio.shield(cleanup)
         except asyncio.CancelledError:
-            # A later cancellation cannot propagate to the cleanup task.
-            continue
+            # Keep draining the same child task, then propagate cancellation.
+            # This must never release a DB lease before its worker is stopped.
+            cancelled_during_cleanup = True
     await cleanup
+    if cancelled_during_cleanup:
+        raise asyncio.CancelledError
 
 
 def cancel_once(task: asyncio.Task[object] | None) -> None:

@@ -186,3 +186,144 @@ def test_cloud_run_health_endpoint_avoids_reserved_suffix_z() -> None:
     source = (ROOT / "ops/backup/session_broker/server.py").read_text()
     assert 'self.path == "/health"' in source
     assert 'self.path == "/healthz"' not in source
+
+
+def test_request_session_rejects_unsafe_broker_before_metadata_network(monkeypatch) -> None:
+    network_calls = []
+
+    def forbidden_network(*args, **kwargs):
+        network_calls.append((args, kwargs))
+        raise AssertionError("unsafe broker must not cause any network I/O")
+
+    monkeypatch.setattr(urllib.request, "urlopen", forbidden_network)
+    prefix = "20261116T123000Z-12345678-1234-1234-1234-123456789abc"
+    for bad in (
+        "http://vimi-backup-123-ew.a.run.app",
+        "https://metadata.google.internal",
+        "https://vimi-backup-123-ew.a.run.app.evil.test",
+        "https://vimi-backup-123-ew.a.run.app/unauthorized",
+    ):
+        with pytest.raises(ValueError):
+            request_session(bad, prefix, "membership.dump.age", 10)
+    assert network_calls == []
+
+
+def test_backup_files_must_be_within_encrypted_run_directory(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(uploader, "BACKUP_ROOT", tmp_path)
+    work = tmp_path / ".gcs-upload.ABCDEFGH"
+    work.mkdir()
+    allowed = work / "membership.dump.age"
+    allowed.write_bytes(b"encrypted-content")
+    assert uploader.checked_backup_file(str(allowed), "membership.dump.age") == allowed
+
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(str(allowed), "manifest.sha256")
+    outside = tmp_path / "membership.dump.age"
+    outside.write_bytes(b"other-file")
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(str(outside), "membership.dump.age")
+    symlink = work / "manifest.sha256"
+    symlink.symlink_to(outside)
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(str(symlink), "manifest.sha256")
+    parent_symlink = tmp_path / "linked-upload"
+    parent_symlink.symlink_to(work, target_is_directory=True)
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(
+            str(parent_symlink / "membership.dump.age"), "membership.dump.age"
+        )
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(
+            str(work / ".." / ".gcs-upload.ABCDEFGH" / "membership.dump.age"),
+            "membership.dump.age",
+        )
+    wrong_folder = tmp_path / "untrusted-dir"
+    wrong_folder.mkdir()
+    (wrong_folder / "membership.dump.age").write_bytes(b"something")
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(
+            str(wrong_folder / "membership.dump.age"), "membership.dump.age"
+        )
+
+
+def test_stream_put_uses_only_validated_gcs_host_and_encrypted_file(
+    tmp_path, monkeypatch,
+) -> None:
+    monkeypatch.setattr(uploader, "BACKUP_ROOT", tmp_path)
+    work = tmp_path / ".gcs-upload.ABCDEFGH"
+    work.mkdir()
+    encrypted = work / "membership.dump.age"
+    encrypted.write_bytes(b"test encrypted backup data")
+    calls = []
+
+    class Response:
+        status = 200
+
+        def read(self):
+            return b""
+
+    class Connection:
+        def __init__(self, host, timeout):
+            assert host == "storage.googleapis.com"
+            assert timeout == 120
+
+        def putrequest(self, method, path):
+            calls.append((method, path))
+
+        def putheader(self, name, value):
+            calls.append((name, value))
+
+        def endheaders(self):
+            pass
+
+        def send(self, data):
+            calls.append(("data", data))
+
+        def getresponse(self):
+            return Response()
+
+        def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(uploader.http.client, "HTTPSConnection", Connection)
+    url = (
+        "https://storage.googleapis.com/upload/storage/v1/b/"
+        "backup-bucket/o?upload_id=opaque-session"
+    )
+    uploader.stream_put(url, str(encrypted), part="membership.dump.age")
+    assert ("PUT", "/upload/storage/v1/b/backup-bucket/o?upload_id=opaque-session") in calls
+    assert ("Content-Length", str(encrypted.stat().st_size)) in calls
+    assert ("data", b"test encrypted backup data") in calls
+    assert ("close",) in calls
+
+    calls.clear()
+    with pytest.raises(ValueError):
+        uploader.stream_put(
+            "https://storage.googleapis.com.evil.test/upload/storage/v1/b/"
+            "backup-bucket/o?upload_id=opaque-session",
+            str(encrypted), part="membership.dump.age",
+        )
+    assert calls == []
+
+
+def test_broker_rejects_session_from_wrong_bucket(monkeypatch) -> None:
+    requested = []
+
+    def fake_urlopen(req, timeout):
+        requested.append(req)
+        if len(requested) == 1:
+            return FakeHTTPResponse(b'{"access_token":"test-token"}')
+        return FakeHTTPResponse(headers={
+            "Location": (
+                "https://storage.googleapis.com/upload/storage/v1/b/"
+                "other-bucket/o?upload_id=opaque-session"
+            ),
+        })
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(ValueError):
+        start_gcs_session(
+            "backup-bucket",
+            "vimi-pay/postgres/example/membership.dump.age",
+            5000,
+        )

@@ -4,7 +4,10 @@ services:
     environment:
       POSTGRES_DB: membership
       POSTGRES_USER: membership
-      POSTGRES_PASSWORD: membership
+      # Required, URL-safe secrets supplied by the host's gitignored .env.
+      # Editing these variables alone does NOT rotate existing database roles.
+      POSTGRES_PASSWORD: ${VIMI_PG_OWNER_PASSWORD:?Set VIMI_PG_OWNER_PASSWORD in private .env}
+      VIMI_PG_RUNTIME_PASSWORD: ${VIMI_PG_RUNTIME_PASSWORD:?Set VIMI_PG_RUNTIME_PASSWORD in private .env}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U membership -d membership"]
       interval: 5s
@@ -13,6 +16,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init-runtime.sql:/docker-entrypoint-initdb.d/10-runtime.sql:ro
+      - ./docker/postgres/20-runtime-password.sh:/docker-entrypoint-initdb.d/20-runtime-password.sh:ro
 
   app:
     build: .
@@ -21,8 +25,8 @@ services:
         condition: service_healthy
     environment:
       TMS_ENVIRONMENT: development
-      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
-      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://membership:membership@postgres:5432/membership
+      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:${VIMI_PG_RUNTIME_PASSWORD:?Set private runtime password}@postgres:5432/membership
+      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://membership:${VIMI_PG_OWNER_PASSWORD:?Set private owner password}@postgres:5432/membership
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
     ports:
       - "8000:8000"
@@ -37,8 +41,8 @@ services:
         condition: service_healthy
     environment:
       TMS_ENVIRONMENT: development
-      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
-      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://membership:membership@postgres:5432/membership
+      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:${VIMI_PG_RUNTIME_PASSWORD:?Set private runtime password}@postgres:5432/membership
+      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://membership:${VIMI_PG_OWNER_PASSWORD:?Set private owner password}@postgres:5432/membership
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
       TMS_RICH_MESSAGES_ENABLED: ${TMS_RICH_MESSAGES_ENABLED:-true}
       TMS_PLATFORM_OWNER_TELEGRAM_ID: ${TMS_PLATFORM_OWNER_TELEGRAM_ID:-}
@@ -70,7 +74,7 @@ services:
         condition: service_healthy
     environment:
       TMS_ENVIRONMENT: development
-      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
+      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:${VIMI_PG_RUNTIME_PASSWORD:?Set private runtime password}@postgres:5432/membership
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
       # Same configured owner identity as the central bot. Required for
       # owner-only monthly CBR publication in the customer supervisor.
@@ -95,7 +99,7 @@ services:
         condition: service_healthy
     environment:
       TMS_ENVIRONMENT: development
-      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@postgres:5432/membership
+      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:${VIMI_PG_RUNTIME_PASSWORD:?Set private runtime password}@postgres:5432/membership
       TMS_DEFAULT_PROJECT_TIMEZONE: Europe/Moscow
       TMS_RICH_MESSAGES_ENABLED: ${TMS_RICH_MESSAGES_ENABLED:-true}
       TMS_BOT_TOKEN_ENCRYPTION_KEY: ${TMS_BOT_TOKEN_ENCRYPTION_KEY:-}
