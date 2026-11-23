@@ -1,6 +1,6 @@
 CREATE ROLE membership_runtime
     LOGIN
-    PASSWORD 'membership_runtime'
+    -- The next init hook sets a private password from environment.
     NOSUPERUSER
     NOCREATEDB
     NOCREATEROLE
