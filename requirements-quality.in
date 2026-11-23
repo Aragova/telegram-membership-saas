@@ -1,0 +1,6 @@
+# Audit-only tool dependencies. Resolve to a hashed, binary-only lock on Python 3.12.
+# This input file is not used for direct installation.
+mypy>=1.15,<2
+bandit>=1.8,<2
+radon==6.0.1
+code2flow==2.5.1
