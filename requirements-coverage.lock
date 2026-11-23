@@ -1,0 +1,9 @@
+# CI-only coverage dependencies for Python 3.12 on GitHub's Ubuntu x86_64 runner.
+# SHA-256 hashes verified against PyPI release wheels; no unpinned installs.
+# The CI environment already installs pytest/pluggy from requirements-dev.lock.
+# --no-deps is intentional: dependencies must be supplied by the hashed dev lock.
+coverage==7.13.3 \
+    --hash=sha256:8bb09e83c603f152d855f666d70a71765ca8e67332e5829e62cb9466c176af23 \
+    --hash=sha256:90a8af9dba6429b2573199622d72e0ebf024d6276f16abce394ad4d181bb0910
+pytest-cov==7.0.0 \
+    --hash=sha256:3b8e9558b16cc1479da72058bdecf8073661c7f57f7d3c5f22a1c23507f2d861
