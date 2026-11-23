@@ -16,30 +16,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      # Per-attempt credentials exist only in disposable CI PostgreSQL.
-      # The same values are used by postgres, migrations and runtime tests.
-      CI_PG_OWNER_PASSWORD: ${{ format('ci-owner-{0}-{1}', github.run_id, github.run_attempt) }}
-      CI_PG_RUNTIME_PASSWORD: ${{ format('ci-runtime-{0}-{1}', github.run_id, github.run_attempt) }}
-      VIMI_PG_OWNER_PASSWORD: ${{ format('ci-owner-{0}-{1}', github.run_id, github.run_attempt) }}
-      VIMI_PG_RUNTIME_PASSWORD: ${{ format('ci-runtime-{0}-{1}', github.run_id, github.run_attempt) }}
-      TMS_DATABASE_URL: ${{ format('postgresql+asyncpg://membership_runtime:ci-runtime-{0}-{1}@localhost:5432/app', github.run_id, github.run_attempt) }}
-      TMS_MIGRATION_DATABASE_URL: ${{ format('postgresql+asyncpg://postgres:ci-owner-{0}-{1}@localhost:5432/app', github.run_id, github.run_attempt) }}
-
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: ${{ format('ci-owner-{0}-{1}', github.run_id, github.run_attempt) }}
-          POSTGRES_DB: app
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d app"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
 
     steps:
       - name: Checkout
@@ -50,6 +26,64 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+
+      - name: Start isolated PostgreSQL with random CI credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          # A new, unpredictable password pair for EACH workflow execution.
+          # Avoid even predictable per-run IDs as passwords.
+          owner_pw="$(python -c 'import secrets; print(secrets.token_urlsafe(36))')"
+          runtime_pw="$(python -c 'import secrets; print(secrets.token_urlsafe(36))')"
+          echo "::add-mask::$owner_pw"
+          echo "::add-mask::$runtime_pw"
+
+          # The runner persists these only to later steps of this CI job.
+          # Neither the values nor the full URLs are printed in the logs.
+          {
+            printf 'CI_PG_OWNER_PASSWORD=%s\n' "$owner_pw"
+            printf 'CI_PG_RUNTIME_PASSWORD=%s\n' "$runtime_pw"
+            printf 'VIMI_PG_OWNER_PASSWORD=%s\n' "$owner_pw"
+            printf 'VIMI_PG_RUNTIME_PASSWORD=%s\n' "$runtime_pw"
+            printf 'TMS_DATABASE_URL=postgresql+asyncpg://membership_runtime:%s@localhost:5432/app\n' "$runtime_pw"
+            printf 'TMS_MIGRATION_DATABASE_URL=postgresql+asyncpg://postgres:%s@localhost:5432/app\n' "$owner_pw"
+          } >> "$GITHUB_ENV"
+
+          env_file="$RUNNER_TEMP/vimi-ci-postgres.env"
+          trap 'rm -f "$env_file"' EXIT
+          {
+            printf 'POSTGRES_USER=postgres\n'
+            printf 'POSTGRES_DB=app\n'
+            printf 'POSTGRES_PASSWORD=%s\n' "$owner_pw"
+          } > "$env_file"
+          docker run --detach --name vimi-ci-postgres \
+            --env-file "$env_file" \
+            --publish 127.0.0.1:5432:5432 \
+            --health-cmd 'pg_isready -U postgres -d app' \
+            --health-interval 5s --health-timeout 5s --health-retries 10 \
+            postgres:17-alpine >/dev/null
+
+          ready=0
+          for _ in {1..45}; do
+            health="$(docker inspect -f '{{.State.Health.Status}}' vimi-ci-postgres 2>/dev/null || true)"
+            if [[ "$health" == healthy ]]; then
+              ready=1
+              break
+            fi
+            if [[ "$health" == unhealthy ]]; then
+              break
+            fi
+            sleep 1
+          done
+          [[ "$ready" == 1 ]] || {
+            echo "CI PostgreSQL failed to start"
+            docker logs --tail 30 vimi-ci-postgres 2>&1 \
+              | sed -E 's/(password)[^ ]*/[redacted]/Ig'
+            exit 1
+          }
+          echo "CI_POSTGRES_READY=OK"
 
       - name: Install
         run: |
@@ -400,3 +434,8 @@ jobs:
             import telegram_membership_saas.bot_main; \
             import telegram_membership_saas.customer_bot_main; \
             import telegram_membership_saas.customer_supervisor_main"
+
+      - name: Remove disposable CI PostgreSQL
+        if: always()
+        shell: bash
+        run: docker rm --force vimi-ci-postgres >/dev/null 2>&1 || true
