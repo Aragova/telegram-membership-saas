@@ -18,8 +18,8 @@ jobs:
     timeout-minutes: 15
     env:
       # These passwords exist only in disposable CI PostgreSQL, never on a VM.
-      VIMI_PG_OWNER_PASSWORD: postgres
-      VIMI_PG_RUNTIME_PASSWORD: membership_runtime
+      VIMI_PG_OWNER_PASSWORD: ${{ format('ci-only-owner-{0}', github.run_id) }}
+      VIMI_PG_RUNTIME_PASSWORD: ${{ format('ci-only-runtime-{0}', github.run_id) }}
       TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@localhost:5432/app
       TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/app
 
