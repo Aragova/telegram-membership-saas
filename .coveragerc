@@ -10,6 +10,7 @@ source =
 
 [report]
 show_missing = True
+include_namespace_packages = True
 
 [xml]
 output = coverage.xml
