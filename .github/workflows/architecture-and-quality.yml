@@ -39,7 +39,10 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
           python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
           python -m pip install --no-build-isolation --no-deps --only-binary=:all: -e .
-          python -m pip install "mypy>=1.15,<2" "bandit>=1.8,<2" "radon==6.0.1" "code2flow==2.5.1"
+          # Temporary bootstrap: generate hash-pinned wheels-only quality lock once.
+          python -m pip install --only-binary=:all: "pip-tools>=7,<8"
+          PIP_ONLY_BINARY=:all: python -m piptools compile --generate-hashes --allow-unsafe --output-file=requirements-quality.lock requirements-quality.in
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-quality.lock
           mkdir -p quality-reports docs
 
       - name: Ruff - style and bugs
@@ -144,7 +147,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- docs/architecture_flow.png
+          git add -- docs/architecture_flow.png requirements-quality.lock
           if git diff --cached --quiet; then
             echo "Architecture PNG has not changed"
             exit 0
