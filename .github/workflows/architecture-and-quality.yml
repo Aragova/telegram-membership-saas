@@ -112,6 +112,7 @@ jobs:
           path: |
             quality-reports/
             docs/architecture_flow.png
+            requirements-quality.lock
 
   publish:
     name: Update PR diagram and comment
@@ -137,7 +138,6 @@ jobs:
 
       - name: Commit only the updated image into this PR branch
         id: push_png
-        continue-on-error: true
         env:
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
