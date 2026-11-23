@@ -12,7 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_ci_uses_random_postgresql_passwords_and_loopback_only() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-    assert workflow.count("secrets.token_urlsafe(36)") == 2
+    # A separate existing smoke test generates two MORE random passwords.
+    # Count only the startup step added by this remediation.
+    startup = workflow.split(
+        "      - name: Start isolated PostgreSQL with random CI credentials\n", 1
+    )[1].split("      - name: Install\n", 1)[0]
+    assert startup.count("secrets.token_urlsafe(36)") == 2
     assert 'echo "::add-mask::$owner_pw"' in workflow
     assert 'echo "::add-mask::$runtime_pw"' in workflow
 
