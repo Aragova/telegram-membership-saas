@@ -3,8 +3,8 @@
 The first-boot PostgreSQL hook is integration-tested in GitHub CI using a
 disposable postgres:16-alpine container and two fresh random passwords.
 """
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
