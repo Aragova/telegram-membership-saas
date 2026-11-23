@@ -51,5 +51,6 @@ def test_sonar_properties_preserve_source_and_test_scopes() -> None:
     config = (ROOT / ".coveragerc").read_text()
     assert "branch = True" in config
     assert "relative_files = True" in config
+    assert "include_namespace_packages = True" in config
     assert "src/telegram_membership_saas" in config
     assert "ops" in config and "migrations" in config
