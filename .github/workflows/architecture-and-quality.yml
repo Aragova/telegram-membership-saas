@@ -149,7 +149,9 @@ jobs:
             echo "Architecture PNG has not changed"
             exit 0
           fi
-          git commit -m "docs: refresh architecture call graph"
+          # GITHUB_TOKEN-generated PR syncs otherwise require workflow approval.
+          # The source commit was checked by CI and audit before this PNG-only commit.
+          git commit -m "docs: refresh architecture call graph [skip ci]"
           git push origin "HEAD:refs/heads/$PR_HEAD_REF"
 
       - name: Create or update a single PR audit comment
