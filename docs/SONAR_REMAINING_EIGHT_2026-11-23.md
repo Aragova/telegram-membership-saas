@@ -12,8 +12,8 @@ mean there are no open historical issues.
 
 | Issue key | Rule and location | Assessment / action |
 |---|---|---|
-| `AaH1CVK0J8YxpWOrqt6r` | `secrets:S6698`, `.github/workflows/ci.yml` line 23 | **Fix in this PR.** Old literal runtime database URL was scoped to ephemeral GitHub Actions PG, not staging. Replace with per-run/attempt value used consistently for role creation and tests. No live VM DB credentials are involved. |
-| `AaH1CVK0J8YxpWOrqt6q` | `yaml:S2068`, `.github/workflows/ci.yml` line 31 | **Fix in this PR.** Replace disposable PG service's static password with same per-run owner password, and use it for Alembic/asyncpg setup. |
+| `AaH1CVK0J8YxpWOrqt6r` | `secrets:S6698`, `.github/workflows/ci.yml` line 23 | **Fix in this PR.** Old literal runtime database URL was scoped to ephemeral GitHub Actions PG, not staging. Replace with cryptographically random, masked per-job credentials used consistently for role creation and tests. No live VM DB credentials are involved. |
+| `AaH1CVK0J8YxpWOrqt6q` | `yaml:S2068`, `.github/workflows/ci.yml` line 31 | **Fix in this PR.** Replace the disposable PG service's static password with the same random owner password, and use it for Alembic/asyncpg setup. Docker publishes it only to CI runner loopback. |
 | `AaH1CVKkJ8YxpWOrqt6i` | `pythonsecurity:S8703`, `ops/backup/session_upload.py` line 90 | **Protected by PR #229, request review of issue status.** `request_session` now calls `validate_service_url` before requesting Google ID token; requires HTTPS, exact `.run.app` domain suffix, no userinfo/nonstandard port/path/query/fragment. Explicitly disables HTTP redirects carrying IAM token. Input is a root-owned backup configuration, not a public user endpoint. Keep tests for malformed origins and redirects. |
 | `AaH1CVKkJ8YxpWOrqt6h` | `pythonsecurity:S5144`, `ops/backup/session_upload.py` line 150 | **Protected by PR #229, request review of issue status.** `stream_put` requires HTTPS and exact `storage.googleapis.com` host/port and GCS upload path, no userinfo/fragment, validated upload ID. The connection host is a constant, not taken from the response; local source is limited to encrypted backup working files without symlinks. Tests exercise these boundaries. |
 | `AaH1CVJmJ8YxpWOrqt6f` | `python:S7497`, `src/telegram_membership_saas/task_lifecycle.py` line 26 | **Fixed behavior in PR #229, scanner still flags intentional protected cleanup.** Repeated cancellation is remembered and re-raised after cleanup task finishes; tests verify no premature exit. Do not re-raise from inside the `except` before cleanup. |
@@ -40,7 +40,7 @@ already complete and was verified separately.
 
 ## Review and completion procedure
 
-1. Run CI with generated per-run credentials; Alembic migrations, PostgreSQL
+1. Run CI with cryptographically random generated per-job credentials; Alembic migrations, PostgreSQL
    RLS integration tests, backup contracts, setup tests and cold starts must
    all pass before merge. Sonar should be checked for new warnings at exact
    PR HEAD and for historical status after merge into main.
