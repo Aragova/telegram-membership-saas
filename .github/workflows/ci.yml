@@ -332,10 +332,18 @@ jobs:
             -v "$PWD/docker/postgres/init-runtime.sql:/docker-entrypoint-initdb.d/10-runtime.sql:ro" \
             -v "$PWD/docker/postgres/20-runtime-password.sh:/docker-entrypoint-initdb.d/20-runtime-password.sh:ro" \
             postgres:16-alpine >/dev/null
+          # Never authenticate to loopback: initdb can configure local
+          # trust, so any password (including the public one) would succeed.
+          # Use the container's Docker-network IPv4 to exercise SCRAM.
+          db_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$name")"
+          [[ "$db_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "No Docker-network IPv4 for private auth probe"
+            exit 1
+          }
           ready=0
           for _ in {1..50}; do
             if docker exec -e "PGPASSWORD=$runtime_pw" "$name" \
-              psql -X -w -Atq -h 127.0.0.1 -U membership_runtime -d membership \
+              psql -X -w -Atq -h "$db_ip" -U membership_runtime -d membership \
               -c 'SELECT 1' 2>/dev/null | grep -qx 1; then
               ready=1
               break
@@ -344,7 +352,7 @@ jobs:
           done
           [[ "$ready" == 1 ]] || { echo "Private PostgreSQL init did not complete"; exit 1; }
           docker exec -e "PGPASSWORD=$owner_pw" "$name" \
-            psql -X -w -Atq -h 127.0.0.1 -U membership -d membership \
+            psql -X -w -Atq -h "$db_ip" -U membership -d membership \
             -c 'SELECT 1' | grep -qx 1
           role_flags="$(docker exec "$name" psql -X -Atq -U membership -d membership \
             -c "SELECT rolsuper::text || ':' || rolbypassrls::text \
@@ -354,13 +362,13 @@ jobs:
             exit 1
           }
           if docker exec -e PGPASSWORD=membership_runtime "$name" \
-            psql -X -w -Atq -h 127.0.0.1 -U membership_runtime -d membership \
+            psql -X -w -Atq -h "$db_ip" -U membership_runtime -d membership \
             -c 'SELECT 1' >/dev/null 2>&1; then
             echo "Public runtime password unexpectedly accepted"
             exit 1
           fi
           if docker exec -e PGPASSWORD=membership "$name" \
-            psql -X -w -Atq -h 127.0.0.1 -U membership -d membership \
+            psql -X -w -Atq -h "$db_ip" -U membership -d membership \
             -c 'SELECT 1' >/dev/null 2>&1; then
             echo "Public owner password unexpectedly accepted"
             exit 1
