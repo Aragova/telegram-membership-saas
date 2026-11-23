@@ -1,0 +1,181 @@
+name: Architecture and quality audit
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: architecture-quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Static audit and call graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout PR source (no write credentials)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Graphviz
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Install project and audit tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
+          python -m pip install --no-build-isolation --no-deps --only-binary=:all: -e .
+          python -m pip install "mypy>=1.15,<2" "bandit>=1.8,<2" "radon==6.0.1" "code2flow==2.5.1"
+          mkdir -p quality-reports docs
+
+      - name: Ruff - style and bugs
+        id: ruff
+        continue-on-error: true
+        run: ruff check . > quality-reports/ruff.txt 2>&1
+
+      - name: mypy - strict project types
+        id: mypy
+        continue-on-error: true
+        run: mypy --strict --ignore-missing-imports src/telegram_membership_saas > quality-reports/mypy.txt 2>&1
+
+      - name: Bandit - security and hardcoded secrets
+        id: bandit
+        continue-on-error: true
+        run: bandit -r src/telegram_membership_saas ops -f json -o quality-reports/bandit.json
+
+      - name: Radon - cyclomatic complexity B-F
+        id: radon
+        continue-on-error: true
+        run: |
+          radon cc . -a -nb > quality-reports/radon.txt
+          radon cc . -j -nb > quality-reports/radon.json
+
+      - name: code2flow + Graphviz - key cross-module call paths
+        id: code2flow
+        continue-on-error: true
+        run: |
+          timeout 300 code2flow \
+            src/telegram_membership_saas/telegram_runtime.py \
+            src/telegram_membership_saas/customer_runtime.py \
+            src/telegram_membership_saas/telegram_adapter.py \
+            src/telegram_membership_saas/modules/owner_setup/onboarding_ui.py \
+            src/telegram_membership_saas/modules/owner_setup/service.py \
+            src/telegram_membership_saas/modules/telegram_commerce/service.py \
+            src/telegram_membership_saas/modules/payments/approval_service.py \
+            src/telegram_membership_saas/modules/file_sales/service.py \
+            src/telegram_membership_saas/modules/access/service.py \
+            src/telegram_membership_saas/modules/outbox/service.py \
+            --language py --output docs/architecture_flow.png \
+            > quality-reports/code2flow.txt 2>&1
+          test -s docs/architecture_flow.png
+
+      - name: Assemble Russian PR report
+        if: always()
+        run: |
+          mkdir -p quality-reports
+          cat > quality-reports/statuses.json <<'JSON'
+          {
+            "ruff": "${{ steps.ruff.outcome }}",
+            "mypy": "${{ steps.mypy.outcome }}",
+            "bandit": "${{ steps.bandit.outcome }}",
+            "radon": "${{ steps.radon.outcome }}",
+            "code2flow": "${{ steps.code2flow.outcome }}"
+          }
+          JSON
+          python ops/quality/pr_report.py
+          cat quality-reports/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish reports and generated PNG as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vimi-quality-reports
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            quality-reports/
+            docs/architecture_flow.png
+
+  publish:
+    name: Update PR diagram and comment
+    needs: audit
+    if: ${{ needs.audit.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout the exact PR commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: true
+
+      - name: Fetch audit artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vimi-quality-reports
+          path: .
+
+      - name: Commit only the updated image into this PR branch
+        id: push_png
+        continue-on-error: true
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [ ! -s docs/architecture_flow.png ]; then
+            echo "No generated PNG: nothing to commit"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- docs/architecture_flow.png
+          if git diff --cached --quiet; then
+            echo "Architecture PNG has not changed"
+            exit 0
+          fi
+          git commit -m "docs: refresh architecture call graph [skip ci]"
+          git push origin "HEAD:refs/heads/$PR_HEAD_REF"
+
+      - name: Create or update a single PR audit comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('quality-reports/comment.md', 'utf8');
+            const marker = '<!-- vimi-quality-report -->';
+            const repo = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...repo, issue_number, per_page: 100 }
+            );
+            const existing = comments.find(c =>
+              c.user?.type === 'Bot' && c.body?.includes(marker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...repo, comment_id: existing.id, body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...repo, issue_number, body
+              });
+            }
