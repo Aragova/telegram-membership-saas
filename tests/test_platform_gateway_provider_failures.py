@@ -7,7 +7,7 @@ issued, and no platform settlement/credit is ever written.
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -226,7 +226,7 @@ async def test_unpaid_lava_receipts_never_reach_platform_ledger(
 ):
     provider = FakeLavaClient(snapshot={"status": status})
     rpc = AsyncMock()
-    verifier = AsyncMock()
+    verifier = Mock()
     monkeypatch.setattr(gateway, "LavaTopClient", lambda _api_key: provider)
     monkeypatch.setattr(gateway, "_rpc", rpc)
     monkeypatch.setattr(gateway, "verify_lava_paid_invoice", verifier)
@@ -237,7 +237,7 @@ async def test_unpaid_lava_receipts_never_reach_platform_ledger(
 
     assert result is None
     rpc.assert_not_awaited()
-    verifier.assert_not_awaited()
+    verifier.assert_not_called()
 
 
 async def test_completed_lava_receipt_is_verified_before_ledger_posting(monkeypatch):
@@ -255,9 +255,9 @@ async def test_completed_lava_receipt_is_verified_before_ledger_posting(monkeypa
     )
 
     assert applied == {"applied": True}
-    assert verifier.await_count == 1
-    assert verifier.await_args.kwargs["expected_amount"] == Decimal("5.00")
-    assert verifier.await_args.kwargs["expected_currency"] == "USD"
+    assert verifier.call_count == 1
+    assert verifier.call_args.kwargs["expected_amount"] == Decimal("5.00")
+    assert verifier.call_args.kwargs["expected_currency"] == "USD"
     assert rpc.await_args.kwargs["name"] == "platform_saas_gateway_record_charge"
     assert rpc.await_args.kwargs["values"]["amount"] == Decimal("150.00")
     assert rpc.await_args.kwargs["values"]["provider_id"] == pending[
