@@ -17,18 +17,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # These passwords exist only in disposable CI PostgreSQL, never on a VM.
-      VIMI_PG_OWNER_PASSWORD: ${{ format('ci-only-owner-{0}', github.run_id) }}
-      VIMI_PG_RUNTIME_PASSWORD: ${{ format('ci-only-runtime-{0}', github.run_id) }}
-      TMS_DATABASE_URL: postgresql+asyncpg://membership_runtime:membership_runtime@localhost:5432/app
-      TMS_MIGRATION_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/app
+      # Per-attempt credentials exist only in disposable CI PostgreSQL.
+      # The same values are used by postgres, migrations and runtime tests.
+      CI_PG_OWNER_PASSWORD: ${{ format('ci-owner-{0}-{1}', github.run_id, github.run_attempt) }}
+      CI_PG_RUNTIME_PASSWORD: ${{ format('ci-runtime-{0}-{1}', github.run_id, github.run_attempt) }}
+      VIMI_PG_OWNER_PASSWORD: ${{ format('ci-owner-{0}-{1}', github.run_id, github.run_attempt) }}
+      VIMI_PG_RUNTIME_PASSWORD: ${{ format('ci-runtime-{0}-{1}', github.run_id, github.run_attempt) }}
+      TMS_DATABASE_URL: ${{ format('postgresql+asyncpg://membership_runtime:ci-runtime-{0}-{1}@localhost:5432/app', github.run_id, github.run_attempt) }}
+      TMS_MIGRATION_DATABASE_URL: ${{ format('postgresql+asyncpg://postgres:ci-owner-{0}-{1}@localhost:5432/app', github.run_id, github.run_attempt) }}
 
     services:
       postgres:
         image: postgres:17-alpine
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ format('ci-owner-{0}-{1}', github.run_id, github.run_attempt) }}
           POSTGRES_DB: app
         ports:
           - 5432:5432
@@ -80,19 +83,29 @@ jobs:
         run: |
           python - <<'PY'
           import asyncio
+          import os
           import asyncpg
 
           async def main() -> None:
               connection = await asyncpg.connect(
                   user="postgres",
-                  password="postgres",
+                  password=os.environ["CI_PG_OWNER_PASSWORD"],
                   database="app",
                   host="localhost",
               )
               try:
                   await connection.execute(
-                      "CREATE ROLE membership_runtime LOGIN PASSWORD 'membership_runtime'"
+                      "CREATE ROLE membership_runtime LOGIN"
                   )
+                  # PostgreSQL DDL cannot parameterize a PASSWORD literal
+                  # directly. Quote the CI-only credential with server-side
+                  # format(%L) before executing the resulting statement.
+                  runtime_password = os.environ["CI_PG_RUNTIME_PASSWORD"]
+                  role_password_sql = await connection.fetchval(
+                      "SELECT format('ALTER ROLE membership_runtime PASSWORD %L', $1::text)",
+                      runtime_password,
+                  )
+                  await connection.execute(role_password_sql)
                   await connection.execute("GRANT CONNECT ON DATABASE app TO membership_runtime")
                   await connection.execute("GRANT USAGE ON SCHEMA public TO membership_runtime")
                   await connection.execute(
