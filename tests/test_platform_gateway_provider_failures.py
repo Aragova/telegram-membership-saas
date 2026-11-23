@@ -257,7 +257,7 @@ async def test_completed_lava_receipt_is_verified_before_ledger_posting(monkeypa
     events = []
     verifier = Mock(side_effect=lambda *_args, **_kwargs: events.append("verified"))
 
-    async def record_charge(**_kwargs):
+    async def record_charge(_factory, **_kwargs):
         assert events == ["verified"], "Ledger write must follow provider verification"
         events.append("recorded")
         return {"applied": True}
