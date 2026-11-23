@@ -20,6 +20,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for accurate SonarQube PR attribution.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -90,6 +93,12 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
           python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.lock
           python -m pip install --no-build-isolation --no-deps --only-binary=:all: -e .
+
+      - name: Install CI-only coverage tools
+        run: |
+          # Provenance-checked wheel hashes; no changes to runtime dependencies.
+          python -m pip install --no-deps --require-hashes --only-binary=:all: -r requirements-coverage.lock
+          python -m pip check
 
       - name: Lint
         run: ruff check .
@@ -346,8 +355,52 @@ jobs:
           asyncio.run(main())
           PY
 
-      - name: Test
-        run: pytest
+      - name: Test with Python branch coverage
+        run: |
+          # Run the existing PostgreSQL/RLS test suite exactly once.
+          pytest --cov --cov-branch --cov-report=xml:coverage.xml --cov-report=term:skip-covered
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          path = Path("coverage.xml")
+          assert path.is_file() and path.stat().st_size > 200, "Missing coverage.xml"
+          root = ET.parse(path).getroot()
+          assert root.tag == "coverage"
+          assert int(root.attrib["lines-valid"]) > 0, "Coverage report has no instrumented lines"
+          assert root.find(".//class") is not None, "Coverage report has no Python files"
+          print("COVERAGE_XML_VALID=OK")
+          PY
+
+      - name: Publish coverage XML for review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Automatic SonarQube Cloud analysis cannot import external coverage.
+      # Turn on only AFTER switching Sonar to CI-based analysis and adding SONAR_TOKEN.
+      # Never expose SONAR_TOKEN to contributions from forked repositories.
+      - name: Require Sonar token when CI analysis is enabled
+        if: ${{ vars.SONAR_CI_ENABLED == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo "SONAR_CI_ENABLED=true but SONAR_TOKEN is missing. Configure the GitHub Actions secret."
+            exit 1
+          fi
+
+      - name: Send measured coverage to SonarQube Cloud
+        if: ${{ vars.SONAR_CI_ENABLED == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+        uses: SonarSource/sonarqube-scan-action@70bad232163b09d998ea0707ee80c0ec80798c16 # v8.5.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
       - name: Compile imports
         run: python -m compileall -q src
