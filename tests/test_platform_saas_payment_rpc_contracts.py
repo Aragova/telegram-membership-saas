@@ -145,13 +145,18 @@ async def test_valid_payment_proof_preserves_original_telegram_evidence(
     )
 
     args = rpc.await_args.kwargs["arguments"]
+    expected = {
+        "attempt": attempt,
+        "bot_id": 101,
+        "chat_id": 102,
+        "message_id": 103,
+        "file_id": "file_reference",
+        "file_type": "document",
+    }
+    if unique is not None:
+        expected["file_unique_id"] = unique
     assert result == proof
-    assert args["attempt"] == attempt
-    assert args["bot_id"] == 101
-    assert args["chat_id"] == 102
-    assert args["message_id"] == 103
-    assert args["file_id"] == "file_reference"
-    assert ("file_unique_id" in args) == (unique is not None)
+    assert args == expected
 
 
 @pytest.mark.parametrize(
