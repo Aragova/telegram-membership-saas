@@ -45,7 +45,7 @@ jobs:
       - name: Ruff - style and bugs
         id: ruff
         continue-on-error: true
-        run: ruff check . > quality-reports/ruff.txt 2>&1
+        run: ruff check . --output-format json > quality-reports/ruff.json
 
       - name: mypy - strict project types
         id: mypy
@@ -149,7 +149,7 @@ jobs:
             echo "Architecture PNG has not changed"
             exit 0
           fi
-          git commit -m "docs: refresh architecture call graph [skip ci]"
+          git commit -m "docs: refresh architecture call graph"
           git push origin "HEAD:refs/heads/$PR_HEAD_REF"
 
       - name: Create or update a single PR audit comment
