@@ -71,8 +71,8 @@ def main() -> None:
         "",
         "| Проверка | Результат |",
         "|---|---|",
-        f"| Ruff | {statuses.get('ruff', 'нет данных')} |",
-        f"| mypy \`--strict\` | {statuses.get('mypy', 'нет данных')}; "
+        f"| Ruff | {statuses.get('ruff', 'нет данных')}; замечаний: **{ruff_count}** |",
+        f"| mypy `--strict` | {statuses.get('mypy', 'нет данных')}; "
         f"ошибок типов: **{mypy_count}** |",
         f"| Bandit | {statuses.get('bandit', 'нет данных')}; "
         f"🔴 HIGH: **{severities['HIGH']}**, MEDIUM: **{severities['MEDIUM']}**, "
@@ -90,7 +90,7 @@ def main() -> None:
             number = finding.get("line_number", "?")
             test_id = finding.get("test_id", "?")
             severity = finding.get("issue_severity", "?")
-            lines.append(f"- **{severity}** {test_id}: \`{filename}:{number}\`")
+            lines.append(f"- **{severity}** {test_id}: `{filename}:{number}`")
     else:
         lines.append("- Находок нет либо JSON-отчёт не создан.")
 
@@ -101,7 +101,7 @@ def main() -> None:
             line_number = block.get("lineno", "?")
             lines.append(
                 f"- **{block.get('rank', '?')} / {block.get('complexity', '?')}** "
-                f"\`{filename}:{line_number}\` · \`{name}\`"
+                f"`{filename}:{line_number}` · `{name}`"
             )
     else:
         lines.append("- Функций класса B–F не обнаружено либо JSON-отчёт не создан.")
