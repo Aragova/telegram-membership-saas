@@ -114,9 +114,13 @@ def checked_backup_file(path: str, part: str) -> Path:
     if part not in PARTS:
         raise ValueError("unknown backup part")
     raw = Path(path)
-    if raw.is_symlink():
-        raise ValueError("backup file cannot be a symlink")
+    # Reject symlinks in the complete source path, not only the leaf file.
+    # resolve() would otherwise conceal symlinked parent work directories.
+    if not raw.is_absolute() or any(node.is_symlink() for node in (raw, *raw.parents)):
+        raise ValueError("backup path must be absolute and have no symlinks")
     resolved = raw.resolve(strict=True)
+    if raw != resolved:
+        raise ValueError("non-canonical backup path")
     root = BACKUP_ROOT.resolve(strict=True)
     if (
         resolved.name != part
