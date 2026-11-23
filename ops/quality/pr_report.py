@@ -51,6 +51,13 @@ def main() -> None:
         for block in items
         if isinstance(block, dict)
     ] if isinstance(complexity, dict) else []
+    # Radon emits {"error": "..."} per unparseable file. Never report
+    # a partial scan as though that file contained no complex functions.
+    radon_errors = sorted(
+        filename
+        for filename, items in complexity.items()
+        if isinstance(items, dict) and "error" in items
+    ) if isinstance(complexity, dict) else []
     ranks = Counter(block.get("rank", "?") for _, block in blocks)
     top_complex = sorted(
         blocks,
@@ -77,7 +84,9 @@ def main() -> None:
         f"LOW: **{severities['LOW']}** |",
         f"| Radon | {statuses.get('radon', 'нет данных')}; "
         f"B: **{ranks['B']}**, C: **{ranks['C']}**, "
-        f"D: **{ranks['D']}**, E: **{ranks['E']}**, F: **{ranks['F']}** |",
+        f"D: **{ranks['D']}**, E: **{ranks['E']}**, F: **{ranks['F']}**; "
+        f"ошибок разбора файлов: **{len(radon_errors)}**"
+        f"{' (неполный анализ)' if radon_errors else ''} |",
         f"| code2flow → PNG | {statuses.get('code2flow', 'нет данных')} |",
         "",
         "### Находки Bandit (первые 8 по серьёзности)",
@@ -91,6 +100,15 @@ def main() -> None:
             lines.append(f"- **{severity}** {test_id}: `{filename}:{number}`")
     else:
         lines.append("- Находок нет либо JSON-отчёт не создан.")
+
+    if radon_errors:
+        lines.extend([
+            "",
+            "### ⚠️ Radon: файлы, не прошедшие анализ",
+            *[f"- `{filename}`" for filename in radon_errors[:12]],
+        ])
+        if len(radon_errors) > 12:
+            lines.append(f"- и ещё **{len(radon_errors) - 12}** файлов.")
 
     lines.extend(["", "### Самые сложные функции (Radon)"])
     if top_complex:
