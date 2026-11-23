@@ -72,6 +72,8 @@ jobs:
         id: code2flow
         continue-on-error: true
         run: |
+          # Never ship an old checked-in PNG as a freshly generated PR graph.
+          rm -f docs/architecture_flow.png
           timeout 300 code2flow \
             src/telegram_membership_saas/telegram_runtime.py \
             src/telegram_membership_saas/customer_runtime.py \
@@ -140,7 +142,7 @@ jobs:
             const fs = require('fs');
             const report = fs.readFileSync('quality-reports/comment.md', 'utf8');
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = report + `\n📎 [Скачать полный отчёт и актуальную PNG-схему](${runUrl}) → Artifacts → vimi-quality-reports\n`;
+            const body = report + `\n📎 [Скачать отчёт и PNG-схему (если генерация успешна)](${runUrl}) → Artifacts → vimi-quality-reports\n`;
             const marker = '<!-- vimi-quality-report -->';
             const repo = context.repo;
             const issue_number = context.issue.number;
