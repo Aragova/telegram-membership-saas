@@ -64,5 +64,5 @@ def test_no_passwords_are_supplied_as_production_examples() -> None:
         encoding="utf-8"
     )
     assert "ALTER ROLE" in runbook
-    assert "existing PostgreSQL Docker" in runbook
+    assert "The existing PostgreSQL container" in runbook
     assert "does not rotate" in runbook.lower()
