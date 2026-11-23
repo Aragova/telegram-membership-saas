@@ -60,10 +60,8 @@ def main() -> None:
 
     statuses = load_json("statuses.json", {})
     mypy_count = sum(" error:" in line for line in read_text("mypy.txt").splitlines())
-    ruff_count = sum(
-        line.startswith(("E", "F", "I", "UP", "B")) and " --> " in line
-        for line in read_text("ruff.txt").splitlines()
-    )
+    ruff_diagnostics = load_json("ruff.json", [])
+    ruff_count = len(ruff_diagnostics) if isinstance(ruff_diagnostics, list) else 0
 
     lines = [
         MARKER,
