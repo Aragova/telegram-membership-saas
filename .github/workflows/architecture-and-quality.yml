@@ -9,6 +9,10 @@ concurrency:
   group: architecture-quality-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# Audit untrusted PR code with read-only credentials.
+permissions:
+  contents: read
+
 jobs:
   audit:
     name: Static audit and call graph
@@ -109,59 +113,34 @@ jobs:
           path: |
             quality-reports/
             docs/architecture_flow.png
-            requirements-quality.lock
 
   publish:
-    name: Update PR diagram and comment
+    name: Comment on PR (no commits)
     needs: audit
     if: ${{ needs.audit.result == 'success' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
+    # Never mutate the PR HEAD: commits by GITHUB_TOKEN cannot trigger
+    # a fresh required CI run and [skip ci] would leave it pending.
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
 
     steps:
-      - name: Checkout the exact PR commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: true
-
       - name: Fetch audit artifact
         uses: actions/download-artifact@v4
         with:
           name: vimi-quality-reports
           path: .
 
-      - name: Commit only the updated image into this PR branch
-        id: push_png
-        env:
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: |
-          if [ ! -s docs/architecture_flow.png ]; then
-            echo "No generated PNG: nothing to commit"
-            exit 1
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- docs/architecture_flow.png
-          if git diff --cached --quiet; then
-            echo "Architecture PNG has not changed"
-            exit 0
-          fi
-          # GITHUB_TOKEN-generated PR syncs otherwise require workflow approval.
-          # The source commit was checked by CI and audit before this PNG-only commit.
-          git commit -m "docs: refresh architecture call graph [skip ci]"
-          git push origin "HEAD:refs/heads/$PR_HEAD_REF"
-
       - name: Create or update a single PR audit comment
-        if: always()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('quality-reports/comment.md', 'utf8');
+            const report = fs.readFileSync('quality-reports/comment.md', 'utf8');
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = report + `\n📎 [Скачать полный отчёт и актуальную PNG-схему](${runUrl}) → Artifacts → vimi-quality-reports\n`;
             const marker = '<!-- vimi-quality-report -->';
             const repo = context.repo;
             const issue_number = context.issue.number;
@@ -170,7 +149,8 @@ jobs:
               { ...repo, issue_number, per_page: 100 }
             );
             const existing = comments.find(c =>
-              c.user?.type === 'Bot' && c.body?.includes(marker)
+              c.user?.login === 'github-actions[bot]' &&
+              c.body?.startsWith(marker)
             );
             if (existing) {
               await github.rest.issues.updateComment({
