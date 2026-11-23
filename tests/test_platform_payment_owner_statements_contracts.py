@@ -286,7 +286,11 @@ async def test_statements_keep_original_invoice_and_verified_credit_snapshots(
     assert result.page == 2
     assert contexts[0].user_id == actor
     assert contexts[0].project_id == project
-    assert session.execute.await_args.args[1] == {"invoice": invoice_id}
+    calls = session.execute.await_args_list
+    assert len(calls) == 4
+    assert calls[0].args[1] == {"page": 2}
+    assert calls[1].args[1] == {"owner": actor}
+    assert calls[3].args[1] == {"invoice": invoice_id}
 
 
 @pytest.mark.parametrize(
