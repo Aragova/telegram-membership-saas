@@ -117,8 +117,12 @@ jobs:
       - name: Alembic heads
         run: alembic heads
 
-      - name: Apply migrations as database owner
-        run: alembic upgrade head
+      - name: Apply migrations as database owner with coverage
+        run: |
+          # This is an actual disposable-PostgreSQL integration check.
+          # Keep its executed migration lines in the same coverage data
+          # subsequently extended by pytest, rather than reporting 0%.
+          python -m coverage run -m alembic upgrade head
 
       - name: Create non-bypass runtime role
         run: |
@@ -358,7 +362,7 @@ jobs:
       - name: Test with Python branch coverage
         run: |
           # Run the existing PostgreSQL/RLS test suite exactly once.
-          pytest --cov --cov-branch --cov-report=xml:coverage.xml --cov-report=term:skip-covered
+          pytest --cov --cov-append --cov-branch --cov-report=xml:coverage.xml --cov-report=term:skip-covered
           python - <<'PY'
           import xml.etree.ElementTree as ET
           from pathlib import Path
@@ -369,7 +373,19 @@ jobs:
           assert root.tag == "coverage"
           assert int(root.attrib["lines-valid"]) > 0, "Coverage report has no instrumented lines"
           assert root.find(".//class") is not None, "Coverage report has no Python files"
+          # A freshly initialized CI database applies this real migration
+          # before pytest; its executed lines must survive the append.
+          migrations = [
+              cls for cls in root.findall(".//class")
+              if cls.attrib.get("filename", "").endswith("0098_saas_stars_usd_quote.py")
+          ]
+          assert migrations, "Applied Alembic revision missing from coverage.xml"
+          assert any(
+              int(line.attrib.get("hits", "0")) > 0
+              for cls in migrations for line in cls.findall("./lines/line")
+          ), "Applied Alembic migration not counted in coverage.xml"
           print("COVERAGE_XML_VALID=OK")
+          print("ALEMBIC_COVERAGE_VALID=OK")
           PY
 
       - name: Publish coverage XML for review
