@@ -104,6 +104,7 @@ async def test_reservation_rejects_nonpayable_or_unauthorized_quote(monkeypatch,
 
 async def test_reservation_retains_exact_original_quote(monkeypatch):
     reservation = _reserved(pay_currency="USD", pay_amount="5.00")
+    expected = reservation.copy()
     rpc = AsyncMock(return_value=reservation)
     monkeypatch.setattr(gateway, "_rpc", rpc)
     invoice_id = uuid4()
@@ -113,7 +114,7 @@ async def test_reservation_retains_exact_original_quote(monkeypatch):
         payer_telegram_id=101, bot_id=202,
     )
 
-    assert actual == reservation
+    assert actual == expected
     assert rpc.await_args.kwargs["values"] == {
         "invoice": invoice_id,
         "provider": "lava",
@@ -321,13 +322,15 @@ async def test_refund_uses_currency_specific_owner_ledger_rpc(monkeypatch, curre
     rpc = AsyncMock(return_value=ack)
     monkeypatch.setattr(gateway, "_rpc", rpc)
 
+    native_refund_amount = Decimal("5.00" if currency == "USD" else "150.00")
     result = await gateway.record_operator_verified_gateway_refund(
         object(), settings=_settings(), provider="lava",
         currency=currency, provider_invoice_id="verified-order",
-        provider_refund_id="verified-refund", amount_rub=Decimal("150.00"),
+        provider_refund_id="verified-refund", amount_rub=native_refund_amount,
     )
 
     assert result == ack
+    assert rpc.await_args.kwargs["values"]["amount"] == native_refund_amount
     assert rpc.await_args.kwargs["name"] == (
         "platform_saas_gateway_operator_refund_native"
         if currency == "USD"
