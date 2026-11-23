@@ -77,19 +77,38 @@ for info, labels, project in selected:
         for line in metadata.stdout.splitlines():
             if line.startswith(('DB_QUERY=', 'ROLE_', 'HOST_AUTH_METHODS=')):
                 print(line)
-        method_rows = [line for line in metadata.stdout.splitlines() if line.startswith('HOST_AUTH_METHODS=')]
-        trust = not method_rows or 'trust' in method_rows[0].lower()
     else:
         print('DB_QUERY=UNAVAILABLE (Docker local PostgreSQL access failed)')
-        trust = True
-    for role, public_pw in ROLES:
+
+    def attempt(role, candidate):
         check = cmd([
-            'docker', 'exec', '-i', '-e', 'PGPASSWORD=' + public_pw, cid,
+            'docker', 'exec', '-i', '-e', 'PGPASSWORD=' + candidate, cid,
             'psql', '-X', '-w', '-A', '-t', '-h', '127.0.0.1', '-U', role,
             '-d', dbname, '-c', 'SELECT 1;'
-        ])
-        accepted = bool(check and check.returncode == 0 and check.stdout.strip() == '1')
-        result = ('ACCEPTED_UNVERIFIED_AUTH' if trust else 'ACCEPTED') if accepted else 'NOT_ACCEPTED'
+        ], timeout=8)
+        if check is None:
+            return 'UNAVAILABLE'
+        if check.returncode == 0 and check.stdout.strip() == '1':
+            return 'ACCEPTED'
+        # An explicit auth failure is different from timeout, SQL error,
+        # missing role, network failure or Docker daemon unavailability.
+        if 'password authentication failed' in check.stderr.lower():
+            return 'REJECTED'
+        return 'UNAVAILABLE'
+
+    for role, public_pw in ROLES:
+        public = attempt(role, public_pw)
+        # Compare the same source and role with a deliberately invalid secret.
+        # This distinguishes password auth from trust/cert/other no-password auth.
+        invalid = attempt(role, '__vimi_invalid_password_probe_20261123__')
+        if public == 'ACCEPTED' and invalid == 'REJECTED':
+            result = 'PUBLIC_PASSWORD_CONFIRMED'
+        elif public == 'ACCEPTED' and invalid == 'ACCEPTED':
+            result = 'ACCEPTED_UNVERIFIED_AUTH'
+        elif public == 'REJECTED' and invalid == 'REJECTED':
+            result = 'PUBLIC_PASSWORD_NOT_ACCEPTED'
+        else:
+            result = 'UNAVAILABLE'
         print('PUBLIC_PASSWORD_LOGIN_' + role + '=' + result)
 print('\nAUDIT_FINISHED=READ_ONLY; NO_SECRETS_PRINTED; NO_DATA_CHANGED')
 PY
