@@ -346,12 +346,13 @@ jobs:
           docker exec -e "PGPASSWORD=$owner_pw" "$name" \
             psql -X -w -Atq -h 127.0.0.1 -U membership -d membership \
             -c 'SELECT 1' | grep -qx 1
-          [[ "$(docker exec "$name" psql -X -Atq -U membership -d membership \
+          role_flags="$(docker exec "$name" psql -X -Atq -U membership -d membership \
             -c "SELECT rolsuper::text || ':' || rolbypassrls::text \
-                FROM pg_roles WHERE rolname = 'membership_runtime'")" == "false:false" \
-            || "$(docker exec "$name" psql -X -Atq -U membership -d membership \
-            -c "SELECT rolsuper::text || ':' || rolbypassrls::text \
-                FROM pg_roles WHERE rolname = 'membership_runtime'")" == "f:f" ]]
+                FROM pg_roles WHERE rolname = 'membership_runtime'")"
+          [[ "$role_flags" == "false:false" || "$role_flags" == "f:f" ]] || {
+            echo "Runtime role unexpectedly has elevated DB privileges"
+            exit 1
+          }
           if docker exec -e PGPASSWORD=membership_runtime "$name" \
             psql -X -w -Atq -h 127.0.0.1 -U membership_runtime -d membership \
             -c 'SELECT 1' >/dev/null 2>&1; then
