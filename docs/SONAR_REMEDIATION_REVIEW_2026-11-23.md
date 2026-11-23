@@ -61,23 +61,47 @@ permissions or production credentials. It must not be deployed automatically.
 | `githubactions:S8541/S8544` CI pip upgrade (2) | Remove unpinned `pip install --upgrade pip`. Remaining dependencies already use hashed wheel-only locks |
 | `python:S5332` Cloud Run HTTP listener (1) | Expected internal HTTP behind Cloud Run TLS/IAM; deployment security control, not a request to expose plaintext HTTP publicly |
 | `text:S8565` dependency lock (1) | Scanner does not recognize the existing fully pinned `requirements-*.lock` files; `tests/test_sonar_hardening.py` checks their integrity |
-| `secrets:S6698` CI/Compose (7), `yaml:S2068` CI/Compose (2) | Test credentials/local development defaults, **not proof they are production-only**. Review and rotate any reused server passwords separately under a maintenance plan; changing them in this PR could break the existing database and bot connections |
+| `secrets:S6698` CI/Compose (7), `yaml:S2068` CI/Compose (2) | **Confirmed live risk on staging**: both public `membership` (SUPERUSER) and `membership_runtime` passwords authenticate over TCP. Compose and first-boot SQL now require private credentials. Disposable CI values are intentional; active database still requires a controlled operator rotation. See [rotation runbook](POSTGRES_CREDENTIAL_ROTATION.md). |
 
-## Required operator follow-up for database findings
+## Verified live PostgreSQL findings (23 Nov 2026)
 
-Never assume the Compose development defaults are safe just because the
-repository labels them `development`. **Without direct verification of the
-deployed environment and secret rotation procedure, we cannot certify that
-server credentials are independent of those defaults.**
+The operator executed read-only Docker/PostgreSQL diagnostics on the VM:
 
-Before marking the nine password findings as false positives in Sonar:
-1. Confirm staging/production PostgreSQL credentials are stored only in
-   protected server configuration and are not the public development defaults.
-2. If reused, rotate them through a controlled database/connection migration
-   with a tested rollback, rather than changing Compose YAML and restarting
-   running Telegram workers indiscriminately.
-3. Record the reason and scope for accepting any CI-local-only finding in
-   SonarQube Cloud. Do not mark an unverified secret as safe.
+- TCP login with both **published** passwords was accepted; an intentionally
+  invalid password was rejected. Thus these are **real active credentials**,
+  not a Sonar false positive and not a merely deprecated Docker env value.
+- `membership` is SUPERUSER; `membership_runtime` is a non-superuser.
+- DB host port bindings: `{}` (no direct host-port exposure).
+- Active connections: 1 `membership`, 8 `membership_runtime`,
+  1 separate `vimi_shortlink_api`. Bot and supervisor must be updated
+  together; public API has independent secrets but shares the same DB host.
+- Last automatic encrypted upload **23 Nov 2026, 03:23 UTC** succeeded;
+  recent daily uploads succeeded. A previous isolated restore on
+  **16 Nov 2026** was successful; a restore of the latest copy has not
+  been independently tested.
+- Host `.env`: `0600`, owned by VM user; backup.env: root-owned `0600`.
+  File permissions alone cannot compensate for published DB passwords.
+
+The previous hypothesis that these were merely unused development examples
+is conclusively **false for the staging server**.
+
+### Prepared fix and remaining operational gate
+
+The PR removes published passwords from runtime Compose and role
+initialization SQL, adds a private first-boot role-password hook and tests
+an isolated PostgreSQL 16 container against old and new credentials.
+**It intentionally does not change credentials on the live VM.**
+
+Do not declare the security incident closed until both real role passwords
+are rotated, the public values fail TCP authentication, the bot/supervisor
+are healthy, the PostgreSQL metadata no longer exposes a useful old
+bootstrap secret, the API is healthy and the backup/upload still works.
+All prerequisites, ordered actions and rollback decisions are in
+[docs/POSTGRES_CREDENTIAL_ROTATION.md](POSTGRES_CREDENTIAL_ROTATION.md).
+
+CI-only test accounts and intentionally disposable passwords remain separate
+from staging. Their Sonar disposition must be recorded as *test-only*, not
+generalized to the real database.
 
 ## Regression and review gates
 
