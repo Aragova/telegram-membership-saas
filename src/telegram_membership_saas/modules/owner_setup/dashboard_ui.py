@@ -71,15 +71,18 @@ def _channel_rows(channel: ChannelFinance) -> tuple[tuple[str, str], ...]:
     """
     owner = _owner(channel)
     if channel.stars_recipient == "channel":
-        return ((
+        rows = [(
             tr("👑 Владелец · ⭐ каналу", "👑 Owner · ⭐ to channel"),
             owner,
-        ),)
-    return (
-        (tr("👑 Владелец канала", "👑 Channel owner"), owner),
-        (tr("💳 Получатель звёзд", "💳 Stars recipient"),
-         _recipient(channel.stars_recipient)),
-    )
+        )]
+    else:
+        rows = [
+            (tr("👑 Владелец канала", "👑 Channel owner"), owner),
+            (tr("💳 Получатель звёзд", "💳 Stars recipient"),
+             _recipient(channel.stars_recipient)),
+        ]
+    # One return shape; preserve the one/two *rows* Telegram requires.
+    return tuple(rows)
 
 
 
