@@ -316,6 +316,56 @@ jobs:
       - name: Validate opt-in light 100-bot compose overlay
         run: docker compose -f compose.yaml -f compose.light100.yaml --profile supervisor config -q
 
+      - name: Verify fresh PostgreSQL bootstrap rejects public credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Isolated container: no published ports and no real VM secrets.
+          owner_pw="$(python -c 'import secrets; print(secrets.token_urlsafe(36))')"
+          runtime_pw="$(python -c 'import secrets; print(secrets.token_urlsafe(36))')"
+          name="vimi-private-postgres-bootstrap"
+          trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+          docker run --rm -d --name "$name" \
+            -e POSTGRES_USER=membership -e POSTGRES_DB=membership \
+            -e "POSTGRES_PASSWORD=$owner_pw" \
+            -e "VIMI_PG_RUNTIME_PASSWORD=$runtime_pw" \
+            -v "$PWD/docker/postgres/init-runtime.sql:/docker-entrypoint-initdb.d/10-runtime.sql:ro" \
+            -v "$PWD/docker/postgres/20-runtime-password.sh:/docker-entrypoint-initdb.d/20-runtime-password.sh:ro" \
+            postgres:16-alpine >/dev/null
+          ready=0
+          for _ in {1..50}; do
+            if docker exec -e "PGPASSWORD=$runtime_pw" "$name" \
+              psql -X -w -Atq -h 127.0.0.1 -U membership_runtime -d membership \
+              -c 'SELECT 1' 2>/dev/null | grep -qx 1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          [[ "$ready" == 1 ]] || { echo "Private PostgreSQL init did not complete"; exit 1; }
+          docker exec -e "PGPASSWORD=$owner_pw" "$name" \
+            psql -X -w -Atq -h 127.0.0.1 -U membership -d membership \
+            -c 'SELECT 1' | grep -qx 1
+          [[ "$(docker exec "$name" psql -X -Atq -U membership -d membership \
+            -c "SELECT rolsuper::text || ':' || rolbypassrls::text \
+                FROM pg_roles WHERE rolname = 'membership_runtime'")" == "false:false" \
+            || "$(docker exec "$name" psql -X -Atq -U membership -d membership \
+            -c "SELECT rolsuper::text || ':' || rolbypassrls::text \
+                FROM pg_roles WHERE rolname = 'membership_runtime'")" == "f:f" ]]
+          if docker exec -e PGPASSWORD=membership_runtime "$name" \
+            psql -X -w -Atq -h 127.0.0.1 -U membership_runtime -d membership \
+            -c 'SELECT 1' >/dev/null 2>&1; then
+            echo "Public runtime password unexpectedly accepted"
+            exit 1
+          fi
+          if docker exec -e PGPASSWORD=membership "$name" \
+            psql -X -w -Atq -h 127.0.0.1 -U membership -d membership \
+            -c 'SELECT 1' >/dev/null 2>&1; then
+            echo "Public owner password unexpectedly accepted"
+            exit 1
+          fi
+          echo "ISOLATED_POSTGRES_PRIVATE_BOOTSTRAP_OK"
+
       - name: Build container
         run: docker build -t telegram-membership-saas:ci .
 
