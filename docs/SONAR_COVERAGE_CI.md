@@ -73,8 +73,13 @@ SonarQube dashboard will **continue to show no coverage**.
   information rather than an outage or reason to suppress paths.
 - GitHub Actions artifacts expire after 14 days; the Sonar dashboard
   stores measures following a successful CI-based scanner analysis.
-- Coverage of subprocesses started by tests may be incomplete;
-  and the Alembic migration command runs before the measured pytest
-  step, so migration scripts may show zero unless exercised in pytest.
-  That is an honest initial baseline, not a scanner regression.
+- The disposable PostgreSQL Alembic upgrade is measured by
+  `python -m coverage run -m alembic upgrade head`. The existing test
+  suite then appends its branch coverage with `pytest --cov-append`,
+  rather than overwriting the migration execution data. CI asserts
+  that the XML contains executed lines from revision 0098 to prevent
+  silently returning to a misleading zero for migrations.
+- Coverage of subprocesses started by tests may still be incomplete.
+  This adjustment records real CI integration work; it does not
+  replace targeted tests for payment, billing, and database security.
 - No deploy or restart of the ViMi Pay VM is required.
