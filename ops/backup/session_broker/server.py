@@ -62,7 +62,8 @@ def start_gcs_session(bucket: str, name: str, size: int) -> str:
         or parsed.username is not None
         or parsed.password is not None
         or parsed.port not in (None, 443)
-        or not parsed.path.startswith(f"/upload/storage/v1/b/{bucket}/o")
+        or parsed.path != f"/upload/storage/v1/b/{bucket}/o"
+        or not urllib.parse.parse_qs(parsed.query).get("upload_id")
     ):
         raise ValueError("unsafe GCS upload session origin")
     return session_url
