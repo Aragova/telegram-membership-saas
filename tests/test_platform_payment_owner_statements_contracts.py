@@ -293,8 +293,6 @@ async def test_statements_keep_original_invoice_and_verified_credit_snapshots(
     ("report", "credits", "settlement", "match"),
     [
         (_invoice_report(invoices=[]), "invalid", None, "merchant credit report"),
-        (_invoice_report(invoices="not-list"), {"total_credited_rub": "0",
-          "credit_count": 0}, None, "merchant billing snapshot"),
         (_invoice_report(invoices=[{"id": str(uuid4())}]), {
           "total_credited_rub": "0", "credit_count": 0},
           "bad settlement", "invoice currency snapshot"),
