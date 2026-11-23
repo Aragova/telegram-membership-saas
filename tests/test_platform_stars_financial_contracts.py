@@ -115,14 +115,16 @@ async def test_stars_order_preserves_frozen_quote_and_original_payer(rpc):
     expected = original.copy()
     rpc.return_value = original
     invoice_id = uuid4()
+    factory = object()
     result = await stars.create_platform_stars_order(
-        object(), invoice_id=invoice_id, payer_telegram_id=501, central_bot_id=601,
+        factory, invoice_id=invoice_id, payer_telegram_id=501, central_bot_id=601,
     )
     assert result == expected
-    assert rpc.await_args.kwargs["name"] == "platform_saas_stars_create_order"
-    assert rpc.await_args.kwargs["arguments"] == {
-        "invoice": invoice_id, "telegram_id": 501, "bot_id": 601,
-    }
+    rpc.assert_awaited_once_with(
+        factory, payer_telegram_id=501,
+        name="platform_saas_stars_create_order",
+        arguments={"invoice": invoice_id, "telegram_id": 501, "bot_id": 601},
+    )
 
 
 @pytest.mark.parametrize(
@@ -189,14 +191,18 @@ async def test_stars_charge_records_original_identity_and_idempotent_result(
 ):
     rpc.return_value = {"applied": applied}
     values = _charge_kwargs()
-    result = await stars.confirm_platform_stars_charge(object(), **values)
+    factory = object()
+    result = await stars.confirm_platform_stars_charge(factory, **values)
     assert result == {"applied": applied}
-    assert rpc.await_args.kwargs["name"] == "platform_saas_stars_record_charge"
-    assert rpc.await_args.kwargs["arguments"] == {
-        "payload": values["payload"], "telegram_id": 501, "bot_id": 601,
-        "amount": 405, "charge_id": values["charge_id"],
-        "paid_at": values["paid_at"],
-    }
+    rpc.assert_awaited_once_with(
+        factory, payer_telegram_id=501,
+        name="platform_saas_stars_record_charge",
+        arguments={
+            "payload": values["payload"], "telegram_id": 501, "bot_id": 601,
+            "amount": 405, "charge_id": values["charge_id"],
+            "paid_at": values["paid_at"],
+        },
+    )
 
 
 @pytest.mark.parametrize("db_result", [None, {}, {"applied": 1}, "paid"])
@@ -233,11 +239,18 @@ async def test_stars_refund_returns_only_database_confirmed_result(rpc, db_answe
     rpc.return_value = db_answer
     values = _charge_kwargs()
     values["refunded_at"] = values.pop("paid_at")
-    answer = await stars.record_platform_stars_refund(object(), **values)
+    factory = object()
+    answer = await stars.record_platform_stars_refund(factory, **values)
     assert answer is (db_answer is True)
-    assert rpc.await_args.kwargs["name"] == "platform_saas_stars_record_refund"
-    assert rpc.await_args.kwargs["arguments"]["charge_id"] == values["charge_id"]
-    assert rpc.await_args.kwargs["arguments"]["refunded_at"] == values["refunded_at"]
+    rpc.assert_awaited_once_with(
+        factory, payer_telegram_id=501,
+        name="platform_saas_stars_record_refund",
+        arguments={
+            "payload": values["payload"], "telegram_id": 501, "bot_id": 601,
+            "amount": 405, "charge_id": values["charge_id"],
+            "refunded_at": values["refunded_at"],
+        },
+    )
 
 
 @pytest.mark.parametrize("charge", ["short", "X" * 256])
@@ -279,11 +292,15 @@ async def test_rub_star_rate_validation_happens_before_operator_rpc(
 
 async def test_operator_rate_preserves_exact_decimal_value(rpc, operator):
     rpc.return_value = "2.10000000"
+    factory = object()
     result = await stars.set_platform_stars_rate(
-        object(), operator_telegram_id=501, rub_per_star=Decimal("2.10000000"),
+        factory, operator_telegram_id=501, rub_per_star=Decimal("2.10000000"),
     )
     assert result == Decimal("2.10000000")
-    assert rpc.await_args.kwargs["arguments"] == {"rate": Decimal("2.10000000")}
+    rpc.assert_awaited_once_with(
+        factory, payer_telegram_id=501, name="platform_saas_stars_set_rate",
+        arguments={"rate": Decimal("2.10000000")},
+    )
 
 
 @pytest.mark.parametrize("db_rate", [None, "0.01300000"])
@@ -291,9 +308,14 @@ async def test_operator_rate_reader_distinguishes_missing_from_frozen_value(
     rpc, operator, db_rate,
 ):
     rpc.return_value = db_rate
+    factory = object()
     assert await stars.platform_stars_rate(
-        object(), operator_telegram_id=501,
+        factory, operator_telegram_id=501,
     ) == (None if db_rate is None else Decimal(db_rate))
+    rpc.assert_awaited_once_with(
+        factory, payer_telegram_id=501,
+        name="platform_saas_stars_rate", arguments={},
+    )
 
 
 @pytest.mark.parametrize(
@@ -368,8 +390,17 @@ async def test_usd_policy_accepts_operator_approved_immutable_parameters(
         "enabled": True, "usd_per_star": "0.013", "withdrawal_reserve_pct": "5.00",
     }
     rpc.return_value = result
+    factory = object()
     assert await stars.configure_platform_stars_usd_policy(
-        object(), operator_telegram_id=501,
+        factory, operator_telegram_id=501,
         usd_per_star=Decimal("0.013"), reserve_percent=Decimal("5.00"),
         enabled=True,
     ) == result
+    rpc.assert_awaited_once_with(
+        factory, payer_telegram_id=501,
+        name="platform_saas_stars_usd_policy_set",
+        arguments={
+            "usd_per_star": Decimal("0.013"),
+            "reserve_pct": Decimal("5.00"), "enabled": True,
+        },
+    )
