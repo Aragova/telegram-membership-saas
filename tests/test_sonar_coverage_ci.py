@@ -23,7 +23,13 @@ def test_coverage_lock_is_hash_pinned_and_isolated() -> None:
         "-r requirements-coverage.lock"
     ) in workflow
     assert "python -m pip check" in workflow
-    assert "pytest --cov --cov-branch --cov-report=xml:coverage.xml" in workflow
+    alembic_run = "python -m coverage run -m alembic upgrade head"
+    pytest_run = "pytest --cov --cov-append --cov-branch --cov-report=xml:coverage.xml"
+    assert alembic_run in workflow
+    assert pytest_run in workflow
+    assert workflow.index(alembic_run) < workflow.index(pytest_run)
+    assert "0098_saas_stars_usd_quote.py" in workflow
+    assert "ALEMBIC_COVERAGE_VALID=OK" in workflow
     assert "COVERAGE_XML_VALID=OK" in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert "retention-days: 14" in workflow
