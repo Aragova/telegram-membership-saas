@@ -1,0 +1,15 @@
+# Measure actual Python runtime and operational scripts.
+# Include unimported modules as uncovered; do not inflate the coverage figure.
+[run]
+branch = True
+relative_files = True
+source =
+    src/telegram_membership_saas
+    ops
+    migrations
+
+[report]
+show_missing = True
+
+[xml]
+output = coverage.xml
