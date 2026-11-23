@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
-from ops.quality import pr_report
+# ops/ is an operational script directory, not an installed Python package.
+# Load its report module by location, independent of pytest's sys.path mode.
+report_path = Path(__file__).resolve().parents[1] / "ops" / "quality" / "pr_report.py"
+spec = importlib.util.spec_from_file_location("vimi_pr_report", report_path)
+assert spec is not None and spec.loader is not None
+pr_report = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pr_report)
 
 
 def _write_json(root: Path, filename: str, payload: object) -> None:
