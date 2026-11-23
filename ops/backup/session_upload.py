@@ -9,11 +9,19 @@ import http.client
 import json
 import os
 import re
+import stat
 import sys
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 PARTS = {"membership.dump.age", "pg-globals.sql.age", "manifest.sha256"}
+# The root-owned opt-in backup script creates only directories with this prefix.
+BACKUP_ROOT = Path("/var/backups/vimi-pay")
+WORKDIR_RE = re.compile(r"\.gcs-upload\.[A-Za-z0-9]{8}")
+SESSION_PATH_RE = re.compile(
+    r"/upload/storage/v1/b/[a-z0-9][a-z0-9._-]{2,61}[a-z0-9]/o"
+)
 PREFIX_RE = re.compile(
     r"^\d{8}T\d{6}Z-"
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -57,8 +65,8 @@ def validate_session_url(raw: str) -> urllib.parse.SplitResult:
         or url.port not in (None, 443)
         or url.username is not None
         or url.password is not None
-        or not url.path.startswith("/upload/storage/v1/b/")
-        or not url.query
+        or SESSION_PATH_RE.fullmatch(url.path) is None
+        or not urllib.parse.parse_qs(url.query).get("upload_id")
         or url.fragment
     ):
         raise ValueError("unexpected upload session origin")
@@ -66,6 +74,9 @@ def validate_session_url(raw: str) -> urllib.parse.SplitResult:
 
 
 def request_session(service_url: str, prefix: str, part: str, size: int) -> str:
+    # Trust boundary: caller-controlled CLI/config URLs must never reach
+    # Google metadata audience or the IAM-token-bearing request unvalidated.
+    service_url = validate_service_url(service_url)
     if not PREFIX_RE.fullmatch(prefix) or part not in PARTS or size <= 0:
         raise ValueError("invalid upload request")
     audience = urllib.parse.quote(service_url, safe="")
@@ -93,27 +104,60 @@ def request_session(service_url: str, prefix: str, part: str, size: int) -> str:
     return session_url
 
 
-def stream_put(session_url: str, path: str) -> None:
+def checked_backup_file(path: str, part: str) -> Path:
+    """Only upload files created by our root-owned encrypted backup run.
+
+    The caller is a local privileged script, not an HTTP request. This
+    additional boundary prevents a mistyped or injected CLI path from
+    uploading arbitrary VM files under our trusted backup identity.
+    """
+    if part not in PARTS:
+        raise ValueError("unknown backup part")
+    raw = Path(path)
+    if raw.is_symlink():
+        raise ValueError("backup file cannot be a symlink")
+    resolved = raw.resolve(strict=True)
+    root = BACKUP_ROOT.resolve(strict=True)
+    if (
+        resolved.name != part
+        or resolved.parent.parent != root
+        or not WORKDIR_RE.fullmatch(resolved.parent.name)
+        or not resolved.is_file()
+    ):
+        raise ValueError("backup file is outside the active encrypted workdir")
+    return resolved
+
+
+def stream_put(session_url: str, path: str, *, part: str) -> None:
+    # Validate BOTH the GCS receiver and the local file before network I/O.
     url = validate_session_url(session_url)
-    size = os.path.getsize(path)
-    if size <= 0:
-        raise ValueError("empty upload file")
-    conn = http.client.HTTPSConnection("storage.googleapis.com", timeout=120)
+    validated = checked_backup_file(path, part)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(validated, flags)
     try:
-        target = url.path + ("?" + url.query if url.query else "")
-        conn.putrequest("PUT", target)
-        conn.putheader("Content-Type", "application/octet-stream")
-        conn.putheader("Content-Length", str(size))
-        conn.endheaders()
-        with open(path, "rb") as infile:
-            while data := infile.read(1024 * 1024):
-                conn.send(data)
-        response = conn.getresponse()
-        if response.status not in (200, 201):
-            raise RuntimeError("GCS upload was not completed")
-        response.read()
+        with os.fdopen(fd, "rb") as infile:
+            fd = -1
+            info = os.fstat(infile.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
+                raise ValueError("empty or non-regular encrypted backup file")
+            conn = http.client.HTTPSConnection("storage.googleapis.com", timeout=120)
+            try:
+                target = url.path + ("?" + url.query if url.query else "")
+                conn.putrequest("PUT", target)
+                conn.putheader("Content-Type", "application/octet-stream")
+                conn.putheader("Content-Length", str(info.st_size))
+                conn.endheaders()
+                while data := infile.read(1024 * 1024):
+                    conn.send(data)
+                response = conn.getresponse()
+                if response.status not in (200, 201):
+                    raise RuntimeError("GCS upload was not completed")
+                response.read()
+            finally:
+                conn.close()
     finally:
-        conn.close()
+        if fd != -1:
+            os.close(fd)
 
 
 def main() -> int:
@@ -124,10 +168,10 @@ def main() -> int:
     parser.add_argument("--file", required=True)
     args = parser.parse_args()
     try:
-        service_url = validate_service_url(args.service_url)
-        size = os.path.getsize(args.file)
-        session_url = request_session(service_url, args.prefix, args.part, size)
-        stream_put(session_url, args.file)
+        validated_file = checked_backup_file(args.file, args.part)
+        size = validated_file.stat().st_size
+        session_url = request_session(args.service_url, args.prefix, args.part, size)
+        stream_put(session_url, str(validated_file), part=args.part)
     except Exception:
         # Never print exception strings: HTTP errors can contain bearer URIs.
         print("BACKUP_FAILED: encrypted upload did not complete", file=sys.stderr)
