@@ -18,7 +18,10 @@ def test_coverage_lock_is_hash_pinned_and_isolated() -> None:
     assert len(hashes) == 3 and len(set(hashes)) == 3
 
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-    assert "pip install --no-deps --require-hashes --only-binary=:all: -r requirements-coverage.lock" in workflow
+    assert (
+        "pip install --no-deps --require-hashes --only-binary=:all: "
+        "-r requirements-coverage.lock"
+    ) in workflow
     assert "python -m pip check" in workflow
     assert "pytest --cov --cov-branch --cov-report=xml:coverage.xml" in workflow
     assert "COVERAGE_XML_VALID=OK" in workflow
