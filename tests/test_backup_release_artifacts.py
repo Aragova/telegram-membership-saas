@@ -226,6 +226,17 @@ def test_backup_files_must_be_within_encrypted_run_directory(tmp_path, monkeypat
     symlink.symlink_to(outside)
     with pytest.raises(ValueError):
         uploader.checked_backup_file(str(symlink), "manifest.sha256")
+    parent_symlink = tmp_path / "linked-upload"
+    parent_symlink.symlink_to(work, target_is_directory=True)
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(
+            str(parent_symlink / "membership.dump.age"), "membership.dump.age"
+        )
+    with pytest.raises(ValueError):
+        uploader.checked_backup_file(
+            str(work / ".." / ".gcs-upload.ABCDEFGH" / "membership.dump.age"),
+            "membership.dump.age",
+        )
     wrong_folder = tmp_path / "untrusted-dir"
     wrong_folder.mkdir()
     (wrong_folder / "membership.dump.age").write_bytes(b"something")
