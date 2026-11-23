@@ -78,9 +78,7 @@ jobs:
             sleep 1
           done
           [[ "$ready" == 1 ]] || {
-            echo "CI PostgreSQL failed to start"
-            docker logs --tail 30 vimi-ci-postgres 2>&1 \
-              | sed -E 's/(password)[^ ]*/[redacted]/Ig'
+            echo "CI PostgreSQL failed to start (no credentials or logs printed)"
             exit 1
           }
           echo "CI_POSTGRES_READY=OK"
