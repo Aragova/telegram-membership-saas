@@ -88,16 +88,20 @@ async def test_new_crypto_invoice_is_bound_to_original_frozen_order(monkeypatch)
     )
     create = AsyncMock(return_value=provider)
     bind = AsyncMock()
-    monkeypatch.setattr(
-        gateway, "_reserve", AsyncMock(return_value=reserved),
-    )
+    reserve = AsyncMock(return_value=reserved)
+    monkeypatch.setattr(gateway, "_reserve", reserve)
     monkeypatch.setattr(gateway, "create_platform_crypto_invoice", create)
     monkeypatch.setattr(gateway, "_bind", bind)
     invoice_id = uuid4()
+    factory = object()
 
     link = await gateway.issue_platform_crypto_checkout(
-        object(), settings=_settings(), payer_telegram_id=101,
+        factory, settings=_settings(), payer_telegram_id=101,
         central_bot_id=102, invoice_id=invoice_id,
+    )
+    reserve.assert_awaited_once_with(
+        factory, invoice_id=invoice_id, provider="crypto",
+        payer_telegram_id=101, bot_id=102,
     )
 
     assert link == gateway.GatewayLink(
@@ -132,15 +136,21 @@ async def test_lava_checkout_uses_exact_currency_and_customer_email(monkeypatch)
     client = FakeLavaClient(created=created)
     bind = AsyncMock()
     monkeypatch.setattr(gateway, "LavaTopClient", lambda _api_key: client)
-    monkeypatch.setattr(gateway, "_reserve", AsyncMock(return_value=reserved))
+    reserve = AsyncMock(return_value=reserved)
+    monkeypatch.setattr(gateway, "_reserve", reserve)
     monkeypatch.setattr(gateway, "_bind", bind)
+    invoice_id = uuid4()
+    factory = object()
 
     link = await gateway.issue_platform_lava_checkout(
-        object(), settings=_settings(), payer_telegram_id=101,
-        central_bot_id=102, invoice_id=uuid4(),
+        factory, settings=_settings(), payer_telegram_id=101,
+        central_bot_id=102, invoice_id=invoice_id,
         customer_email="real-payer@example.org",
     )
-
+    reserve.assert_awaited_once_with(
+        factory, invoice_id=invoice_id, provider="lava",
+        payer_telegram_id=101, bot_id=102,
+    )
     assert link.provider == "lava"
     assert link.pay_amount == Decimal("5.00")
     assert link.amount_rub == Decimal("150.00")
@@ -244,8 +254,15 @@ async def test_completed_lava_receipt_is_verified_before_ledger_posting(monkeypa
     pending = _pending()
     snapshot = {"status": "completed", "invoice_id": pending["provider_invoice_id"]}
     provider = FakeLavaClient(snapshot=snapshot)
-    verifier = AsyncMock()
-    rpc = AsyncMock(return_value={"applied": True})
+    events = []
+    verifier = Mock(side_effect=lambda *_args, **_kwargs: events.append("verified"))
+
+    async def record_charge(**_kwargs):
+        assert events == ["verified"], "Ledger write must follow provider verification"
+        events.append("recorded")
+        return {"applied": True}
+
+    rpc = AsyncMock(side_effect=record_charge)
     monkeypatch.setattr(gateway, "LavaTopClient", lambda _api_key: provider)
     monkeypatch.setattr(gateway, "verify_lava_paid_invoice", verifier)
     monkeypatch.setattr(gateway, "_rpc", rpc)
@@ -255,9 +272,12 @@ async def test_completed_lava_receipt_is_verified_before_ledger_posting(monkeypa
     )
 
     assert applied == {"applied": True}
-    assert verifier.call_count == 1
-    assert verifier.call_args.kwargs["expected_amount"] == Decimal("5.00")
-    assert verifier.call_args.kwargs["expected_currency"] == "USD"
+    assert events == ["verified", "recorded"]
+    verifier.assert_called_once_with(
+        snapshot, expected_id=UUID(pending["provider_invoice_id"]),
+        expected_currency="USD", expected_amount=Decimal("5.00"),
+    )
+    rpc.assert_awaited_once()
     assert rpc.await_args.kwargs["name"] == "platform_saas_gateway_record_charge"
     assert rpc.await_args.kwargs["values"]["amount"] == Decimal("150.00")
     assert rpc.await_args.kwargs["values"]["provider_id"] == pending[
