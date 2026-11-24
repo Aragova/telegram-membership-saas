@@ -24,7 +24,6 @@ from telegram_membership_saas.modules.telegram_access.service import (
     require_aware,
 )
 
-
 NATIVE_MEMBERSHIP_TIMEOUT_SECONDS = 10.0
 
 

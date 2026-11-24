@@ -36,9 +36,9 @@ from telegram_membership_saas.modules.resources import Resource, ResourceType
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessResult,
     ensure_owner_service_access,
+    native_departures,
     run_one_telegram_access_action,
 )
-from telegram_membership_saas.modules.telegram_access import native_departures
 from telegram_membership_saas.modules.telegram_access.handlers import process_native_departure
 from telegram_membership_saas.modules.telegram_access.native_departures import (
     process_claimed_native_departure,
