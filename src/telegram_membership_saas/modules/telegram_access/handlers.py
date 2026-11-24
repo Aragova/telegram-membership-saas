@@ -132,6 +132,7 @@ def create_telegram_access_router(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     expected_project_id: UUID | None = None,
+    native_project_id: UUID | None = None,
 ) -> Router:
     router = Router(name="telegram-access")
 
@@ -141,8 +142,8 @@ def create_telegram_access_router(
             session_factory, bot, request, expected_project_id=expected_project_id
         )
 
-    if expected_project_id is not None:
-        project_id = expected_project_id
+    project_id = expected_project_id if expected_project_id is not None else native_project_id
+    if project_id is not None:
 
         @router.chat_member()
         async def native_departure_handler(

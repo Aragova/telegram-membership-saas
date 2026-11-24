@@ -307,7 +307,7 @@ async def test_native_departure_requeues_only_existing_local_access() -> None:
 
 
 @pytest.mark.parametrize("current_status", ["left", "member"])
-async def test_native_departure_durable_retry_and_live_membership(current_status):
+async def test_native_departure_durable_retry_and_live_membership(current_status, caplog):
     engine = build_engine(Settings())
     factory = build_session_factory(engine)
     base = datetime.now(UTC) - timedelta(minutes=2)
@@ -357,6 +357,11 @@ async def test_native_departure_durable_retry_and_live_membership(current_status
             assert event.last_error == "native_departure_retry"
             event_id, attempt = event.id, event.attempt_count
             next_at = event.available_at
+        assert str(event_id) in caplog.text
+        assert "RuntimeError" in caplog.text
+        assert "native_departures:process_claimed_native_departure" in caplog.text
+        assert "temporary network failure" not in caplog.text
+        assert all(record.exc_info is None for record in caplog.records)
         async with system_project_session_scope(factory, project_id) as session:
             retry = await claim_next_outbox_event(
                 session, project_id=project_id,
@@ -386,7 +391,8 @@ async def test_native_departure_durable_retry_and_live_membership(current_status
         await engine.dispose()
 
 
-async def test_concurrent_native_departures_preserve_one_corrective_revision():
+@pytest.mark.parametrize("initial_state", ["granted", "unknown"])
+async def test_concurrent_native_departures_preserve_one_corrective_revision(initial_state):
     engine = build_engine(Settings())
     factory = build_session_factory(engine)
     base = datetime.now(UTC) - timedelta(minutes=2)
@@ -405,6 +411,12 @@ async def test_concurrent_native_departures_preserve_one_corrective_revision():
             factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
             claimed_at=base, clock=lambda: base,
         )
+        async with system_project_session_scope(factory, project_id) as session:
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            state.actual_state = initial_state
+
         async def observe(moment):
             async with system_project_session_scope(factory, project_id) as session:
                 return await reconcile_native_departure(

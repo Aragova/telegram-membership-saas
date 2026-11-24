@@ -43,6 +43,8 @@ def native_departure_failure_policy(
     )):
         # Missing rights or a rotated token may recover. Do not discard paid
         # access evidence or hammer the Telegram API during a prolonged outage.
+        if attempt >= 48:
+            return True, timedelta(0), "native_departure_unavailable_exhausted"
         return False, timedelta(hours=1), "native_departure_unavailable"
     delay = timedelta(seconds=30 * 2 ** min(max(attempt - 1, 0), 6))
     return False, delay, "native_departure_retry"

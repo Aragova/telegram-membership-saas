@@ -11,7 +11,8 @@ For a normal member of a channel with historical ViMi paid links, removal
 uses Telegram's non-banning unbanChatMember operation; ordinary channels
 without this history and groups retain the existing ban behavior.
 
-The customer dispatcher receives channel membership updates. A native expiry
+The customer dispatcher and the legacy access-enabled central dispatcher with a
+configured project receive project-scoped channel membership updates. A native expiry
 departure (old member with elapsed subscription timestamp, new left) is
 persisted in the existing outbox before the project worker checks it live.
 The worker retries failed reads with bounded backoff, honors FloodWait and rechecks observations
@@ -19,8 +20,15 @@ older than a local completion. Projection and access state are locked before
 advancing either revision, so duplicate events do not supersede a corrective grant.
 An administrator/creator or unsupported membership state fails permanently with
 an explicit safe code instead of claiming a successful removal. Permission and
-token errors remain recoverable but retry at most once per hour; malformed
-payloads fail permanently. Only an existing scoped local entitlement can enqueue a new
+token errors retry at most once per hour, up to 48 total attempts; exhausted
+and malformed events fail permanently with safe codes. The event row remains
+for operator inspection. After rights are restored, an authorized operator can
+requeue the exact failed event in its project after verifying its channel and bot
+binding; reset the attempt count and lease, clear the error, and set it pending
+with immediate availability. Never delete the evidence or requeue across tenants.
+Warnings include the exception class and safe application location, never raw
+Telegram error text or traceback contents. Unknown physical access is reconciled
+like granted access when a fresh departure is confirmed. Only an existing scoped local entitlement can enqueue a new
 safe join-request invitation. Explicit kicked status is not restored by
 this handler. No grants or payments are fabricated from membership evidence.
 

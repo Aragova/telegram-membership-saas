@@ -57,6 +57,7 @@ from telegram_membership_saas.project_worker_lock import (
     confirm_project_lock,
     project_worker_lock,
 )
+from telegram_membership_saas.safe_diagnostics import safe_failure_site
 from telegram_membership_saas.task_lifecycle import (
     cancel_and_drain,
     cancel_once,
@@ -132,7 +133,10 @@ async def process_project_runtime_once(
         except Exception as exc:
             if claimed_native:
                 permanent, delay, error = native_departure_failure_policy(exc, claimed_attempt)
-                logger.warning("Native departure %s: %s", claimed_event_id, error)
+                logger.warning(
+                    "Native departure %s: %s (%s at %s)",
+                    claimed_event_id, error, type(exc).__name__, safe_failure_site(exc),
+                )
             else:
                 permanent = isinstance(exc, ValueError)
                 delay = timedelta(seconds=30)

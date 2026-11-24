@@ -332,7 +332,10 @@ async def test_channel_revoke_rejects_unrecognized_or_privileged_member(status):
     ), 1, False, 100, "native_departure_rate_limited"),
     (TelegramForbiddenError(
         method=GetChatMember(chat_id=-1001, user_id=1), message="secret",
-    ), 1, False, 3600, "native_departure_unavailable"),
+    ), 47, False, 3600, "native_departure_unavailable"),
+    (TelegramForbiddenError(
+        method=GetChatMember(chat_id=-1001, user_id=1), message="secret",
+    ), 48, True, 0, "native_departure_unavailable_exhausted"),
     (RuntimeError("secret"), 1, False, 30, "native_departure_retry"),
     (RuntimeError("secret"), 50, False, 1920, "native_departure_retry"),
 ])

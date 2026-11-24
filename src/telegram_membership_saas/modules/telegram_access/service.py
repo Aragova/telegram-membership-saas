@@ -192,7 +192,7 @@ async def reconcile_native_departure(
             AccessState.resource_id == resource_id,
         ).with_for_update().execution_options(populate_existing=True)
     )
-    if state is None or state.actual_state != ActualAccessState.GRANTED.value:
+    if state is None or state.actual_state == ActualAccessState.REVOKED.value:
         return False
     if state.last_synced_at is not None and state.last_synced_at > observed_at:
         # The durable event remains retryable. A fresh read, not the time
