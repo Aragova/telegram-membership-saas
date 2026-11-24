@@ -42,6 +42,7 @@ from telegram_membership_saas.modules.file_sales.service import (
     purchased_assets,
 )
 from telegram_membership_saas.project_worker_lock import checkout_retirement_lock
+from telegram_membership_saas.safe_diagnostics import safe_failure_site
 
 log = logging.getLogger(__name__)
 MAX_INVOICES_PER_SCAN = 12
@@ -480,6 +481,8 @@ async def run_crypto_pay_recovery_loop(
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.warning("Crypto Pay worker iteration failed for project %s (%s)",
-                        project_id, type(exc).__name__)
+            log.warning(
+                "Crypto Pay worker iteration failed for project %s (%s at %s)",
+                project_id, type(exc).__name__, safe_failure_site(exc),
+            )
         await asyncio.sleep(poll_seconds)

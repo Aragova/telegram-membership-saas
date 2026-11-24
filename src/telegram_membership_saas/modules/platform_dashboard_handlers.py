@@ -557,11 +557,14 @@ def _monitoring_diagnosis(
                "Bot is being configured or started. This is not a confirmed outage."),
         )
     if runtime == "running" and elapsed is None:
-        return (
-            tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
+        explanation = (
+            tr("Время последнего сигнала в будущем; проверьте часы сервера и Supervisor.",
+               "The last heartbeat is in the future; check the server clock and Supervisor.")
+            if _heartbeat_time(bot) is not None else
             tr("Нет подтверждения: время последнего сигнала отсутствует; проверьте Supervisor.",
-               "Runtime is not confirmed: no recorded heartbeat; check Supervisor."),
+               "Runtime is not confirmed: no recorded heartbeat; check Supervisor.")
         )
+        return tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"), explanation
     if runtime in {"stale", "running"}:
         return _stale_diagnosis(elapsed)
     if runtime in {"error", "failed"}:

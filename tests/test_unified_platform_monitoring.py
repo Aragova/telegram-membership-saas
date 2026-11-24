@@ -322,3 +322,25 @@ def test_future_heartbeat_cannot_confirm_runtime_or_recent_restart(state, code, 
 @pytest.mark.parametrize("state", ["running", "degraded"])
 def test_missing_heartbeat_does_not_confirm_running_or_retry(state):
     assert ui._bot_list_button_label(_diag_bot(state, heartbeat=None)).startswith("🟠")
+
+
+@pytest.mark.parametrize(("language", "future", "missing"), [
+    ("ru", "в будущем", "отсутствует"),
+    ("en", "in the future", "no recorded heartbeat"),
+])
+def test_running_diagnosis_distinguishes_future_and_missing_heartbeat(
+    language, future, missing,
+):
+    token = _language.set(language)
+    try:
+        _, explanation = ui._monitoring_diagnosis(
+            _diag_bot("running", heartbeat=NOW + _diag_minutes(60)), now=NOW,
+        )
+        assert future in explanation
+        assert missing not in explanation
+        _, explanation = ui._monitoring_diagnosis(
+            _diag_bot("running", heartbeat=None), now=NOW,
+        )
+        assert missing in explanation
+    finally:
+        _language.reset(token)
