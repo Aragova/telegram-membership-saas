@@ -80,7 +80,8 @@ yet available. A known sale ID must be independently observed in the test.
 
 The script uses bot-only authorization and an in-memory session, disables
 provider logging, checks bot and broadcast-channel identity, limits reads to
-20 pages of 50 transactions and has bounded timeouts. It prints aggregate
+20 pages of 50 transactions and has bounded timeouts. It allows one retry
+per request for Telegram DC migration or a transient RPC failure. It prints aggregate
 counts and booleans only; no IDs, buyer data, payloads or raw provider errors.
 Exit 0 means the history pagination ended; 2 means incomplete; 1 means the
 probe failed. Disconnect is not session revocation: revoke the disposable

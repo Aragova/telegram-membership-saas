@@ -83,7 +83,8 @@ async def run_live(
     expected_bot_id = int(token.split(":", 1)[0])
     client = TelegramClient(
         MemorySession(), api_id, api_hash, receive_updates=False,
-        request_retries=0, connection_retries=0, flood_sleep_threshold=0,
+        # Telegram can redirect initial bot authorization to another DC.
+        request_retries=1, connection_retries=0, flood_sleep_threshold=0,
         auto_reconnect=False,
     )
     try:

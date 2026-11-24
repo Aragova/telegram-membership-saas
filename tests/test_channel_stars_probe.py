@@ -141,7 +141,7 @@ async def test_live_read_uses_exact_bot_and_peer_and_disconnects(monkeypatch):
     assert report["sale_seen"]
     assert not report["commission_authorized"]
     assert args == [((session, 1, "api"), {
-        "receive_updates": False, "request_retries": 0, "connection_retries": 0,
+        "receive_updates": False, "request_retries": 1, "connection_retries": 0,
         "flood_sleep_threshold": 0, "auto_reconnect": False,
     })]
     client.connect.assert_awaited_once()
