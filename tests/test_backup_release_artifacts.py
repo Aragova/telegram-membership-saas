@@ -143,7 +143,7 @@ def test_broker_uses_exact_create_only_resumable_upload(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(broker, "_open_google", fake_urlopen)
     assert start_gcs_session(
         "backup-bucket", "vimi-pay/postgres/example/membership.dump.age", 5000
     ).startswith("https://storage.googleapis.com/upload/")
@@ -170,7 +170,7 @@ def test_vm_requests_id_token_for_real_broker_audience(monkeypatch) -> None:
         assert json.loads(req.data)["part"] == "membership.dump.age"
         return FakeHTTPResponse(json.dumps({"upload_url": session}).encode())
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(uploader, "_open_without_redirects", fake_urlopen)
     monkeypatch.setattr(uploader, "_open_private_broker", fake_urlopen)
     got = request_session(
         broker,
@@ -195,7 +195,8 @@ def test_request_session_rejects_unsafe_broker_before_metadata_network(monkeypat
         network_calls.append((args, kwargs))
         raise AssertionError("unsafe broker must not cause any network I/O")
 
-    monkeypatch.setattr(urllib.request, "urlopen", forbidden_network)
+    monkeypatch.setattr(uploader, "_open_without_redirects", forbidden_network)
+    monkeypatch.setattr(uploader, "_open_private_broker", forbidden_network)
     prefix = "20261116T123000Z-12345678-1234-1234-1234-123456789abc"
     for bad in (
         "http://vimi-backup-123-ew.a.run.app",
@@ -320,10 +321,56 @@ def test_broker_rejects_session_from_wrong_bucket(monkeypatch) -> None:
             ),
         })
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(broker, "_open_google", fake_urlopen)
     with pytest.raises(ValueError):
         start_gcs_session(
             "backup-bucket",
             "vimi-pay/postgres/example/membership.dump.age",
             5000,
         )
+
+
+@pytest.mark.parametrize("module, opener_name, redirect_class", [
+    (broker, "_open_google", broker._NoRedirect),
+    (uploader, "_open_without_redirects", uploader._NoBrokerRedirect),
+])
+def test_backup_http_transport_disables_proxies_and_redirects(
+    monkeypatch, module, opener_name, redirect_class,
+) -> None:
+    request = urllib.request.Request(
+        "https://storage.googleapis.com/",
+        headers={"Authorization": "Bearer dummy-token"},
+    )
+    response = FakeHTTPResponse()
+    calls = []
+
+    class FakeOpener:
+        def open(self, req, *, timeout):
+            calls.append((req, timeout))
+            return response
+
+    def build_opener(*handlers):
+        assert len(handlers) == 2
+        proxy, redirect = handlers
+        assert isinstance(proxy, urllib.request.ProxyHandler)
+        assert proxy.proxies == {}
+        assert isinstance(redirect, redirect_class)
+        for code in (301, 302, 303, 307, 308):
+            assert redirect.redirect_request(
+                request, None, code, "Redirect", {},
+                "https://example.invalid/redirect",
+            ) is None
+        return FakeOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", build_opener)
+    assert getattr(module, opener_name)(request, timeout=8) is response
+    assert calls == [(request, 8)]
+
+
+def test_broker_rejects_invalid_bucket_before_minting_credentials(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid bucket must not cause network I/O")
+
+    monkeypatch.setattr(broker, "_open_google", forbidden)
+    with pytest.raises(ValueError, match="invalid backup bucket"):
+        start_gcs_session("evil.test/path?x=y", "backup.age", 100)

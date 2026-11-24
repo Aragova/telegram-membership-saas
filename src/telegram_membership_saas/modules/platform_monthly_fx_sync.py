@@ -10,10 +10,11 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
 import httpx
+from defusedxml.common import DefusedXmlException
+from defusedxml.ElementTree import fromstring
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -42,7 +43,10 @@ def parse_official_rates(
     """Normalize official CBR nominal-based rates for a requested sale day."""
     if len(payload) > 256_000:
         raise ValueError("CBR response too large")
-    root = ET.fromstring(payload)
+    try:
+        root = fromstring(payload, forbid_dtd=True)
+    except DefusedXmlException as exc:
+        raise ValueError("Unsafe CBR XML response") from exc
     if root.tag != "ValCurs":
         raise ValueError("Unexpected central bank response")
     actual = datetime.strptime(root.attrib["Date"], "%d.%m.%Y").date()
