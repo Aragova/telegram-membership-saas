@@ -32,7 +32,6 @@ from telegram_membership_saas.modules.stars_subscription_service import (
 from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
 )
-
 from telegram_membership_saas.safe_diagnostics import safe_failure_site
 
 log = logging.getLogger(__name__)
