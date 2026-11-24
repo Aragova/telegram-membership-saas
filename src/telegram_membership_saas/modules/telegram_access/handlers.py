@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import recipient_language, tr
-from telegram_membership_saas.modules.telegram_access.native_departures import enqueue_native_departure
+from telegram_membership_saas.modules.telegram_access.native_departures import (
+    enqueue_native_departure,
+)
 from telegram_membership_saas.modules.telegram_access.service import (
     finalize_join_request_approval,
     prepare_join_request_decision,
