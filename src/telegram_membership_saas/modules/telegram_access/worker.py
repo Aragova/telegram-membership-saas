@@ -336,6 +336,11 @@ async def run_one_telegram_access_action(
             action_id=command.access.action_id,
             claim_attempt=command.access.claim_attempt,
             processed_at=completed_at,
+            membership_observed_at=(
+                result.membership_observed_at or claim_moment
+                if command.is_channel and result.already_member
+                else None
+            ),
         )
         if (
             command.access.action_type == AccessActionType.GRANT

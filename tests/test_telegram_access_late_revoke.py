@@ -479,3 +479,80 @@ async def test_concurrent_native_departures_preserve_one_corrective_revision(ini
             assert action.desired_revision == state.desired_revision
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("initial_state", ["unknown", "revoked"])
+@pytest.mark.parametrize("read_after_departure", [False, True])
+async def test_native_departure_fences_inflight_member_read(
+    initial_state, read_after_departure,
+):
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=3)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )
+            resource = await session.get(Resource, resource_id)
+            person = await session.get(TelegramUser, owner_id)
+            chat_id, telegram_id = int(resource.external_id), person.telegram_user_id
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            state.actual_state = initial_state
+
+        departure_at = base + timedelta(seconds=10)
+        completed_at = base + timedelta(seconds=30)
+        read_at = (
+            base + timedelta(seconds=20) if read_after_departure
+            else base + timedelta(seconds=5)
+        )
+
+        class InterleavedAdapter(AlreadyMemberThenRevokeAdapter):
+            async def prepare(self, command):
+                # The older read and the durable departure commit interleave
+                # before the worker attempts to persist its result.
+                async with system_project_session_scope(factory, project_id) as session:
+                    await reconcile_native_departure(
+                        session, project_id=project_id, chat_id=chat_id,
+                        telegram_user_id=telegram_id, observed_at=departure_at,
+                    )
+                return TelegramAccessResult(
+                    already_member=True, resolved_chat_id=chat_id,
+                    membership_observed_at=read_at,
+                )
+
+        execution = await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=InterleavedAdapter(),
+            claimed_at=base, clock=lambda: completed_at,
+        )
+        async with system_project_session_scope(factory, project_id) as session:
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            if read_after_departure:
+                assert execution.status == "succeeded"
+                assert state.actual_state == "granted"
+                assert state.last_synced_at == read_at
+            else:
+                assert execution.status in ("pending", "superseded")
+                assert state.actual_state == "revoked"
+                assert state.last_synced_at == departure_at
+                action = await session.scalar(select(AccessAction).where(
+                    AccessAction.project_id == project_id,
+                    AccessAction.status == "pending",
+                    AccessAction.desired_revision == state.desired_revision,
+                ))
+                assert action is not None and action.action_type == "grant"
+        if not read_after_departure:
+            retry = await run_one_telegram_access_action(
+                factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+                claimed_at=datetime.now(UTC), clock=lambda: datetime.now(UTC),
+            )
+            assert retry.status == "succeeded"
+    finally:
+        await engine.dispose()

@@ -32,6 +32,7 @@ class TelegramAccessResult:
     resolved_chat_id: int | None = None
     already_member: bool = False
     revoke_retry_at: datetime | None = None
+    membership_observed_at: datetime | None = None
 
 
 class TelegramAccessAdapter:
@@ -90,8 +91,16 @@ class TelegramAccessAdapter:
                 revoke_retry_at=min(retry_at, now + timedelta(hours=1)),
             )
         status = getattr(member.status, "value", member.status)
-        if status in ("left", "kicked"):
-            # No new ban (and no unban of an administrator's existing ban).
+        if status == "kicked":
+            # Preserve an existing administrator ban.
+            return TelegramAccessResult()
+        if status == "left":
+            if not command.native_channel_history:
+                # Keep the ordinary-channel re-entry barrier.
+                await self._bot.ban_chat_member(
+                    chat_id=command.chat_id, user_id=command.telegram_user_id,
+                    revoke_messages=False,
+                )
             return TelegramAccessResult()
         if status != "member":
             # Never try to demote an administrator or guess an unknown state.
@@ -120,6 +129,7 @@ class TelegramAccessAdapter:
         chat = await self._bot.get_chat(chat_id=command.chat_id)
         resolved_chat_id = int(chat.id)
 
+        observed_at = self._clock()
         member = await self._bot.get_chat_member(
             chat_id=resolved_chat_id,
             user_id=command.telegram_user_id,
@@ -132,6 +142,7 @@ class TelegramAccessAdapter:
             return TelegramAccessResult(
                 resolved_chat_id=resolved_chat_id,
                 already_member=True,
+                membership_observed_at=observed_at,
             )
 
         await self._bot.unban_chat_member(

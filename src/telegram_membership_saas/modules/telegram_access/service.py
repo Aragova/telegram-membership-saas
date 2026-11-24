@@ -192,7 +192,14 @@ async def reconcile_native_departure(
             AccessState.resource_id == resource_id,
         ).with_for_update().execution_options(populate_existing=True)
     )
-    if state is None or state.actual_state == ActualAccessState.REVOKED.value:
+    if state is None:
+        return False
+    if state.actual_state == ActualAccessState.REVOKED.value:
+        # Even an already absent state can have a grant in flight. Advance
+        # the observation fence without churning the desired revision.
+        if state.last_synced_at is None or state.last_synced_at < observed_at:
+            state.last_synced_at = observed_at
+            await session.flush()
         return False
     if state.last_synced_at is not None and state.last_synced_at > observed_at:
         # The durable event remains retryable. A fresh read, not the time

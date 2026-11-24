@@ -5,8 +5,9 @@ A ChatMemberMember subscription timestamp (even one already passed while
 Telegram still reports membership) protects the member from removal.
 Persist the revoke as pending with a bounded next-check time in the existing
 access action queue, not as a failed or successful removal. Telegram owns
-native renewal/expiry. A left or kicked member is already absent; never
-create a new ban or undo an existing administrative ban in that case.
+native renewal/expiry. An already kicked member is left untouched. A left
+member in a channel with native-link history remains able to buy native access;
+ordinary channels retain the existing permanent re-entry barrier.
 For a normal member of a channel with historical ViMi paid links, removal
 uses Telegram's non-banning unbanChatMember operation; ordinary channels
 without this history and groups retain the existing ban behavior.
@@ -18,6 +19,9 @@ persisted in the existing outbox before the project worker checks it live.
 The worker retries failed reads with bounded backoff, honors FloodWait and rechecks observations
 older than a local completion. Projection and access state are locked before
 advancing either revision, so duplicate events do not supersede a corrective grant.
+An already-member grant records the start of its Telegram membership read;
+a newer departure fences old read-only completions (even when local state
+was already revoked). Actual join approvals and revokes still record effects.
 An administrator/creator or unsupported membership state fails permanently with
 an explicit safe code instead of claiming a successful removal. Permission and
 token errors retry at most once per hour; at 48 total attempts they move to a

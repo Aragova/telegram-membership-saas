@@ -274,13 +274,22 @@ async def test_channel_revoke_defers_native_membership(seconds: int) -> None:
 
 
 @pytest.mark.parametrize("status", ["left", "kicked"])
-async def test_channel_revoke_absent_member_never_changes_ban(status: str) -> None:
+@pytest.mark.parametrize("native_history", [True, False])
+async def test_channel_revoke_absent_member_preserves_reentry_policy(
+    status: str, native_history: bool,
+) -> None:
     bot = FakeBot(status=status)
     result = await TelegramAccessAdapter(bot).prepare(
-        replace(_command(AccessActionType.REVOKE), is_channel=True),
+        replace(
+            _command(AccessActionType.REVOKE),
+            is_channel=True, native_channel_history=native_history,
+        ),
     )
     assert result.revoke_retry_at is None
-    assert [name for name, _ in bot.calls] == ["get_chat_member"]
+    expected = ["get_chat_member"]
+    if status == "left" and not native_history:
+        expected.append("ban_chat_member")
+    assert [name for name, _ in bot.calls] == expected
 
 
 @pytest.mark.parametrize("native_history", [True, False])
