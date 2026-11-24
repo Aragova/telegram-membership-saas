@@ -452,6 +452,15 @@ def _heartbeat_time(bot: dict) -> datetime | None:
     return moment if moment.tzinfo is not None and moment.utcoffset() is not None else None
 
 
+def _heartbeat_age(bot: dict, now: datetime) -> timedelta | None:
+    """Reject future observations outside the incident scanner's 60s tolerance."""
+    seen = _heartbeat_time(bot)
+    if seen is None:
+        return None
+    elapsed = now - seen
+    return elapsed if elapsed >= timedelta(seconds=-60) else None
+
+
 def _degraded_diagnosis(code: str, elapsed: timedelta | None) -> tuple[str, str]:
     if elapsed is None or elapsed > timedelta(seconds=120):
         return (
@@ -528,9 +537,7 @@ def _monitoring_diagnosis(
     """
     runtime = str(bot.get("runtime_state") or "unknown")
     status = str(bot.get("status") or "unknown")
-    seen = _heartbeat_time(bot)
-    current = now or datetime.now(UTC)
-    elapsed = current - seen if seen is not None else None
+    elapsed = _heartbeat_age(bot, now or datetime.now(UTC))
 
     if status == "disabled":
         return (tr("⚪ Отключён владельцем", "⚪ Disabled by owner"),
@@ -572,15 +579,13 @@ def _bot_list_button_label(bot: dict) -> str:
     """One tappable row: defer false-red states during Supervisor warm-up."""
     state = bot["runtime_state"]
     marker = _RUNTIME_ICONS.get(state, "⚪")
-    heartbeat = _heartbeat_time(bot)
-    # A disconnected Supervisor is not actively retrying Telegram even if
-    # the last persisted state was "degraded".
-    if state == "degraded" and (
-        heartbeat is None
-        or datetime.now(UTC) - heartbeat > timedelta(seconds=120)
+    elapsed = _heartbeat_age(bot, datetime.now(UTC))
+    # A stale or implausible heartbeat cannot confirm active polling/retry.
+    if state in {"running", "degraded"} and (
+        elapsed is None or elapsed > timedelta(seconds=120)
     ):
         marker = "🟠"
-    if heartbeat is not None and datetime.now(UTC) - heartbeat <= _STARTUP_GRACE:
+    if elapsed is not None and elapsed <= _STARTUP_GRACE:
         if state == "stopped" or (
             state == "error"
             and bot.get("error_code") in {"worker_stopped", "lock_lost"}

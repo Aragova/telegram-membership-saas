@@ -255,10 +255,11 @@ async def run_subscription_stars_ledger_loop(
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            log.exception(
-                "Stars ledger reconciliation unavailable for project %s",
-                project_id,
+        except Exception as exc:
+            # Transport/DB exception text can include tokens or payment data.
+            log.warning(
+                "Stars ledger reconciliation unavailable for project %s (%s)",
+                project_id, type(exc).__name__,
             )
         # Stagger calls across up to 100 independent bots; no extra VM.
         await asyncio.sleep(900 + bot.id % 180)

@@ -479,6 +479,7 @@ async def run_crypto_pay_recovery_loop(
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            log.exception("Crypto Pay worker iteration failed (no invoice details)")
+        except Exception as exc:
+            log.warning("Crypto Pay worker iteration failed for project %s (%s)",
+                        project_id, type(exc).__name__)
         await asyncio.sleep(poll_seconds)

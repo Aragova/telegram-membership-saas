@@ -24,9 +24,26 @@ PostgreSQL integration tests remain intact. Do not split complex tests
 merely for Radon grades.
 
 ## Deferred
-Financial replay/checkout refactors need independent transactional
-regressions; no changes to those five functions here. Audit heartbeat
-freshness consistency separately (future timestamps are handled
-differently by the UI and incident scanner); do not silently change
-semantics during extraction. Broader menu decomposition, query profiling,
-dead-code analysis and production load measurements are not completed.
+## Final risk-based scope (owner direction)
+Do not refactor five financial/checkout functions or large menus merely
+to reduce Radon grades. No demonstrated throughput bottleneck justifies
+changing financial transactions here. Twelve complex test functions are
+not defects by themselves.
+
+Two concrete follow-up risks are addressed in the same PR:
+- UI heartbeat freshness now rejects observations more than 60 seconds in
+  the future, consistent with the incident scanner. Invalid observations
+  cannot confirm running, active retry or recent restart in detail/list.
+- Stars and Crypto Pay periodic recovery no longer log raw exception
+  tracebacks; keep project ID and exception type, retry and cancellation.
+
+Bandit B104 MEDIUM in ops/backup/session_broker/server.py is the Cloud Run
+container listener (0.0.0.0 is required; authentication is external Cloud
+Run IAM). Do not change it to localhost or suppress the finding. Live IAM
+configuration is not reverified by this source review. B105 metadata URL
+is not a secret. Other type/style findings are not blanket-fixed or
+suppressed; the full 740 mypy findings and remaining LOW Bandit items
+were not individually reviewed in this pass. No production benchmark or
+complete historical audit is claimed. The scoped changes do not alter
+billing, payment fulfillment, permissions, menu structure, DB schema,
+retry schedules or deployment topology.

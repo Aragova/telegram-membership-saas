@@ -267,6 +267,12 @@ def test_existing_bot_actions_and_no_worker_modules_added():
 
 
 @pytest.mark.parametrize(("state", "age_seconds", "code", "ru", "en"), [
+    ("running", -60, None, "🟢 Работает", "🟢 Running"),
+    ("running", -61, None, "⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
+    ("degraded", -61, None,
+     "🟠 Нет свежего сигнала Supervisor", "🟠 No recent supervisor heartbeat"),
+    ("stopped", -61, None, "🔴 Остановлен", "🔴 Stopped"),
+    ("error", -61, "lock_lost", "🔴 Ошибка запуска", "🔴 Startup error"),
     ("running", 120, None, "🟢 Работает", "🟢 Running"),
     ("running", 121, None, "🟠 Сигнал задерживается", "🟠 Heartbeat delayed"),
     ("degraded", 120, "polling_network_failed",
@@ -298,3 +304,16 @@ def test_monitoring_diagnosis_preserves_bilingual_boundaries(
             assert explanation
         finally:
             _language.reset(token)
+
+
+@pytest.mark.parametrize(("state", "code", "marker"), [
+    ("running", None, "🟠"),
+    ("degraded", None, "🟠"),
+    ("stopped", None, "🔴"),
+    ("error", "lock_lost", "🔴"),
+])
+def test_future_heartbeat_cannot_confirm_runtime_or_recent_restart(state, code, marker):
+    observation = _diag_bot(
+        state, heartbeat=_diag_live_now() + _diag_minutes(60), error_code=code,
+    )
+    assert ui._bot_list_button_label(observation).startswith(marker)
