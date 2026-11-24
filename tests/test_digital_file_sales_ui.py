@@ -271,11 +271,17 @@ async def test_file_payment_ingress_rejects_unbound_update(
     message = SimpleNamespace(
         from_user=SimpleNamespace(id=sender_id) if sender_id is not None else None,
         chat=SimpleNamespace(type=chat_type, id=chat_id),
-        successful_payment=SimpleNamespace(invoice_payload=payload) if payload else None,
+        successful_payment=SimpleNamespace(
+            invoice_payload=payload, currency="XTR", total_amount=100,
+            telegram_payment_charge_id="charge-1",
+        ) if payload is not None else None,
+        date=datetime.now(UTC),
     )
     handler = next(
         r.callback for r in router.message.handlers
         if r.callback.__name__ == "file_payment_success"
     )
-    await handler(message, _bot())
+    bot = _bot()
+    await handler(message, bot)
     confirmed.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
