@@ -753,7 +753,9 @@ def test_access_error_code_never_contains_provider_payload(exception, code):
     assert access_worker._access_error_code(exception) == code
 
 
-async def test_command_build_failure_does_not_persist_exception(invite_cleanup_case, monkeypatch):
+async def test_command_build_failure_does_not_persist_exception(
+    invite_cleanup_case, monkeypatch, caplog,
+):
     case = invite_cleanup_case
     monkeypatch.setattr(
         access_worker, "build_telegram_access_command",
@@ -771,9 +773,12 @@ async def test_command_build_failure_does_not_persist_exception(invite_cleanup_c
         assert action is not None
         assert action.last_error == result.error
     assert not case.adapter.calls
+    assert f"{result.action_id}: telegram_command_build_failed (RuntimeError)" in caplog.text
+    assert _SECRET_ERROR not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
 
 
-async def test_provider_rate_limit_preserves_retry_and_safe_error(invite_cleanup_case):
+async def test_provider_rate_limit_preserves_retry_and_safe_error(invite_cleanup_case, caplog):
     case = invite_cleanup_case
     case.adapter.prepare = AsyncMock(side_effect=TelegramRetryAfter(
         method=_METHOD, message=_SECRET_ERROR, retry_after=60,
@@ -790,6 +795,9 @@ async def test_provider_rate_limit_preserves_retry_and_safe_error(invite_cleanup
         assert action is not None
         assert action.last_error == result.error
         assert action.available_at == case.base + timedelta(seconds=60)
+    assert f"{result.action_id}: telegram_rate_limited (TelegramRetryAfter)" in caplog.text
+    assert _SECRET_ERROR not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 async def test_stale_provider_failure_returns_only_safe_code(invite_cleanup_case, monkeypatch):

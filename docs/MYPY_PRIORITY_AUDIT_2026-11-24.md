@@ -8,6 +8,8 @@ This is a scoped risk review, not a blanket fix of type annotations.
 - Telegram access worker persisted five raw exception strings in DB/result
   paths. Telegram transport exceptions can contain tokens or private URLs.
   Fixed codes replace raw strings without changing the failure policy.
+  Qodo review requested diagnostic context; warning logs now include only
+  action UUID, fixed code and exception class, with no traceback.
   Existing owner incident detection relies on non-null error, not text.
   No historical data rewrite or credential rotation: actual past exposure
   has not been established. Review old data separately with redacted queries.

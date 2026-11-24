@@ -134,6 +134,7 @@ and `AccessState.last_error` and return the same safe code in the execution resu
 Command construction failures use `telegram_command_build_failed`; Telegram
 rate-limit, network, server, unauthorized, forbidden, not-found, bad-request,
 API and unexpected failures have distinct fixed codes. Never store raw exception
-text or request URLs. Retry timing, permanent/retryable classification, ticket
+text or request URLs. Warning logs contain the action UUID, fixed code and
+exception class only (no traceback). Retry timing, permanent/retryable classification, ticket
 closure, claim fencing and owner incident detection remain unchanged. Historical
 error records are not rewritten by this release.

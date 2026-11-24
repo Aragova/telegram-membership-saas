@@ -117,8 +117,12 @@ async def _claim_command(
 
     try:
         return await build_telegram_access_command(session, action), None
-    except Exception:
+    except Exception as exc:
         error_code = "telegram_command_build_failed"
+        logger.warning(
+            "Telegram access command build failed for action %s: %s (%s)",
+            action.id, error_code, type(exc).__name__,
+        )
         await mark_access_action_failed(
             session,
             project_id=project_id,
@@ -166,6 +170,10 @@ async def _record_external_failure(
         default_retry_delay=default_retry_delay,
     )
     error_code = _access_error_code(exc)
+    logger.warning(
+        "Telegram access failed for action %s: %s (%s)",
+        command.access.action_id, error_code, type(exc).__name__,
+    )
     try:
         async with system_project_session_scope(session_factory, project_id) as session:
             if close_ticket:
