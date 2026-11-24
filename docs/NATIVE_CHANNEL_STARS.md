@@ -65,6 +65,38 @@ paste keys, sessions, raw transaction data or buyer IDs into GitHub or chat.
 If access is denied or attribution is ambiguous, automatic commission stays off.
 Do not introduce a production MTProto dependency until this is demonstrated.
 
+### Operator-only diagnostic (PR 2 prerequisite)
+
+`ops/audit/channel_stars_probe.py` implements the bounded read-only history
+experiment, not an accounting integration. Run only from an isolated local
+terminal for a disposable test bot/channel. Install Telethon 1.x separately
+in a disposable environment after verifying its package provenance; do not
+install it into the application environment or add it to production locks.
+Invoke `python ops/audit/channel_stars_probe.py`. Enter test API credentials,
+bot token, positive MTProto channel ID, verified access hash and known test
+transaction IDs at hidden prompts. Never obtain the access hash by guessing
+or joining a channel with a personal account. Leave renewal ID blank if not
+yet available. A known sale ID must be independently observed in the test.
+
+The script uses bot-only authorization and an in-memory session, disables
+provider logging, checks bot and broadcast-channel identity, limits reads to
+20 pages of 50 transactions and has bounded timeouts. It prints aggregate
+counts and booleans only; no IDs, buyer data, payloads or raw provider errors.
+Exit 0 means the history pagination ended; 2 means incomplete; 1 means the
+probe failed. Disconnect is not session revocation: revoke the disposable
+test bot token when the experiment is finished.
+
+Official method eligibility does not establish permission for a specific
+channel. A subscription-period flag, matching ID, or presence of a bot
+payload is not evidence of merchant attribution. Refunds lacking a period
+or matching ID will not be recognized; their absence is not proof that no
+refunds occurred. The probe always reports commission_authorized=false,
+even when a known sale/renewal/refund is visible. No ledger write, commission
+activation, migration, runtime dependency or buyer/admin UI change.
+Before production implementation, independently verify exact transaction
+identity, amounts, signs, refund linkage, paid-link/bot attribution and
+ownership history, and record a sanitized acceptance decision.
+
 ---
 
 # Telegram Stars: bot balance and native channel subscriptions
