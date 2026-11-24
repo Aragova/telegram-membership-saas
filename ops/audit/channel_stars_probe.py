@@ -14,6 +14,10 @@ PAGE_SIZE = 50
 PERIOD = 30 * 24 * 60 * 60
 
 
+class ProbeValidationError(ValueError):
+    """Invalid local inputs or mismatched provider identity."""
+
+
 def _candidate(row: Any) -> bool:
     """A protocol hint, not proof of a ViMi purchase or its attribution."""
     return (
@@ -56,16 +60,19 @@ async def inspect_history(
             if not _candidate(row):
                 continue
             refund = bool(getattr(row, "refund", False))
-            key = (row.id, refund)
+            row_id = getattr(row, "id", None)
+            if not isinstance(row_id, str) or not row_id:
+                return result  # Incomplete; never silently discard malformed evidence.
+            key = (row_id, refund)
             if key in seen:
                 continue
             seen.add(key)
             result["subscription_candidates"] += 1
             if getattr(row, "bot_payload", None):
                 result["candidate_payload_seen"] = True
-            if row.id == sale_id:
+            if row_id == sale_id:
                 result["sale_refund_seen" if refund else "sale_seen"] = True
-            if row.id == renewal_id:
+            if renewal_id and row_id == renewal_id:
                 result["renewal_refund_seen" if refund else "renewal_seen"] = True
         if next_offset is None or next_offset == "":
             result["complete"] = True
@@ -80,10 +87,10 @@ async def inspect_history(
 def _bot_id(token: str) -> int:
     prefix, separator, secret = token.partition(":")
     if not separator or not secret or not prefix.isascii() or not prefix.isdigit():
-        raise ValueError("Invalid bot token format")
+        raise ProbeValidationError("Invalid bot token format")
     bot_id = int(prefix)
     if bot_id <= 0:
-        raise ValueError("Invalid bot token format")
+        raise ProbeValidationError("Invalid bot token format")
     return bot_id
 
 
@@ -111,12 +118,12 @@ async def run_live(
             await client.sign_in(bot_token=token)
             me = await client.get_me()
             if getattr(me, "bot", False) is not True or getattr(me, "id", None) != expected_bot_id:
-                raise ValueError("Bot identity mismatch")
+                raise ProbeValidationError("Bot identity mismatch")
             peer = InputPeerChannel(channel_id, access_hash)
             channel = await client.get_entity(peer)
             if (getattr(channel, "id", None) != channel_id
                     or getattr(channel, "broadcast", False) is not True):
-                raise ValueError("Expected a broadcast channel")
+                raise ProbeValidationError("Expected a broadcast channel")
 
             async def fetch(offset: str) -> Any:
                 return await client(
@@ -131,11 +138,11 @@ async def run_live(
 
 def _read_inputs() -> tuple[int, str, str, int, int, str, str]:
     if not sys.stdin.isatty():
-        raise ValueError("Interactive private terminal required")
+        raise ProbeValidationError("Interactive private terminal required")
     with warnings.catch_warnings():
         warnings.simplefilter("error", getpass.GetPassWarning)
         if getpass.getpass("Type ISOLATED TEST to confirm: ") != "ISOLATED TEST":
-            raise ValueError("Test environment not confirmed")
+            raise ProbeValidationError("Test environment not confirmed")
         api_id = int(getpass.getpass("Test API ID: "))
         api_hash = getpass.getpass("Test API hash: ")
         token = getpass.getpass("Test bot token: ")
@@ -144,11 +151,31 @@ def _read_inputs() -> tuple[int, str, str, int, int, str, str]:
         sale_id = getpass.getpass("Known test sale transaction ID: ")
         renewal_id = getpass.getpass("Known test renewal transaction ID (or blank): ")
     if api_id <= 0 or channel_id <= 0 or not api_hash or not token or not sale_id:
-        raise ValueError("Missing test inputs")
+        raise ProbeValidationError("Missing test inputs")
     _bot_id(token)
     if sale_id == renewal_id:
-        raise ValueError("Sale and renewal must be distinct")
+        raise ProbeValidationError("Sale and renewal must be distinct")
     return api_id, api_hash, token, channel_id, access_hash, sale_id, renewal_id
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """Return only a fixed allowlisted code, never provider exception text."""
+    if isinstance(exc, KeyboardInterrupt):
+        return "interrupted"
+    if isinstance(exc, ProbeValidationError):
+        return "invalid_input_or_identity"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, ImportError):
+        return "dependency_unavailable"
+    if isinstance(exc, OSError):
+        return "connection_error"
+    if type(exc).__name__ in {"ChatAdminRequiredError", "BotAccessForbiddenError",
+                             "ChannelPrivateError", "PeerIdInvalidError"}:
+        return "peer_access_denied"
+    if type(exc).__name__ == "FloodWaitError":
+        return "rate_limited"
+    return "provider_or_runtime_error"
 
 
 def main() -> int:
@@ -156,8 +183,11 @@ def main() -> int:
     logging.disable(logging.CRITICAL)
     try:
         report = asyncio.run(run_live(*_read_inputs()))
-    except (Exception, KeyboardInterrupt):
-        print(json.dumps({"status": "probe_failed", "commission_authorized": False}))
+    except (Exception, KeyboardInterrupt) as exc:
+        print(json.dumps({
+            "status": "probe_failed", "commission_authorized": False,
+            "reason": _failure_reason(exc),
+        }))
         return 1
     print(json.dumps({"status": "read_ok", **report}, sort_keys=True))
     return 0 if report["complete"] else 2

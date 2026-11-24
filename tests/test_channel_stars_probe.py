@@ -97,6 +97,7 @@ def test_cli_does_not_leak_exception(monkeypatch, capsys):
     assert probe.main() == 1
     assert json.loads(capsys.readouterr().out) == {
         "status": "probe_failed", "commission_authorized": False,
+        "reason": "provider_or_runtime_error",
     }
 
 
@@ -223,3 +224,26 @@ def test_malformed_token_rejected_at_input(monkeypatch, token):
     _inputs(monkeypatch, ["ISOLATED TEST", "1", "api", token, "88", "99", "sale", ""])
     with pytest.raises(ValueError, match="Invalid bot token format"):
         probe._read_inputs()
+
+
+@pytest.mark.parametrize("identifier", [None, "", 123])
+async def test_malformed_candidate_id_leaves_scan_incomplete(identifier):
+    fetch = AsyncMock(return_value=page([row(identifier)]))
+    result = await probe.inspect_history(fetch, "sale", "")
+    assert not result["complete"]
+    assert not result["commission_authorized"]
+    assert not result["renewal_seen"]
+
+
+@pytest.mark.parametrize("error,reason", [
+    (KeyboardInterrupt(), "interrupted"),
+    (probe.ProbeValidationError("secret"), "invalid_input_or_identity"),
+    (TimeoutError("secret"), "timeout"),
+    (ImportError("secret"), "dependency_unavailable"),
+    (OSError("secret"), "connection_error"),
+    (type("ChatAdminRequiredError", (Exception,), {})("secret"), "peer_access_denied"),
+    (type("FloodWaitError", (Exception,), {})("secret"), "rate_limited"),
+    (ValueError("secret"), "provider_or_runtime_error"),
+])
+def test_safe_failure_reasons(error, reason):
+    assert probe._failure_reason(error) == reason

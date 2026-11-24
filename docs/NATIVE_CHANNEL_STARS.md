@@ -85,7 +85,9 @@ per request for Telegram DC migration or a transient RPC failure. It prints aggr
 counts and booleans only; no IDs, buyer data, payloads or raw provider errors.
 Exit 0 means the history pagination ended; 2 means incomplete; 1 means the
 probe failed. Missing or malformed history fields leave the scan incomplete,
-never equivalent to an empty final page. Disconnect is not session revocation:
+never equivalent to an empty final page. Malformed candidate transaction IDs
+also make the scan incomplete. Failure reports include only an allowlisted
+reason code, never the raw provider exception or message. Disconnect is not session revocation:
 revoke the disposable
 test bot token when the experiment is finished.
 
