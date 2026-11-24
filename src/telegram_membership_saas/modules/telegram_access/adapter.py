@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import ChatMemberMember, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.localization import recipient_language, tr
@@ -17,6 +17,8 @@ class TelegramAccessCommand:
     access: AccessCommand
     telegram_user_id: int
     chat_id: int | str
+    is_channel: bool = False
+    native_channel_history: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,7 @@ class TelegramAccessResult:
     invite_expires_at: datetime | None = None
     resolved_chat_id: int | None = None
     already_member: bool = False
+    revoke_retry_at: datetime | None = None
 
 
 class TelegramAccessAdapter:
@@ -56,6 +59,8 @@ class TelegramAccessAdapter:
         if command.access.action_type == AccessActionType.GRANT:
             return await self._prepare_grant(command)
         if command.access.action_type == AccessActionType.REVOKE:
+            if command.is_channel:
+                return await self._prepare_channel_revoke(command)
             await self._bot.ban_chat_member(
                 chat_id=command.chat_id,
                 user_id=command.telegram_user_id,
@@ -63,6 +68,47 @@ class TelegramAccessAdapter:
             )
             return TelegramAccessResult()
         raise ValueError(f"Unsupported access action: {command.access.action_type}")
+
+    async def _prepare_channel_revoke(
+        self, command: TelegramAccessCommand,
+    ) -> TelegramAccessResult:
+        # The optional subscription timestamp belongs to ChatMemberMember
+        # only: the same field on a banned/restricted member is a ban date.
+        member = await self._bot.get_chat_member(
+            chat_id=command.chat_id, user_id=command.telegram_user_id,
+        )
+        if isinstance(member, ChatMemberMember) and member.until_date is not None:
+            now = self._clock()
+            # Even a passed timestamp is not permission to kick a member:
+            # Telegram owns native expiry/renewal, including its races.
+            retry_at = max(now + timedelta(minutes=5), member.until_date)
+            return TelegramAccessResult(
+                revoke_retry_at=min(retry_at, now + timedelta(hours=1)),
+            )
+        status = getattr(member.status, "value", member.status)
+        if status in ("left", "kicked"):
+            # No new ban (and no unban of an administrator's existing ban).
+            return TelegramAccessResult()
+        if status != "member":
+            # Never try to demote an administrator or guess an unknown state.
+            raise ValueError("Channel membership cannot be safely revoked")
+        if not isinstance(member, ChatMemberMember):
+            raise ValueError("Unrecognized channel member representation")
+
+        if command.native_channel_history:
+            # Ordinary expiry must not create an indefinite ban that blocks
+            # the next Telegram-paid join. Telegram provides no atomic
+            # conditional remove; the membership read above is mandatory.
+            await self._bot.unban_chat_member(
+                chat_id=command.chat_id, user_id=command.telegram_user_id,
+                only_if_banned=False,
+            )
+        else:
+            await self._bot.ban_chat_member(
+                chat_id=command.chat_id, user_id=command.telegram_user_id,
+                revoke_messages=False,
+            )
+        return TelegramAccessResult()
 
     async def _prepare_grant(self, command: TelegramAccessCommand) -> TelegramAccessResult:
         chat = await self._bot.get_chat(chat_id=command.chat_id)

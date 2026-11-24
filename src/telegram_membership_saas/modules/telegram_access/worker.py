@@ -26,6 +26,7 @@ from telegram_membership_saas.modules.access import (
     mark_access_action_failed,
     mark_access_action_succeeded,
 )
+from telegram_membership_saas.modules.access.service import defer_access_revoke
 from telegram_membership_saas.modules.telegram_access.adapter import (
     TelegramAccessAdapter,
     TelegramAccessCommand,
@@ -251,6 +252,17 @@ async def run_one_telegram_access_action(
         )
 
     processed_at = current_time()
+    if result.revoke_retry_at is not None:
+        async with system_project_session_scope(session_factory, project_id) as session:
+            deferred = await defer_access_revoke(
+                session, project_id=project_id, action_id=command.access.action_id,
+                claim_attempt=command.access.claim_attempt, now=processed_at,
+                retry_at=result.revoke_retry_at,
+            )
+        return TelegramAccessExecution(
+            action_id=command.access.action_id,
+            status="native_subscription_protected" if deferred else "stale_deferral_ignored",
+        )
     if (
         processed_at >= claim_moment + effective_lease
         and command.access.action_type == AccessActionType.GRANT

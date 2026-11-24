@@ -13,9 +13,13 @@ from telegram_membership_saas.modules.access import (
     AccessCommand,
     AccessRuntimeResult,
     AccessState,
+    ActualAccessState,
+    enqueue_access_action_for_state,
     mark_access_action_failed,
     mark_access_action_succeeded,
+    recalculate_effective_access,
     reconcile_access_target,
+    sync_access_state_from_projection,
 )
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
@@ -24,6 +28,7 @@ from telegram_membership_saas.modules.entitlements import (
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import get_or_create_project_customer
+from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_access.adapter import (
@@ -100,6 +105,16 @@ async def build_telegram_access_command(
     }:
         raise ValueError("Resource is not managed by the Telegram access adapter")
 
+    is_channel = resource.resource_type == ResourceType.TELEGRAM_CHANNEL.value
+    native_history = False
+    if is_channel and action.action_type == AccessActionType.REVOKE.value:
+        native_history = (await session.scalar(
+            select(PlanPrice.id).where(
+                PlanPrice.project_id == action.project_id,
+                PlanPrice.native_subscription_chat_id == resource.external_id,
+            ).limit(1)
+        )) is not None
+
     return TelegramAccessCommand(
         access=AccessCommand(
             action_id=action.id,
@@ -111,7 +126,63 @@ async def build_telegram_access_command(
         ),
         telegram_user_id=telegram_user_id,
         chat_id=parse_chat_id(resource.external_id),
+        is_channel=is_channel,
+        native_channel_history=native_history,
     )
+
+
+async def reconcile_native_departure(
+    session: AsyncSession, *, project_id: UUID, chat_id: int,
+    telegram_user_id: int, observed_at: datetime,
+) -> bool:
+    """A fresh native departure may invalidate an existing physical grant.
+
+    Never create customers, payments, or grants based on Telegram membership.
+    Only existing project-scoped ViMi Pay access can justify a new invitation.
+    """
+    require_aware(observed_at)
+    target = (await session.execute(
+        select(AccessState.customer_id, Resource.id)
+        .join(Resource, (Resource.id == AccessState.resource_id)
+              & (Resource.project_id == AccessState.project_id))
+        .join(ProjectCustomer, (ProjectCustomer.id == AccessState.customer_id)
+              & (ProjectCustomer.project_id == AccessState.project_id))
+        .join(TelegramUser, TelegramUser.id == ProjectCustomer.user_id)
+        .where(
+            AccessState.project_id == project_id,
+            Resource.resource_type == ResourceType.TELEGRAM_CHANNEL.value,
+            Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
+            Resource.external_id == str(chat_id),
+            TelegramUser.telegram_user_id == telegram_user_id,
+            AccessState.actual_state == ActualAccessState.GRANTED.value,
+        )
+    )).one_or_none()
+    if target is None:
+        return False
+    customer_id, resource_id = target
+    # Recompute at execution time, not at the event timestamp. A delayed
+    # notification must not resurrect an expired local entitlement.
+    effective = await recalculate_effective_access(
+        session, project_id=project_id, customer_id=customer_id, resource_id=resource_id,
+    )
+    state = await sync_access_state_from_projection(
+        session, project_id=project_id, customer_id=customer_id, resource_id=resource_id,
+    )
+    if state.last_synced_at is not None and state.last_synced_at > observed_at:
+        return False
+    if state.actual_state != ActualAccessState.GRANTED.value:
+        return False
+    state.actual_state = ActualAccessState.REVOKED.value
+    state.last_synced_at = observed_at
+    await session.flush()
+    if effective.has_access:
+        await enqueue_access_action_for_state(
+            session, project_id=project_id, customer_id=customer_id,
+            resource_id=resource_id, available_at=effective.computed_at,
+        )
+        return True
+    return False
 
 
 async def record_grant_result(

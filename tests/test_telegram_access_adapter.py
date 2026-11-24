@@ -1,10 +1,12 @@
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from aiogram.types import ChatMemberMember, User
 
 from telegram_membership_saas.modules.access import AccessActionType, AccessCommand
 from telegram_membership_saas.modules.telegram_access import (
@@ -240,3 +242,55 @@ async def test_invite_cleanup_does_not_swallow_cancellation():
             action_id=uuid4(),
         )
     bot.revoke_chat_invite_link.assert_awaited_once()
+
+@pytest.mark.parametrize("seconds", [3600, 0, -60])
+async def test_channel_revoke_defers_native_membership(seconds: int) -> None:
+    now = datetime(2026, 11, 24, tzinfo=UTC)
+    bot = FakeBot(status="member")
+    bot.get_chat_member = AsyncMock(return_value=ChatMemberMember(
+        user=User(id=123456789, is_bot=False, first_name="Buyer"),
+        until_date=now + timedelta(seconds=seconds),
+    ))
+    adapter = TelegramAccessAdapter(bot, clock=lambda: now)
+    command = replace(_command(AccessActionType.REVOKE), is_channel=True)
+
+    result = await adapter.prepare(command)
+
+    assert result.revoke_retry_at is not None
+    assert now < result.revoke_retry_at <= now + timedelta(hours=1)
+    assert not bot.calls
+
+
+@pytest.mark.parametrize("status", ["left", "kicked"])
+async def test_channel_revoke_absent_member_never_changes_ban(status: str) -> None:
+    bot = FakeBot(status=status)
+    result = await TelegramAccessAdapter(bot).prepare(
+        replace(_command(AccessActionType.REVOKE), is_channel=True),
+    )
+    assert result.revoke_retry_at is None
+    assert [name for name, _ in bot.calls] == ["get_chat_member"]
+
+
+@pytest.mark.parametrize("native_history", [True, False])
+async def test_channel_revoke_ordinary_member_keeps_native_join_possible(native_history: bool):
+    bot = FakeBot()
+    bot.get_chat_member = AsyncMock(return_value=ChatMemberMember(
+        user=User(id=123456789, is_bot=False, first_name="Buyer"),
+    ))
+    await TelegramAccessAdapter(bot).prepare(replace(
+        _command(AccessActionType.REVOKE),
+        is_channel=True, native_channel_history=native_history,
+    ))
+    assert [name for name, _ in bot.calls] == [
+        "unban_chat_member" if native_history else "ban_chat_member",
+    ]
+
+
+async def test_channel_revoke_failed_read_never_mutates_membership() -> None:
+    bot = FakeBot()
+    bot.get_chat_member = AsyncMock(side_effect=RuntimeError("unavailable"))
+    with pytest.raises(RuntimeError, match="unavailable"):
+        await TelegramAccessAdapter(bot).prepare(
+            replace(_command(AccessActionType.REVOKE), is_channel=True),
+        )
+    assert not bot.calls

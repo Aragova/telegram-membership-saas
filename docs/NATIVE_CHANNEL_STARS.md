@@ -1,3 +1,49 @@
+## P0 mixed-access hardening (current PR)
+
+Before any automatic channel revoke, read the exact member through Bot API.
+A ChatMemberMember subscription timestamp (even one already passed while
+Telegram still reports membership) protects the member from removal.
+Persist the revoke as pending with a bounded next-check time in the existing
+access action queue, not as a failed or successful removal. Telegram owns
+native renewal/expiry. A left or kicked member is already absent; never
+create a new ban or undo an existing administrative ban in that case.
+For a normal member of a channel with historical ViMi paid links, removal
+uses Telegram's non-banning unbanChatMember operation; ordinary channels
+without this history and groups retain the existing ban behavior.
+
+The customer dispatcher receives channel membership updates. A native expiry
+departure (old member with elapsed subscription timestamp, new left) is
+rechecked live. Only an existing scoped local entitlement can enqueue a new
+safe join-request invitation. Explicit kicked status is not restored by
+this handler. No grants or payments are fabricated from membership evidence.
+
+This is deliberately not atomic with Telegram renewals or administrator
+actions; Bot API has no conditional removal RPC. The live acceptance gate
+must cover both races. Event loss, legacy bans and native links created
+outside ViMi require separate verification; no automatic commission accrual.
+See the new experiment protocol below.
+
+## Financial API experiment (not executed, not a release of billing)
+
+Official references:
+- https://core.telegram.org/method/payments.getStarsTransactions
+- https://core.telegram.org/api/subscriptions
+- https://core.telegram.org/bots/api#chatmembermember
+
+Use an isolated test bot and private test channel with a known paid invite
+and controlled genuine transaction. An MTProto bot authorization requires
+a private API ID/hash and bot token; no personal user session. Use a
+temporary local session only; resolve the exact channel input peer (including
+access hash) through verified Telegram data. Request payments.getStarsTransactions
+with that channel peer and paginate; record only whether permission was granted,
+whether a known subscription charge/renewal/refund is identifiable, and whether
+the operation can be uniquely attributed to the original bot/merchant. Do not
+paste keys, sessions, raw transaction data or buyer IDs into GitHub or chat.
+If access is denied or attribution is ambiguous, automatic commission stays off.
+Do not introduce a production MTProto dependency until this is demonstrated.
+
+---
+
 # Telegram Stars: bot balance and native channel subscriptions
 
 ## Recipient-first new Stars plan onboarding (2026-11-22)

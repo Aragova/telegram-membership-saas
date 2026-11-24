@@ -8,6 +8,7 @@ from sqlalchemy import select
 from telegram_membership_saas.config import Settings
 from telegram_membership_saas.db import build_engine, build_session_factory, tenant_session_scope
 from telegram_membership_saas.modules.access import (
+    AccessAction,
     AccessActionStatus,
     AccessActionType,
     AccessState,
@@ -23,6 +24,7 @@ from telegram_membership_saas.modules.telegram_access import (
     ensure_owner_service_access,
     run_one_telegram_access_action,
 )
+from telegram_membership_saas.modules.telegram_access.service import reconcile_native_departure
 from telegram_membership_saas.tenant_context import TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -176,5 +178,109 @@ async def test_late_revoke_records_external_effect_after_lease_expiry() -> None:
             assert state is not None
             assert state.desired_access is False
             assert state.actual_state == ActualAccessState.REVOKED.value
+    finally:
+        await engine.dispose()
+
+
+async def test_native_revoke_wait_persists_and_rechecks_after_restart() -> None:
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=3)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            grant = (await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )).grant
+            grant_id, customer_id = grant.id, grant.customer_id
+        adapter = AlreadyMemberThenRevokeAdapter()
+        await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=adapter, claimed_at=base, clock=lambda: base,
+        )
+        moment = base + timedelta(minutes=1)
+        async with tenant_session_scope(factory, context) as session:
+            grant = await session.get(EntitlementGrant, grant_id)
+            grant.status = EntitlementGrantStatus.REVOKED.value
+            grant.revoked_at = moment
+            await session.flush()
+            runtime = await reconcile_access_target(
+                session, project_id=project_id, customer_id=customer_id,
+                resource_id=resource_id, calculated_at=moment,
+            )
+            action_id = runtime.queued_action.id
+
+        class ProtectedAdapter(AlreadyMemberThenRevokeAdapter):
+            async def prepare(self, command):
+                assert command.is_channel
+                return TelegramAccessResult(revoke_retry_at=moment + timedelta(minutes=1))
+
+        deferred = await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=ProtectedAdapter(),
+            claimed_at=moment, clock=lambda: moment,
+        )
+        assert deferred.status == "native_subscription_protected"
+        async with tenant_session_scope(factory, context) as session:
+            action = await session.get(AccessAction, action_id)
+            assert action.status == AccessActionStatus.PENDING.value
+            assert action.last_error is None and action.locked_at is None
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            assert state.actual_state == ActualAccessState.GRANTED.value
+        assert await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=moment, clock=lambda: moment,
+        ) is None
+        retry = moment + timedelta(minutes=1)
+        completed = await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=retry, clock=lambda: retry,
+        )
+        assert completed.status == AccessActionStatus.SUCCEEDED.value
+    finally:
+        await engine.dispose()
+
+
+async def test_native_departure_requeues_only_existing_local_access() -> None:
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=1)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )
+            resource = await session.get(Resource, resource_id)
+            user = await session.get(TelegramUser, owner_id)
+            chat_id, telegram_id = int(resource.external_id), user.telegram_user_id
+        await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=base, clock=lambda: base,
+        )
+        async with tenant_session_scope(factory, context) as session:
+            assert await reconcile_native_departure(
+                session, project_id=project_id, chat_id=chat_id,
+                telegram_user_id=telegram_id, observed_at=datetime.now(UTC),
+            )
+            assert not await reconcile_native_departure(
+                session, project_id=project_id, chat_id=chat_id,
+                telegram_user_id=telegram_id, observed_at=datetime.now(UTC),
+            )
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            assert state.desired_access
+            assert state.actual_state == ActualAccessState.REVOKED.value
+            actions = (await session.scalars(select(AccessAction).where(
+                AccessAction.project_id == project_id,
+                AccessAction.status == AccessActionStatus.PENDING.value,
+            ))).all()
+            assert len(actions) == 1
+            assert actions[0].action_type == AccessActionType.GRANT.value
     finally:
         await engine.dispose()

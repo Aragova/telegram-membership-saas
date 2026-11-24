@@ -3,7 +3,7 @@ from uuid import UUID
 
 from aiogram import Bot, Router
 from aiogram.exceptions import AiogramError
-from aiogram.types import ChatJoinRequest
+from aiogram.types import ChatJoinRequest, ChatMemberMember, ChatMemberUpdated
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
@@ -11,6 +11,7 @@ from telegram_membership_saas.localization import recipient_language, tr
 from telegram_membership_saas.modules.telegram_access.service import (
     finalize_join_request_approval,
     prepare_join_request_decision,
+    reconcile_native_departure,
 )
 
 
@@ -103,6 +104,30 @@ async def process_chat_join_request(
     return True
 
 
+async def process_native_departure(
+    session_factory: async_sessionmaker[AsyncSession], bot: Bot,
+    update: ChatMemberUpdated, *, project_id: UUID,
+) -> bool:
+    old = update.old_chat_member
+    new = update.new_chat_member
+    if (
+        update.chat.type != "channel" or not isinstance(old, ChatMemberMember)
+        or old.until_date is None or old.until_date > update.date
+        or new.status != "left" or new.user.id != old.user.id
+    ):
+        return False
+    # A late/replayed event must not unban a user or overwrite a new join.
+    observed_at = utcnow()
+    current = await bot.get_chat_member(chat_id=update.chat.id, user_id=new.user.id)
+    if current.status != "left":
+        return False
+    async with system_project_session_scope(session_factory, project_id) as session:
+        return await reconcile_native_departure(
+            session, project_id=project_id, chat_id=update.chat.id,
+            telegram_user_id=new.user.id, observed_at=observed_at,
+        )
+
+
 def create_telegram_access_router(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -115,5 +140,12 @@ def create_telegram_access_router(
         await process_chat_join_request(
             session_factory, bot, request, expected_project_id=expected_project_id
         )
+
+    if expected_project_id is not None:
+        project_id = expected_project_id
+
+        @router.chat_member()
+        async def native_departure_handler(update: ChatMemberUpdated, bot: Bot) -> None:
+            await process_native_departure(session_factory, bot, update, project_id=project_id)
 
     return router
