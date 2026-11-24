@@ -23,6 +23,7 @@ from telegram_membership_saas.customer_runtime import (
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.service import encrypt_token
 from telegram_membership_saas.modules.telegram_access import handlers as access
+from telegram_membership_saas.task_lifecycle import RuntimeTaskStopped
 from telegram_membership_saas.telegram_adapter import (
     create_customer_dispatcher,
     create_dispatcher,
@@ -407,6 +408,79 @@ async def test_repeated_cancel_cannot_skip_slow_aiogram_shutdown(monkeypatch):
         bot.session.close.assert_awaited_once()
     finally:
         finish_shutdown.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize(("failed_worker", "label"), [
+    ("run_project_runtime_loop", "access"),
+    ("run_broadcast_loop", "broadcast"),
+    ("run_subscription_stars_ledger_loop", "stars_recovery"),
+    ("run_crypto_pay_recovery_loop", "crypto_recovery"),
+])
+async def test_required_worker_exit_drains_project_runtime(monkeypatch, failed_worker, label):
+    names = {
+        "run_project_runtime_loop", "run_broadcast_loop",
+        "run_subscription_stars_ledger_loop", "run_crypto_pay_recovery_loop",
+    }
+    polling_started, polling_stopped = asyncio.Event(), asyncio.Event()
+    release_failure = asyncio.Event()
+    drained = set()
+    started = set()
+
+    class DispatcherStub:
+        async def start_polling(self, *_args, **_kwargs):
+            polling_started.set()
+            await polling_stopped.wait()
+
+        async def stop_polling(self):
+            polling_stopped.set()
+
+    def worker(name):
+        async def run(*_args, **_kwargs):
+            started.add(name)
+            try:
+                if name == failed_worker:
+                    await release_failure.wait()
+                    raise RuntimeError("private-transport-secret")
+                await asyncio.Event().wait()
+            finally:
+                if name != failed_worker:
+                    assert polling_stopped.is_set()
+                drained.add(name)
+        return run
+
+    for name in names:
+        monkeypatch.setattr(runtime, name, worker(name))
+    bot = MagicMock()
+    bot.session.close = AsyncMock()
+    monkeypatch.setattr(runtime, "load_customer_bot", AsyncMock(
+        return_value=SimpleNamespace(token=TEST_TOKEN, telegram_bot_id=123456),
+    ))
+    monkeypatch.setattr(runtime, "ObservedCustomerBot", MagicMock(return_value=bot))
+    monkeypatch.setattr(runtime, "check_customer_bot_identity", AsyncMock())
+    monkeypatch.setattr(runtime, "verify_resource_permissions", AsyncMock())
+    monkeypatch.setattr(runtime, "install_public_commands", AsyncMock())
+    monkeypatch.setattr(runtime, "sync_project_owner_commands", AsyncMock())
+    monkeypatch.setattr(runtime, "create_customer_dispatcher",
+                        lambda *_args, **_kwargs: DispatcherStub())
+    task = asyncio.create_task(runtime.run_customer_bot_instance(
+        MagicMock(), project_id=uuid4(), telegram_bot_id=123456,
+        settings=_settings(SecretStr(Fernet.generate_key().decode())),
+    ))
+    try:
+        await asyncio.wait_for(polling_started.wait(), timeout=2)
+        assert started == names
+        release_failure.set()
+        with pytest.raises(RuntimeTaskStopped, match=label) as error:
+            await asyncio.wait_for(task, timeout=2)
+        assert "private-transport-secret" not in str(error.value)
+        assert drained == names
+        bot.session.close.assert_awaited_once()
+    finally:
+        release_failure.set()
+        polling_stopped.set()
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)

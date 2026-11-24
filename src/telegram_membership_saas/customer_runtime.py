@@ -11,11 +11,13 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from random import uniform
 from uuid import UUID
 
 from aiogram import Bot
 from aiogram.methods import GetUpdates
+from aiogram.methods.base import TelegramMethod
 from aiogram.utils.backoff import BackoffConfig
 from cryptography.fernet import InvalidToken
 from sqlalchemy import select
@@ -47,7 +49,12 @@ from telegram_membership_saas.modules.stars_subscription_recovery import (
 from telegram_membership_saas.modules.telegram_access import TelegramAccessAdapter
 from telegram_membership_saas.project_worker_lock import project_worker_lock
 from telegram_membership_saas.rich_messages import RichUiBot
-from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
+from telegram_membership_saas.task_lifecycle import (
+    cancel_and_drain,
+    cancel_once,
+    complete_cleanup,
+    wait_for_runtime_tasks,
+)
 from telegram_membership_saas.telegram_adapter import create_customer_dispatcher
 from telegram_membership_saas.telegram_menus import (
     install_public_commands,
@@ -122,7 +129,9 @@ class ObservedCustomerBot(RichUiBot):
         self._poll_failure = on_poll_failure
         self._poll_request = on_poll_request
 
-    async def __call__(self, method, request_timeout=None):
+    async def __call__[T](
+        self, method: TelegramMethod[T], request_timeout: int | None = None,
+    ) -> T:
         # An in-flight request is not proof of a successful Telegram response.
         # This milestone also excludes all preflight work from polling timeout.
         if isinstance(method, GetUpdates) and self._poll_request is not None:
@@ -246,10 +255,7 @@ async def verify_resource_permissions(
     for resource in resources:
         try:
             member = await retry_telegram_preflight(
-                lambda chat_id=resource.external_id: bot.get_chat_member(
-                    chat_id=chat_id,
-                    user_id=bot.id,
-                ),
+                partial(bot.get_chat_member, chat_id=resource.external_id, user_id=bot.id),
             )
         except Exception as exc:
             # A transient getChatMember failure is NEVER evidence that the
@@ -260,8 +266,8 @@ async def verify_resource_permissions(
         status = getattr(member.status, "value", member.status)
         if status != "creator" and (
             status != "administrator"
-            or not member.can_invite_users
-            or not member.can_restrict_members
+            or not getattr(member, "can_invite_users", False)
+            or not getattr(member, "can_restrict_members", False)
         ):
             raise CustomerBotDiagnosticError("missing_admin_rights")
 
@@ -339,8 +345,9 @@ async def run_customer_bot_instance(
                 ),
                 timeout=CUSTOMER_COMMAND_INSTALL_TIMEOUT_SECONDS,
             )
-        except Exception:
-            logger.warning("Could not synchronize connected owner commands", exc_info=True)
+        except Exception as exc:
+            logger.warning("Could not synchronize connected owner commands (%s)",
+                           type(exc).__name__)
         worker = asyncio.create_task(
             run_project_runtime_loop(
                 session_factory,
@@ -360,12 +367,13 @@ async def run_customer_bot_instance(
                 session_factory, bot=bot, project_id=project_id,
             )
         )
-        crypto_reconciliation = asyncio.create_task(
-            run_crypto_pay_recovery_loop(
-                session_factory, project_id=project_id, bot=bot,
-                encryption_key=settings.bot_token_encryption_key,
+        if settings.bot_token_encryption_key is not None:
+            crypto_reconciliation = asyncio.create_task(
+                run_crypto_pay_recovery_loop(
+                    session_factory, project_id=project_id, bot=bot,
+                    encryption_key=settings.bot_token_encryption_key,
+                )
             )
-        )
         if on_started is not None:
             await on_started()
         logger.info("Customer bot ready for project %s", project_id)
@@ -382,9 +390,16 @@ async def run_customer_bot_instance(
                 backoff_config=TELEGRAM_POLL_BACKOFF,
             )
         )
-        # Never propagate cancellation to aiogram's start_polling task directly.
-        # It manages an internal GetUpdates task that must be stopped gracefully.
-        await asyncio.shield(polling)
+        # asyncio.wait observes completion without propagating cancellation
+        # to aiogram or sibling tasks. Cleanup still owns the shutdown order.
+        background = {
+            "access": worker,
+            "broadcast": broadcast_worker,
+            "stars_recovery": stars_reconciliation,
+        }
+        if crypto_reconciliation is not None:
+            background["crypto_recovery"] = crypto_reconciliation
+        await wait_for_runtime_tasks(polling, background)
     finally:
         async def shutdown() -> None:
             try:
@@ -405,25 +420,11 @@ async def run_customer_bot_instance(
                 # Access maintenance must also finish before the caller is
                 # permitted to release its per-project advisory lock.
                 try:
-                    if worker is not None:
-                        cancel_once(worker)
-                        await asyncio.gather(worker, return_exceptions=True)
+                    await cancel_and_drain(
+                        worker, broadcast_worker, stars_reconciliation,
+                        crypto_reconciliation,
+                    )
                 finally:
-                    if broadcast_worker is not None:
-                        cancel_once(broadcast_worker)
-                        await asyncio.gather(
-                            broadcast_worker, return_exceptions=True,
-                        )
-                    if stars_reconciliation is not None:
-                        cancel_once(stars_reconciliation)
-                        await asyncio.gather(
-                            stars_reconciliation, return_exceptions=True,
-                        )
-                    if crypto_reconciliation is not None:
-                        cancel_once(crypto_reconciliation)
-                        await asyncio.gather(
-                            crypto_reconciliation, return_exceptions=True,
-                        )
                     if bot is not None:
                         await bot.session.close()
 

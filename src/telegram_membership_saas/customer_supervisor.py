@@ -55,7 +55,12 @@ from telegram_membership_saas.project_worker_lock import (
     confirm_project_lock,
     project_worker_lock,
 )
-from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
+from telegram_membership_saas.task_lifecycle import (
+    RuntimeTaskStopped,
+    cancel_and_drain,
+    cancel_once,
+    complete_cleanup,
+)
 
 logger = logging.getLogger(__name__)
 SCAN_SECONDS = 10
@@ -172,7 +177,10 @@ async def discover_targets(
                 "FROM public.list_customer_bot_targets()"
             )
         )).all()
-    return tuple(BotTarget(*row) for row in rows)
+    return tuple(
+        BotTarget(row.project_id, row.telegram_bot_id, row.credential_version)
+        for row in rows
+    )
 
 
 async def discover_removal_targets(
@@ -186,7 +194,7 @@ async def discover_removal_targets(
                 "FROM public.list_customer_bot_removals()"
             )
         )).all()
-    return tuple((project_id, bot_id) for project_id, bot_id in rows)
+    return tuple((row.project_id, row.telegram_bot_id) for row in rows)
 
 
 def safe_error_code(exc: Exception) -> str:
@@ -194,6 +202,8 @@ def safe_error_code(exc: Exception) -> str:
     # they may contain a URL with the bot token.
     if isinstance(exc, ProjectWorkerBusy):
         return "lock_lost"
+    if isinstance(exc, RuntimeTaskStopped):
+        return "worker_stopped"
     if isinstance(exc, CustomerBotDiagnosticError):
         return exc.code
     message = str(exc)
@@ -738,31 +748,11 @@ class CustomerBotSupervisor:
                 await asyncio.sleep(SCAN_SECONDS)
         finally:
             async def shutdown() -> None:
-                if self._fx_task is not None:
-                    cancel_once(self._fx_task)
-                    await asyncio.gather(
-                        self._fx_task, return_exceptions=True,
-                    )
-                if self._star_task is not None:
-                    cancel_once(self._star_task)
-                    await asyncio.gather(
-                        self._star_task, return_exceptions=True,
-                    )
-                if self._crypto_evidence_task is not None:
-                    cancel_once(self._crypto_evidence_task)
-                    await asyncio.gather(
-                        self._crypto_evidence_task, return_exceptions=True,
-                    )
-                if self._commercial_task is not None:
-                    cancel_once(self._commercial_task)
-                    await asyncio.gather(
-                        self._commercial_task, return_exceptions=True,
-                    )
-                for worker in self.workers.values():
-                    cancel_once(worker.task)
-                await asyncio.gather(
-                    *(w.task for w in self.workers.values()),
-                    return_exceptions=True,
+                # Independent platform and project tasks can drain together.
+                # Each project still owns its polling-before-lease barrier.
+                await cancel_and_drain(
+                    self._fx_task, self._star_task, self._crypto_evidence_task,
+                    self._commercial_task, *(w.task for w in self.workers.values()),
                 )
                 self.workers.clear()
 

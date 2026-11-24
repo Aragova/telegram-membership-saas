@@ -8,14 +8,16 @@ after failover and another worker holds the lock, heartbeat fails closed.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from hashlib import sha256
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import Result, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
+from sqlalchemy.sql import Executable
 
 
 class ProjectWorkerBusy(RuntimeError):
@@ -90,12 +92,16 @@ class SharedProjectLeaseHandle:
         self._manager = manager
         self.project_id = project_id
 
-    async def execute(self, statement, parameters=None):
+    async def execute(
+        self, statement: Executable, parameters: Mapping[str, Any] | None = None,
+    ) -> Result[Any]:
         return await self._manager.execute_scoped(
             self.project_id, statement, parameters,
         )
 
-    async def scalar(self, statement, parameters=None):
+    async def scalar(
+        self, statement: Executable, parameters: Mapping[str, Any] | None = None,
+    ) -> Any:
         result = await self.execute(statement, parameters)
         return result.scalar()
 
@@ -158,7 +164,9 @@ class SharedProjectLeaseManager:
             raise ProjectWorkerBusy("Shared supervisor lease backend changed")
         return connection
 
-    async def _finish_critical(self, operation):
+    async def _finish_critical[T](
+        self, operation: Coroutine[Any, Any, T],
+    ) -> tuple[T, bool]:
         """Finish shared-connection SQL even if its requesting bot is cancelled.
 
         The child task owns the mutex until its SQL has completed. A worker's
@@ -234,8 +242,9 @@ class SharedProjectLeaseManager:
                     raise asyncio.CancelledError
 
     async def execute_scoped(
-        self, project_id: UUID, statement, parameters=None,
-    ):
+        self, project_id: UUID, statement: Executable,
+        parameters: Mapping[str, Any] | None = None,
+    ) -> Result[Any]:
         result, cancelled = await self._finish_critical(
             self._execute_scoped(project_id, statement, parameters),
         )
@@ -243,7 +252,10 @@ class SharedProjectLeaseManager:
             raise asyncio.CancelledError
         return result
 
-    async def _execute_scoped(self, project_id: UUID, statement, parameters):
+    async def _execute_scoped(
+        self, project_id: UUID, statement: Executable,
+        parameters: Mapping[str, Any] | None,
+    ) -> Result[Any]:
         async with self._mutex:
             if project_id not in self._held:
                 raise ProjectWorkerBusy("Project lease was released")
