@@ -122,3 +122,9 @@ be committed or logged.
 
 Do not log invite links as durable business data outside the tenant-scoped join ticket. Avoid
 logging bot tokens, private customer data or full exception payloads that may contain secrets.
+
+Failed best-effort revocation of a stale/undelivered invite is observable in a
+warning containing only the access action UUID and exception class. It must
+not interrupt ticket closure, lease fencing or reconciliation. It never logs
+the invite URL or Telegram exception body. The join ticket, expiry and current
+desired access remain the authority, not successful remote link revocation.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from uuid import UUID
@@ -18,6 +19,8 @@ from telegram_membership_saas.modules.bots.models import BotInstance, BotInstanc
 from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.projects import Project, ProjectStatus
 from telegram_membership_saas.tenant_context import TenantAccessDenied, TenantContext
+
+logger = logging.getLogger(__name__)
 
 # Never put the token in error messages, logging, URLs, callback_data or the DB unencrypted.
 TOKEN_PATTERN = re.compile(r"^[0-9]{5,20}:[A-Za-z0-9_-]{30,100}$")
@@ -120,9 +123,10 @@ async def verify_telegram_bot(token: str) -> VerifiedBot:
     finally:
         try:
             await candidate.session.close()
-        except Exception:
-            # Closing a failed transport must not disclose a token-bearing URL.
-            pass
+        except Exception as exc:
+            # Cleanup must not mask getMe's outcome or expose a token-bearing URL.
+            logger.warning("Telegram bot verification session close failed (%s)",
+                           type(exc).__name__)
 
     if not identity.is_bot or not identity.username:
         raise ValueError("Telegram не вернул корректную учётную запись бота")

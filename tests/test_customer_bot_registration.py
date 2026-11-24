@@ -109,6 +109,34 @@ async def test_telegram_transport_exception_cannot_leak_token(monkeypatch):
     candidate.session.close.assert_awaited_once()
 
 
+@pytest.mark.parametrize("identity_fails", [False, True])
+async def test_verify_close_failure_is_observable_without_exposing_token(
+    monkeypatch, caplog, identity_fails,
+):
+    candidate = MagicMock()
+    candidate.get_me = AsyncMock(return_value=SimpleNamespace(
+        id=2222, username="MyTestBot", first_name="Test Bot", is_bot=True,
+    ))
+    if identity_fails:
+        candidate.get_me.side_effect = RuntimeError(f"/bot{TEST_TOKEN}/getMe")
+    candidate.session.close = AsyncMock(
+        side_effect=RuntimeError(f"/bot{TEST_TOKEN}/close"),
+    )
+    monkeypatch.setattr(bots, "Bot", MagicMock(return_value=candidate))
+    if identity_fails:
+        with pytest.raises(ValueError, match="Telegram не подтвердил токен"):
+            await bots.verify_telegram_bot(TEST_TOKEN)
+    else:
+        result = await bots.verify_telegram_bot(TEST_TOKEN)
+        assert result.telegram_bot_id == 2222
+
+    candidate.session.close.assert_awaited_once()
+    assert "Telegram bot verification session close failed (RuntimeError)" in caplog.text
+    assert TEST_TOKEN not in caplog.text
+    assert "/close" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
 async def test_invalid_token_does_not_make_telegram_call(monkeypatch):
     factory = MagicMock()
     monkeypatch.setattr(bots, "Bot", factory)

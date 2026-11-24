@@ -116,11 +116,16 @@ async def _claim_command(
 async def _discard_quietly(
     adapter: TelegramAccessAdapter,
     result: TelegramAccessResult,
+    *,
+    action_id: UUID,
 ) -> None:
     try:
         await adapter.discard(result)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Preserve the ticket/lease reconciliation path. Never log the invite
+        # link or the Telegram exception body (it may include credentials).
+        logger.warning("Telegram invite cleanup failed for action %s (%s)",
+                       action_id, type(exc).__name__)
 
 
 async def _record_external_failure(
@@ -220,7 +225,7 @@ async def run_one_telegram_access_action(
         and command.access.action_type == AccessActionType.GRANT
         and result.invite_link is not None
     ):
-        await _discard_quietly(adapter, result)
+        await _discard_quietly(adapter, result, action_id=command.access.action_id)
         return TelegramAccessExecution(
             action_id=command.access.action_id,
             status="lease_expired_before_persist",
@@ -240,7 +245,7 @@ async def run_one_telegram_access_action(
                 "newer claim generation" not in str(stale)
             ):
                 raise
-            await _discard_quietly(adapter, result)
+            await _discard_quietly(adapter, result, action_id=command.access.action_id)
             return TelegramAccessExecution(
                 action_id=command.access.action_id,
                 status="stale_grant_result_ignored",
@@ -252,7 +257,7 @@ async def run_one_telegram_access_action(
         try:
             await adapter.deliver(command, result)
         except Exception as exc:
-            await _discard_quietly(adapter, result)
+            await _discard_quietly(adapter, result, action_id=command.access.action_id)
             return await _record_external_failure(
                 session_factory,
                 project_id=project_id,
