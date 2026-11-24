@@ -137,6 +137,4 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    # Cloud Run requires all-interface binding inside its container. IAM
-    # invocation checks must remain enabled; never grant public invocation.
-    http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()  # nosec B104
+    http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
