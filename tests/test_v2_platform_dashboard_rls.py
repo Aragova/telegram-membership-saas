@@ -141,10 +141,13 @@ async def test_platform_aggregate_requires_db_grant_and_does_not_weaken_rls():
             for row in result.turnover
         )
 
-        # Use one transaction so SQL now() and all other report rows are
-        # stable across the two observations. No global count from one page.
+        # REPEATABLE READ freezes the other report rows across both calls.
+        # Configure it before tenant_session_scope issues any RLS queries.
+        snapshot_factory = build_session_factory(
+            engine.execution_options(isolation_level="REPEATABLE READ"),
+        )
         async with tenant_session_scope(
-            factory, TenantContext(user_id=op, project_id=own_project),
+            snapshot_factory, TenantContext(user_id=op, project_id=own_project),
         ) as session:
             health = (await session.scalars(select(CustomerBotRuntimeHealth).where(
                 CustomerBotRuntimeHealth.project_id == own_project,
