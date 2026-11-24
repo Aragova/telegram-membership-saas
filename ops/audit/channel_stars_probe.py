@@ -48,6 +48,8 @@ async def inspect_history(
     missing = object()
     for _ in range(MAX_PAGES):
         page = await fetch(offset)
+        # Official payments.starsStatus TL schema: history, not transactions.
+        # https://core.telegram.org/constructor/payments.starsStatus
         history = getattr(page, "history", missing)
         next_offset = getattr(page, "next_offset", missing)
         # Missing fields are not an authoritative empty history or final page.
@@ -111,6 +113,7 @@ async def run_live(
         request_retries=1, connection_retries=0, flood_sleep_threshold=0,
         auto_reconnect=False,
     )
+    primary_failed = False
     try:
         async with asyncio.timeout(60):
             await client.connect()
@@ -131,15 +134,24 @@ async def run_live(
                 )
 
             return await inspect_history(fetch, sale_id, renewal_id)
+    except BaseException:
+        primary_failed = True
+        raise
     finally:
-        primary_error = sys.exception()
         try:
             async with asyncio.timeout(10):
                 await client.disconnect()
         except Exception:
             # Preserve the primary failure; a cleanup-only failure still fails closed.
-            if primary_error is None:
+            if not primary_failed:
                 raise
+
+
+def _read_integer(prompt: str) -> int:
+    try:
+        return int(getpass.getpass(prompt))
+    except ValueError:
+        raise ProbeValidationError("Invalid integer input") from None
 
 
 def _read_inputs() -> tuple[int, str, str, int, int, str, str]:
@@ -149,11 +161,11 @@ def _read_inputs() -> tuple[int, str, str, int, int, str, str]:
         warnings.simplefilter("error", getpass.GetPassWarning)
         if getpass.getpass("Type ISOLATED TEST to confirm: ") != "ISOLATED TEST":
             raise ProbeValidationError("Test environment not confirmed")
-        api_id = int(getpass.getpass("Test API ID: "))
+        api_id = _read_integer("Test API ID: ")
         api_hash = getpass.getpass("Test API hash: ")
         token = getpass.getpass("Test bot token: ")
-        channel_id = int(getpass.getpass("Test MTProto channel ID (positive): "))
-        access_hash = int(getpass.getpass("Verified channel access hash: "))
+        channel_id = _read_integer("Test MTProto channel ID (positive): ")
+        access_hash = _read_integer("Verified channel access hash: ")
         sale_id = getpass.getpass("Known test sale transaction ID: ")
         renewal_id = getpass.getpass("Known test renewal transaction ID (or blank): ")
     if api_id <= 0 or channel_id <= 0 or not api_hash or not token or not sale_id:

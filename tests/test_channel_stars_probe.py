@@ -263,3 +263,24 @@ async def test_disconnect_only_failure_fails_closed(monkeypatch):
     client.disconnect.side_effect = OSError("cleanup")
     with pytest.raises(OSError, match="cleanup"):
         await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")
+
+
+@pytest.mark.parametrize("index", [1, 4, 5])
+def test_noninteger_inputs_are_safe_validation_errors(monkeypatch, index):
+    values = ["ISOLATED TEST", "1", "api", "77:fake", "88", "99", "sale", ""]
+    values[index] = "private noninteger"
+    _inputs(monkeypatch, values)
+    with pytest.raises(probe.ProbeValidationError, match="Invalid integer input") as exc:
+        probe._read_inputs()
+    assert probe._failure_reason(exc.value) == "invalid_input_or_identity"
+    assert "private" not in str(exc.value)
+
+
+async def test_disconnect_failure_is_not_masked_by_callers_exception(monkeypatch):
+    client, _, _, _, _ = _fake_telethon(monkeypatch)
+    client.disconnect.side_effect = OSError("cleanup")
+    try:
+        raise ValueError("caller")
+    except ValueError:
+        with pytest.raises(OSError, match="cleanup"):
+            await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")
