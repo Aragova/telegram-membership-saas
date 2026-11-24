@@ -68,13 +68,13 @@ def _http_diagnostic(response: httpx.Response) -> str:
     return f"LAVA-HTTP-{status}{field}"
 
 
-def _amount(value: Decimal | str | int, currency: str) -> Decimal:
+def _amount(value: object, currency: str) -> Decimal:
     if currency not in LAVA_LIMITS:
         raise ValueError("Unsupported Lava.top currency")
     try:
         parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise ValueError("Invalid Lava.top amount") from exc
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("Invalid Lava.top amount") from None
     low, high = LAVA_LIMITS[currency]
     if (
         not parsed.is_finite() or parsed < low or parsed > high
@@ -84,25 +84,39 @@ def _amount(value: Decimal | str | int, currency: str) -> Decimal:
     return parsed
 
 
+def _provider_amount(value: object, currency: str) -> Decimal:
+    """Normalize invalid provider evidence without leaking response data."""
+    try:
+        return _amount(value, currency)
+    except ValueError:
+        raise LavaTopError(
+            "Lava.top returned an invalid amount", code="LAVA-INVALID-AMOUNT",
+        ) from None
+
+
 def _provider_invoice_id(value: object) -> UUID:
     if not isinstance(value, str):
         raise LavaTopError("Invalid Lava.top invoice identity")
     try:
         return UUID(value)
-    except ValueError as exc:
-        raise LavaTopError("Invalid Lava.top invoice identity") from exc
+    except ValueError:
+        raise LavaTopError("Invalid Lava.top invoice identity") from None
 
 
 def _checkout_link(value: object) -> str:
     if not isinstance(value, str) or len(value) > 2048:
         raise LavaTopError("Lava.top returned an invalid checkout link")
-    parsed = urlsplit(value)
-    hostname = (parsed.hostname or "").lower()
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+        hostname = (parsed.hostname or "").lower()
+    except ValueError:
+        raise LavaTopError("Lava.top returned an invalid checkout link") from None
     if (
         parsed.scheme != "https" or not hostname
         or not (hostname == "lava.top" or hostname.endswith(".lava.top"))
         or parsed.username is not None or parsed.password is not None
-        or parsed.port is not None or parsed.fragment
+        or port is not None or parsed.fragment
     ):
         raise LavaTopError("Lava.top returned an unsafe checkout link")
     return value
@@ -190,7 +204,7 @@ def verify_lava_paid_invoice(
         raise LavaTopError("Lava.top invoice receipt is missing")
     if receipt.get("currency") != expected_currency:
         raise LavaTopError("Lava.top invoice currency mismatch")
-    if _amount(expected_amount, expected_currency) != _amount(
+    if _amount(expected_amount, expected_currency) != _provider_amount(
         receipt.get("amount"), expected_currency,
     ):
         raise LavaTopError("Lava.top invoice amount mismatch")
@@ -281,7 +295,7 @@ class LavaTopClient:
             )
         if (
             amount_total.get("currency") != currency
-            or _amount(amount_total.get("amount"), currency) != total
+            or _provider_amount(amount_total.get("amount"), currency) != total
         ):
             raise LavaTopError(
                 "Lava.top invoice quote differs from original",

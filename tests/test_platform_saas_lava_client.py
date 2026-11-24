@@ -42,6 +42,8 @@ def test_invalid_amount_rejected(value):
     "https://lava.top@evil.example/pay",
     "https://evil.example/pay",
     "https://lava.top:444/pay",
+    "https://lava.top:PRIVATE-PORT/pay",
+    "https://[PRIVATE-HOST/pay",
     "https://user:pass@lava.top/pay",
     "https://lava.top/pay#extra",
 ])
@@ -135,7 +137,7 @@ def test_verified_settlement_requires_exact_provider_identity(reply):
         "receipt": {"currency": "RUB", "amount": 150, "fee": 0},
     }
     frozen.update(reply)
-    with pytest.raises((LavaTopError, ValueError)):
+    with pytest.raises(LavaTopError):
         verify_lava_paid_invoice(
             frozen, expected_id=invoice_id,
             expected_currency="RUB", expected_amount=Decimal("150.00"),
@@ -292,3 +294,33 @@ async def test_unknown_create_response_status_is_diagnosed_without_accepting_lin
                 currency="RUB", amount=Decimal("150"),
             )
     assert exc.value.code == "LAVA-CREATE-STATUS"
+
+
+@pytest.mark.parametrize("amount", [None, "NaN", "PRIVATE-AMOUNT", True, 150.001])
+async def test_invalid_provider_amount_has_safe_error_for_create_and_settlement(amount):
+    reply = {
+        "id": str(uuid4()), "status": "new",
+        "amountTotal": {"amount": amount, "currency": "RUB"},
+        "paymentUrl": "https://lava.top/pay",
+    }
+    async with LavaTopClient(
+        "test", transport=httpx.MockTransport(lambda _: httpx.Response(200, json=reply)),
+    ) as api:
+        with pytest.raises(LavaTopError) as error:
+            await api.create_dynamic_invoice(
+                email="buyer@example.com", offer_id=uuid4(),
+                currency="RUB", amount=Decimal("150"),
+            )
+    assert error.value.code == "LAVA-INVALID-AMOUNT"
+    assert error.value.__cause__ is None
+    assert "PRIVATE-AMOUNT" not in str(error.value)
+
+    invoice_id = uuid4()
+    with pytest.raises(LavaTopError) as error:
+        verify_lava_paid_invoice(
+            {"id": str(invoice_id), "status": "completed", "type": "ONE_TIME",
+             "receipt": {"amount": amount, "currency": "RUB"}},
+            expected_id=invoice_id, expected_currency="RUB", expected_amount=Decimal("150"),
+        )
+    assert error.value.code == "LAVA-INVALID-AMOUNT"
+    assert error.value.__cause__ is None

@@ -34,8 +34,8 @@ class CryptoPayError(RuntimeError):
 def _safe_decimal(value: object) -> Decimal:
     try:
         parsed = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError) as exc:
-        raise CryptoPayError("Invalid Crypto Pay amount") from exc
+    except (InvalidOperation, ValueError, TypeError):
+        raise CryptoPayError("Invalid Crypto Pay amount") from None
     if not parsed.is_finite() or parsed <= 0:
         raise CryptoPayError("Invalid Crypto Pay amount")
     return parsed
@@ -64,13 +64,17 @@ def _invoice_link(link: object, *, testnet: bool) -> str:
     """Crypto Pay returns a Telegram deep link, never trust arbitrary redirects."""
     if not isinstance(link, str):
         raise CryptoPayError("Crypto Pay returned an invalid invoice URL")
-    parts = urlsplit(link)
+    try:
+        parts = urlsplit(link)
+        port = parts.port
+    except ValueError:
+        raise CryptoPayError("Crypto Pay returned an invalid invoice URL") from None
     # @send was the original public @CryptoBot address and still appears
     # in provider-issued single-use invoice deep links.
     allowed = {"cryptotestnetbot"} if testnet else {"cryptobot", "send"}
     if (parts.scheme != "https"
         or parts.username is not None or parts.password is not None
-        or parts.port is not None
+        or port is not None
         or parts.hostname not in {"t.me", "telegram.me"}
         or parts.path.strip("/").lower() not in allowed):
         raise CryptoPayError("Crypto Pay returned an unsafe invoice URL")
@@ -125,8 +129,8 @@ def verify_completed_transfer(
         raise CryptoPayError("Crypto Pay completed transfer timestamp is missing")
     try:
         completed = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise CryptoPayError("Crypto Pay completed transfer timestamp is invalid") from exc
+    except ValueError:
+        raise CryptoPayError("Crypto Pay completed transfer timestamp is invalid") from None
     if completed.tzinfo is None or completed > datetime.now(UTC) + timedelta(minutes=5):
         raise CryptoPayError("Crypto Pay completed transfer timestamp is invalid")
     return CryptoPayTransferReceipt(
@@ -173,8 +177,8 @@ def verify_paid_invoice(
         raise CryptoPayError("Crypto Pay paid timestamp is missing")
     try:
         paid_at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise CryptoPayError("Crypto Pay paid timestamp is invalid") from exc
+    except ValueError:
+        raise CryptoPayError("Crypto Pay paid timestamp is invalid") from None
     if paid_at.tzinfo is None or paid_at > datetime.now(UTC) + timedelta(minutes=5):
         raise CryptoPayError("Crypto Pay paid timestamp is invalid")
     # The official getInvoices Invoice.paid_usd_rate is the USD price of
@@ -210,7 +214,7 @@ def verify_webhook_signature(
     raw_body: bytes, signature: str, token: str,
 ) -> bool:
     """HMAC-SHA256(key=SHA256(app token), message=RAW request bytes)."""
-    if not isinstance(signature, str) or len(signature) != 64:
+    if not isinstance(signature, str) or len(signature) != 64 or not signature.isascii():
         return False
     key = hashlib.sha256(token.encode("utf-8")).digest()
     expected = hmac.new(key, raw_body, hashlib.sha256).hexdigest()
@@ -274,7 +278,9 @@ class CryptoPayClient:
             "expires_in": expires_in, "allow_comments": False,
             "allow_anonymous": True,
         })
-        if not isinstance(result, dict) or type(result.get("invoice_id")) is not int:
+        if (not isinstance(result, dict)
+            or type(result.get("invoice_id")) is not int
+            or result["invoice_id"] <= 0):
             raise CryptoPayError("Crypto Pay invoice creation is incomplete")
         if result.get("payload") != payload or result.get("status") != "active":
             raise CryptoPayError("Crypto Pay returned a mismatched invoice")

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
 from test_owner_subscribers_ui import _bot
 
 from telegram_membership_saas.modules.file_sales import handlers as ui
@@ -252,3 +253,35 @@ async def test_new_file_editor_cancels_old_crypto_token_wizard(monkeypatch):
     cancel.assert_awaited_once()
     assert cancel.await_args.kwargs == {"actor_id": owner, "bot_scope_id": bot.id}
     assert "название папки" in bot.send_message.await_args.args[1]
+
+
+@pytest.mark.parametrize(("sender_id", "chat_id", "chat_type", "payload"), [
+    (123, 456, "private", "fs:test"),
+    (123, 123, "private", None),
+    (123, 123, "private", "sp:test"),
+    (None, 123, "private", "fs:test"),
+    (123, 123, "group", "fs:test"),
+])
+async def test_file_payment_ingress_rejects_unbound_update(
+    monkeypatch, sender_id, chat_id, chat_type, payload,
+):
+    router = ui.create_file_sales_router(MagicMock(), project_id=uuid4())
+    confirmed = AsyncMock()
+    monkeypatch.setattr(ui, "confirm_stars_payment", confirmed)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=sender_id) if sender_id is not None else None,
+        chat=SimpleNamespace(type=chat_type, id=chat_id),
+        successful_payment=SimpleNamespace(
+            invoice_payload=payload, currency="XTR", total_amount=100,
+            telegram_payment_charge_id="charge-1",
+        ) if payload is not None else None,
+        date=datetime.now(UTC),
+    )
+    handler = next(
+        r.callback for r in router.message.handlers
+        if r.callback.__name__ == "file_payment_success"
+    )
+    bot = _bot()
+    await handler(message, bot)
+    confirmed.assert_not_awaited()
+    bot.send_message.assert_not_awaited()

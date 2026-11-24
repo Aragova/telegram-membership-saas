@@ -1266,10 +1266,12 @@ def create_file_sales_router(
 
     @router.message(F.successful_payment.invoice_payload.startswith("fs:"))
     async def file_payment_success(message: Message, bot: Bot) -> None:
-        if message.from_user is None or message.chat.type != "private":
-            return
         payment = message.successful_payment
-        if not payment.invoice_payload.startswith("fs:"):
+        if (
+            message.from_user is None or message.chat.type != "private"
+            or message.chat.id != message.from_user.id or payment is None
+            or not payment.invoice_payload.startswith("fs:")
+        ):
             return
         try:
             purchase = await confirm_stars_payment(
