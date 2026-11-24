@@ -49,8 +49,7 @@ def test_sonar_properties_preserve_source_and_test_scopes() -> None:
     scanner = (ROOT / "sonar-project.properties").read_text()
     assert "sonar.projectKey=Aragova_telegram-membership-saas" in scanner
     assert "sonar.organization=aragova" in scanner
-    assert "sonar.sources=." in scanner
-    assert "sonar.tests=tests" in scanner
+    assert not re.search(r"^sonar\.(sources|tests)\s*=", scanner, re.MULTILINE)
     assert "sonar.exclusions=tests/**/*" in scanner
     assert "sonar.python.coverage.reportPaths=coverage.xml" in scanner
 

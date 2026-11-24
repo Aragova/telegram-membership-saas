@@ -83,3 +83,17 @@ SonarQube dashboard will **continue to show no coverage**.
   This adjustment records real CI integration work; it does not
   replace targeted tests for payment, billing, and database security.
 - No deploy or restart of the ViMi Pay VM is required.
+
+## Cloud analysis scope warnings
+
+The current Cloud analysis-scope UI ignores the legacy `sonar.sources`
+and `sonar.tests` properties. Keep the existing exclusions and coverage
+import unchanged; check the effective source/test classification in the
+project's Analysis Scope UI and confirm that source, ops and migration
+files still appear in the scanner report after this change.
+
+The Oracle PL/SQL Data Dictionary warning is not a PostgreSQL connection
+failure. ViMi Pay uses PostgreSQL, not Oracle. Do not provide production
+credentials or turn off the SQL analyzer merely to remove this warning.
+PostgreSQL migration execution, RLS tests and database security checks
+remain mandatory.

@@ -158,3 +158,25 @@ def test_absent_optional_cbr_currency_does_not_block_core_sales():
     assert quoted == date(2026, 11, 11)
     assert "GBP" not in rates
     assert all(code in rates for code in ("USD", "EUR", "UAH", "BYN"))
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16"])
+@pytest.mark.parametrize("doctype", [
+    '<!DOCTYPE ValCurs>',
+    '<!DOCTYPE ValCurs [<!ENTITY harmless "80,00">]>',
+    '<!DOCTYPE ValCurs SYSTEM "https://example.invalid/external.dtd">',
+])
+def test_cbr_parser_rejects_dtd_before_reading_currency_data(encoding, doctype):
+    xml = _sample(amount="80,00").decode("utf-8")
+    payload = (doctype + xml).encode(encoding)
+    with pytest.raises(ValueError, match="Unsafe CBR XML"):
+        parse_official_rates(payload, day=date(2026, 11, 1))
+
+
+def test_cbr_parser_accepts_normal_windows_1251_document():
+    xml = _sample(amount="80,00").decode("utf-8").replace(
+        "Foreign Currency Market", "Курсы валют",
+    )
+    payload = ('<?xml version="1.0" encoding="windows-1251"?>' + xml).encode("cp1251")
+    _, rates = parse_official_rates(payload, day=date(2026, 11, 1))
+    assert rates["USD"] == Decimal("80")

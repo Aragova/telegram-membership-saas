@@ -30,14 +30,22 @@ METADATA = "http://metadata.google.internal/computeMetadata/v1/instance/service-
 
 
 class _NoBrokerRedirect(urllib.request.HTTPRedirectHandler):
-    """Never forward the Cloud Run IAM bearer token to a redirected origin."""
+    """Never forward metadata or Cloud Run credentials to a redirected origin."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
+def _open_without_redirects(req: urllib.request.Request, *, timeout: int):
+    # Both requests carry credentials or mint credentials. Ignore any
+    # inherited HTTP(S)_PROXY settings, including for the metadata origin.
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoBrokerRedirect(),
+    ).open(req, timeout=timeout)
+
+
 def _open_private_broker(req: urllib.request.Request, *, timeout: int):
-    return urllib.request.build_opener(_NoBrokerRedirect()).open(req, timeout=timeout)
+    return _open_without_redirects(req, timeout=timeout)
 
 
 def validate_service_url(raw: str) -> str:
@@ -84,7 +92,7 @@ def request_session(service_url: str, prefix: str, part: str, size: int) -> str:
         f"{METADATA}?audience={audience}",
         headers={"Metadata-Flavor": "Google"},
     )
-    with urllib.request.urlopen(req, timeout=10) as response:
+    with _open_without_redirects(req, timeout=10) as response:
         id_token = response.read().decode("ascii")
     body = json.dumps({"prefix": prefix, "part": part, "size": size}).encode()
     req = urllib.request.Request(

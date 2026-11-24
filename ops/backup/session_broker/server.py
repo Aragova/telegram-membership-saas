@@ -18,6 +18,21 @@ PARTS = frozenset({"membership.dump.age", "pg-globals.sql.age", "manifest.sha256
 META_TOKEN = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Do not follow redirects carrying a workload identity credential."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open_google(req: urllib.request.Request, *, timeout: int):
+    # Both URLs are constructed locally from fixed Google origins.
+    # Ignore proxy environment variables and never follow a redirect.
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), _NoRedirect(),
+    ).open(req, timeout=timeout)
+
+
 def object_name(prefix: str, part: str, size: int) -> str:
     """Validate every client-controlled path component, fail closed."""
     if not isinstance(prefix, str) or not PREFIX_RE.fullmatch(prefix):
@@ -33,10 +48,12 @@ def object_name(prefix: str, part: str, size: int) -> str:
 
 def start_gcs_session(bucket: str, name: str, size: int) -> str:
     """Use Cloud Run workload identity; token and session URI never logged."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,61}[a-z0-9]", bucket):
+        raise ValueError("invalid backup bucket")
     metadata_req = urllib.request.Request(
         META_TOKEN, headers={"Metadata-Flavor": "Google"}
     )
-    with urllib.request.urlopen(metadata_req, timeout=8) as response:
+    with _open_google(metadata_req, timeout=8) as response:
         token = json.load(response)["access_token"]
 
     params = urllib.parse.urlencode(
@@ -53,7 +70,7 @@ def start_gcs_session(bucket: str, name: str, size: int) -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as response:
+    with _open_google(req, timeout=30) as response:
         session_url = response.headers["Location"]
     parsed = urllib.parse.urlsplit(session_url)
     if (
@@ -64,6 +81,7 @@ def start_gcs_session(bucket: str, name: str, size: int) -> str:
         or parsed.port not in (None, 443)
         or parsed.path != f"/upload/storage/v1/b/{bucket}/o"
         or not urllib.parse.parse_qs(parsed.query).get("upload_id")
+        or parsed.fragment
     ):
         raise ValueError("unsafe GCS upload session origin")
     return session_url
@@ -119,4 +137,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8080"))
-    http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    # Cloud Run requires all-interface binding inside its container. IAM
+    # invocation checks must remain enabled; never grant public invocation.
+    http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()  # nosec B104
