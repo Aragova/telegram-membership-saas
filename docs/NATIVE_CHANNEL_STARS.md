@@ -20,12 +20,13 @@ older than a local completion. Projection and access state are locked before
 advancing either revision, so duplicate events do not supersede a corrective grant.
 An administrator/creator or unsupported membership state fails permanently with
 an explicit safe code instead of claiming a successful removal. Permission and
-token errors retry at most once per hour, up to 48 total attempts; exhausted
-and malformed events fail permanently with safe codes. The event row remains
-for operator inspection. After rights are restored, an authorized operator can
-requeue the exact failed event in its project after verifying its channel and bot
-binding; reset the attempt count and lease, clear the error, and set it pending
-with immediate availability. Never delete the evidence or requeue across tenants.
+token errors retry at most once per hour; at 48 total attempts they move to a
+slow recovery schedule (one attempt per day), retaining a distinct safe error
+code and the original observation. They remain claimable automatically after
+rights return; no manual database update or reset of claim generation is needed.
+Only malformed payloads are terminal. The membership read has a 10-second
+async timeout, after which the worker persists a retry and continues processing
+other access work. No database lock is held across the read.
 Warnings include the exception class and safe application location, never raw
 Telegram error text or traceback contents. Unknown physical access is reconciled
 like granted access when a fresh departure is confirmed. Only an existing scoped local entitlement can enqueue a new

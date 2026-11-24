@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from aiogram.exceptions import TelegramForbiddenError
+from aiogram.methods import GetChatMember
 from aiogram.types import Chat, ChatMemberLeft, ChatMemberMember, ChatMemberUpdated, User
 from sqlalchemy import select
 
@@ -36,6 +38,7 @@ from telegram_membership_saas.modules.telegram_access import (
     ensure_owner_service_access,
     run_one_telegram_access_action,
 )
+from telegram_membership_saas.modules.telegram_access import native_departures
 from telegram_membership_saas.modules.telegram_access.handlers import process_native_departure
 from telegram_membership_saas.modules.telegram_access.native_departures import (
     process_claimed_native_departure,
@@ -307,7 +310,10 @@ async def test_native_departure_requeues_only_existing_local_access() -> None:
 
 
 @pytest.mark.parametrize("current_status", ["left", "member"])
-async def test_native_departure_durable_retry_and_live_membership(current_status, caplog):
+@pytest.mark.parametrize("failure", ["network", "permission", "timeout"])
+async def test_native_departure_durable_retry_and_live_membership(
+    current_status, caplog, failure, monkeypatch,
+):
     engine = build_engine(Settings())
     factory = build_session_factory(engine)
     base = datetime.now(UTC) - timedelta(minutes=2)
@@ -342,33 +348,68 @@ async def test_native_departure_durable_retry_and_live_membership(current_status
             factory, update, project_id=project_id, update_id=123,
         )
         bot = AsyncMock()
-        bot.get_chat_member.side_effect = RuntimeError("temporary network failure")
+        if failure == "permission":
+            # Exercise real durable recovery beyond the old terminal cutoff.
+            async with system_project_session_scope(factory, project_id) as session:
+                pending = await session.scalar(select(OutboxEvent).where(
+                    OutboxEvent.project_id == project_id,
+                    OutboxEvent.event_type == "native_departure",
+                ))
+                pending.attempt_count = 47
+            bot.get_chat_member.side_effect = TelegramForbiddenError(
+                method=GetChatMember(chat_id=chat_id, user_id=telegram_id),
+                message="temporary network failure",
+            )
+        elif failure == "timeout":
+            async def slow_member(**kwargs):
+                await asyncio.sleep(60)
+
+            monkeypatch.setattr(native_departures, "NATIVE_MEMBERSHIP_TIMEOUT_SECONDS", 0.01)
+            bot.get_chat_member.side_effect = slow_member
+        else:
+            bot.get_chat_member.side_effect = RuntimeError("temporary network failure")
         runtime_adapter = AlreadyMemberThenRevokeAdapter()
         runtime_adapter.bot = bot
-        assert await process_project_runtime_once(
+        assert await asyncio.wait_for(process_project_runtime_once(
             factory, project_id=project_id, adapter=runtime_adapter,
-        )
+        ), timeout=5)
         async with system_project_session_scope(factory, project_id) as session:
             event = await session.scalar(select(OutboxEvent).where(
                 OutboxEvent.project_id == project_id,
                 OutboxEvent.event_type == "native_departure",
             ))
             assert event.status == "failed_retryable"
-            assert event.last_error == "native_departure_retry"
+            expected_error = (
+                "native_departure_unavailable_slow_retry"
+                if failure == "permission" else "native_departure_retry"
+            )
+            assert event.last_error == expected_error
             event_id, attempt = event.id, event.attempt_count
             next_at = event.available_at
+            assert attempt == (48 if failure == "permission" else 1)
+            delay = timedelta(days=1) if failure == "permission" else timedelta(seconds=30)
+            assert next_at >= datetime.now(UTC) + delay - timedelta(seconds=5)
         assert str(event_id) in caplog.text
-        assert "RuntimeError" in caplog.text
+        expected_class = {
+            "network": "RuntimeError", "permission": "TelegramForbiddenError",
+            "timeout": "TimeoutError",
+        }[failure]
+        assert expected_class in caplog.text
         assert "native_departures:process_claimed_native_departure" in caplog.text
         assert "temporary network failure" not in caplog.text
         assert all(record.exc_info is None for record in caplog.records)
         async with system_project_session_scope(factory, project_id) as session:
+            assert await claim_next_outbox_event(
+                session, project_id=project_id, claimed_at=next_at - timedelta(seconds=1),
+            ) is None
             retry = await claim_next_outbox_event(
                 session, project_id=project_id,
                 claimed_at=next_at,
             )
             assert retry.id == event_id and retry.attempt_count == attempt + 1
             next_attempt = retry.attempt_count
+        if failure == "timeout":
+            monkeypatch.setattr(native_departures, "NATIVE_MEMBERSHIP_TIMEOUT_SECONDS", 10.0)
         bot.get_chat_member.side_effect = None
         bot.get_chat_member.return_value = (
             ChatMemberLeft(user=user) if current_status == "left"

@@ -1,4 +1,5 @@
 """Durable, scoped membership observations; never a financial event."""
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -24,6 +25,9 @@ from telegram_membership_saas.modules.telegram_access.service import (
 )
 
 
+NATIVE_MEMBERSHIP_TIMEOUT_SECONDS = 10.0
+
+
 class NativeDeparturePayloadError(ValueError):
     """A malformed durable event cannot be processed safely."""
 
@@ -44,7 +48,9 @@ def native_departure_failure_policy(
         # Missing rights or a rotated token may recover. Do not discard paid
         # access evidence or hammer the Telegram API during a prolonged outage.
         if attempt >= 48:
-            return True, timedelta(0), "native_departure_unavailable_exhausted"
+            # Slow recovery, not a terminal failure. A later permissions fix
+            # must be able to reconcile the original observation automatically.
+            return False, timedelta(days=1), "native_departure_unavailable_slow_retry"
         return False, timedelta(hours=1), "native_departure_unavailable"
     delay = timedelta(seconds=30 * 2 ** min(max(attempt - 1, 0), 6))
     return False, delay, "native_departure_retry"
@@ -120,7 +126,8 @@ async def process_claimed_native_departure(
     observed_at = datetime.now(UTC)
     left = False
     if relevant:
-        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+        async with asyncio.timeout(NATIVE_MEMBERSHIP_TIMEOUT_SECONDS):
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
         left = member.status == "left"
 
     async with system_project_session_scope(factory, project_id) as session:
