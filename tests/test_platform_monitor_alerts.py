@@ -5,7 +5,7 @@ All tests use existing Supervisor heartbeat; no second bot poller or user menus.
 import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -32,7 +32,9 @@ from telegram_membership_saas.modules.platform_monitor_alerts import (
     _claim_event,
     _finish_event,
     _healthy,
+    _observe_monitor_problem,
     _problem_threshold,
+    _resolve_monitor_incident,
     deliver_platform_monitor_event,
     scan_platform_monitor,
 )
@@ -384,3 +386,88 @@ async def test_operator_incident_one_problem_one_recovery_and_tenant_isolation()
             )
         await engine.dispose()
         await admin_engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("status", "attempts", "intentional", "healthy_age", "claim_age",
+     "expected_status", "closed", "created"),
+    [
+        (None, 0, False, 0, None, None, True, 0),
+        ("pending", 0, False, 0, None, "cancelled", True, 0),
+        ("pending", 1, True, 0, None, "cancelled", True, 0),
+        ("pending", 1, False, 119, None, "pending", False, 0),
+        ("pending", 1, False, 120, None, "cancelled", True, 1),
+        ("sending", 1, False, 120, None, "sending", False, 0),
+        ("sending", 1, False, 120, 299, "sending", False, 0),
+        ("sending", 1, False, 120, 300, "cancelled", True, 1),
+        ("sent", 1, False, 120, None, "sent", True, 1),
+        ("cancelled", 0, False, 120, None, "cancelled", True, 0),
+    ],
+)
+async def test_monitor_incident_recovery_transitions(
+    status, attempts, intentional, healthy_age, claim_age,
+    expected_status, closed, created,
+):
+    moment = datetime(2026, 11, 24, 12, tzinfo=UTC)
+    incident = PlatformMonitorIncident(
+        id=uuid4(), healthy_since=moment - timedelta(seconds=healthy_age),
+    )
+    problem = PlatformMonitorOutbox(
+        id=uuid4(), incident_id=incident.id, kind="problem",
+        status=status, attempts=attempts,
+        claimed_at=moment - timedelta(seconds=claim_age) if claim_age is not None else None,
+    ) if status is not None else None
+    session = MagicMock()
+    session.scalars = AsyncMock(return_value=SimpleNamespace(
+        all=lambda: [problem] if problem is not None else [],
+    ))
+    result = await _resolve_monitor_incident(
+        session, incident=incident, intentional=intentional, moment=moment,
+    )
+    assert result == created
+    assert incident.recovered_at == (moment if closed else None)
+    if problem is not None:
+        assert problem.status == expected_status
+    if created:
+        event = session.add.call_args.args[0]
+        assert event.incident_id == incident.id
+        assert event.kind == "recovered"
+        assert event.status == "pending"
+    else:
+        session.add.assert_not_called()
+
+
+async def test_monitor_problem_confirmation_preserves_existing_episode():
+    moment = datetime(2026, 11, 24, 12, tzinfo=UTC)
+    bot_id = uuid4()
+    observation = {
+        "username": "demo", "runtime_state": "error",
+        "error_code": "polling_stalled", "last_heartbeat": moment.isoformat(),
+    }
+    session = MagicMock()
+    session.scalar = AsyncMock(return_value=None)
+    threshold = timedelta(minutes=10)
+    incident, count = await _observe_monitor_problem(
+        session, bot=observation, bot_id=bot_id, incident=None,
+        threshold=threshold, moment=moment,
+    )
+    assert count == 0
+    assert incident.suspected_since == moment
+    session.scalar.assert_not_awaited()
+    incident.healthy_since = moment
+    same, count = await _observe_monitor_problem(
+        session, bot=observation, bot_id=bot_id, incident=incident,
+        threshold=threshold, moment=moment + threshold,
+    )
+    assert same is incident and count == 1
+    assert incident.healthy_since is None
+    assert incident.confirmed_at == moment + threshold
+    event = session.add.call_args.args[0]
+    assert event.kind == "problem" and event.incident_id == incident.id
+    session.scalar.return_value = event.id
+    same, count = await _observe_monitor_problem(
+        session, bot=observation, bot_id=bot_id, incident=incident,
+        threshold=threshold, moment=moment + threshold * 2,
+    )
+    assert same is incident and count == 0
+    assert session.add.call_count == 2
