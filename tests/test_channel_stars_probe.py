@@ -247,3 +247,19 @@ async def test_malformed_candidate_id_leaves_scan_incomplete(identifier):
 ])
 def test_safe_failure_reasons(error, reason):
     assert probe._failure_reason(error) == reason
+
+
+async def test_disconnect_failure_preserves_primary_error(monkeypatch):
+    client, _, _, _, _ = _fake_telethon(monkeypatch)
+    client.side_effect = TimeoutError("primary")
+    client.disconnect.side_effect = OSError("cleanup")
+    with pytest.raises(TimeoutError, match="primary"):
+        await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")
+    client.disconnect.assert_awaited_once()
+
+
+async def test_disconnect_only_failure_fails_closed(monkeypatch):
+    client, _, _, _, _ = _fake_telethon(monkeypatch)
+    client.disconnect.side_effect = OSError("cleanup")
+    with pytest.raises(OSError, match="cleanup"):
+        await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")

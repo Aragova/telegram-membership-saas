@@ -132,8 +132,14 @@ async def run_live(
 
             return await inspect_history(fetch, sale_id, renewal_id)
     finally:
-        async with asyncio.timeout(10):
-            await client.disconnect()
+        primary_error = sys.exception()
+        try:
+            async with asyncio.timeout(10):
+                await client.disconnect()
+        except Exception:
+            # Preserve the primary failure; a cleanup-only failure still fails closed.
+            if primary_error is None:
+                raise
 
 
 def _read_inputs() -> tuple[int, str, str, int, int, str, str]:
