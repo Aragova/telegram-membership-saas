@@ -98,3 +98,99 @@ def test_cli_does_not_leak_exception(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out) == {
         "status": "probe_failed", "commission_authorized": False,
     }
+
+
+def _fake_telethon(monkeypatch, *, bot=True, bot_id=77, broadcast=True, channel_id=88):
+    client = AsyncMock()
+    client.get_me.return_value = SimpleNamespace(bot=bot, id=bot_id)
+    client.get_entity.return_value = SimpleNamespace(id=channel_id, broadcast=broadcast)
+    client.return_value = page([row("sale")])
+    peer = SimpleNamespace()
+    session = object()
+    client_args = []
+    request_args = []
+
+    def make_client(*args, **kwargs):
+        client_args.append((args, kwargs))
+        return client
+
+    def make_peer(*args):
+        assert args == (88, 99)
+        return peer
+
+    def make_request(**kwargs):
+        request_args.append(kwargs)
+        return object()
+
+    modules = {
+        "telethon": SimpleNamespace(TelegramClient=make_client),
+        "telethon.sessions": SimpleNamespace(MemorySession=lambda: session),
+        "telethon.tl.functions.payments": SimpleNamespace(
+            GetStarsTransactionsRequest=make_request,
+        ),
+        "telethon.tl.types": SimpleNamespace(InputPeerChannel=make_peer),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(probe.sys.modules, name, module)
+    return client, peer, session, client_args, request_args
+
+
+async def test_live_read_uses_exact_bot_and_peer_and_disconnects(monkeypatch):
+    client, peer, session, args, requests = _fake_telethon(monkeypatch)
+    report = await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")
+    assert report["sale_seen"]
+    assert not report["commission_authorized"]
+    assert args == [((session, 1, "api"), {
+        "receive_updates": False, "request_retries": 0, "connection_retries": 0,
+        "flood_sleep_threshold": 0, "auto_reconnect": False,
+    })]
+    client.connect.assert_awaited_once()
+    client.sign_in.assert_awaited_once_with(bot_token="77:fake")
+    client.get_entity.assert_awaited_once_with(peer)
+    assert requests == [{"peer": peer, "offset": "", "limit": probe.PAGE_SIZE}]
+    client.disconnect.assert_awaited_once()
+
+
+@pytest.mark.parametrize("changes", [
+    {"bot": False}, {"bot_id": 78}, {"broadcast": False}, {"channel_id": 89},
+])
+async def test_live_identity_mismatch_never_reads_transactions(monkeypatch, changes):
+    client, _, _, _, requests = _fake_telethon(monkeypatch, **changes)
+    with pytest.raises(ValueError, match="identity mismatch|broadcast channel"):
+        await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")
+    assert not requests
+    client.disconnect.assert_awaited_once()
+
+
+async def test_live_rpc_failure_disconnects(monkeypatch):
+    client, _, _, _, _ = _fake_telethon(monkeypatch)
+    client.side_effect = RuntimeError("provider failure")
+    with pytest.raises(RuntimeError, match="provider failure"):
+        await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")
+    client.disconnect.assert_awaited_once()
+
+
+def _inputs(monkeypatch, values):
+    monkeypatch.setattr(probe.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    answers = iter(values)
+    monkeypatch.setattr(probe.getpass, "getpass", lambda _: next(answers))
+
+
+def test_hidden_inputs(monkeypatch):
+    _inputs(monkeypatch, ["ISOLATED TEST", "1", "api", "77:fake", "88", "99", "sale", ""])
+    assert probe._read_inputs() == (1, "api", "77:fake", 88, 99, "sale", "")
+
+
+@pytest.mark.parametrize("values", [
+    ["no"],
+    ["ISOLATED TEST", "0", "api", "77:fake", "88", "99", "sale", ""],
+    ["ISOLATED TEST", "1", "api", "77:fake", "0", "99", "sale", ""],
+    ["ISOLATED TEST", "1", "", "77:fake", "88", "99", "sale", ""],
+    ["ISOLATED TEST", "1", "api", "", "88", "99", "sale", ""],
+    ["ISOLATED TEST", "1", "api", "77:fake", "88", "99", "", ""],
+    ["ISOLATED TEST", "1", "api", "77:fake", "88", "99", "sale", "sale"],
+])
+def test_invalid_hidden_inputs(monkeypatch, values):
+    _inputs(monkeypatch, values)
+    with pytest.raises(ValueError):
+        probe._read_inputs()
