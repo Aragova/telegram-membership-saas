@@ -52,7 +52,12 @@ from telegram_membership_saas.project_worker_lock import (
     confirm_project_lock,
     project_worker_lock,
 )
-from telegram_membership_saas.task_lifecycle import cancel_once, complete_cleanup
+from telegram_membership_saas.task_lifecycle import (
+    cancel_and_drain,
+    cancel_once,
+    complete_cleanup,
+    wait_for_runtime_tasks,
+)
 from telegram_membership_saas.telegram_adapter import create_bot, create_dispatcher
 from telegram_membership_saas.telegram_menus import install_public_commands
 
@@ -328,21 +333,21 @@ async def run_telegram_bot(settings: Settings | None = None) -> None:
                     )
                 )
             try:
-                await asyncio.shield(polling)
+                background = {
+                    "central_stars_recovery": central_stars_recovery,
+                    "central_gateway_recovery": central_gateway_recovery,
+                }
+                if central_monitor is not None:
+                    background["central_monitor"] = central_monitor
+                await wait_for_runtime_tasks(polling, background)
             finally:
                 async def stop_central() -> None:
                     try:
                         await stop_dispatcher()
                     finally:
-                        cancel_once(central_monitor)
-                        cancel_once(central_stars_recovery)
-                        cancel_once(central_gateway_recovery)
-                        await asyncio.gather(
-                            *(task for task in (
-                                central_monitor, central_stars_recovery,
-                                central_gateway_recovery,
-                            ) if task is not None),
-                            return_exceptions=True,
+                        await cancel_and_drain(
+                            central_monitor, central_stars_recovery,
+                            central_gateway_recovery,
                         )
 
                 await complete_cleanup(stop_central())

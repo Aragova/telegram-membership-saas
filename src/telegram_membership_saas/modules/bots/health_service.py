@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionm
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.bots.diagnostics import HEALTH_ERROR_CODES
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
+from telegram_membership_saas.project_worker_lock import SharedProjectLeaseHandle
 
 STATES = frozenset({
     "setup_needed", "queued", "starting", "running", "degraded", "stopped", "error",
@@ -20,7 +21,7 @@ ERROR_CODES = HEALTH_ERROR_CODES
 
 
 async def claim_bot_health(
-    lease: AsyncConnection,
+    lease: AsyncConnection | SharedProjectLeaseHandle,
     *,
     project_id: UUID,
     bot_id: int,
@@ -181,5 +182,5 @@ def public_health_label(
             "lock_lost": "🟡 Бот перезапускается",
             "worker_stopped": "🟡 Бот перезапускается",
         }
-        return labels.get(health.error_code, "🔴 Не удалось запустить бота"), False
+        return labels.get(health.error_code or "", "🔴 Не удалось запустить бота"), False
     return "⚪ Не запущен", False

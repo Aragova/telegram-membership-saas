@@ -87,3 +87,26 @@ Migration 0103 is schema-only (adds a `degraded` value to an existing
 state constraint). Its downgrade conservatively maps active degraded rows to
 `error`, **never** to `running`. Execute rollback through the established
 protected deployment process with supervisor version/schema coordinated.
+
+
+## Runtime task supervision (2026-11-24)
+
+A live customer poller is not sufficient if an enabled access, broadcast,
+Stars or Crypto Pay loop has unexpectedly exited. The customer runtime now
+observes all enabled long-lived tasks, including normal unexpected returns
+and unexpected child cancellation. It records the fixed task label and
+exception class only, drains polling and all siblings before releasing
+the project lease, and uses the existing per-project restart/backoff.
+Crypto Pay is not started when its encryption key is absent. The normal
+central management runtime similarly supervises its enabled recovery and
+monitoring tasks. The legacy central access mode is unchanged.
+
+Independent sibling tasks receive cancellation together **after** polling
+stops. Supervisor shutdown also requests cancellation of independent
+platform/project tasks together; the project-level lease barrier remains
+in place. No change to retry durations, shared SQL lock keys, RLS,
+admission limits, payments, schema or deployment topology.
+
+This checks task termination, not progress of each individual operation.
+Persistent API/database faults still follow the existing loop-level retry
+policies. CI is not a live 100-bot benchmark.
