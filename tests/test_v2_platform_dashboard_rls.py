@@ -1,10 +1,11 @@
 """PostgreSQL RLS: platform reporting is restricted and audited; tenants isolated."""
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -14,6 +15,7 @@ from telegram_membership_saas.db import (
     build_session_factory,
     tenant_session_scope,
 )
+from telegram_membership_saas.modules import platform_dashboard_handlers as ui
 from telegram_membership_saas.modules.bots import BotInstance
 from telegram_membership_saas.modules.bots.runtime_health import CustomerBotRuntimeHealth
 from telegram_membership_saas.modules.owner_setup.service import (
@@ -138,6 +140,41 @@ async def test_platform_aggregate_requires_db_grant_and_does_not_weaken_rls():
             "currency" in row and "amount" in row
             for row in result.turnover
         )
+
+        # REPEATABLE READ freezes the other report rows across both calls.
+        # Configure it before tenant_session_scope issues any RLS queries.
+        snapshot_factory = build_session_factory(
+            engine.execution_options(isolation_level="REPEATABLE READ"),
+        )
+        async with tenant_session_scope(
+            snapshot_factory, TenantContext(user_id=op, project_id=own_project),
+        ) as session:
+            health = (await session.scalars(select(CustomerBotRuntimeHealth).where(
+                CustomerBotRuntimeHealth.project_id == own_project,
+            ))).one()
+            now = (await session.execute(text("SELECT now()"))).scalar_one()
+            health.state = "running"
+            health.last_heartbeat = now + timedelta(hours=1)
+            await session.flush()
+            query = text(
+                "SELECT public.platform_report_snapshot(:since, 0, 20) AS snapshot"
+            ).columns(snapshot=JSONB)
+            params = {"since": datetime(1970, 1, 1, tzinfo=UTC)}
+            future = (await session.execute(query, params)).scalar_one()
+            future_row = next(
+                row for row in future["bot_rows"] if row["username"] == bot_names[0]
+            )
+            assert ui._bot_list_button_label(future_row).startswith("🟠")
+            health.last_heartbeat = now
+            await session.flush()
+            fresh = (await session.execute(query, params)).scalar_one()
+            fresh_row = next(
+                row for row in fresh["bot_rows"] if row["username"] == bot_names[0]
+            )
+            assert fresh["bots_running"] == future["bots_running"] + 1
+            assert ui._bot_list_button_label(fresh_row).startswith("🟢")
+            health.state = "error"
+            health.last_heartbeat = datetime(2026, 11, 9, 18, tzinfo=UTC)
 
         # A forged report request cannot bypass the app's configured ID.
         with pytest.raises(PermissionError):

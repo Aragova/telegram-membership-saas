@@ -161,6 +161,100 @@ def _new_event(
     )
 
 
+async def _resolve_monitor_incident(
+    session: AsyncSession, *, incident: PlatformMonitorIncident,
+    intentional: bool, moment: datetime,
+) -> int:
+    """Close or recover one episode without replaying obsolete alerts."""
+    events = {
+        ev.kind: ev for ev in (
+            await session.scalars(
+                select(PlatformMonitorOutbox)
+                .where(PlatformMonitorOutbox.incident_id == incident.id)
+                .with_for_update()
+            )
+        ).all()
+    }
+    problem = events.get("problem")
+    if intentional or problem is None:
+        if problem is not None and problem.status == "pending":
+            problem.status = "cancelled"
+        incident.recovered_at = moment
+        return 0
+    if problem.status == "pending" and problem.attempts == 0:
+        # Never attempted: cancel cleanly, with no extra message.
+        problem.status = "cancelled"
+        incident.recovered_at = moment
+        return 0
+
+    incident.healthy_since = incident.healthy_since or moment
+    if moment - incident.healthy_since < HEALTHY_FOR_RECOVERY:
+        return 0
+    if problem.status == "pending":
+        # An earlier attempt may actually have reached Telegram
+        # before the transport failed. Once recovered, stop retries
+        # and provide the one possible closing notification.
+        problem.status = "cancelled"
+    elif problem.status == "sending":
+        # The sending process may have died after claiming. Once
+        # its lease expires and recovery is stable, do NOT replay
+        # an already-obsolete problem. Whether it sent is unknown;
+        # a recovery message safely closes that possibility.
+        if (
+            problem.claimed_at is None
+            or moment - problem.claimed_at < DELIVERY_LEASE
+        ):
+            return 0
+        problem.status = "cancelled"
+    elif problem.status not in {"sent", "cancelled"}:
+        return 0
+    incident.recovered_at = moment
+    if problem.status == "sent" or problem.attempts > 0:
+        session.add(_new_event(incident.id, "recovered", now=moment))
+        return 1
+    return 0
+
+
+async def _observe_monitor_problem(
+    session: AsyncSession, *, bot: dict[str, object], bot_id: UUID,
+    incident: PlatformMonitorIncident | None, threshold: timedelta,
+    moment: datetime,
+) -> tuple[PlatformMonitorIncident, int]:
+    """Record one unhealthy observation and enqueue at most one problem."""
+    if incident is None:
+        incident = PlatformMonitorIncident(
+            id=uuid4(), bot_instance_id=bot_id,
+            username=str(bot.get("username") or "unknown")[:64],
+            suspected_since=moment, last_observed_at=moment,
+            last_runtime_state=str(bot.get("runtime_state") or "unknown")[:24],
+            last_error_code=_clean_code(bot.get("error_code")),
+            last_heartbeat=_observed_time(bot.get("last_heartbeat")),
+        )
+        session.add(incident)
+    else:
+        incident.last_observed_at = moment
+        incident.username = str(bot.get("username") or "unknown")[:64]
+        incident.last_runtime_state = str(
+            bot.get("runtime_state") or "unknown"
+        )[:24]
+        incident.last_error_code = _clean_code(bot.get("error_code"))
+        incident.last_heartbeat = _observed_time(bot.get("last_heartbeat"))
+        incident.healthy_since = None
+
+    if moment - incident.suspected_since < threshold:
+        return incident, 0
+    previous = await session.scalar(select(PlatformMonitorOutbox.id).where(
+        PlatformMonitorOutbox.incident_id == incident.id,
+        PlatformMonitorOutbox.kind == "problem",
+    ))
+    if previous is None:
+        incident.confirmed_at = moment
+        session.add(_new_event(incident.id, "problem", now=moment))
+        return incident, 1
+
+    return incident, 0
+
+
 async def scan_platform_monitor(
     factory: async_sessionmaker[AsyncSession], *,
     owner_actor_id: UUID,
@@ -208,85 +302,18 @@ async def scan_platform_monitor(
             if healthy or threshold is None:
                 if incident is None:
                     continue
-                events = {
-                    ev.kind: ev for ev in (
-                        await session.scalars(
-                            select(PlatformMonitorOutbox)
-                            .where(PlatformMonitorOutbox.incident_id == incident.id)
-                            .with_for_update()
-                        )
-                    ).all()
-                }
-                problem = events.get("problem")
-                if threshold is None or problem is None:
-                    if problem is not None and problem.status == "pending":
-                        problem.status = "cancelled"
-                    incident.recovered_at = moment
-                    continue
-                if problem.status == "pending" and problem.attempts == 0:
-                    # Never attempted: cancel cleanly, with no extra message.
-                    problem.status = "cancelled"
-                    incident.recovered_at = moment
-                    continue
-
-                incident.healthy_since = incident.healthy_since or moment
-                if moment - incident.healthy_since < HEALTHY_FOR_RECOVERY:
-                    continue
-                if problem.status == "pending":
-                    # An earlier attempt may actually have reached Telegram
-                    # before the transport failed. Once recovered, stop retries
-                    # and provide the one possible closing notification.
-                    problem.status = "cancelled"
-                elif problem.status == "sending":
-                    # The sending process may have died after claiming. Once
-                    # its lease expires and recovery is stable, do NOT replay
-                    # an already-obsolete problem. Whether it sent is unknown;
-                    # a recovery message safely closes that possibility.
-                    if (
-                        problem.claimed_at is None
-                        or moment - problem.claimed_at < DELIVERY_LEASE
-                    ):
-                        continue
-                    problem.status = "cancelled"
-                elif problem.status not in {"sent", "cancelled"}:
-                    continue
-                incident.recovered_at = moment
-                if problem.status == "sent" or problem.attempts > 0:
-                    session.add(_new_event(incident.id, "recovered", now=moment))
-                    created += 1
-                continue
-
-            if incident is None:
-                incident = PlatformMonitorIncident(
-                    id=uuid4(), bot_instance_id=bot_id,
-                    username=str(bot.get("username") or "unknown")[:64],
-                    suspected_since=moment, last_observed_at=moment,
-                    last_runtime_state=str(bot.get("runtime_state") or "unknown")[:24],
-                    last_error_code=_clean_code(bot.get("error_code")),
-                    last_heartbeat=_observed_time(bot.get("last_heartbeat")),
+                created += await _resolve_monitor_incident(
+                    session, incident=incident,
+                    intentional=threshold is None, moment=moment,
                 )
-                session.add(incident)
-                by_bot[bot_id] = incident
-            else:
-                incident.last_observed_at = moment
-                incident.username = str(bot.get("username") or "unknown")[:64]
-                incident.last_runtime_state = str(
-                    bot.get("runtime_state") or "unknown"
-                )[:24]
-                incident.last_error_code = _clean_code(bot.get("error_code"))
-                incident.last_heartbeat = _observed_time(bot.get("last_heartbeat"))
-                incident.healthy_since = None
-
-            if moment - incident.suspected_since < threshold:
                 continue
-            previous = await session.scalar(select(PlatformMonitorOutbox.id).where(
-                PlatformMonitorOutbox.incident_id == incident.id,
-                PlatformMonitorOutbox.kind == "problem",
-            ))
-            if previous is None:
-                incident.confirmed_at = moment
-                session.add(_new_event(incident.id, "problem", now=moment))
-                created += 1
+
+            incident, added = await _observe_monitor_problem(
+                session, bot=bot, bot_id=bot_id, incident=incident,
+                threshold=threshold, moment=moment,
+            )
+            by_bot[bot_id] = incident
+            created += added
 
         # Removed connections have no active alert, even when old metadata
         # remains before the FK cascade cleanup.

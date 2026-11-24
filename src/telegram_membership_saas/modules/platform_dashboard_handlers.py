@@ -452,6 +452,81 @@ def _heartbeat_time(bot: dict) -> datetime | None:
     return moment if moment.tzinfo is not None and moment.utcoffset() is not None else None
 
 
+def _heartbeat_age(bot: dict[str, object], now: datetime) -> timedelta | None:
+    """Reject future observations outside the incident scanner's 60s tolerance."""
+    seen = _heartbeat_time(bot)
+    if seen is None:
+        return None
+    elapsed = now - seen
+    return elapsed if elapsed >= timedelta(seconds=-60) else None
+
+
+def _degraded_diagnosis(code: str, elapsed: timedelta | None) -> tuple[str, str]:
+    if elapsed is None or elapsed > timedelta(seconds=120):
+        return (
+            tr("🟠 Нет свежего сигнала Supervisor",
+               "🟠 No recent supervisor heartbeat"),
+            tr("Невозможно подтвердить процесс восстановления. Проверьте Supervisor.",
+               "Recovery process is not confirmed. Check Supervisor."),
+        )
+    return (
+        tr("🟡 Telegram временно недоступен",
+           "🟡 Telegram temporarily unavailable"),
+        tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
+        tr("Supervisor работает и повторяет запросы. "
+           "Получение обновлений не подтверждено.",
+           "Supervisor is alive and retrying. "
+           "Telegram update delivery is not confirmed."),
+    )
+
+
+def _stale_diagnosis(elapsed: timedelta | None) -> tuple[str, str]:
+    if elapsed is not None and elapsed <= _STARTUP_GRACE:
+        return (
+            tr("🟠 Сигнал задерживается", "🟠 Heartbeat delayed"),
+            tr("Возможен прогрев после обновления. Повторите проверку через несколько минут.",
+               "This may be startup after deployment. Recheck in a few minutes."),
+        )
+    return (
+        tr("🟠 Нет свежего сигнала", "🟠 No recent heartbeat"),
+        tr("Проверьте Supervisor и Telegram. Один сигнал не подтверждает аварию.",
+           "Check Supervisor and Telegram. A single observation does not confirm an outage."),
+    )
+
+
+def _error_diagnosis(code: str, elapsed: timedelta | None) -> tuple[str, str]:
+    is_restarting = (
+        code in {"worker_stopped", "lock_lost"}
+        and elapsed is not None and elapsed <= _STARTUP_GRACE
+    )
+    return (
+        tr("🟡 Перезапускается", "🟡 Restarting")
+        if is_restarting else
+        (tr("🔴 Потеря polling", "🔴 Polling unavailable")
+         if code.startswith("polling_") else
+         tr("🔴 Ошибка запуска", "🔴 Startup error")),
+        tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
+        tr("Supervisor зафиксировал ошибку. Проверьте повторный запуск.",
+           "Supervisor recorded an error. Check the next startup attempt."),
+    )
+
+
+def _stopped_diagnosis(elapsed: timedelta | None) -> tuple[str, str]:
+    if elapsed is not None and elapsed <= _STARTUP_GRACE:
+        return (
+            tr("🟡 Недавно остановлен", "🟡 Recently stopped"),
+            tr("Возможно, бот перезапускается после обновления. Проверьте повторно.",
+               "Bot may be restarting after deployment. Recheck before treating as outage."),
+        )
+    return (
+        tr("🔴 Остановлен", "🔴 Stopped"),
+        tr("Свежего сигнала нет. Проверьте Supervisor; "
+           "одного снимка состояния недостаточно для вывода о постоянной аварии.",
+           "No fresh heartbeat. Check Supervisor; "
+           "one snapshot does not prove a persistent outage."),
+    )
+
+
 def _monitoring_diagnosis(
     bot: dict, *, now: datetime | None = None,
 ) -> tuple[str, str]:
@@ -462,9 +537,7 @@ def _monitoring_diagnosis(
     """
     runtime = str(bot.get("runtime_state") or "unknown")
     status = str(bot.get("status") or "unknown")
-    seen = _heartbeat_time(bot)
-    current = now or datetime.now(UTC)
-    elapsed = current - seen if seen is not None else None
+    elapsed = _heartbeat_age(bot, now or datetime.now(UTC))
 
     if status == "disabled":
         return (tr("⚪ Отключён владельцем", "⚪ Disabled by owner"),
@@ -476,23 +549,7 @@ def _monitoring_diagnosis(
         return (tr("🟢 Работает", "🟢 Running"),
                 tr("Последний записанный статус: работает", "Latest recorded state: running"))
     if runtime == "degraded":
-        code = str(bot.get("error_code") or "")
-        if elapsed is None or elapsed > timedelta(seconds=120):
-            return (
-                tr("🟠 Нет свежего сигнала Supervisor",
-                   "🟠 No recent supervisor heartbeat"),
-                tr("Невозможно подтвердить процесс восстановления. Проверьте Supervisor.",
-                   "Recovery process is not confirmed. Check Supervisor."),
-            )
-        return (
-            tr("🟡 Telegram временно недоступен",
-               "🟡 Telegram temporarily unavailable"),
-            tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
-            tr("Supervisor работает и повторяет запросы. "
-               "Получение обновлений не подтверждено.",
-               "Supervisor is alive and retrying. "
-               "Telegram update delivery is not confirmed."),
-        )
+        return _degraded_diagnosis(str(bot.get("error_code") or ""), elapsed)
     if runtime in {"starting", "queued", "setup_needed"}:
         return (
             "🟡 " + _status_label(runtime),
@@ -500,53 +557,20 @@ def _monitoring_diagnosis(
                "Bot is being configured or started. This is not a confirmed outage."),
         )
     if runtime == "running" and elapsed is None:
-        return (
-            tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
+        explanation = (
+            tr("Время последнего сигнала в будущем; проверьте часы сервера и Supervisor.",
+               "The last heartbeat is in the future; check the server clock and Supervisor.")
+            if _heartbeat_time(bot) is not None else
             tr("Нет подтверждения: время последнего сигнала отсутствует; проверьте Supervisor.",
-               "Runtime is not confirmed: no recorded heartbeat; check Supervisor."),
+               "Runtime is not confirmed: no recorded heartbeat; check Supervisor.")
         )
+        return tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"), explanation
     if runtime in {"stale", "running"}:
-        if elapsed is not None and elapsed <= _STARTUP_GRACE:
-            return (
-                tr("🟠 Сигнал задерживается", "🟠 Heartbeat delayed"),
-                tr("Возможен прогрев после обновления. Повторите проверку через несколько минут.",
-                   "This may be startup after deployment. Recheck in a few minutes."),
-            )
-        return (
-            tr("🟠 Нет свежего сигнала", "🟠 No recent heartbeat"),
-            tr("Проверьте Supervisor и Telegram. Один сигнал не подтверждает аварию.",
-               "Check Supervisor and Telegram. A single observation does not confirm an outage."),
-        )
+        return _stale_diagnosis(elapsed)
     if runtime in {"error", "failed"}:
-        code = str(bot.get("error_code") or "")
-        is_restarting = (
-            code in {"worker_stopped", "lock_lost"}
-            and elapsed is not None and elapsed <= _STARTUP_GRACE
-        )
-        return (
-            tr("🟡 Перезапускается", "🟡 Restarting")
-            if is_restarting else
-            (tr("🔴 Потеря polling", "🔴 Polling unavailable")
-             if code.startswith("polling_") else
-             tr("🔴 Ошибка запуска", "🔴 Startup error")),
-            tr(*_ERROR_TEXT[code]) if code in _ERROR_TEXT else
-            tr("Supervisor зафиксировал ошибку. Проверьте повторный запуск.",
-               "Supervisor recorded an error. Check the next startup attempt."),
-        )
+        return _error_diagnosis(str(bot.get("error_code") or ""), elapsed)
     if runtime == "stopped":
-        if elapsed is not None and elapsed <= _STARTUP_GRACE:
-            return (
-                tr("🟡 Недавно остановлен", "🟡 Recently stopped"),
-                tr("Возможно, бот перезапускается после обновления. Проверьте повторно.",
-                   "Bot may be restarting after deployment. Recheck before treating as outage."),
-            )
-        return (
-            tr("🔴 Остановлен", "🔴 Stopped"),
-            tr("Свежего сигнала нет. Проверьте Supervisor; "
-               "одного снимка состояния недостаточно для вывода о постоянной аварии.",
-               "No fresh heartbeat. Check Supervisor; "
-               "one snapshot does not prove a persistent outage."),
-        )
+        return _stopped_diagnosis(elapsed)
     return (
         tr("⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
         tr("Нет актуального подтверждения от Supervisor; не считать аварией без проверки.",
@@ -558,15 +582,13 @@ def _bot_list_button_label(bot: dict) -> str:
     """One tappable row: defer false-red states during Supervisor warm-up."""
     state = bot["runtime_state"]
     marker = _RUNTIME_ICONS.get(state, "⚪")
-    heartbeat = _heartbeat_time(bot)
-    # A disconnected Supervisor is not actively retrying Telegram even if
-    # the last persisted state was "degraded".
-    if state == "degraded" and (
-        heartbeat is None
-        or datetime.now(UTC) - heartbeat > timedelta(seconds=120)
+    elapsed = _heartbeat_age(bot, datetime.now(UTC))
+    # A stale or implausible heartbeat cannot confirm active polling/retry.
+    if state in {"running", "degraded"} and (
+        elapsed is None or elapsed > timedelta(seconds=120)
     ):
         marker = "🟠"
-    if heartbeat is not None and datetime.now(UTC) - heartbeat <= _STARTUP_GRACE:
+    if elapsed is not None and elapsed <= _STARTUP_GRACE:
         if state == "stopped" or (
             state == "error"
             and bot.get("error_code") in {"worker_stopped", "lock_lost"}

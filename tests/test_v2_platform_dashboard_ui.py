@@ -354,6 +354,8 @@ async def test_platform_edit_falls_back_only_when_message_cannot_be_edited():
 def test_compact_bot_button_keeps_status_handle_and_exact_metrics(state, emoji):
     bot = dict(_snapshot().bots[0])
     bot["runtime_state"] = state
+    if state == "running":
+        bot["last_heartbeat"] = datetime.now(UTC).isoformat()
     bot["username"] = "telegram_long_bot_username_123456"
     bot["plans"] = 139
     bot["subscriptions"] = 6000

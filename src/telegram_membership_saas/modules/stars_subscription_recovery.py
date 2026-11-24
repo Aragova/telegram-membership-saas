@@ -32,6 +32,7 @@ from telegram_membership_saas.modules.stars_subscription_service import (
 from telegram_membership_saas.modules.stars_subscriptions import (
     SubscriptionStarOrder,
 )
+from telegram_membership_saas.safe_diagnostics import safe_failure_site
 
 log = logging.getLogger(__name__)
 PAGE_SIZE = 100
@@ -255,10 +256,11 @@ async def run_subscription_stars_ledger_loop(
                 )
         except asyncio.CancelledError:
             raise
-        except Exception:
-            log.exception(
-                "Stars ledger reconciliation unavailable for project %s",
-                project_id,
+        except Exception as exc:
+            # Transport/DB exception text can include tokens or payment data.
+            log.warning(
+                "Stars ledger reconciliation unavailable for project %s (%s at %s)",
+                project_id, type(exc).__name__, safe_failure_site(exc),
             )
         # Stagger calls across up to 100 independent bots; no extra VM.
         await asyncio.sleep(900 + bot.id % 180)

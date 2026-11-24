@@ -30,6 +30,7 @@ def _platform_snapshot() -> PlatformSnapshot:
         bots=({
             "username": "test_member_bot", "project_name": "My Custom Channel",
             "status": "registered", "runtime_state": "running",
+            "last_heartbeat": datetime.now(UTC).isoformat(),
             "resources": 1, "plans": 2, "subscriptions": 3,
             "payments_period": 3,
             "gmv_by_currency": [{"currency": "USD", "amount": "17.50"}],

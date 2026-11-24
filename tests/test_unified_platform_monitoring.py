@@ -264,3 +264,83 @@ def test_existing_bot_actions_and_no_worker_modules_added():
     assert ui._button("Open", "detail:30:0:0:abc").callback_data == (
         "plat:detail:30:0:0:abc"
     )
+
+
+@pytest.mark.parametrize(("state", "age_seconds", "code", "ru", "en"), [
+    ("running", -60, None, "🟢 Работает", "🟢 Running"),
+    ("running", -61, None, "⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
+    ("degraded", -61, None,
+     "🟠 Нет свежего сигнала Supervisor", "🟠 No recent supervisor heartbeat"),
+    ("stopped", -61, None, "🔴 Остановлен", "🔴 Stopped"),
+    ("error", -61, "lock_lost", "🔴 Ошибка запуска", "🔴 Startup error"),
+    ("running", 120, None, "🟢 Работает", "🟢 Running"),
+    ("running", 121, None, "🟠 Сигнал задерживается", "🟠 Heartbeat delayed"),
+    ("degraded", 120, "polling_network_failed",
+     "🟡 Telegram временно недоступен", "🟡 Telegram temporarily unavailable"),
+    ("degraded", 121, "polling_network_failed",
+     "🟠 Нет свежего сигнала Supervisor", "🟠 No recent supervisor heartbeat"),
+    ("degraded", None, None,
+     "🟠 Нет свежего сигнала Supervisor", "🟠 No recent supervisor heartbeat"),
+    ("error", 0, "lock_lost", "🟡 Перезапускается", "🟡 Restarting"),
+    ("error", 3600, "worker_stopped", "🔴 Ошибка запуска", "🔴 Startup error"),
+    ("failed", 0, "polling_stalled", "🔴 Потеря polling", "🔴 Polling unavailable"),
+    ("stopped", 0, None, "🟡 Недавно остановлен", "🟡 Recently stopped"),
+    ("stopped", None, None, "🔴 Остановлен", "🔴 Stopped"),
+    ("stale", 3600, None, "🟠 Нет свежего сигнала", "🟠 No recent heartbeat"),
+    ("unknown", None, None, "⚪ Нет подтверждения работы", "⚪ Runtime not confirmed"),
+])
+def test_monitoring_diagnosis_preserves_bilingual_boundaries(
+    state, age_seconds, code, ru, en,
+):
+    from datetime import timedelta
+
+    heartbeat = NOW - timedelta(seconds=age_seconds) if age_seconds is not None else None
+    observation = _diag_bot(state, heartbeat=heartbeat, error_code=code)
+    for language, expected in (("ru", ru), ("en", en)):
+        token = _language.set(language)
+        try:
+            title, explanation = ui._monitoring_diagnosis(observation, now=NOW)
+            assert title == expected
+            assert explanation
+        finally:
+            _language.reset(token)
+
+
+@pytest.mark.parametrize(("state", "code", "marker"), [
+    ("running", None, "🟠"),
+    ("degraded", None, "🟠"),
+    ("stopped", None, "🔴"),
+    ("error", "lock_lost", "🔴"),
+])
+def test_future_heartbeat_cannot_confirm_runtime_or_recent_restart(state, code, marker):
+    observation = _diag_bot(
+        state, heartbeat=_diag_live_now() + _diag_minutes(60), error_code=code,
+    )
+    assert ui._bot_list_button_label(observation).startswith(marker)
+
+
+@pytest.mark.parametrize("state", ["running", "degraded"])
+def test_missing_heartbeat_does_not_confirm_running_or_retry(state):
+    assert ui._bot_list_button_label(_diag_bot(state, heartbeat=None)).startswith("🟠")
+
+
+@pytest.mark.parametrize(("language", "future", "missing"), [
+    ("ru", "в будущем", "отсутствует"),
+    ("en", "in the future", "no recorded heartbeat"),
+])
+def test_running_diagnosis_distinguishes_future_and_missing_heartbeat(
+    language, future, missing,
+):
+    token = _language.set(language)
+    try:
+        _, explanation = ui._monitoring_diagnosis(
+            _diag_bot("running", heartbeat=NOW + _diag_minutes(60)), now=NOW,
+        )
+        assert future in explanation
+        assert missing not in explanation
+        _, explanation = ui._monitoring_diagnosis(
+            _diag_bot("running", heartbeat=None), now=NOW,
+        )
+        assert missing in explanation
+    finally:
+        _language.reset(token)
