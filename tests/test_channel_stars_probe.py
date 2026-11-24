@@ -194,3 +194,32 @@ def test_invalid_hidden_inputs(monkeypatch, values):
     _inputs(monkeypatch, values)
     with pytest.raises(ValueError):
         probe._read_inputs()
+
+
+@pytest.mark.parametrize("malformed", [
+    None, SimpleNamespace(), SimpleNamespace(history=[]),
+    SimpleNamespace(next_offset=None), SimpleNamespace(history="invalid", next_offset=None),
+])
+async def test_malformed_page_is_never_reported_complete(malformed):
+    fetch = AsyncMock(return_value=malformed)
+    result = await probe.inspect_history(fetch, "sale", "renew")
+    assert not result["complete"]
+    assert not result["commission_authorized"]
+    assert result["pages"] == 0
+
+
+@pytest.mark.parametrize("entity", [None, SimpleNamespace(broadcast=True)])
+async def test_missing_channel_identity_is_rejected(monkeypatch, entity):
+    client, _, _, _, requests = _fake_telethon(monkeypatch)
+    client.get_entity.return_value = entity
+    with pytest.raises(ValueError, match="broadcast channel"):
+        await probe.run_live(1, "api", "77:fake", 88, 99, "sale", "")
+    assert not requests
+    client.disconnect.assert_awaited_once()
+
+
+@pytest.mark.parametrize("token", ["77", "77:", "abc:fake", "0:fake", "１２:fake", ":fake"])
+def test_malformed_token_rejected_at_input(monkeypatch, token):
+    _inputs(monkeypatch, ["ISOLATED TEST", "1", "api", token, "88", "99", "sale", ""])
+    with pytest.raises(ValueError, match="Invalid bot token format"):
+        probe._read_inputs()

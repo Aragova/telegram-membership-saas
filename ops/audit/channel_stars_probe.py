@@ -41,10 +41,18 @@ async def inspect_history(
     offset = ""
     cursors = {offset}
     seen: set[tuple[str, bool]] = set()
+    missing = object()
     for _ in range(MAX_PAGES):
         page = await fetch(offset)
+        history = getattr(page, "history", missing)
+        next_offset = getattr(page, "next_offset", missing)
+        # Missing fields are not an authoritative empty history or final page.
+        if history is missing or next_offset is missing:
+            break
+        if history is not None and not isinstance(history, (list, tuple)):
+            break
         result["pages"] += 1
-        for row in page.history or ():
+        for row in history or ():
             if not _candidate(row):
                 continue
             refund = bool(getattr(row, "refund", False))
@@ -59,7 +67,6 @@ async def inspect_history(
                 result["sale_refund_seen" if refund else "sale_seen"] = True
             if row.id == renewal_id:
                 result["renewal_refund_seen" if refund else "renewal_seen"] = True
-        next_offset = page.next_offset
         if next_offset is None or next_offset == "":
             result["complete"] = True
             break
@@ -68,6 +75,16 @@ async def inspect_history(
         cursors.add(next_offset)
         offset = next_offset
     return result
+
+
+def _bot_id(token: str) -> int:
+    prefix, separator, secret = token.partition(":")
+    if not separator or not secret or not prefix.isascii() or not prefix.isdigit():
+        raise ValueError("Invalid bot token format")
+    bot_id = int(prefix)
+    if bot_id <= 0:
+        raise ValueError("Invalid bot token format")
+    return bot_id
 
 
 async def run_live(
@@ -80,7 +97,7 @@ async def run_live(
     from telethon.tl.functions.payments import GetStarsTransactionsRequest
     from telethon.tl.types import InputPeerChannel
 
-    expected_bot_id = int(token.split(":", 1)[0])
+    expected_bot_id = _bot_id(token)
     client = TelegramClient(
         MemorySession(), api_id, api_hash, receive_updates=False,
         # Telegram can redirect initial bot authorization to another DC.
@@ -93,11 +110,12 @@ async def run_live(
             # No interactive phone-login fallback, no persisted session.
             await client.sign_in(bot_token=token)
             me = await client.get_me()
-            if not me or not me.bot or me.id != expected_bot_id:
+            if getattr(me, "bot", False) is not True or getattr(me, "id", None) != expected_bot_id:
                 raise ValueError("Bot identity mismatch")
             peer = InputPeerChannel(channel_id, access_hash)
             channel = await client.get_entity(peer)
-            if channel.id != channel_id or not getattr(channel, "broadcast", False):
+            if (getattr(channel, "id", None) != channel_id
+                    or getattr(channel, "broadcast", False) is not True):
                 raise ValueError("Expected a broadcast channel")
 
             async def fetch(offset: str) -> Any:
@@ -127,6 +145,7 @@ def _read_inputs() -> tuple[int, str, str, int, int, str, str]:
         renewal_id = getpass.getpass("Known test renewal transaction ID (or blank): ")
     if api_id <= 0 or channel_id <= 0 or not api_hash or not token or not sale_id:
         raise ValueError("Missing test inputs")
+    _bot_id(token)
     if sale_id == renewal_id:
         raise ValueError("Sale and renewal must be distinct")
     return api_id, api_hash, token, channel_id, access_hash, sale_id, renewal_id
