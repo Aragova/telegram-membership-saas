@@ -1,6 +1,7 @@
 import os
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -595,3 +596,114 @@ async def test_join_approval_race_queues_corrective_revoke() -> None:
             assert state.actual_state == ActualAccessState.REVOKED.value
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+async def invite_cleanup_case():
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime(2026, 11, 3, 16, 0, tzinfo=UTC)
+    try:
+        owner_id, telegram_id = await _create_user(factory, f"cleanup_{uuid4().hex[:8]}")
+        project_id = await _create_project(factory, owner_id, "Invite cleanup")
+        resource_id = await _create_resource(
+            factory, owner_id=owner_id, project_id=project_id, name="Cleanup channel",
+        )
+        async with tenant_session_scope(
+            factory, TenantContext(user_id=owner_id, project_id=project_id),
+        ) as session:
+            await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )
+        adapter = FakeTelegramAdapter(base=base)
+        adapter.discard = AsyncMock(side_effect=RuntimeError("private-revoke-error"))
+        yield SimpleNamespace(
+            factory=factory, base=base, project_id=project_id, adapter=adapter,
+            telegram_id=telegram_id,
+        )
+    finally:
+        await engine.dispose()
+
+
+async def test_failed_invite_cleanup_preserves_expired_lease_result(invite_cleanup_case, caplog):
+    case = invite_cleanup_case
+    result = await run_one_telegram_access_action(
+        case.factory, project_id=case.project_id, adapter=case.adapter,
+        claimed_at=case.base, clock=lambda: case.base + timedelta(minutes=21),
+    )
+    assert result is not None
+    assert result.status == "lease_expired_before_persist"
+    case.adapter.discard.assert_awaited_once()
+    assert [call[0] for call in case.adapter.calls] == ["prepare"]
+    async with system_project_session_scope(case.factory, case.project_id) as session:
+        assert await session.scalar(select(TelegramJoinTicket)) is None
+    assert str(result.action_id) in caplog.text
+    assert "Telegram invite cleanup failed" in caplog.text
+    assert "private-revoke-error" not in caplog.text
+
+
+async def test_failed_invite_cleanup_cannot_replace_newer_ticket(invite_cleanup_case, caplog):
+    case = invite_cleanup_case
+    original_prepare = case.adapter.prepare
+    later = case.base + timedelta(seconds=2)
+    newer = FakeTelegramAdapter(base=later)
+    newer.counter = 10
+
+    async def prepare_and_reclaim(command):
+        prepared = await original_prepare(command)
+        replacement = await run_one_telegram_access_action(
+            case.factory, project_id=case.project_id,
+            adapter=newer,  # type: ignore[arg-type]
+            claimed_at=later, clock=lambda: later, lease_timeout=timedelta(seconds=1),
+        )
+        assert replacement is not None
+        assert replacement.status == "awaiting_join"
+        return prepared
+
+    case.adapter.prepare = prepare_and_reclaim
+    result = await run_one_telegram_access_action(
+        case.factory, project_id=case.project_id, adapter=case.adapter,
+        claimed_at=case.base, clock=lambda: later,
+    )
+    assert result is not None
+    assert result.status == "stale_grant_result_ignored"
+    case.adapter.discard.assert_awaited_once()
+    assert [call[0] for call in case.adapter.calls] == ["prepare"]
+    async with system_project_session_scope(case.factory, case.project_id) as session:
+        ticket = await session.scalar(select(TelegramJoinTicket))
+        assert ticket is not None
+        assert ticket.claim_attempt == 2
+        assert ticket.invite_link == "https://t.me/+ticket-11"
+        assert ticket.status == TelegramJoinTicketStatus.PENDING.value
+    assert str(result.action_id) in caplog.text
+    assert "private-revoke-error" not in caplog.text
+
+
+async def test_failed_invite_cleanup_after_delivery_failure_revokes_ticket(
+    invite_cleanup_case, caplog,
+):
+    case = invite_cleanup_case
+    case.adapter.deliver = AsyncMock(side_effect=RuntimeError("delivery unavailable"))
+    result = await run_one_telegram_access_action(
+        case.factory, project_id=case.project_id, adapter=case.adapter,
+        claimed_at=case.base, clock=lambda: case.base,
+    )
+    assert result is not None
+    assert result.status == AccessActionStatus.FAILED_RETRYABLE.value
+    case.adapter.deliver.assert_awaited_once()
+    case.adapter.discard.assert_awaited_once()
+    async with system_project_session_scope(case.factory, case.project_id) as session:
+        ticket = await session.scalar(select(TelegramJoinTicket))
+        assert ticket is not None
+        assert ticket.status == TelegramJoinTicketStatus.REVOKED.value
+        decision = await prepare_join_request_decision(
+            session, project_id=case.project_id, invite_link=ticket.invite_link,
+            chat_id=int(ticket.chat_id), telegram_user_id=case.telegram_id,
+            requested_at=case.base + timedelta(seconds=1),
+        )
+        assert not decision.approve
+        action = await session.get(AccessAction, result.action_id)
+        assert action is not None
+        assert action.status == AccessActionStatus.FAILED_RETRYABLE.value
+    assert str(result.action_id) in caplog.text
+    assert "private-revoke-error" not in caplog.text

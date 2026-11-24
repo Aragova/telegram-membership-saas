@@ -1,5 +1,7 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -11,6 +13,7 @@ from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessResult,
     project_id_from_invite_name,
 )
+from telegram_membership_saas.modules.telegram_access.worker import _discard_quietly
 
 
 class FakeBot:
@@ -199,3 +202,41 @@ def test_project_id_from_invite_name_rejects_untrusted_names(value: str | None) 
 def test_project_id_from_invite_name_accepts_exact_uuid_hex() -> None:
     project_id = uuid4()
     assert project_id_from_invite_name(project_id.hex) == project_id
+
+
+async def test_failed_invite_cleanup_logs_only_action_and_exception_type(caplog):
+    bot = FakeBot()
+    secret_link = "https://t.me/+private-test-link"
+    secret_token = "123456:private-test-token"
+    bot.revoke_chat_invite_link = AsyncMock(
+        side_effect=RuntimeError(f"/bot{secret_token}/revoke {secret_link}"),
+    )
+    adapter = TelegramAccessAdapter(bot)
+    action_id = uuid4()
+    await _discard_quietly(
+        adapter,
+        TelegramAccessResult(invite_link=secret_link, resolved_chat_id=-1009876543210),
+        action_id=action_id,
+    )
+    bot.revoke_chat_invite_link.assert_awaited_once_with(
+        chat_id=-1009876543210, invite_link=secret_link,
+    )
+    assert f"Telegram invite cleanup failed for action {action_id} (RuntimeError)" in caplog.text
+    assert secret_link not in caplog.text
+    assert secret_token not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+async def test_invite_cleanup_does_not_swallow_cancellation():
+    bot = FakeBot()
+    bot.revoke_chat_invite_link = AsyncMock(side_effect=asyncio.CancelledError)
+    adapter = TelegramAccessAdapter(bot)
+    with pytest.raises(asyncio.CancelledError):
+        await _discard_quietly(
+            adapter,
+            TelegramAccessResult(
+                invite_link="https://t.me/+private-test", resolved_chat_id=-1009876543210,
+            ),
+            action_id=uuid4(),
+        )
+    bot.revoke_chat_invite_link.assert_awaited_once()
