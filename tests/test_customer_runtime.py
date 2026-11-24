@@ -68,6 +68,7 @@ def test_connected_dispatcher_separates_tenant_admin_and_buyer_routes():
 
 def test_central_can_drop_buyer_routes_for_cutover():
     dispatcher = create_dispatcher(MagicMock(), project_id=uuid4(), enable_access=False)
+    assert "chat_member" not in dispatcher.resolve_used_update_types()
     assert [r.name for r in dispatcher.sub_routers] == [
         "vimi-language", "vimi-saas-proof-ingress",
         "platform-saas-central-stars", "platform-saas-central-gateways",
@@ -484,3 +485,20 @@ async def test_required_worker_exit_drains_project_runtime(monkeypatch, failed_w
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_native_departure_dispatcher_is_project_scoped(monkeypatch, legacy):
+    project_id = uuid4()
+    factory = MagicMock()
+    handler = AsyncMock()
+    monkeypatch.setattr(access, "process_native_departure", handler)
+    dispatcher = (
+        create_dispatcher(factory, project_id=project_id)
+        if legacy else create_customer_dispatcher(factory, project_id=project_id)
+    )
+    assert "chat_member" in dispatcher.resolve_used_update_types()
+    router = next(r for r in dispatcher.sub_routers if r.name == "telegram-access")
+    update = MagicMock()
+    await router.chat_member.handlers[0].callback(update, SimpleNamespace(update_id=17))
+    handler.assert_awaited_once_with(factory, update, project_id=project_id, update_id=17)

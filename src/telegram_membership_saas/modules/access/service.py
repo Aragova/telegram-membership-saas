@@ -424,9 +424,12 @@ async def mark_access_action_succeeded(
     action_id: UUID,
     claim_attempt: int,
     processed_at: datetime | None = None,
+    membership_observed_at: datetime | None = None,
 ) -> AccessAction:
     moment = processed_at or utcnow()
     require_aware(moment)
+    if membership_observed_at is not None:
+        require_aware(membership_observed_at)
     if claim_attempt <= 0:
         raise ValueError("claim_attempt must be positive")
 
@@ -457,18 +460,51 @@ async def mark_access_action_succeeded(
     if state is None:
         raise RuntimeError("Access state disappeared before action completion")
 
+    is_current_claim = (
+        action.status == AccessActionStatus.PROCESSING.value
+        and action.attempt_count == claim_attempt
+    )
+    if membership_observed_at is not None:
+        if action.action_type != AccessActionType.GRANT.value:
+            raise ValueError("Membership observation is only valid for a grant")
+        # An already-member result is a read, not an external mutation.
+        # Never let an old claim or a read preceding a newer departure
+        # overwrite physical access. Real join approvals and revokes still
+        # record their external side effects, including late completions.
+        stale_read = (
+            state.last_synced_at is not None
+            and state.last_synced_at > membership_observed_at
+        )
+        if not is_current_claim or stale_read:
+            if is_current_claim:
+                can_retry = (
+                    state.desired_access
+                    and state.desired_revision == action.desired_revision
+                    and not _actual_matches_desired(state)
+                )
+                action.status = (
+                    AccessActionStatus.PENDING.value if can_retry
+                    else AccessActionStatus.SUPERSEDED.value
+                )
+                action.processed_at = None if can_retry else moment
+                action.locked_at = None
+                action.last_error = None
+                if can_retry:
+                    action.available_at = moment
+            await session.flush()
+            await enqueue_access_action_for_state(
+                session, project_id=project_id, customer_id=action.customer_id,
+                resource_id=action.resource_id, available_at=moment,
+            )
+            return action
+
     state.actual_state = (
         ActualAccessState.GRANTED.value
         if action.action_type == AccessActionType.GRANT.value
         else ActualAccessState.REVOKED.value
     )
-    state.last_synced_at = moment
+    state.last_synced_at = membership_observed_at or moment
     state.last_error = None
-
-    is_current_claim = (
-        action.status == AccessActionStatus.PROCESSING.value
-        and action.attempt_count == claim_attempt
-    )
     if is_current_claim:
         action.status = AccessActionStatus.SUCCEEDED.value
         action.processed_at = moment
@@ -484,6 +520,53 @@ async def mark_access_action_succeeded(
         available_at=moment,
     )
     return action
+
+
+async def defer_access_revoke(
+    session: AsyncSession, *, project_id: UUID, action_id: UUID,
+    claim_attempt: int, now: datetime, retry_at: datetime,
+) -> bool:
+    """Persist a native-member protection wait, not an access failure/success."""
+    require_aware(now)
+    require_aware(retry_at)
+    action = await session.scalar(
+        select(AccessAction).where(
+            AccessAction.project_id == project_id, AccessAction.id == action_id,
+        ).execution_options(populate_existing=True).with_for_update()
+    )
+    if (
+        action is None or action.status != AccessActionStatus.PROCESSING.value
+        or action.attempt_count != claim_attempt
+        or action.action_type != AccessActionType.REVOKE.value
+    ):
+        return False
+    state = await session.scalar(
+        select(AccessState).where(
+            AccessState.project_id == project_id,
+            AccessState.customer_id == action.customer_id,
+            AccessState.resource_id == action.resource_id,
+        ).execution_options(populate_existing=True).with_for_update()
+    )
+    if state is None:
+        raise RuntimeError("Access state disappeared before native deferral")
+    action.locked_at = None
+    action.last_error = None
+    if state.desired_access or state.desired_revision != action.desired_revision:
+        action.status = AccessActionStatus.SUPERSEDED.value
+        action.processed_at = now
+        await session.flush()
+        await enqueue_access_action_for_state(
+            session, project_id=project_id, customer_id=action.customer_id,
+            resource_id=action.resource_id, available_at=now,
+        )
+        return False
+    action.status = AccessActionStatus.PENDING.value
+    action.processed_at = None
+    action.available_at = max(now + timedelta(seconds=30), retry_at)
+    # Do not overwrite actual_state: no destructive side effect occurred.
+    state.last_error = None
+    await session.flush()
+    return True
 
 
 async def mark_access_action_failed(

@@ -107,7 +107,9 @@ def create_dispatcher(
         ))
         dispatcher.include_router(owner_router)
         if enable_access:
-            dispatcher.include_router(create_telegram_access_router(session_factory))
+            dispatcher.include_router(
+                create_telegram_access_router(session_factory, native_project_id=project_id)
+            )
         if project_id is not None:
             if enable_access:
                 # Legacy single-project local mode only; never expose this

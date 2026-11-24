@@ -3,11 +3,14 @@ from uuid import UUID
 
 from aiogram import Bot, Router
 from aiogram.exceptions import AiogramError
-from aiogram.types import ChatJoinRequest
+from aiogram.types import ChatJoinRequest, ChatMemberMember, ChatMemberUpdated, Update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import recipient_language, tr
+from telegram_membership_saas.modules.telegram_access.native_departures import (
+    enqueue_native_departure,
+)
 from telegram_membership_saas.modules.telegram_access.service import (
     finalize_join_request_approval,
     prepare_join_request_decision,
@@ -103,10 +106,33 @@ async def process_chat_join_request(
     return True
 
 
+async def process_native_departure(
+    session_factory: async_sessionmaker[AsyncSession],
+    update: ChatMemberUpdated, *, project_id: UUID, update_id: int,
+) -> bool:
+    old = update.old_chat_member
+    new = update.new_chat_member
+    if (
+        update.chat.type != "channel" or not isinstance(old, ChatMemberMember)
+        or old.until_date is None or old.until_date > update.date
+        or new.status != "left" or new.user.id != old.user.id
+    ):
+        return False
+    # Persist before any Telegram network read. The project worker owns
+    # retries; the polling handler must not consume an event on API failure.
+    async with system_project_session_scope(session_factory, project_id) as session:
+        return await enqueue_native_departure(
+            session, project_id=project_id, chat_id=update.chat.id,
+            telegram_user_id=new.user.id, update_id=update_id,
+            occurred_at=update.date,
+        )
+
+
 def create_telegram_access_router(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     expected_project_id: UUID | None = None,
+    native_project_id: UUID | None = None,
 ) -> Router:
     router = Router(name="telegram-access")
 
@@ -115,5 +141,16 @@ def create_telegram_access_router(
         await process_chat_join_request(
             session_factory, bot, request, expected_project_id=expected_project_id
         )
+
+    project_id = expected_project_id if expected_project_id is not None else native_project_id
+    if project_id is not None:
+
+        @router.chat_member()
+        async def native_departure_handler(
+            update: ChatMemberUpdated, event_update: Update,
+        ) -> None:
+            await process_native_departure(
+                session_factory, update, project_id=project_id, update_id=event_update.update_id,
+            )
 
     return router

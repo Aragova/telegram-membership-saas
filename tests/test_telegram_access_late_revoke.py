@@ -1,13 +1,24 @@
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from aiogram.exceptions import TelegramForbiddenError
+from aiogram.methods import GetChatMember
+from aiogram.types import Chat, ChatMemberLeft, ChatMemberMember, ChatMemberUpdated, User
 from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
-from telegram_membership_saas.db import build_engine, build_session_factory, tenant_session_scope
+from telegram_membership_saas.db import (
+    build_engine,
+    build_session_factory,
+    system_project_session_scope,
+    tenant_session_scope,
+)
 from telegram_membership_saas.modules.access import (
+    AccessAction,
     AccessActionStatus,
     AccessActionType,
     AccessState,
@@ -16,13 +27,27 @@ from telegram_membership_saas.modules.access import (
 )
 from telegram_membership_saas.modules.entitlements import EntitlementGrant, EntitlementGrantStatus
 from telegram_membership_saas.modules.identity import TelegramUser
+from telegram_membership_saas.modules.outbox import (
+    OutboxEvent,
+    claim_next_outbox_event,
+)
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource, ResourceType
 from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessResult,
     ensure_owner_service_access,
+    native_departures,
     run_one_telegram_access_action,
 )
+from telegram_membership_saas.modules.telegram_access.handlers import process_native_departure
+from telegram_membership_saas.modules.telegram_access.native_departures import (
+    process_claimed_native_departure,
+)
+from telegram_membership_saas.modules.telegram_access.service import (
+    NativeObservationStale,
+    reconcile_native_departure,
+)
+from telegram_membership_saas.telegram_runtime import process_project_runtime_once
 from telegram_membership_saas.tenant_context import TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -176,5 +201,358 @@ async def test_late_revoke_records_external_effect_after_lease_expiry() -> None:
             assert state is not None
             assert state.desired_access is False
             assert state.actual_state == ActualAccessState.REVOKED.value
+    finally:
+        await engine.dispose()
+
+
+async def test_native_revoke_wait_persists_and_rechecks_after_restart() -> None:
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=3)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            grant = (await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )).grant
+            grant_id, customer_id = grant.id, grant.customer_id
+        adapter = AlreadyMemberThenRevokeAdapter()
+        await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=adapter, claimed_at=base, clock=lambda: base,
+        )
+        moment = base + timedelta(minutes=1)
+        async with tenant_session_scope(factory, context) as session:
+            grant = await session.get(EntitlementGrant, grant_id)
+            grant.status = EntitlementGrantStatus.REVOKED.value
+            grant.revoked_at = moment
+            await session.flush()
+            runtime = await reconcile_access_target(
+                session, project_id=project_id, customer_id=customer_id,
+                resource_id=resource_id, calculated_at=moment,
+            )
+            action_id = runtime.queued_action.id
+
+        class ProtectedAdapter(AlreadyMemberThenRevokeAdapter):
+            async def prepare(self, command):
+                assert command.is_channel
+                return TelegramAccessResult(revoke_retry_at=moment + timedelta(minutes=1))
+
+        deferred = await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=ProtectedAdapter(),
+            claimed_at=moment, clock=lambda: moment,
+        )
+        assert deferred.status == "native_subscription_protected"
+        async with tenant_session_scope(factory, context) as session:
+            action = await session.get(AccessAction, action_id)
+            assert action.status == AccessActionStatus.PENDING.value
+            assert action.last_error is None and action.locked_at is None
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            assert state.actual_state == ActualAccessState.GRANTED.value
+        assert await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=moment, clock=lambda: moment,
+        ) is None
+        retry = moment + timedelta(minutes=1)
+        completed = await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=retry, clock=lambda: retry,
+        )
+        assert completed.status == AccessActionStatus.SUCCEEDED.value
+    finally:
+        await engine.dispose()
+
+
+async def test_native_departure_requeues_only_existing_local_access() -> None:
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=1)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )
+            resource = await session.get(Resource, resource_id)
+            user = await session.get(TelegramUser, owner_id)
+            chat_id, telegram_id = int(resource.external_id), user.telegram_user_id
+        await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=base, clock=lambda: base,
+        )
+        async with tenant_session_scope(factory, context) as session:
+            assert await reconcile_native_departure(
+                session, project_id=project_id, chat_id=chat_id,
+                telegram_user_id=telegram_id, observed_at=datetime.now(UTC),
+            )
+            assert not await reconcile_native_departure(
+                session, project_id=project_id, chat_id=chat_id,
+                telegram_user_id=telegram_id, observed_at=datetime.now(UTC),
+            )
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            assert state.desired_access
+            assert state.actual_state == ActualAccessState.REVOKED.value
+            actions = (await session.scalars(select(AccessAction).where(
+                AccessAction.project_id == project_id,
+                AccessAction.status == AccessActionStatus.PENDING.value,
+            ))).all()
+            assert len(actions) == 1
+            assert actions[0].action_type == AccessActionType.GRANT.value
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize("current_status", ["left", "member"])
+@pytest.mark.parametrize("failure", ["network", "permission", "timeout"])
+async def test_native_departure_durable_retry_and_live_membership(
+    current_status, caplog, failure, monkeypatch,
+):
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=2)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )
+            resource = await session.get(Resource, resource_id)
+            person = await session.get(TelegramUser, owner_id)
+            chat_id, telegram_id = int(resource.external_id), person.telegram_user_id
+        await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=base, clock=lambda: base,
+        )
+        # The fixture's database IDs can exceed Telegram's documented ID range;
+        # aiogram accepts the integer and no live request is made.
+        user = User(id=telegram_id, is_bot=False, first_name="Test")
+        update = ChatMemberUpdated(
+            chat=Chat(id=chat_id, type="channel"), from_user=user,
+            date=base + timedelta(minutes=1),
+            old_chat_member=ChatMemberMember(user=user, until_date=base),
+            new_chat_member=ChatMemberLeft(user=user),
+        )
+        assert await process_native_departure(
+            factory, update, project_id=project_id, update_id=123,
+        )
+        assert not await process_native_departure(
+            factory, update, project_id=project_id, update_id=123,
+        )
+        bot = AsyncMock()
+        if failure == "permission":
+            # Exercise real durable recovery beyond the old terminal cutoff.
+            async with system_project_session_scope(factory, project_id) as session:
+                pending = await session.scalar(select(OutboxEvent).where(
+                    OutboxEvent.project_id == project_id,
+                    OutboxEvent.event_type == "native_departure",
+                ))
+                pending.attempt_count = 47
+            bot.get_chat_member.side_effect = TelegramForbiddenError(
+                method=GetChatMember(chat_id=chat_id, user_id=telegram_id),
+                message="temporary network failure",
+            )
+        elif failure == "timeout":
+            async def slow_member(**kwargs):
+                await asyncio.sleep(60)
+
+            monkeypatch.setattr(native_departures, "NATIVE_MEMBERSHIP_TIMEOUT_SECONDS", 0.01)
+            bot.get_chat_member.side_effect = slow_member
+        else:
+            bot.get_chat_member.side_effect = RuntimeError("temporary network failure")
+        runtime_adapter = AlreadyMemberThenRevokeAdapter()
+        runtime_adapter.bot = bot
+        assert await asyncio.wait_for(process_project_runtime_once(
+            factory, project_id=project_id, adapter=runtime_adapter,
+        ), timeout=5)
+        async with system_project_session_scope(factory, project_id) as session:
+            event = await session.scalar(select(OutboxEvent).where(
+                OutboxEvent.project_id == project_id,
+                OutboxEvent.event_type == "native_departure",
+            ))
+            assert event.status == "failed_retryable"
+            expected_error = (
+                "native_departure_unavailable_slow_retry"
+                if failure == "permission" else "native_departure_retry"
+            )
+            assert event.last_error == expected_error
+            event_id, attempt = event.id, event.attempt_count
+            next_at = event.available_at
+            assert attempt == (48 if failure == "permission" else 1)
+            delay = timedelta(days=1) if failure == "permission" else timedelta(seconds=30)
+            assert next_at >= datetime.now(UTC) + delay - timedelta(seconds=5)
+        assert str(event_id) in caplog.text
+        expected_class = {
+            "network": "RuntimeError", "permission": "TelegramForbiddenError",
+            "timeout": "TimeoutError",
+        }[failure]
+        assert expected_class in caplog.text
+        assert "native_departures:process_claimed_native_departure" in caplog.text
+        assert "temporary network failure" not in caplog.text
+        assert all(record.exc_info is None for record in caplog.records)
+        async with system_project_session_scope(factory, project_id) as session:
+            assert await claim_next_outbox_event(
+                session, project_id=project_id, claimed_at=next_at - timedelta(seconds=1),
+            ) is None
+            retry = await claim_next_outbox_event(
+                session, project_id=project_id,
+                claimed_at=next_at,
+            )
+            assert retry.id == event_id and retry.attempt_count == attempt + 1
+            next_attempt = retry.attempt_count
+        if failure == "timeout":
+            monkeypatch.setattr(native_departures, "NATIVE_MEMBERSHIP_TIMEOUT_SECONDS", 10.0)
+        bot.get_chat_member.side_effect = None
+        bot.get_chat_member.return_value = (
+            ChatMemberLeft(user=user) if current_status == "left"
+            else ChatMemberMember(user=user)
+        )
+        await process_claimed_native_departure(
+            factory, project_id=project_id, event_id=event_id,
+            claim_attempt=next_attempt, bot=bot,
+        )
+        async with system_project_session_scope(factory, project_id) as session:
+            event = await session.get(OutboxEvent, event_id)
+            assert event.status == "succeeded"
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            assert state.actual_state == (
+                "revoked" if current_status == "left" else "granted"
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize("initial_state", ["granted", "unknown"])
+async def test_concurrent_native_departures_preserve_one_corrective_revision(initial_state):
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=2)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )
+            resource = await session.get(Resource, resource_id)
+            person = await session.get(TelegramUser, owner_id)
+            chat_id, telegram_id = int(resource.external_id), person.telegram_user_id
+        await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+            claimed_at=base, clock=lambda: base,
+        )
+        async with system_project_session_scope(factory, project_id) as session:
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            state.actual_state = initial_state
+
+        async def observe(moment):
+            async with system_project_session_scope(factory, project_id) as session:
+                return await reconcile_native_departure(
+                    session, project_id=project_id, chat_id=chat_id,
+                    telegram_user_id=telegram_id, observed_at=moment,
+                )
+        with pytest.raises(NativeObservationStale):
+            await observe(base - timedelta(seconds=1))
+        observed_at = datetime.now(UTC)
+        results = await asyncio.gather(observe(observed_at), observe(observed_at))
+        assert sorted(results) == [False, True]
+        async with system_project_session_scope(factory, project_id) as session:
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            action = await session.scalar(select(AccessAction).where(
+                AccessAction.project_id == project_id, AccessAction.status == "pending",
+            ))
+            assert action.desired_revision == state.desired_revision
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize("initial_state", ["unknown", "revoked"])
+@pytest.mark.parametrize("read_after_departure", [False, True])
+async def test_native_departure_fences_inflight_member_read(
+    initial_state, read_after_departure,
+):
+    engine = build_engine(Settings())
+    factory = build_session_factory(engine)
+    base = datetime.now(UTC) - timedelta(minutes=3)
+    try:
+        owner_id = await _create_user(factory)
+        project_id, resource_id = await _create_project_and_resource(factory, owner_id)
+        context = TenantContext(user_id=owner_id, project_id=project_id)
+        async with tenant_session_scope(factory, context) as session:
+            await ensure_owner_service_access(
+                session, project_id=project_id, resource_id=resource_id, granted_at=base,
+            )
+            resource = await session.get(Resource, resource_id)
+            person = await session.get(TelegramUser, owner_id)
+            chat_id, telegram_id = int(resource.external_id), person.telegram_user_id
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            state.actual_state = initial_state
+
+        departure_at = base + timedelta(seconds=10)
+        completed_at = base + timedelta(seconds=30)
+        read_at = (
+            base + timedelta(seconds=20) if read_after_departure
+            else base + timedelta(seconds=5)
+        )
+
+        class InterleavedAdapter(AlreadyMemberThenRevokeAdapter):
+            async def prepare(self, command):
+                # The older read and the durable departure commit interleave
+                # before the worker attempts to persist its result.
+                async with system_project_session_scope(factory, project_id) as session:
+                    await reconcile_native_departure(
+                        session, project_id=project_id, chat_id=chat_id,
+                        telegram_user_id=telegram_id, observed_at=departure_at,
+                    )
+                return TelegramAccessResult(
+                    already_member=True, resolved_chat_id=chat_id,
+                    membership_observed_at=read_at,
+                )
+
+        execution = await run_one_telegram_access_action(
+            factory, project_id=project_id, adapter=InterleavedAdapter(),
+            claimed_at=base, clock=lambda: completed_at,
+        )
+        async with system_project_session_scope(factory, project_id) as session:
+            state = await session.scalar(select(AccessState).where(
+                AccessState.project_id == project_id, AccessState.resource_id == resource_id,
+            ))
+            if read_after_departure:
+                assert execution.status == "succeeded"
+                assert state.actual_state == "granted"
+                assert state.last_synced_at == read_at
+            else:
+                assert execution.status in ("pending", "superseded")
+                assert state.actual_state == "revoked"
+                assert state.last_synced_at == departure_at
+                action = await session.scalar(select(AccessAction).where(
+                    AccessAction.project_id == project_id,
+                    AccessAction.status == "pending",
+                    AccessAction.desired_revision == state.desired_revision,
+                ))
+                assert action is not None and action.action_type == "grant"
+        if not read_after_departure:
+            retry = await run_one_telegram_access_action(
+                factory, project_id=project_id, adapter=AlreadyMemberThenRevokeAdapter(),
+                claimed_at=datetime.now(UTC), clock=lambda: datetime.now(UTC),
+            )
+            assert retry.status == "succeeded"
     finally:
         await engine.dispose()

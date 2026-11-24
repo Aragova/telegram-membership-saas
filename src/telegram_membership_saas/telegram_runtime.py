@@ -18,6 +18,7 @@ from telegram_membership_saas.db import (
 from telegram_membership_saas.modules.access import enqueue_due_access_recalculations
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
+    OutboxEventType,
     claim_next_outbox_event,
     mark_outbox_event_failed,
     process_claimed_access_recalculate_event,
@@ -48,10 +49,15 @@ from telegram_membership_saas.modules.telegram_access import (
     expire_due_join_tickets,
     run_one_telegram_access_action,
 )
+from telegram_membership_saas.modules.telegram_access.native_departures import (
+    native_departure_failure_policy,
+    process_claimed_native_departure,
+)
 from telegram_membership_saas.project_worker_lock import (
     confirm_project_lock,
     project_worker_lock,
 )
+from telegram_membership_saas.safe_diagnostics import safe_failure_site
 from telegram_membership_saas.task_lifecycle import (
     cancel_and_drain,
     cancel_once,
@@ -93,6 +99,7 @@ async def process_project_runtime_once(
 
     claimed_event_id: UUID | None = None
     claimed_attempt = 0
+    claimed_native = False
     async with system_project_session_scope(session_factory, project_id) as session:
         event = await claim_next_outbox_event(
             session,
@@ -102,21 +109,38 @@ async def process_project_runtime_once(
         if event is not None:
             claimed_event_id = event.id
             claimed_attempt = event.attempt_count
+            claimed_native = event.event_type == OutboxEventType.NATIVE_DEPARTURE.value
 
     if claimed_event_id is not None:
         did_work = True
         try:
-            async with system_project_session_scope(session_factory, project_id) as session:
-                event = await session.get(OutboxEvent, claimed_event_id)
-                if event is None:
-                    raise RuntimeError("Claimed outbox event disappeared")
-                await process_claimed_access_recalculate_event(
-                    session,
-                    event=event,
-                    claim_attempt=claimed_attempt,
-                    processed_at=moment,
+            if claimed_native:
+                await process_claimed_native_departure(
+                    session_factory, project_id=project_id, event_id=claimed_event_id,
+                    claim_attempt=claimed_attempt, bot=adapter.bot,
                 )
+            else:
+                async with system_project_session_scope(session_factory, project_id) as session:
+                    event = await session.get(OutboxEvent, claimed_event_id)
+                    if event is None:
+                        raise RuntimeError("Claimed outbox event disappeared")
+                    await process_claimed_access_recalculate_event(
+                        session,
+                        event=event,
+                        claim_attempt=claimed_attempt,
+                        processed_at=moment,
+                    )
         except Exception as exc:
+            if claimed_native:
+                permanent, delay, error = native_departure_failure_policy(exc, claimed_attempt)
+                logger.warning(
+                    "Native departure %s: %s (%s at %s)",
+                    claimed_event_id, error, type(exc).__name__, safe_failure_site(exc),
+                )
+            else:
+                permanent = isinstance(exc, ValueError)
+                delay = timedelta(seconds=30)
+                error = str(exc) or exc.__class__.__name__
             async with system_project_session_scope(session_factory, project_id) as session:
                 try:
                     await mark_outbox_event_failed(
@@ -124,10 +148,10 @@ async def process_project_runtime_once(
                         project_id=project_id,
                         event_id=claimed_event_id,
                         claim_attempt=claimed_attempt,
-                        error=str(exc) or exc.__class__.__name__,
-                        failed_at=moment,
-                        permanent=isinstance(exc, ValueError),
-                        retry_delay=timedelta(seconds=30),
+                        error=error,
+                        failed_at=utcnow() if claimed_native else moment,
+                        permanent=permanent,
+                        retry_delay=delay,
                     )
                 except ValueError:
                     logger.warning(

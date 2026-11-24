@@ -13,9 +13,14 @@ from telegram_membership_saas.modules.access import (
     AccessCommand,
     AccessRuntimeResult,
     AccessState,
+    ActualAccessState,
+    EffectiveAccess,
+    enqueue_access_action_for_state,
     mark_access_action_failed,
     mark_access_action_succeeded,
+    recalculate_effective_access,
     reconcile_access_target,
+    sync_access_state_from_projection,
 )
 from telegram_membership_saas.modules.entitlements import (
     EntitlementGrant,
@@ -24,6 +29,7 @@ from telegram_membership_saas.modules.entitlements import (
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
 from telegram_membership_saas.modules.payments import get_or_create_project_customer
+from telegram_membership_saas.modules.pricing import PlanPrice
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus, ResourceType
 from telegram_membership_saas.modules.telegram_access.adapter import (
@@ -100,6 +106,16 @@ async def build_telegram_access_command(
     }:
         raise ValueError("Resource is not managed by the Telegram access adapter")
 
+    is_channel = resource.resource_type == ResourceType.TELEGRAM_CHANNEL.value
+    native_history = False
+    if is_channel and action.action_type == AccessActionType.REVOKE.value:
+        native_history = (await session.scalar(
+            select(PlanPrice.id).where(
+                PlanPrice.project_id == action.project_id,
+                PlanPrice.native_subscription_chat_id == resource.external_id,
+            ).limit(1)
+        )) is not None
+
     return TelegramAccessCommand(
         access=AccessCommand(
             action_id=action.id,
@@ -111,7 +127,100 @@ async def build_telegram_access_command(
         ),
         telegram_user_id=telegram_user_id,
         chat_id=parse_chat_id(resource.external_id),
+        is_channel=is_channel,
+        native_channel_history=native_history,
     )
+
+
+class NativeObservationStale(RuntimeError):
+    """A newer local completion requires another live membership read."""
+
+
+async def native_departure_target(
+    session: AsyncSession, *, project_id: UUID, chat_id: int, telegram_user_id: int,
+) -> tuple[UUID, UUID] | None:
+    target = (await session.execute(
+        select(AccessState.customer_id, Resource.id)
+        .join(Resource, (Resource.id == AccessState.resource_id)
+              & (Resource.project_id == AccessState.project_id))
+        .join(ProjectCustomer, (ProjectCustomer.id == AccessState.customer_id)
+              & (ProjectCustomer.project_id == AccessState.project_id))
+        .join(TelegramUser, TelegramUser.id == ProjectCustomer.user_id)
+        .where(
+            AccessState.project_id == project_id,
+            Resource.resource_type == ResourceType.TELEGRAM_CHANNEL.value,
+            Resource.status == ResourceStatus.ACTIVE.value,
+            Resource.removed_at.is_(None),
+            Resource.external_id == str(chat_id),
+            TelegramUser.telegram_user_id == telegram_user_id,
+        )
+    )).one_or_none()
+    return (target[0], target[1]) if target is not None else None
+
+
+async def reconcile_native_departure(
+    session: AsyncSession, *, project_id: UUID, chat_id: int,
+    telegram_user_id: int, observed_at: datetime,
+) -> bool:
+    """A fresh native departure may invalidate an existing physical grant.
+
+    Never create customers, payments, or grants based on Telegram membership.
+    Only existing project-scoped ViMi Pay access can justify a new invitation.
+    """
+    require_aware(observed_at)
+    target = await native_departure_target(
+        session, project_id=project_id, chat_id=chat_id, telegram_user_id=telegram_user_id,
+    )
+    if target is None:
+        return False
+    customer_id, resource_id = target
+    # Same lock order as the projection service. Reject stale/duplicate
+    # observations BEFORE advancing either revision.
+    projection = await session.scalar(
+        select(EffectiveAccess).where(
+            EffectiveAccess.project_id == project_id,
+            EffectiveAccess.customer_id == customer_id,
+            EffectiveAccess.resource_id == resource_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if projection is None:
+        return False
+    state = await session.scalar(
+        select(AccessState).where(
+            AccessState.project_id == project_id,
+            AccessState.customer_id == customer_id,
+            AccessState.resource_id == resource_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if state is None:
+        return False
+    if state.actual_state == ActualAccessState.REVOKED.value:
+        # Even an already absent state can have a grant in flight. Advance
+        # the observation fence without churning the desired revision.
+        if state.last_synced_at is None or state.last_synced_at < observed_at:
+            state.last_synced_at = observed_at
+            await session.flush()
+        return False
+    if state.last_synced_at is not None and state.last_synced_at > observed_at:
+        # The durable event remains retryable. A fresh read, not the time
+        # of a completed worker transaction, decides membership.
+        raise NativeObservationStale("Native membership observation predates local state")
+    effective = await recalculate_effective_access(
+        session, project_id=project_id, customer_id=customer_id, resource_id=resource_id,
+    )
+    state = await sync_access_state_from_projection(
+        session, project_id=project_id, customer_id=customer_id, resource_id=resource_id,
+    )
+    state.actual_state = ActualAccessState.REVOKED.value
+    state.last_synced_at = observed_at
+    await session.flush()
+    if effective.has_access:
+        await enqueue_access_action_for_state(
+            session, project_id=project_id, customer_id=customer_id,
+            resource_id=resource_id, available_at=effective.computed_at,
+        )
+        return True
+    return False
 
 
 async def record_grant_result(
