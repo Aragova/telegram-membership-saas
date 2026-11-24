@@ -99,6 +99,8 @@ class TelegramAccessAdapter:
             # Ordinary expiry must not create an indefinite ban that blocks
             # the next Telegram-paid join. Telegram provides no atomic
             # conditional remove; the membership read above is mandatory.
+            # Bot API explicitly guarantees removal with only_if_banned=False:
+            # https://core.telegram.org/bots/api#unbanchatmember
             await self._bot.unban_chat_member(
                 chat_id=command.chat_id, user_id=command.telegram_user_id,
                 only_if_banned=False,

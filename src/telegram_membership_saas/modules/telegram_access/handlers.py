@@ -3,15 +3,15 @@ from uuid import UUID
 
 from aiogram import Bot, Router
 from aiogram.exceptions import AiogramError
-from aiogram.types import ChatJoinRequest, ChatMemberMember, ChatMemberUpdated
+from aiogram.types import ChatJoinRequest, ChatMemberMember, ChatMemberUpdated, Update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.localization import recipient_language, tr
+from telegram_membership_saas.modules.telegram_access.native_departures import enqueue_native_departure
 from telegram_membership_saas.modules.telegram_access.service import (
     finalize_join_request_approval,
     prepare_join_request_decision,
-    reconcile_native_departure,
 )
 
 
@@ -105,8 +105,8 @@ async def process_chat_join_request(
 
 
 async def process_native_departure(
-    session_factory: async_sessionmaker[AsyncSession], bot: Bot,
-    update: ChatMemberUpdated, *, project_id: UUID,
+    session_factory: async_sessionmaker[AsyncSession],
+    update: ChatMemberUpdated, *, project_id: UUID, update_id: int,
 ) -> bool:
     old = update.old_chat_member
     new = update.new_chat_member
@@ -116,15 +116,13 @@ async def process_native_departure(
         or new.status != "left" or new.user.id != old.user.id
     ):
         return False
-    # A late/replayed event must not unban a user or overwrite a new join.
-    observed_at = utcnow()
-    current = await bot.get_chat_member(chat_id=update.chat.id, user_id=new.user.id)
-    if current.status != "left":
-        return False
+    # Persist before any Telegram network read. The project worker owns
+    # retries; the polling handler must not consume an event on API failure.
     async with system_project_session_scope(session_factory, project_id) as session:
-        return await reconcile_native_departure(
+        return await enqueue_native_departure(
             session, project_id=project_id, chat_id=update.chat.id,
-            telegram_user_id=new.user.id, observed_at=observed_at,
+            telegram_user_id=new.user.id, update_id=update_id,
+            occurred_at=update.date,
         )
 
 
@@ -145,7 +143,11 @@ def create_telegram_access_router(
         project_id = expected_project_id
 
         @router.chat_member()
-        async def native_departure_handler(update: ChatMemberUpdated, bot: Bot) -> None:
-            await process_native_departure(session_factory, bot, update, project_id=project_id)
+        async def native_departure_handler(
+            update: ChatMemberUpdated, event_update: Update,
+        ) -> None:
+            await process_native_departure(
+                session_factory, update, project_id=project_id, update_id=event_update.update_id,
+            )
 
     return router

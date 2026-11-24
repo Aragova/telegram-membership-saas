@@ -284,6 +284,8 @@ async def test_channel_revoke_ordinary_member_keeps_native_join_possible(native_
     assert [name for name, _ in bot.calls] == [
         "unban_chat_member" if native_history else "ban_chat_member",
     ]
+    if native_history:
+        assert bot.calls[0][1]["only_if_banned"] is False
 
 
 async def test_channel_revoke_failed_read_never_mutates_membership() -> None:
@@ -294,3 +296,13 @@ async def test_channel_revoke_failed_read_never_mutates_membership() -> None:
             replace(_command(AccessActionType.REVOKE), is_channel=True),
         )
     assert not bot.calls
+
+
+@pytest.mark.parametrize("status", ["administrator", "creator", "member"])
+async def test_channel_revoke_rejects_unrecognized_or_privileged_member(status):
+    bot = FakeBot(status=status)
+    with pytest.raises(ValueError):
+        await TelegramAccessAdapter(bot).prepare(
+            replace(_command(AccessActionType.REVOKE), is_channel=True),
+        )
+    assert [name for name, _ in bot.calls] == ["get_chat_member"]

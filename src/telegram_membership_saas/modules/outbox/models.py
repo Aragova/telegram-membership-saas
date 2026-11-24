@@ -21,6 +21,7 @@ from telegram_membership_saas.db_base import Base
 
 class OutboxEventType(StrEnum):
     ACCESS_RECALCULATE = "access_recalculate"
+    NATIVE_DEPARTURE = "native_departure"
 
 
 class OutboxEventStatus(StrEnum):
@@ -41,7 +42,7 @@ class OutboxEvent(Base):
             name="uq_outbox_events_project_dedupe",
         ),
         CheckConstraint(
-            "event_type IN ('access_recalculate')",
+            "event_type IN ('access_recalculate', 'native_departure')",
             name="ck_outbox_events_type",
         ),
         CheckConstraint(

@@ -14,6 +14,7 @@ from telegram_membership_saas.modules.access import (
     AccessRuntimeResult,
     AccessState,
     ActualAccessState,
+    EffectiveAccess,
     enqueue_access_action_for_state,
     mark_access_action_failed,
     mark_access_action_succeeded,
@@ -131,16 +132,13 @@ async def build_telegram_access_command(
     )
 
 
-async def reconcile_native_departure(
-    session: AsyncSession, *, project_id: UUID, chat_id: int,
-    telegram_user_id: int, observed_at: datetime,
-) -> bool:
-    """A fresh native departure may invalidate an existing physical grant.
+class NativeObservationStale(RuntimeError):
+    """A newer local completion requires another live membership read."""
 
-    Never create customers, payments, or grants based on Telegram membership.
-    Only existing project-scoped ViMi Pay access can justify a new invitation.
-    """
-    require_aware(observed_at)
+
+async def native_departure_target(
+    session: AsyncSession, *, project_id: UUID, chat_id: int, telegram_user_id: int,
+) -> tuple[UUID, UUID] | None:
     target = (await session.execute(
         select(AccessState.customer_id, Resource.id)
         .join(Resource, (Resource.id == AccessState.resource_id)
@@ -155,24 +153,57 @@ async def reconcile_native_departure(
             Resource.removed_at.is_(None),
             Resource.external_id == str(chat_id),
             TelegramUser.telegram_user_id == telegram_user_id,
-            AccessState.actual_state == ActualAccessState.GRANTED.value,
         )
     )).one_or_none()
+    return (target[0], target[1]) if target is not None else None
+
+
+async def reconcile_native_departure(
+    session: AsyncSession, *, project_id: UUID, chat_id: int,
+    telegram_user_id: int, observed_at: datetime,
+) -> bool:
+    """A fresh native departure may invalidate an existing physical grant.
+
+    Never create customers, payments, or grants based on Telegram membership.
+    Only existing project-scoped ViMi Pay access can justify a new invitation.
+    """
+    require_aware(observed_at)
+    target = await native_departure_target(
+        session, project_id=project_id, chat_id=chat_id, telegram_user_id=telegram_user_id,
+    )
     if target is None:
         return False
     customer_id, resource_id = target
-    # Recompute at execution time, not at the event timestamp. A delayed
-    # notification must not resurrect an expired local entitlement.
+    # Same lock order as the projection service. Reject stale/duplicate
+    # observations BEFORE advancing either revision.
+    projection = await session.scalar(
+        select(EffectiveAccess).where(
+            EffectiveAccess.project_id == project_id,
+            EffectiveAccess.customer_id == customer_id,
+            EffectiveAccess.resource_id == resource_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if projection is None:
+        return False
+    state = await session.scalar(
+        select(AccessState).where(
+            AccessState.project_id == project_id,
+            AccessState.customer_id == customer_id,
+            AccessState.resource_id == resource_id,
+        ).with_for_update().execution_options(populate_existing=True)
+    )
+    if state is None or state.actual_state != ActualAccessState.GRANTED.value:
+        return False
+    if state.last_synced_at is not None and state.last_synced_at > observed_at:
+        # The durable event remains retryable. A fresh read, not the time
+        # of a completed worker transaction, decides membership.
+        raise NativeObservationStale("Native membership observation predates local state")
     effective = await recalculate_effective_access(
         session, project_id=project_id, customer_id=customer_id, resource_id=resource_id,
     )
     state = await sync_access_state_from_projection(
         session, project_id=project_id, customer_id=customer_id, resource_id=resource_id,
     )
-    if state.last_synced_at is not None and state.last_synced_at > observed_at:
-        return False
-    if state.actual_state != ActualAccessState.GRANTED.value:
-        return False
     state.actual_state = ActualAccessState.REVOKED.value
     state.last_synced_at = observed_at
     await session.flush()
