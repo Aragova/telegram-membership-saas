@@ -78,6 +78,27 @@ def _telegram_failure_policy(
     return False, moment + default_retry_delay
 
 
+def _access_error_code(exc: Exception) -> str:
+    """Persist only fixed codes, never Telegram request/exception contents."""
+    if isinstance(exc, TelegramRetryAfter):
+        return "telegram_rate_limited"
+    if isinstance(exc, TelegramUnauthorizedError):
+        return "telegram_unauthorized"
+    if isinstance(exc, TelegramForbiddenError):
+        return "telegram_forbidden"
+    if isinstance(exc, TelegramNotFound):
+        return "telegram_not_found"
+    if isinstance(exc, TelegramBadRequest):
+        return "telegram_bad_request"
+    if isinstance(exc, TelegramNetworkError):
+        return "telegram_network_failed"
+    if isinstance(exc, TelegramServerError):
+        return "telegram_server_failed"
+    if isinstance(exc, AiogramError):
+        return "telegram_api_failed"
+    return "telegram_access_failed"
+
+
 async def _claim_command(
     session: AsyncSession,
     *,
@@ -96,20 +117,21 @@ async def _claim_command(
 
     try:
         return await build_telegram_access_command(session, action), None
-    except Exception as exc:
+    except Exception:
+        error_code = "telegram_command_build_failed"
         await mark_access_action_failed(
             session,
             project_id=project_id,
             action_id=action.id,
             claim_attempt=action.attempt_count,
-            error=str(exc) or exc.__class__.__name__,
+            error=error_code,
             failed_at=claimed_at,
             permanent=True,
         )
         return None, TelegramAccessExecution(
             action_id=action.id,
             status=AccessActionStatus.FAILED_PERMANENT.value,
-            error=str(exc) or exc.__class__.__name__,
+            error=error_code,
         )
 
 
@@ -143,6 +165,7 @@ async def _record_external_failure(
         moment=failed_at,
         default_retry_delay=default_retry_delay,
     )
+    error_code = _access_error_code(exc)
     try:
         async with system_project_session_scope(session_factory, project_id) as session:
             if close_ticket:
@@ -156,7 +179,7 @@ async def _record_external_failure(
                 project_id=project_id,
                 action_id=command.access.action_id,
                 claim_attempt=command.access.claim_attempt,
-                error=str(exc) or exc.__class__.__name__,
+                error=error_code,
                 failed_at=failed_at,
                 retry_at=retry_at,
                 permanent=permanent,
@@ -164,7 +187,7 @@ async def _record_external_failure(
         return TelegramAccessExecution(
             action_id=command.access.action_id,
             status=failed.status,
-            error=str(exc) or exc.__class__.__name__,
+            error=error_code,
         )
     except ValueError as stale:
         if "lease is no longer current" not in str(stale):
@@ -172,7 +195,7 @@ async def _record_external_failure(
         return TelegramAccessExecution(
             action_id=command.access.action_id,
             status="stale_failure_ignored",
-            error=str(exc) or exc.__class__.__name__,
+            error=error_code,
         )
 
 

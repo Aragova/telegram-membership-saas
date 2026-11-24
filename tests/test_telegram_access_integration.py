@@ -5,6 +5,17 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from aiogram.exceptions import (
+    AiogramError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+    TelegramNotFound,
+    TelegramRetryAfter,
+    TelegramServerError,
+    TelegramUnauthorizedError,
+)
+from aiogram.methods import SendMessage
 from sqlalchemy import select
 
 from telegram_membership_saas.config import Settings
@@ -43,6 +54,7 @@ from telegram_membership_saas.modules.telegram_access import (
     record_grant_result,
     run_one_telegram_access_action,
 )
+from telegram_membership_saas.modules.telegram_access import worker as access_worker
 from telegram_membership_saas.tenant_context import TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -683,7 +695,8 @@ async def test_failed_invite_cleanup_after_delivery_failure_revokes_ticket(
     invite_cleanup_case, caplog,
 ):
     case = invite_cleanup_case
-    case.adapter.deliver = AsyncMock(side_effect=RuntimeError("delivery unavailable"))
+    secret = "https://api.telegram.org/botTEST-SECRET/sendMessage https://t.me/+private"
+    case.adapter.deliver = AsyncMock(side_effect=RuntimeError(secret))
     result = await run_one_telegram_access_action(
         case.factory, project_id=case.project_id, adapter=case.adapter,
         claimed_at=case.base, clock=lambda: case.base,
@@ -705,5 +718,91 @@ async def test_failed_invite_cleanup_after_delivery_failure_revokes_ticket(
         action = await session.get(AccessAction, result.action_id)
         assert action is not None
         assert action.status == AccessActionStatus.FAILED_RETRYABLE.value
+        assert action.last_error == "telegram_access_failed"
+        state = await session.scalar(select(AccessState).where(
+            AccessState.project_id == case.project_id,
+            AccessState.customer_id == action.customer_id,
+            AccessState.resource_id == action.resource_id,
+        ))
+        assert state is not None
+        assert state.last_error == "telegram_access_failed"
+    assert result.error == "telegram_access_failed"
     assert str(result.action_id) in caplog.text
     assert "private-revoke-error" not in caplog.text
+    assert secret not in caplog.text
+
+
+_SECRET_ERROR = "private-test-token https://t.me/+private-test"
+_METHOD = SendMessage(chat_id=123, text="test")
+
+
+@pytest.mark.parametrize(("exception", "code"), [
+    (TelegramRetryAfter(method=_METHOD, message=_SECRET_ERROR, retry_after=60),
+     "telegram_rate_limited"),
+    (TelegramUnauthorizedError(method=_METHOD, message=_SECRET_ERROR),
+     "telegram_unauthorized"),
+    (TelegramForbiddenError(method=_METHOD, message=_SECRET_ERROR), "telegram_forbidden"),
+    (TelegramNotFound(method=_METHOD, message=_SECRET_ERROR), "telegram_not_found"),
+    (TelegramBadRequest(method=_METHOD, message=_SECRET_ERROR), "telegram_bad_request"),
+    (TelegramNetworkError(method=_METHOD, message=_SECRET_ERROR), "telegram_network_failed"),
+    (TelegramServerError(method=_METHOD, message=_SECRET_ERROR), "telegram_server_failed"),
+    (AiogramError(_SECRET_ERROR), "telegram_api_failed"),
+    (RuntimeError(_SECRET_ERROR), "telegram_access_failed"),
+])
+def test_access_error_code_never_contains_provider_payload(exception, code):
+    assert access_worker._access_error_code(exception) == code
+
+
+async def test_command_build_failure_does_not_persist_exception(invite_cleanup_case, monkeypatch):
+    case = invite_cleanup_case
+    monkeypatch.setattr(
+        access_worker, "build_telegram_access_command",
+        AsyncMock(side_effect=RuntimeError(_SECRET_ERROR)),
+    )
+    result = await run_one_telegram_access_action(
+        case.factory, project_id=case.project_id, adapter=case.adapter,
+        claimed_at=case.base, clock=lambda: case.base,
+    )
+    assert result is not None
+    assert result.status == AccessActionStatus.FAILED_PERMANENT.value
+    assert result.error == "telegram_command_build_failed"
+    async with system_project_session_scope(case.factory, case.project_id) as session:
+        action = await session.get(AccessAction, result.action_id)
+        assert action is not None
+        assert action.last_error == result.error
+    assert not case.adapter.calls
+
+
+async def test_provider_rate_limit_preserves_retry_and_safe_error(invite_cleanup_case):
+    case = invite_cleanup_case
+    case.adapter.prepare = AsyncMock(side_effect=TelegramRetryAfter(
+        method=_METHOD, message=_SECRET_ERROR, retry_after=60,
+    ))
+    result = await run_one_telegram_access_action(
+        case.factory, project_id=case.project_id, adapter=case.adapter,
+        claimed_at=case.base, clock=lambda: case.base,
+    )
+    assert result is not None
+    assert result.status == AccessActionStatus.FAILED_RETRYABLE.value
+    assert result.error == "telegram_rate_limited"
+    async with system_project_session_scope(case.factory, case.project_id) as session:
+        action = await session.get(AccessAction, result.action_id)
+        assert action is not None
+        assert action.last_error == result.error
+        assert action.available_at == case.base + timedelta(seconds=60)
+
+
+async def test_stale_provider_failure_returns_only_safe_code(invite_cleanup_case, monkeypatch):
+    case = invite_cleanup_case
+    case.adapter.prepare = AsyncMock(side_effect=RuntimeError(_SECRET_ERROR))
+    monkeypatch.setattr(
+        access_worker, "mark_access_action_failed",
+        AsyncMock(side_effect=ValueError("Access action lease is no longer current")),
+    )
+    result = await run_one_telegram_access_action(
+        case.factory, project_id=case.project_id, adapter=case.adapter,
+        claimed_at=case.base, clock=lambda: case.base,
+    )
+    assert result is not None
+    assert result.status == "stale_failure_ignored"
+    assert result.error == "telegram_access_failed"

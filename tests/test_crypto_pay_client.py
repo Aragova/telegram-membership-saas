@@ -132,6 +132,7 @@ def test_webhook_signature_uses_exact_raw_body_and_constant_time_digest():
     assert verify_webhook_signature(body, sig, TOKEN)
     assert not verify_webhook_signature(body + b" ", sig, TOKEN)
     assert not verify_webhook_signature(body, "not-a-real-signature", TOKEN)
+    assert not verify_webhook_signature(body, "Ж" * 64, TOKEN)
     assert not verify_webhook_signature(body, sig, TOKEN + "wrong")
 
 
@@ -326,3 +327,28 @@ async def test_readonly_crypto_transfer_query_is_bounded_and_safe():
         with pytest.raises(ValueError):
             await provider.get_transfers(spend_id="")
 
+
+
+@pytest.mark.parametrize(("invoice_id", "link"), [
+    (0, "https://t.me/CryptoBot?start=invoice"),
+    (-1, "https://t.me/CryptoBot?start=invoice"),
+    (42, "https://t.me:PRIVATE-PORT/CryptoBot"),
+    (42, "https://[PRIVATE-HOST/CryptoBot"),
+])
+async def test_malformed_provider_creation_evidence_is_safe(invoice_id, link):
+    response = {
+        "ok": True, "result": {
+            "invoice_id": invoice_id, "payload": "cp:abc", "status": "active",
+            "currency_type": "crypto", "asset": "TON", "amount": "2",
+            "bot_invoice_url": link,
+        },
+    }
+    async with CryptoPayClient(
+        TOKEN, transport=httpx.MockTransport(lambda _: httpx.Response(200, json=response)),
+    ) as api:
+        with pytest.raises(CryptoPayError) as error:
+            await api.create_invoice(
+                currency="TON", amount=Decimal("2"), payload="cp:abc", description="Premium",
+            )
+    assert "PRIVATE-" not in str(error.value)
+    assert error.value.__cause__ is None
