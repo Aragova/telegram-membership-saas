@@ -28,7 +28,6 @@ from telegram_membership_saas.modules.identity import TelegramUser
 from telegram_membership_saas.modules.outbox import (
     OutboxEvent,
     claim_next_outbox_event,
-    mark_outbox_event_failed,
 )
 from telegram_membership_saas.modules.projects import Project
 from telegram_membership_saas.modules.resources import Resource, ResourceType
@@ -45,6 +44,7 @@ from telegram_membership_saas.modules.telegram_access.service import (
     NativeObservationStale,
     reconcile_native_departure,
 )
+from telegram_membership_saas.telegram_runtime import process_project_runtime_once
 from telegram_membership_saas.tenant_context import TenantContext
 
 pytestmark = pytest.mark.skipif(
@@ -341,25 +341,26 @@ async def test_native_departure_durable_retry_and_live_membership(current_status
         assert not await process_native_departure(
             factory, update, project_id=project_id, update_id=123,
         )
-        async with system_project_session_scope(factory, project_id) as session:
-            event = await claim_next_outbox_event(session, project_id=project_id)
-            event_id, attempt = event.id, event.attempt_count
         bot = AsyncMock()
         bot.get_chat_member.side_effect = RuntimeError("temporary network failure")
-        with pytest.raises(RuntimeError, match="temporary network"):
-            await process_claimed_native_departure(
-                factory, project_id=project_id, event_id=event_id,
-                claim_attempt=attempt, bot=bot,
-            )
+        runtime_adapter = AlreadyMemberThenRevokeAdapter()
+        runtime_adapter.bot = bot
+        assert await process_project_runtime_once(
+            factory, project_id=project_id, adapter=runtime_adapter,
+        )
         async with system_project_session_scope(factory, project_id) as session:
-            await mark_outbox_event_failed(
-                session, project_id=project_id, event_id=event_id, claim_attempt=attempt,
-                error="native_departure_retry", retry_delay=timedelta(seconds=1),
-            )
+            event = await session.scalar(select(OutboxEvent).where(
+                OutboxEvent.project_id == project_id,
+                OutboxEvent.event_type == "native_departure",
+            ))
+            assert event.status == "failed_retryable"
+            assert event.last_error == "native_departure_retry"
+            event_id, attempt = event.id, event.attempt_count
+            next_at = event.available_at
         async with system_project_session_scope(factory, project_id) as session:
             retry = await claim_next_outbox_event(
                 session, project_id=project_id,
-                claimed_at=datetime.now(UTC) + timedelta(seconds=2),
+                claimed_at=next_at,
             )
             assert retry.id == event_id and retry.attempt_count == attempt + 1
             next_attempt = retry.attempt_count

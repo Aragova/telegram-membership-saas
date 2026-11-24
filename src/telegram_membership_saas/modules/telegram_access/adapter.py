@@ -12,6 +12,10 @@ from telegram_membership_saas.modules.access import AccessActionType, AccessComm
 ACTIVE_MEMBER_STATUSES = frozenset({"creator", "administrator", "member"})
 
 
+class UnsafeChannelRevoke(ValueError):
+    """The member cannot safely be removed by automated enforcement."""
+
+
 @dataclass(frozen=True, slots=True)
 class TelegramAccessCommand:
     access: AccessCommand
@@ -91,9 +95,9 @@ class TelegramAccessAdapter:
             return TelegramAccessResult()
         if status != "member":
             # Never try to demote an administrator or guess an unknown state.
-            raise ValueError("Channel membership cannot be safely revoked")
+            raise UnsafeChannelRevoke("Channel membership cannot be safely revoked")
         if not isinstance(member, ChatMemberMember):
-            raise ValueError("Unrecognized channel member representation")
+            raise UnsafeChannelRevoke("Unrecognized channel member representation")
 
         if command.native_channel_history:
             # Ordinary expiry must not create an indefinite ban that blocks

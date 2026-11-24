@@ -14,9 +14,13 @@ without this history and groups retain the existing ban behavior.
 The customer dispatcher receives channel membership updates. A native expiry
 departure (old member with elapsed subscription timestamp, new left) is
 persisted in the existing outbox before the project worker checks it live.
-The worker retries failed reads, honors FloodWait and rechecks observations
+The worker retries failed reads with bounded backoff, honors FloodWait and rechecks observations
 older than a local completion. Projection and access state are locked before
-advancing either revision, so duplicate events do not supersede a corrective grant. Only an existing scoped local entitlement can enqueue a new
+advancing either revision, so duplicate events do not supersede a corrective grant.
+An administrator/creator or unsupported membership state fails permanently with
+an explicit safe code instead of claiming a successful removal. Permission and
+token errors remain recoverable but retry at most once per hour; malformed
+payloads fail permanently. Only an existing scoped local entitlement can enqueue a new
 safe join-request invitation. Explicit kicked status is not restored by
 this handler. No grants or payments are fabricated from membership evidence.
 
@@ -24,6 +28,9 @@ This is deliberately not atomic with Telegram renewals or administrator
 actions; Bot API has no conditional removal RPC. The live acceptance gate
 must cover both races. Updates lost before the database commit (e.g. extended Telegram/DB outage),
 legacy bans and native links created outside ViMi require separate verification; no automatic commission accrual.
+Before rollback, stop the access workers and reconcile pending native departures
+and deferred revokes; never let an older worker consume protected pending revokes.
+The 0108 downgrade intentionally refuses to discard native departure evidence.
 See the new experiment protocol below.
 
 ## Financial API experiment (not executed, not a release of billing)

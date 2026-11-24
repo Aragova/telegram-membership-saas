@@ -6,7 +6,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from aiogram.exceptions import TelegramRetryAfter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -51,6 +50,7 @@ from telegram_membership_saas.modules.telegram_access import (
     run_one_telegram_access_action,
 )
 from telegram_membership_saas.modules.telegram_access.native_departures import (
+    native_departure_failure_policy,
     process_claimed_native_departure,
 )
 from telegram_membership_saas.project_worker_lock import (
@@ -130,9 +130,13 @@ async def process_project_runtime_once(
                         processed_at=moment,
                     )
         except Exception as exc:
-            delay = timedelta(seconds=max(30, exc.retry_after)) if isinstance(
-                exc, TelegramRetryAfter,
-            ) else timedelta(seconds=30)
+            if claimed_native:
+                permanent, delay, error = native_departure_failure_policy(exc, claimed_attempt)
+                logger.warning("Native departure %s: %s", claimed_event_id, error)
+            else:
+                permanent = isinstance(exc, ValueError)
+                delay = timedelta(seconds=30)
+                error = str(exc) or exc.__class__.__name__
             async with system_project_session_scope(session_factory, project_id) as session:
                 try:
                     await mark_outbox_event_failed(
@@ -140,11 +144,9 @@ async def process_project_runtime_once(
                         project_id=project_id,
                         event_id=claimed_event_id,
                         claim_attempt=claimed_attempt,
-                        error="native_departure_retry" if claimed_native else (
-                            str(exc) or exc.__class__.__name__
-                        ),
+                        error=error,
                         failed_at=utcnow() if claimed_native else moment,
-                        permanent=isinstance(exc, ValueError) and not claimed_native,
+                        permanent=permanent,
                         retry_delay=delay,
                     )
                 except ValueError:

@@ -1,8 +1,15 @@
 """Durable, scoped membership observations; never a financial event."""
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from aiogram import Bot
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNotFound,
+    TelegramRetryAfter,
+    TelegramUnauthorizedError,
+)
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,10 +17,35 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram_membership_saas.db import system_project_session_scope
 from telegram_membership_saas.modules.outbox import OutboxEvent, OutboxEventStatus, OutboxEventType
 from telegram_membership_saas.modules.telegram_access.service import (
+    NativeObservationStale,
     native_departure_target,
     reconcile_native_departure,
     require_aware,
 )
+
+
+class NativeDeparturePayloadError(ValueError):
+    """A malformed durable event cannot be processed safely."""
+
+
+def native_departure_failure_policy(
+    exc: Exception, attempt: int,
+) -> tuple[bool, timedelta, str]:
+    """Return permanent flag, delay and safe code; preserve recoverable evidence."""
+    if isinstance(exc, NativeDeparturePayloadError):
+        return True, timedelta(0), "native_departure_invalid_payload"
+    if isinstance(exc, TelegramRetryAfter):
+        return False, timedelta(seconds=max(30, exc.retry_after)), "native_departure_rate_limited"
+    if isinstance(exc, NativeObservationStale):
+        return False, timedelta(seconds=30), "native_departure_stale_observation"
+    if isinstance(exc, (
+        TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError, TelegramBadRequest,
+    )):
+        # Missing rights or a rotated token may recover. Do not discard paid
+        # access evidence or hammer the Telegram API during a prolonged outage.
+        return False, timedelta(hours=1), "native_departure_unavailable"
+    delay = timedelta(seconds=30 * 2 ** min(max(attempt - 1, 0), 6))
+    return False, delay, "native_departure_retry"
 
 
 async def enqueue_native_departure(
@@ -69,8 +101,13 @@ async def process_claimed_native_departure(
         )
         if event is None:
             return
-        chat_id = int(event.payload["chat_id"])
-        user_id = int(event.payload["telegram_user_id"])
+        try:
+            chat_id = int(event.payload["chat_id"])
+            user_id = int(event.payload["telegram_user_id"])
+        except (KeyError, TypeError, ValueError):
+            raise NativeDeparturePayloadError("Invalid native departure target") from None
+        if chat_id >= 0 or user_id <= 0:
+            raise NativeDeparturePayloadError("Invalid native departure identity")
         target = await native_departure_target(
             session, project_id=project_id, chat_id=chat_id, telegram_user_id=user_id,
         )

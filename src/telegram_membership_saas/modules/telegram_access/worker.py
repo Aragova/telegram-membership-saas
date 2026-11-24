@@ -31,6 +31,7 @@ from telegram_membership_saas.modules.telegram_access.adapter import (
     TelegramAccessAdapter,
     TelegramAccessCommand,
     TelegramAccessResult,
+    UnsafeChannelRevoke,
 )
 from telegram_membership_saas.modules.telegram_access.service import (
     build_telegram_access_command,
@@ -71,6 +72,7 @@ def _telegram_failure_policy(
             TelegramForbiddenError,
             TelegramNotFound,
             TelegramUnauthorizedError,
+            UnsafeChannelRevoke,
         ),
     ):
         return True, None
@@ -81,6 +83,8 @@ def _telegram_failure_policy(
 
 def _access_error_code(exc: Exception) -> str:
     """Persist only fixed codes, never Telegram request/exception contents."""
+    if isinstance(exc, UnsafeChannelRevoke):
+        return "telegram_channel_revoke_unsafe"
     if isinstance(exc, TelegramRetryAfter):
         return "telegram_rate_limited"
     if isinstance(exc, TelegramUnauthorizedError):

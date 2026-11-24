@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+from aiogram.methods import GetChatMember
 from aiogram.types import ChatMemberMember, User
 
 from telegram_membership_saas.modules.access import AccessActionType, AccessCommand
@@ -15,7 +17,17 @@ from telegram_membership_saas.modules.telegram_access import (
     TelegramAccessResult,
     project_id_from_invite_name,
 )
-from telegram_membership_saas.modules.telegram_access.worker import _discard_quietly
+from telegram_membership_saas.modules.telegram_access.adapter import UnsafeChannelRevoke
+from telegram_membership_saas.modules.telegram_access.native_departures import (
+    NativeDeparturePayloadError,
+    native_departure_failure_policy,
+)
+from telegram_membership_saas.modules.telegram_access.service import NativeObservationStale
+from telegram_membership_saas.modules.telegram_access.worker import (
+    _access_error_code,
+    _discard_quietly,
+    _telegram_failure_policy,
+)
 
 
 class FakeBot:
@@ -301,8 +313,30 @@ async def test_channel_revoke_failed_read_never_mutates_membership() -> None:
 @pytest.mark.parametrize("status", ["administrator", "creator", "member"])
 async def test_channel_revoke_rejects_unrecognized_or_privileged_member(status):
     bot = FakeBot(status=status)
-    with pytest.raises(ValueError):
+    with pytest.raises(UnsafeChannelRevoke) as exc:
         await TelegramAccessAdapter(bot).prepare(
             replace(_command(AccessActionType.REVOKE), is_channel=True),
         )
+    assert _telegram_failure_policy(
+        exc.value, moment=datetime.now(UTC), default_retry_delay=timedelta(seconds=30),
+    ) == (True, None)
+    assert _access_error_code(exc.value) == "telegram_channel_revoke_unsafe"
     assert [name for name, _ in bot.calls] == ["get_chat_member"]
+
+
+@pytest.mark.parametrize(("error", "attempt", "permanent", "seconds", "code"), [
+    (NativeDeparturePayloadError("bad"), 1, True, 0, "native_departure_invalid_payload"),
+    (NativeObservationStale("stale"), 5, False, 30, "native_departure_stale_observation"),
+    (TelegramRetryAfter(
+        method=GetChatMember(chat_id=-1001, user_id=1), message="secret", retry_after=100,
+    ), 1, False, 100, "native_departure_rate_limited"),
+    (TelegramForbiddenError(
+        method=GetChatMember(chat_id=-1001, user_id=1), message="secret",
+    ), 1, False, 3600, "native_departure_unavailable"),
+    (RuntimeError("secret"), 1, False, 30, "native_departure_retry"),
+    (RuntimeError("secret"), 50, False, 1920, "native_departure_retry"),
+])
+def test_native_departure_retry_policy(error, attempt, permanent, seconds, code):
+    assert native_departure_failure_policy(error, attempt) == (
+        permanent, timedelta(seconds=seconds), code,
+    )
