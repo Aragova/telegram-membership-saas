@@ -23,7 +23,6 @@ Add bilingual boundary and incident transition regression tests; existing
 PostgreSQL integration tests remain intact. Do not split complex tests
 merely for Radon grades.
 
-## Deferred
 ## Final risk-based scope (owner direction)
 Do not refactor five financial/checkout functions or large menus merely
 to reduce Radon grades. No demonstrated throughput bottleneck justifies
@@ -34,6 +33,9 @@ Two concrete follow-up risks are addressed in the same PR:
 - UI heartbeat freshness now rejects observations more than 60 seconds in
   the future, consistent with the incident scanner. Invalid observations
   cannot confirm running, active retry or recent restart in detail/list.
+  Migration 0107 aligns the global SQL count with the same future bound;
+  preserves the existing report's permissions, audit and finance projections.
+  PostgreSQL and legacy bilingual UI regressions cover the changed contract.
 - Stars and Crypto Pay periodic recovery no longer log raw exception
   tracebacks; keep project ID and exception type, retry and cancellation.
 
@@ -45,5 +47,6 @@ is not a secret. Other type/style findings are not blanket-fixed or
 suppressed; the full 740 mypy findings and remaining LOW Bandit items
 were not individually reviewed in this pass. No production benchmark or
 complete historical audit is claimed. The scoped changes do not alter
-billing, payment fulfillment, permissions, menu structure, DB schema,
-retry schedules or deployment topology.
+billing, payment fulfillment, permissions, menu structure, tables,
+retry schedules or deployment topology. The report function requires
+migration 0107 before deployment.

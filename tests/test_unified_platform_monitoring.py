@@ -317,3 +317,8 @@ def test_future_heartbeat_cannot_confirm_runtime_or_recent_restart(state, code, 
         state, heartbeat=_diag_live_now() + _diag_minutes(60), error_code=code,
     )
     assert ui._bot_list_button_label(observation).startswith(marker)
+
+
+@pytest.mark.parametrize("state", ["running", "degraded"])
+def test_missing_heartbeat_does_not_confirm_running_or_retry(state):
+    assert ui._bot_list_button_label(_diag_bot(state, heartbeat=None)).startswith("🟠")

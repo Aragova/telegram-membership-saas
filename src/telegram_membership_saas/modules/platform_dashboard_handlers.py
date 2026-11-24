@@ -452,7 +452,7 @@ def _heartbeat_time(bot: dict) -> datetime | None:
     return moment if moment.tzinfo is not None and moment.utcoffset() is not None else None
 
 
-def _heartbeat_age(bot: dict, now: datetime) -> timedelta | None:
+def _heartbeat_age(bot: dict[str, object], now: datetime) -> timedelta | None:
     """Reject future observations outside the incident scanner's 60s tolerance."""
     seen = _heartbeat_time(bot)
     if seen is None:
