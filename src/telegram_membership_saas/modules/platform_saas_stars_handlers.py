@@ -39,6 +39,10 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
     encode_uuid,
 )
+from telegram_membership_saas.stars_checkout_ui import (
+    stars_checkout_rows,
+    stars_topup_guidance,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -86,39 +90,17 @@ async def build_platform_stars_checkout(
         + "\n\n" + bot_label
         + "\n\n" + tr("Итого к оплате", "Total due")
         + "\n<b>" + str(amount) + " ⭐</b>\n\n"
-        + tr(
-            "💡 <b>Не хватает звёзд?</b>\n\n"
-            "Telegram может показать ошибку при оплате. "
-            "Заранее пополните баланс через официальный @PremiumBot "
-            "или настройки Telegram.\n\n"
-            "<b>Как оплатить:</b>\n"
-            "① Купите необходимое количество звёзд.\n"
-            "② Вернитесь в этот чат.\n"
-            "③ Оплатите счёт.\n\n"
+        + stars_topup_guidance()
+        + "\n\n" + tr(
             "Сумма действует 20 минут. Если срок истёк, "
             "вернитесь назад и снова выберите Telegram Stars.",
-            "💡 <b>Not enough Stars?</b>\n\n"
-            "Telegram may show a payment error. Top up first using "
-            "the official @PremiumBot or Telegram Settings.\n\n"
-            "<b>How to pay:</b>\n"
-            "① Buy the required number of Stars.\n"
-            "② Return to this chat.\n"
-            "③ Pay the invoice.\n\n"
             "The quote is valid for 20 minutes. If it expires, "
             "go back and select Telegram Stars again.",
         )
     )
-    rows = [
-        [InlineKeyboardButton(
-            text=tr("⭐ Оплатить {amount}", "⭐ Pay {amount}").format(amount=amount),
-            url=link, style="success",
-        )],
-        [InlineKeyboardButton(
-            text=tr("💫 Купить звёзды", "💫 Buy Stars"),
-            url="https://t.me/PremiumBot", style="primary",
-        )],
-        [stars_payment_back(invoice_id, page_code)],
-    ]
+    rows = stars_checkout_rows(
+        amount=amount, link=link, back=stars_payment_back(invoice_id, page_code),
+    )
     return html, rows
 
 

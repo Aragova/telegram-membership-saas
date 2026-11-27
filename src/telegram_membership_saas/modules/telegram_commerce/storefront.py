@@ -27,6 +27,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     is_period_only_plan_name,
     list_checkout_options,
 )
+from telegram_membership_saas.stars_checkout_ui import stars_topup_button, stars_topup_guidance
 from telegram_membership_saas.support_links import support_button
 
 PAGE_SIZE = 7
@@ -461,7 +462,7 @@ def offer_screen(
             "продлевает подписку каждые 30 дней. Покупка управляется Telegram.",
             "⭐ Stars go to the channel balance. Telegram automatically "
             "renews this subscription every 30 days. Telegram manages the purchase.",
-        )
+        ) + "\n\n" + stars_topup_guidance()
     for method in current.methods:
         if method.payment_method_id.int == 0 and current.native_stars_link:
             rows.append([InlineKeyboardButton(
@@ -476,9 +477,12 @@ def offer_screen(
             callback_data=(
                 f"buy:{encode_uuid(option.plan_price_id)}:"
                 f"{encode_uuid(method.payment_method_id)}"
+                + (f":{page}" if method.payment_method_id.int == 0 and page else "")
             ),
             style="success" if crypto else None,
         )])
+    if current.native_stars_link:
+        rows.append([stars_topup_button()])
     rows.append([InlineKeyboardButton(
         text=tr("⬅️ Все тарифы", "⬅️ All plans"),
         callback_data=f"cat:{option.currency_code}:{page}",
