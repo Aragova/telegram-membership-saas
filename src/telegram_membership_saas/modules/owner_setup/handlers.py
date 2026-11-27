@@ -88,6 +88,7 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_crypto_method_screen,
     preview_method_screen,
     preview_offer_screen,
+    preview_stars_method_screen,
 )
 from telegram_membership_saas.modules.owner_setup.central_connection_flow_ui import (
     disconnect_card,
@@ -4709,6 +4710,10 @@ def create_owner_setup_router(
                     # PaymentMethod row. Never open a real provider invoice
                     # from owner preview, even for a stale callback.
                     rendered = preview_crypto_method_screen(
+                        offers, price_id=price_id, page=page,
+                    )
+                elif method_id.int == 0:
+                    rendered = preview_stars_method_screen(
                         offers, price_id=price_id, page=page,
                     )
                 else:
