@@ -31,7 +31,7 @@ async def _rpc(
     payer_telegram_id: int, name: str, arguments: dict,
 ) -> object:
     signatures = {
-        "platform_saas_stars_create_order": ("invoice", "telegram_id", "bot_id"),
+        "platform_saas_stars_create_checkout": ("invoice", "telegram_id", "bot_id"),
         "platform_saas_stars_precheckout": ("payload", "telegram_id", "bot_id", "amount"),
         "platform_saas_stars_record_charge": (
             "payload", "telegram_id", "bot_id", "amount", "charge_id", "paid_at",
@@ -59,7 +59,7 @@ async def _rpc(
         + ",".join(":" + key for key in expected) + ") AS data"
     )
     if name in (
-        "platform_saas_stars_create_order",
+        "platform_saas_stars_create_checkout",
         "platform_saas_stars_record_charge",
         "platform_saas_stars_usd_policy_read",
         "platform_saas_stars_usd_policy_set",
@@ -79,7 +79,7 @@ async def create_platform_stars_order(
         raise ValueError("Invalid central bot identity")
     data = await _rpc(
         factory, payer_telegram_id=payer_telegram_id,
-        name="platform_saas_stars_create_order",
+        name="platform_saas_stars_create_checkout",
         arguments={
             "invoice": invoice_id,
             "telegram_id": payer_telegram_id,
