@@ -14,7 +14,11 @@ from uuid import UUID
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import (
-    InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Message, PreCheckoutQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    Message,
+    PreCheckoutQuery,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,7 +35,10 @@ from telegram_membership_saas.modules.platform_saas_stars_service import (
     platform_stars_usd_policy,
     record_platform_stars_refund,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
+from telegram_membership_saas.modules.telegram_commerce.service import (
+    decode_uuid,
+    encode_uuid,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -65,7 +72,7 @@ async def build_platform_stars_checkout(
         ).format(stars=amount),
         payload=order["payload"],
         currency="XTR",
-        prices=[LabeledPrice(label="⭐ Telegram Stars", amount=amount)],
+        prices=[LabeledPrice(label=tr("⭐ Telegram Stars", "⭐ Telegram Stars"), amount=amount)],
     )
     username = order.get("bot_username")
     bot_label = (
