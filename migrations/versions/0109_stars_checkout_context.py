@@ -25,6 +25,9 @@ BEGIN
   -- exact debt, currency and expiry. It remains the only order creator.
   quote := public.platform_saas_stars_create_order(
     p_invoice, p_telegram_id, p_central_bot);
+  IF quote IS NULL OR jsonb_typeof(quote) <> 'object' THEN
+    RAISE EXCEPTION 'Invalid Stars checkout quote' USING ERRCODE='22023';
+  END IF;
   actor := NULLIF(current_setting('app.current_user_id',true),'')::uuid;
   SELECT b.username INTO bot_username
     FROM public.platform_saas_invoices i

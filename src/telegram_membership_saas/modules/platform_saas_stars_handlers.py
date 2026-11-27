@@ -110,7 +110,7 @@ async def build_platform_stars_checkout(
     )
     rows = [
         [InlineKeyboardButton(
-            text=tr("⭐ Оплатить ", "⭐ Pay ") + str(amount),
+            text=tr("⭐ Оплатить {amount}", "⭐ Pay {amount}").format(amount=amount),
             url=link, style="success",
         )],
         [InlineKeyboardButton(
