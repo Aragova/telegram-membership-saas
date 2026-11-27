@@ -13,7 +13,9 @@ from uuid import UUID
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import LabeledPrice, Message, PreCheckoutQuery
+from aiogram.types import (
+    InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, Message, PreCheckoutQuery,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from telegram_membership_saas.config import get_settings
@@ -29,38 +31,88 @@ from telegram_membership_saas.modules.platform_saas_stars_service import (
     platform_stars_usd_policy,
     record_platform_stars_refund,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid
+from telegram_membership_saas.modules.telegram_commerce.service import decode_uuid, encode_uuid
 
 LOG = logging.getLogger(__name__)
 
 START_PATTERN = re.compile(r"^/start(?:@[A-Za-z0-9_]{5,32})? sa_([A-Za-z0-9_-]{22})$")
 
 
-async def send_platform_stars_invoice(
+def stars_payment_back(invoice_id: UUID, page_token: str = "0") -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text=tr("⬅️ Назад", "⬅️ Back"),
+        callback_data="own:spm:" + encode_uuid(invoice_id) + ":RUB:" + page_token,
+        style="primary",
+    )
+
+
+async def build_platform_stars_checkout(
     bot: Bot,
     factory: async_sessionmaker[AsyncSession],
-    *, payer_telegram_id: int, invoice_id: UUID,
-) -> None:
-    """Create one immutable quote, then send it from the central bot."""
+    *, payer_telegram_id: int, invoice_id: UUID, page_token: str = "0",
+) -> tuple[str, list[list[InlineKeyboardButton]]]:
+    """One frozen quote, one native payment link; no charge on screen entry."""
     order = await create_platform_stars_order(
         factory, invoice_id=invoice_id,
         payer_telegram_id=payer_telegram_id, central_bot_id=bot.id,
     )
     amount = int(order["stars_amount"])
-    await bot.send_invoice(
-        chat_id=payer_telegram_id,
+    link = await bot.create_invoice_link(
         title=tr("ViMi Pay · Оплата счёта", "ViMi Pay · Invoice payment"),
         description=tr(
-            "Оплата обслуживания вашего бота.\n\nК оплате: {stars} ⭐",
-            "Payment for your bot service.\n\nTotal: {stars} ⭐",
+            "Оплата счёта ViMi Pay.\n\nК оплате: {stars} ⭐",
+            "ViMi Pay invoice payment.\n\nTotal: {stars} ⭐",
         ).format(stars=amount),
         payload=order["payload"],
-        currency="XTR",  # Telegram Bot API's Stars currency wire value.
-        prices=[LabeledPrice(
-            label=tr("⭐ Telegram Stars", "⭐ Telegram Stars"),
-            amount=amount,
-        )],
+        currency="XTR",
+        prices=[LabeledPrice(label="⭐ Telegram Stars", amount=amount)],
     )
+    username = order.get("bot_username")
+    bot_label = (
+        "🤖 <b>@" + username + "</b>"
+        if isinstance(username, str) and re.fullmatch(r"[A-Za-z0-9_]{5,32}", username)
+        else tr("🤖 Счёт бота", "🤖 Bot invoice")
+    )
+    html = (
+        tr("✦ <b>ViMi Pay</b>\n⭐ <b>TELEGRAM STARS · ОПЛАТА СЧЁТА</b>",
+           "✦ <b>ViMi Pay</b>\n⭐ <b>TELEGRAM STARS · INVOICE PAYMENT</b>")
+        + "\n\n" + bot_label
+        + "\n\n" + tr("Итого к оплате", "Total due")
+        + "\n<b>" + str(amount) + " ⭐</b>\n\n"
+        + tr(
+            "💡 <b>Не хватает звёзд?</b>\n\n"
+            "Telegram может показать ошибку при оплате. "
+            "Заранее пополните баланс через официальный @PremiumBot "
+            "или настройки Telegram.\n\n"
+            "<b>Как оплатить:</b>\n"
+            "① Купите необходимое количество звёзд.\n"
+            "② Вернитесь в этот чат.\n"
+            "③ Оплатите счёт.\n\n"
+            "Сумма действует 20 минут. Если срок истёк, "
+            "вернитесь назад и снова выберите Telegram Stars.",
+            "💡 <b>Not enough Stars?</b>\n\n"
+            "Telegram may show a payment error. Top up first using "
+            "the official @PremiumBot or Telegram Settings.\n\n"
+            "<b>How to pay:</b>\n"
+            "① Buy the required number of Stars.\n"
+            "② Return to this chat.\n"
+            "③ Pay the invoice.\n\n"
+            "The quote is valid for 20 minutes. If it expires, "
+            "go back and select Telegram Stars again.",
+        )
+    )
+    rows = [
+        [InlineKeyboardButton(
+            text=tr("⭐ Оплатить ", "⭐ Pay ") + str(amount),
+            url=link, style="success",
+        )],
+        [InlineKeyboardButton(
+            text=tr("💫 Купить звёзды", "💫 Buy Stars"),
+            url="https://t.me/PremiumBot", style="primary",
+        )],
+        [stars_payment_back(invoice_id, page_token)],
+    ]
+    return html, rows
 
 
 def create_platform_saas_stars_router(
@@ -82,9 +134,13 @@ def create_platform_saas_stars_router(
             return
         try:
             invoice_id = decode_uuid(match.group(1))
-            await send_platform_stars_invoice(
+            html, rows = await build_platform_stars_checkout(
                 bot, factory,
                 payer_telegram_id=message.from_user.id, invoice_id=invoice_id,
+            )
+            await bot.send_message(
+                message.chat.id, html, parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
             )
         except Exception:
             # No bill identifiers or details in the error. Current owner
