@@ -92,10 +92,21 @@ async def test_central_stars_settlement_replay_refund_and_bank_cap():
                 assert policy["enabled"] is True
                 assert policy["example_stars"] == 405
                 await set_actor(conn, owner)
+                # The enriched checkout remains payer-scoped under the
+                # actual restricted runtime database role.
+                await set_actor(conn, operator)
+                with pytest.raises(DBAPIError):
+                    async with conn.begin_nested():
+                        await call(
+                            conn, "platform_saas_stars_create_checkout",
+                            invoice, owner_tg, 987654321, json=True,
+                        )
+                await set_actor(conn, owner)
                 data = await call(
-                    conn, "platform_saas_stars_create_order",
+                    conn, "platform_saas_stars_create_checkout",
                     invoice, owner_tg, 987654321, json=True,
                 )
+                assert data["bot_username"] == "billing_test_bot"
                 assert data["stars_amount"] == 400
                 assert Decimal(data["usd_quote"]) == Decimal("1.875")
                 assert Decimal(data["payment_surcharge_pct"]) == 5
