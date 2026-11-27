@@ -12,6 +12,7 @@ from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
     NATIVE_PERIOD_SECONDS,
     native_price_allowed,
 )
+from telegram_membership_saas.modules.telegram_commerce.rich_ui import rich_subscription_offer_html
 from telegram_membership_saas.modules.telegram_commerce.service import CheckoutOption
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     build_buyer_offers,
@@ -49,6 +50,8 @@ def test_native_link_is_one_buyer_payment_button_not_a_bot_invoice():
     )
     screen, keyboard = offer_screen(offers, price_id=price_id)
     assert "@PremiumBot" in screen
+    assert "@PremiumBot" in rich_subscription_offer_html(offers[0])
+    assert "@PremiumBot" not in rich_subscription_offer_html(offers[0], preview=True)
     buttons = [item for row in keyboard.inline_keyboard for item in row]
     assert sum(item.url == link for item in buttons) == 1
     assert sum(item.url == "https://t.me/PremiumBot" for item in buttons) == 1

@@ -44,6 +44,8 @@ _STATISTICS = (
     "ViMi Pay · Платформа", "ViMi Pay · Platform",
     "Статистика · ViMi Pay", "Statistics · ViMi Pay",
     "Мои покупки", "My purchases",
+    "⭐ Оплата подписки", "⭐ Subscription payment",
+    "⭐ Оплата покупки", "⭐ Purchase payment",
     "Статистика бота", "Bot statistics",
     "ViMi Pay · Счета", "ViMi Pay · Invoices",
     "ViMi Pay · Реквизиты", "ViMi Pay · Payment instructions",
