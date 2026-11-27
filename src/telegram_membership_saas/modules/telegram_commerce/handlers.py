@@ -105,6 +105,7 @@ from telegram_membership_saas.receipt_prompt_ui import (
 from telegram_membership_saas.rich_messages import classic_messages
 from telegram_membership_saas.stars_checkout_ui import (
     buyer_stars_checkout_html,
+    log_stars_checkout_failure,
     send_stars_screen,
     stars_checkout_rows,
 )
@@ -899,8 +900,9 @@ def create_telegram_commerce_router(
                         provider_token="",
                     )
                 except AiogramError as exc:
-                    logging.getLogger(__name__).warning(
-                        "Subscription Stars invoice unavailable: %s", type(exc).__name__,
+                    log_stars_checkout_failure(
+                        logging.getLogger(__name__),
+                        "Subscription Stars invoice unavailable", exc,
                     )
                     await send_stars_screen(
                         bot, chat_id=callback.from_user.id,

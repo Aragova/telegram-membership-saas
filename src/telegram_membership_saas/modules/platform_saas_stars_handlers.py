@@ -40,6 +40,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     encode_uuid,
 )
 from telegram_membership_saas.stars_checkout_ui import (
+    log_stars_checkout_failure,
     stars_checkout_rows,
     stars_topup_guidance,
 )
@@ -132,10 +133,10 @@ def create_platform_saas_stars_router(
                 message.chat.id, html, parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
             )
-        except Exception:
-            # No bill identifiers or details in the error. Current owner
-            # authorization, rate availability and remaining debt are SQL.
-            LOG.warning("Central platform Stars deep-link checkout unavailable")
+        except Exception as exc:
+            log_stars_checkout_failure(
+                LOG, "Central platform Stars deep-link checkout unavailable", exc,
+            )
             await bot.send_message(
                 message.chat.id,
                 tr(

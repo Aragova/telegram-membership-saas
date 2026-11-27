@@ -1,4 +1,6 @@
 """Shared buyer Stars screen: locale, actual Rich table, navigation fallback."""
+import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,6 +12,7 @@ from telegram_membership_saas.localization import _language
 from telegram_membership_saas.rich_messages import to_rich_html
 from telegram_membership_saas.stars_checkout_ui import (
     buyer_stars_checkout_html,
+    log_stars_checkout_failure,
     send_stars_screen,
     stars_topup_button,
 )
@@ -63,3 +66,19 @@ async def test_stars_screen_does_not_retry_ambiguous_transport_failure():
             keyboard=InlineKeyboardMarkup(inline_keyboard=[[stars_topup_button()]]),
         )
     bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize("state, expected", [("42501", "42501"), ("SECRET", "-"), (None, "-")])
+def test_checkout_failure_logs_stack_without_payment_secrets(caplog, state, expected):
+    logger = logging.getLogger("test.stars")
+    try:
+        error = RuntimeError("SECRET_TOKEN_AND_PAYMENT_PAYLOAD")
+        error.orig = SimpleNamespace(sqlstate=state)
+        raise error
+    except RuntimeError as exc:
+        log_stars_checkout_failure(logger, "Stars checkout", exc)
+    assert "RuntimeError" in caplog.text
+    assert "SQLSTATE=" + expected in caplog.text
+    assert "test_checkout_failure_logs_stack_without_payment_secrets" in caplog.text
+    assert "SECRET" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

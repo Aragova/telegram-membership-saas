@@ -6096,9 +6096,9 @@ def create_owner_setup_router(
                                     invoice_id=invoice_id, page_code=page_text,
                                 )
                             except Exception as exc:
-                                logging.getLogger(__name__).warning(
-                                    "Platform Stars checkout unavailable: %s",
-                                    type(exc).__name__,
+                                stars_ui.log_stars_checkout_failure(
+                                    logging.getLogger(__name__),
+                                    "Platform Stars checkout unavailable", exc,
                                 )
                                 html = tr(
                                     "⚠️ ⭐ Оплата счёта пока недоступна. "

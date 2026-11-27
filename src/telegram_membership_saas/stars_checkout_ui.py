@@ -1,11 +1,33 @@
 """Shared Stars checkout presentation; never creates or settles an order."""
+import logging
+import re
 from html import escape
+from pathlib import PurePath
+from traceback import walk_tb
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from telegram_membership_saas.localization import tr
+
+
+def log_stars_checkout_failure(
+    logger: logging.Logger, operation: str, exc: Exception,
+) -> None:
+    """Log stack locations and SQLSTATE, never exception text or frame locals."""
+    orig = getattr(exc, "orig", None)
+    state = getattr(orig, "sqlstate", None)
+    if not isinstance(state, str) or re.fullmatch(r"[0-9A-Z]{5}", state) is None:
+        state = "-"
+    frames = " > ".join(
+        f"{PurePath(frame.f_code.co_filename).name}:{line}:{frame.f_code.co_name}"
+        for frame, line in walk_tb(exc.__traceback__)
+    )
+    logger.warning(
+        "%s: %s; SQLSTATE=%s; stack=%s",
+        operation, type(exc).__name__, state, frames or "-",
+    )
 
 
 def stars_topup_guidance() -> str:

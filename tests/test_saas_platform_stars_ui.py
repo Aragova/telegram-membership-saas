@@ -457,3 +457,25 @@ async def test_crypto_provider_outage_is_not_an_invalid_app(monkeypatch, languag
         assert "readiness check is temporarily unavailable" in detail
     assert "FAKE_PRIVATE_TOKEN" not in detail
     assert "provider offline" not in detail
+
+
+async def test_deeplink_failure_keeps_back_and_safe_diagnostics(monkeypatch, caplog):
+    invoice = uuid4()
+    monkeypatch.setattr(
+        stars_ui, "build_platform_stars_checkout",
+        AsyncMock(side_effect=RuntimeError("SECRET_INVOICE_PAYLOAD")),
+    )
+    router = stars_ui.create_platform_saas_stars_router(MagicMock())
+    bot = MagicMock(send_message=AsyncMock())
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type="private", id=123),
+        from_user=SimpleNamespace(id=123),
+        text="/start sa_" + encode_uuid(invoice),
+    )
+    await handler(router, "open_platform_stars_from_deeplink")(message, bot)
+    assert "RuntimeError" in caplog.text
+    assert "open_platform_stars_from_deeplink" in caplog.text
+    assert "SECRET_INVOICE_PAYLOAD" not in caplog.text
+    assert "SECRET_INVOICE_PAYLOAD" not in str(bot.send_message.await_args)
+    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert rows[0][0].callback_data == "own:spm:" + encode_uuid(invoice) + ":RUB:0"
