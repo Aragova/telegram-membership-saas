@@ -1,14 +1,14 @@
 """Attach the authorized bot username to an immutable Stars checkout quote.
 
-Revision ID: 0108_stars_checkout_context
-Revises: 0107_monitor_heartbeat_bound
+Revision ID: 0109_stars_checkout_context
+Revises: 0108_native_departure_outbox
 """
 from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0108_stars_checkout_context"
-down_revision: str | None = "0107_monitor_heartbeat_bound"
+revision: str = "0109_stars_checkout_context"
+down_revision: str | None = "0108_native_departure_outbox"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

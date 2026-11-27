@@ -45,10 +45,10 @@ LOG = logging.getLogger(__name__)
 START_PATTERN = re.compile(r"^/start(?:@[A-Za-z0-9_]{5,32})? sa_([A-Za-z0-9_-]{22})$")
 
 
-def stars_payment_back(invoice_id: UUID, page_token: str = "0") -> InlineKeyboardButton:
+def stars_payment_back(invoice_id: UUID, page_code: str = "0") -> InlineKeyboardButton:
     return InlineKeyboardButton(
         text=tr("⬅️ Назад", "⬅️ Back"),
-        callback_data="own:spm:" + encode_uuid(invoice_id) + ":RUB:" + page_token,
+        callback_data="own:spm:" + encode_uuid(invoice_id) + ":RUB:" + page_code,
         style="primary",
     )
 
@@ -56,7 +56,7 @@ def stars_payment_back(invoice_id: UUID, page_token: str = "0") -> InlineKeyboar
 async def build_platform_stars_checkout(
     bot: Bot,
     factory: async_sessionmaker[AsyncSession],
-    *, payer_telegram_id: int, invoice_id: UUID, page_token: str = "0",
+    *, payer_telegram_id: int, invoice_id: UUID, page_code: str = "0",
 ) -> tuple[str, list[list[InlineKeyboardButton]]]:
     """One frozen quote, one native payment link; no charge on screen entry."""
     order = await create_platform_stars_order(
@@ -117,7 +117,7 @@ async def build_platform_stars_checkout(
             text=tr("💫 Купить звёзды", "💫 Buy Stars"),
             url="https://t.me/PremiumBot", style="primary",
         )],
-        [stars_payment_back(invoice_id, page_token)],
+        [stars_payment_back(invoice_id, page_code)],
     ]
     return html, rows
 

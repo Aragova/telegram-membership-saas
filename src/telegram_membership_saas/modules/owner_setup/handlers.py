@@ -6088,7 +6088,7 @@ def create_owner_setup_router(
                             try:
                                 html, rows = await stars_ui.build_platform_stars_checkout(
                                     bot, factory, payer_telegram_id=user_id,
-                                    invoice_id=invoice_id, page_token=page_text,
+                                    invoice_id=invoice_id, page_code=page_text,
                                 )
                             except Exception:
                                 html = tr(

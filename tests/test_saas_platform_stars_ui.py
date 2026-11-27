@@ -123,7 +123,7 @@ async def test_central_owner_invoice_pay_shows_stars_checkout(
     stars_build.assert_awaited_once()
     assert stars_build.await_args.kwargs["invoice_id"] == invoice
     assert stars_build.await_args.kwargs["payer_telegram_id"] == tg
-    assert stars_build.await_args.kwargs["page_token"] == "0"
+    assert stars_build.await_args.kwargs["page_code"] == "0"
     bot.send_message.assert_awaited_once()
     query.answer.assert_awaited_once()
 
