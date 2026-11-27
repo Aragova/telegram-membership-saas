@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest
@@ -15,7 +15,7 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
 )
 from telegram_membership_saas.modules.telegram_commerce import handlers as buyer_ui
 from telegram_membership_saas.modules.telegram_commerce import rich_ui
-from telegram_membership_saas.modules.telegram_commerce.service import CheckoutOption
+from telegram_membership_saas.modules.telegram_commerce.service import CheckoutOption, encode_uuid
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     BuyerOffer,
     offer_screen,
@@ -322,3 +322,62 @@ async def test_cancellation_notice_classic_fallback_is_unchanged(monkeypatch):
     assert _callbacks(screen.await_args.kwargs["keyboard"]) == _callbacks(
         legacy_keyboard,
     )
+
+
+@pytest.mark.parametrize("language", ["ru", "en"])
+async def test_stars_buyer_checkout_edits_offer_and_uses_frozen_order(monkeypatch, language):
+    project, price, plan = uuid4(), uuid4(), uuid4()
+    order = SimpleNamespace(
+        plan_id=plan, plan_name_snapshot="Lifetime", duration_value=None,
+        duration_unit="lifetime", stars_amount=2000, invoice_payload="sp:" + uuid4().hex,
+    )
+    create = AsyncMock(return_value=order)
+    monkeypatch.setattr(buyer_ui, "create_stars_subscription_order", create)
+
+    @asynccontextmanager
+    async def scope(*_a, **_k):
+        yield MagicMock(scalars=AsyncMock(return_value=MagicMock(
+            all=MagicMock(return_value=["Channel <VIP> & Friends"]),
+        )))
+
+    monkeypatch.setattr(buyer_ui, "system_project_session_scope", scope)
+    router = buyer_ui.create_telegram_commerce_router(MagicMock(), project_id=project)
+    handler = next(
+        h.callback for h in router.callback_query.handlers
+        if h.callback.__name__ == "buy_handler"
+    )
+    bot = _bot()
+    bot.create_invoice_link = AsyncMock(return_value="https://t.me/$subscription-invoice")
+    bot.send_invoice = AsyncMock()
+    callback = SimpleNamespace(
+        data="buy:" + encode_uuid(price) + ":" + encode_uuid(UUID(int=0)) + ":3",
+        from_user=SimpleNamespace(id=123, username="buyer", first_name="Buyer"),
+        message=SimpleNamespace(chat=SimpleNamespace(id=123, type="private"), message_id=77),
+        answer=AsyncMock(),
+    )
+    locale = localization._language.set(language)
+    try:
+        await handler(callback, bot)
+    finally:
+        localization._language.reset(locale)
+    create.assert_awaited_once()
+    assert create.await_args.kwargs["buyer_id"] == 123
+    assert create.await_args.kwargs["plan_price_id"] == price
+    args = bot.create_invoice_link.await_args.kwargs
+    assert args["payload"] == order.invoice_payload
+    assert args["currency"] == "XTR"
+    assert args["prices"][0].amount == 2000
+    bot.send_invoice.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    bot.edit_message_text.assert_awaited_once()
+    screen = bot.edit_message_text.await_args.kwargs
+    assert screen["message_id"] == 77
+    assert "2000 ⭐" in screen["text"]
+    assert "Channel &lt;VIP&gt; &amp; Friends" in screen["text"]
+    assert "@PremiumBot" in screen["text"]
+    assert ("30 минут" if language == "ru" else "30 minutes") in screen["text"]
+    rows = screen["reply_markup"].inline_keyboard
+    assert rows[0][0].url == "https://t.me/$subscription-invoice"
+    assert rows[1][0].url == "https://t.me/PremiumBot"
+    assert rows[2][0].callback_data == "offer:" + encode_uuid(price) + ":3"
+    callback.answer.assert_awaited_once()

@@ -25,6 +25,7 @@ from telegram_membership_saas.modules.telegram_commerce.storefront import (
     catalog_screen,
     offer_screen,
 )
+from telegram_membership_saas.stars_checkout_ui import stars_topup_guidance
 
 
 def _preview_markup(
@@ -80,7 +81,7 @@ def preview_offer_screen(
     offers: tuple[BuyerOffer, ...], *, price_id: UUID, page: int = 0,
 ) -> tuple[str, InlineKeyboardMarkup] | None:
     """Same currency and eligible payment-method choices; no real checkout."""
-    rendered = offer_screen(offers, price_id=price_id, page=page)
+    rendered = offer_screen(offers, price_id=price_id, page=page, preview=True)
     if rendered is None:
         return None
     text, keyboard = rendered
@@ -139,6 +140,33 @@ def preview_crypto_method_screen(
         [InlineKeyboardButton(
             text=tr("⬅️ Панель администратора", "⬅️ Admin panel"),
             callback_data="own:dashboard",
+        )],
+    ])
+
+
+def preview_stars_method_screen(
+    offers: tuple[BuyerOffer, ...], *, price_id: UUID, page: int = 0,
+) -> tuple[str, InlineKeyboardMarkup] | None:
+    """Read-only Stars preview, never exposing a live payment or join URL."""
+    offer = next((
+        item for item in offers if item.option.plan_price_id == price_id
+        and any(method.payment_method_id.int == 0 for method in item.methods)
+    ), None)
+    if offer is None:
+        return None
+    option = offer.option
+    amount = format_amount(option.amount, option.currency_precision)
+    content = (
+        _preview_title() + tr("⭐ <b>Оплата подписки</b>", "⭐ <b>Subscription payment</b>")
+        + "\n\n📢 " + escape(offer.resource_label)
+        + "\n🗓 " + escape(format_period(option.duration_value, option.duration_unit))
+        + "\n💰 <b>" + escape(display_price(amount, option.currency_code)) + "</b>\n\n"
+        + stars_topup_guidance() + _preview_disclaimer()
+    )
+    return content, InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=tr("⬅️ Назад", "⬅️ Back"),
+            callback_data=f"own:pvoffer:{encode_uuid(price_id)}:{page}",
         )],
     ])
 

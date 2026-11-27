@@ -48,15 +48,28 @@ async def test_buyer_gets_xtr_invoice_but_not_file_before_stars_confirmation(
     bot = _bot()
     bot.id = 9999
     bot.send_invoice = AsyncMock()
-    await cb(router)(query("buy:" + encode_uuid(product)), bot)
-    bot.send_invoice.assert_awaited_once()
-    args = bot.send_invoice.await_args.kwargs
+    bot.edit_message_text = AsyncMock()
+    bot.create_invoice_link = AsyncMock(return_value="https://t.me/$file-invoice")
+    request = query("buy:" + encode_uuid(product) + ":USD")
+    request.message.message_id = 77
+    await cb(router)(request, bot)
+    bot.send_invoice.assert_not_awaited()
+    bot.create_invoice_link.assert_awaited_once()
+    args = bot.create_invoice_link.await_args.kwargs
     assert args["currency"] == "XTR"
     assert args["provider_token"] == ""
     assert len(args["prices"]) == 1
     assert args["prices"][0].amount == 79
     assert args["payload"] == order.invoice_payload
     delivered.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    screen = bot.edit_message_text.await_args.kwargs
+    assert screen["message_id"] == 77
+    assert "79 ⭐" in screen["text"] and "@PremiumBot" in screen["text"]
+    rows = screen["reply_markup"].inline_keyboard
+    assert rows[0][0].url == "https://t.me/$file-invoice"
+    assert rows[1][0].url == "https://t.me/PremiumBot"
+    assert rows[2][0].callback_data == "fm:currency:" + encode_uuid(product) + ":USD"
 
 
 async def test_confirmed_charge_only_unlocks_files_to_actual_buyer(monkeypatch):

@@ -27,6 +27,7 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     is_period_only_plan_name,
     list_checkout_options,
 )
+from telegram_membership_saas.stars_checkout_ui import stars_topup_button, stars_topup_guidance
 from telegram_membership_saas.support_links import support_button
 
 PAGE_SIZE = 7
@@ -418,6 +419,7 @@ def catalog_screen(
 
 def offer_screen(
     offers: tuple[BuyerOffer, ...], *, price_id: UUID, page: int = 0,
+    preview: bool = False,
 ) -> tuple[str, InlineKeyboardMarkup] | None:
     current = next(
         (offer for offer in offers if offer.option.plan_price_id == price_id),
@@ -461,9 +463,9 @@ def offer_screen(
             "продлевает подписку каждые 30 дней. Покупка управляется Telegram.",
             "⭐ Stars go to the channel balance. Telegram automatically "
             "renews this subscription every 30 days. Telegram manages the purchase.",
-        )
+        ) + ("\n\n" + stars_topup_guidance() if not preview else "")
     for method in current.methods:
-        if method.payment_method_id.int == 0 and current.native_stars_link:
+        if method.payment_method_id.int == 0 and current.native_stars_link and not preview:
             rows.append([InlineKeyboardButton(
                 text=tr("⭐ Оплатить и войти в канал", "⭐ Pay and join channel"),
                 url=current.native_stars_link, style="success",
@@ -476,9 +478,12 @@ def offer_screen(
             callback_data=(
                 f"buy:{encode_uuid(option.plan_price_id)}:"
                 f"{encode_uuid(method.payment_method_id)}"
+                + (f":{page}" if method.payment_method_id.int == 0 and page and not preview else "")
             ),
             style="success" if crypto else None,
         )])
+    if current.native_stars_link and not preview:
+        rows.append([stars_topup_button()])
     rows.append([InlineKeyboardButton(
         text=tr("⬅️ Все тарифы", "⬅️ All plans"),
         callback_data=f"cat:{option.currency_code}:{page}",

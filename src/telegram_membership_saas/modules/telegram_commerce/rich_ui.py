@@ -22,6 +22,8 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     is_period_only_plan_name,
 )
 from telegram_membership_saas.modules.telegram_commerce.storefront import BuyerOffer
+from telegram_membership_saas.rich_messages import to_rich_html
+from telegram_membership_saas.stars_checkout_ui import stars_topup_guidance
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +78,14 @@ def rich_subscription_offer_html(
             "👇 Как вам удобнее оплатить?",
             "👇 How would you like to pay?",
         ) + "</b></p>")
+        if offer.native_stars_link:
+            parts.append("<p>" + tr(
+                "⭐ Звёзды поступят на баланс канала. Telegram автоматически "
+                "продлевает подписку каждые 30 дней.",
+                "⭐ Stars go to the channel balance. Telegram automatically "
+                "renews this subscription every 30 days.",
+            ) + "</p>")
+            parts.append(to_rich_html(stars_topup_guidance()))
     return "\n".join(parts)
 
 

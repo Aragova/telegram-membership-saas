@@ -61,7 +61,7 @@ def _charge_kwargs(**changes):
     ("operation", "arguments", "payer"),
     [
         ("unknown_stars_operation", {}, 501),
-        ("platform_saas_stars_create_order", {"invoice": uuid4()}, 501),
+        ("platform_saas_stars_create_checkout", {"invoice": uuid4()}, 501),
         ("platform_saas_stars_rate", {"injected": "other-user"}, 501),
         ("platform_saas_stars_rate", {}, 0),
     ],
@@ -122,7 +122,7 @@ async def test_stars_order_preserves_frozen_quote_and_original_payer(rpc):
     assert result == expected
     rpc.assert_awaited_once_with(
         factory, payer_telegram_id=501,
-        name="platform_saas_stars_create_order",
+        name="platform_saas_stars_create_checkout",
         arguments={"invoice": invoice_id, "telegram_id": 501, "bot_id": 601},
     )
 

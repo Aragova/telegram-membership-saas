@@ -286,6 +286,7 @@ jobs:
                       "platform_saas_stars_usd_policy_read()",
                       "platform_saas_stars_usd_policy_set(numeric,numeric,boolean)",
                       "platform_saas_stars_create_order(uuid,bigint,bigint)",
+                      "platform_saas_stars_create_checkout(uuid,bigint,bigint)",
                       "platform_saas_stars_precheckout(text,bigint,bigint,integer)",
                       "platform_saas_stars_record_charge(text,bigint,bigint,integer,text,timestamptz)",
                       "platform_saas_stars_record_refund(text,bigint,bigint,integer,text,timestamptz)",

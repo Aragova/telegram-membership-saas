@@ -74,6 +74,7 @@ from telegram_membership_saas.receipt_prompt_ui import (
     send_receipt_prompt,
     update_receipt_prompt,
 )
+from telegram_membership_saas.stars_checkout_ui import send_stars_screen
 from telegram_membership_saas.support_links import support_button
 
 log = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ class ManualPriceFilter(BaseFilter):
 async def show_file_payment_options(
     bot: Bot, *, factory: async_sessionmaker[AsyncSession],
     project_id: UUID, buyer_id: int, product_id: UUID,
-    currency: str | None = None,
+    currency: str | None = None, message_id: int | None = None,
 ) -> None:
     product, count = await view_product(
         factory, project_id=project_id, bot_id=bot.id, product_id=product_id,
@@ -302,7 +303,7 @@ async def show_file_payment_options(
         rows.append([InlineKeyboardButton(
             text=tr("⭐ Telegram Stars · ", "⭐ Telegram Stars · ")
             + str(product.stars_price),
-            callback_data="fs:buy:" + code,
+            callback_data="fs:buy:" + code + (":" + chosen if currency and chosen else ""),
             style="success",
         )])
     rows.append([InlineKeyboardButton(
@@ -328,6 +329,12 @@ async def show_file_payment_options(
         + tr("👇 <b>Как вам удобнее оплатить?</b>",
              "👇 <b>How would you like to pay?</b>")
     )
+    if message_id is not None:
+        await send_stars_screen(
+            bot, chat_id=buyer_id, html=legacy_html,
+            keyboard=_keyboard(rows), message_id=message_id,
+        )
+        return
     await send_file_card(
         bot, chat_id=buyer_id,
         rich_html=rich_file_card_html(
@@ -458,6 +465,7 @@ def create_manual_file_router(
                 await show_file_payment_options(
                     bot, factory=factory, project_id=project_id, buyer_id=uid,
                     product_id=decode_uuid(token), currency=currency,
+                    message_id=getattr(query.message, "message_id", None),
                 )
             elif action.startswith("crypto:"):
                 _, token, currency = action.split(":", 2)

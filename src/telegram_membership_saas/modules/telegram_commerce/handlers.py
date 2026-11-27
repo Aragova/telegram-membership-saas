@@ -42,6 +42,7 @@ from telegram_membership_saas.modules.entitlements import (
     EntitlementSource,
 )
 from telegram_membership_saas.modules.identity import ProjectCustomer, TelegramUser
+from telegram_membership_saas.modules.plans import PlanResource
 from telegram_membership_saas.modules.platform_saas_hold_errors import CommercialHoldError
 from telegram_membership_saas.modules.resources import Resource, ResourceStatus
 from telegram_membership_saas.modules.stars_subscription_recovery import (
@@ -102,6 +103,12 @@ from telegram_membership_saas.receipt_prompt_ui import (
     update_receipt_prompt,
 )
 from telegram_membership_saas.rich_messages import classic_messages
+from telegram_membership_saas.stars_checkout_ui import (
+    buyer_stars_checkout_html,
+    log_stars_checkout_failure,
+    send_stars_screen,
+    stars_checkout_rows,
+)
 from telegram_membership_saas.support_links import support_button
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.telegram_menus import refresh_user_commands
@@ -798,7 +805,12 @@ def create_telegram_commerce_router(
         if callback.data is None:
             return
         try:
-            _, price_token, method_token = callback.data.split(":", 2)
+            _, price_token, method_token, *page_parts = callback.data.split(":")
+            page_code = page_parts[0] if page_parts else "0"
+            if (len(page_parts) > 1 or not page_code.isascii()
+                    or not page_code.isdecimal() or len(page_code) > 5
+                    or int(page_code) > 10000):
+                raise ValueError("Invalid catalog page")
             plan_price_id = decode_uuid(price_token)
             payment_method_id = decode_uuid(method_token)
             if payment_method_id.int == 1:
@@ -843,7 +855,8 @@ def create_telegram_commerce_router(
             if payment_method_id.int == 0:
                 # Synthetic provider token zero is the native XTR rail,
                 # NEVER a PaymentMethod foreign key or a manual bank transfer.
-                if not _buyer_screen_callback(callback):
+                message = callback.message
+                if message is None or not _buyer_screen_callback(callback):
                     raise PermissionError("Open the bot's private chat")
                 async with system_project_session_scope(
                     session_factory, project_id,
@@ -855,20 +868,76 @@ def create_telegram_commerce_router(
                         first_name=callback.from_user.first_name,
                         plan_price_id=plan_price_id,
                     )
+                    names = (await session.scalars(
+                        select(Resource.name).join(
+                            PlanResource,
+                            (PlanResource.resource_id == Resource.id)
+                            & (PlanResource.project_id == Resource.project_id),
+                        ).where(
+                            PlanResource.project_id == project_id,
+                            PlanResource.plan_id == order.plan_id,
+                            Resource.status == ResourceStatus.ACTIVE.value,
+                            Resource.removed_at.is_(None),
+                        ).distinct().order_by(Resource.name).limit(3)
+                    )).all()
                 await callback.answer()
                 label = order.plan_name_snapshot[:32]
-                await bot.send_invoice(
-                    chat_id=callback.from_user.id,
-                    title=label,
-                    description=tr(
-                        "Подписка · срок: ", "Subscription · period: ",
-                    ) + format_period(
-                        order.duration_value, order.duration_unit,
+                period = format_period(order.duration_value, order.duration_unit)
+                back = InlineKeyboardButton(
+                    text=tr("⬅️ Назад", "⬅️ Back"),
+                    callback_data="offer:" + price_token + ":" + page_code,
+                    style="primary",
+                )
+                try:
+                    link = await bot.create_invoice_link(
+                        title=label,
+                        description=tr(
+                            "Подписка · срок: ", "Subscription · period: ",
+                        ) + period,
+                        payload=order.invoice_payload,
+                        currency="XTR",
+                        prices=[LabeledPrice(label=label, amount=order.stars_amount)],
+                        provider_token="",
+                    )
+                except AiogramError as exc:
+                    log_stars_checkout_failure(
+                        logging.getLogger(__name__),
+                        "Subscription Stars invoice unavailable", exc,
+                    )
+                    await send_stars_screen(
+                        bot, chat_id=callback.from_user.id,
+                        html=tr(
+                            "⚠️ Не удалось открыть счёт. Вернитесь назад и повторите.",
+                            "⚠️ Could not open the invoice. Go back and try again.",
+                        ),
+                        keyboard=InlineKeyboardMarkup(inline_keyboard=[[back]]),
+                        message_id=message.message_id,
+                    )
+                    return
+                details = [
+                    (tr("📢 Канал", "📢 Channel"),
+                     " · ".join(names[:2]) + (" …" if len(names) > 2 else "")
+                     if names else tr("Подписка", "Subscription")),
+                ]
+                if not is_period_only_plan_name(
+                    order.plan_name_snapshot, order.duration_value, order.duration_unit,
+                ):
+                    details.append((tr("🎟 Тариф", "🎟 Plan"), order.plan_name_snapshot))
+                details.append((tr("🗓 Срок", "🗓 Duration"), period))
+                await send_stars_screen(
+                    bot, chat_id=callback.from_user.id,
+                    html=buyer_stars_checkout_html(
+                        title=tr("⭐ Оплата подписки", "⭐ Subscription payment"),
+                        details=details, amount=order.stars_amount,
+                        notice=tr(
+                            "Счёт действует 30 минут. Если срок истёк, вернитесь назад.",
+                            "The invoice is valid for 30 minutes. Go back if it expires.",
+                        ),
                     ),
-                    payload=order.invoice_payload,
-                    currency="XTR",
-                    prices=[LabeledPrice(label=label, amount=order.stars_amount)],
-                    provider_token="",
+                    keyboard=InlineKeyboardMarkup(inline_keyboard=stars_checkout_rows(
+                        amount=order.stars_amount, link=link, back=back,
+                    )),
+                    message_id=message.message_id,
                 )
                 return
             async with system_project_session_scope(session_factory, project_id) as session:

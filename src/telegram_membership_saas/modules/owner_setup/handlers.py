@@ -88,6 +88,7 @@ from telegram_membership_saas.modules.owner_setup.buyer_preview import (
     preview_crypto_method_screen,
     preview_method_screen,
     preview_offer_screen,
+    preview_stars_method_screen,
 )
 from telegram_membership_saas.modules.owner_setup.central_connection_flow_ui import (
     disconnect_card,
@@ -379,6 +380,7 @@ from telegram_membership_saas.payment_review_ui import (
     send_payment_review,
 )
 from telegram_membership_saas.rich_messages import RICH_ACTIONS_MARKER
+from telegram_membership_saas.stars_checkout_ui import log_stars_checkout_failure
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.telegram_menus import set_chat_commands
 from telegram_membership_saas.tenant_context import TenantContext
@@ -4711,6 +4713,10 @@ def create_owner_setup_router(
                     rendered = preview_crypto_method_screen(
                         offers, price_id=price_id, page=page,
                     )
+                elif method_id.int == 0:
+                    rendered = preview_stars_method_screen(
+                        offers, price_id=price_id, page=page,
+                    )
                 else:
                     method = await session.scalar(
                         select(PaymentMethod).where(
@@ -6086,17 +6092,23 @@ def create_owner_setup_router(
                             # Telegram Stars must be received by the actual
                             # CENTRAL platform bot, never by tenant bots.
                             try:
-                                await stars_ui.send_platform_stars_invoice(
+                                html, rows = await stars_ui.build_platform_stars_checkout(
                                     bot, factory, payer_telegram_id=user_id,
-                                    invoice_id=invoice_id,
+                                    invoice_id=invoice_id, page_code=page_text,
                                 )
-                            except Exception:
-                                await bot.send_message(user_id,tr(
-                                    "⚠️ ⭐ Оплата пока недоступна: "
-                                    "курс выплат или счёт требуют проверки.",
-                                    "⚠️ ⭐ Stars checkout is unavailable: "
-                                    "the payout rate or invoice needs review.",
-                                ))
+                            except Exception as exc:
+                                log_stars_checkout_failure(
+                                    logging.getLogger(__name__),
+                                    "Platform Stars checkout unavailable", exc,
+                                )
+                                html = tr(
+                                    "⚠️ ⭐ Оплата счёта пока недоступна. "
+                                    "Проверьте выставленный счёт или обратитесь в поддержку.",
+                                    "⚠️ ⭐ Invoice payment is currently unavailable. "
+                                    "Check your issued invoice or contact support.",
+                                )
+                                rows = [[stars_ui.stars_payment_back(invoice_id, page_text)]]
+                            await _show_saas_payment_step(bot, query, html, rows)
                         else:
                             # Payer-only deep link keeps the same immutable
                             # invoice ID while opening @vimipay_bot privately.

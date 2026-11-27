@@ -8,11 +8,16 @@ import pytest
 from test_channel_management_ui import _auth, _bot, _handler, _query
 
 from telegram_membership_saas.modules.owner_setup import handlers as owner_ui
+from telegram_membership_saas.modules.owner_setup.buyer_preview import (
+    preview_offer_screen,
+    preview_stars_method_screen,
+)
 from telegram_membership_saas.modules.owner_setup.native_channel_stars import (
     NATIVE_PERIOD_SECONDS,
     native_price_allowed,
 )
-from telegram_membership_saas.modules.telegram_commerce.service import CheckoutOption
+from telegram_membership_saas.modules.telegram_commerce.rich_ui import rich_subscription_offer_html
+from telegram_membership_saas.modules.telegram_commerce.service import CheckoutOption, encode_uuid
 from telegram_membership_saas.modules.telegram_commerce.storefront import (
     build_buyer_offers,
     offer_screen,
@@ -47,10 +52,24 @@ def test_native_link_is_one_buyer_payment_button_not_a_bot_invoice():
     offers = build_buyer_offers(
         (option,), native_links={price_id: link},
     )
-    _, keyboard = offer_screen(offers, price_id=price_id)
+    screen, keyboard = offer_screen(offers, price_id=price_id)
+    assert "@PremiumBot" in screen
+    assert "@PremiumBot" in rich_subscription_offer_html(offers[0])
+    assert "@PremiumBot" not in rich_subscription_offer_html(offers[0], preview=True)
     buttons = [item for row in keyboard.inline_keyboard for item in row]
     assert sum(item.url == link for item in buttons) == 1
+    assert sum(item.url == "https://t.me/PremiumBot" for item in buttons) == 1
     assert not any((item.callback_data or "").startswith("buy:") for item in buttons)
+
+    _, preview = preview_offer_screen(offers, price_id=price_id, page=3)
+    assert all(button.url is None for row in preview.inline_keyboard for button in row)
+    assert any(
+        button.callback_data == "own:pvmethod:" + encode_uuid(price_id)
+        + ":" + encode_uuid(UUID(int=0)) + ":3"
+        for row in preview.inline_keyboard for button in row
+    )
+    _, preview_detail = preview_stars_method_screen(offers, price_id=price_id, page=3)
+    assert all(button.url is None for row in preview_detail.inline_keyboard for button in row)
 
     classic = build_buyer_offers((option,))
     _, regular = offer_screen(classic, price_id=price_id)
