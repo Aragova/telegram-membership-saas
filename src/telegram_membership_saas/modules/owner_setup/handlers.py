@@ -380,6 +380,7 @@ from telegram_membership_saas.payment_review_ui import (
     send_payment_review,
 )
 from telegram_membership_saas.rich_messages import RICH_ACTIONS_MARKER
+from telegram_membership_saas.stars_checkout_ui import log_stars_checkout_failure
 from telegram_membership_saas.telegram_dates import native_telegram_time
 from telegram_membership_saas.telegram_menus import set_chat_commands
 from telegram_membership_saas.tenant_context import TenantContext
@@ -6096,7 +6097,7 @@ def create_owner_setup_router(
                                     invoice_id=invoice_id, page_code=page_text,
                                 )
                             except Exception as exc:
-                                stars_ui.log_stars_checkout_failure(
+                                log_stars_checkout_failure(
                                     logging.getLogger(__name__),
                                     "Platform Stars checkout unavailable", exc,
                                 )
