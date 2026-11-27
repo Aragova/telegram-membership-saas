@@ -6086,17 +6086,19 @@ def create_owner_setup_router(
                             # Telegram Stars must be received by the actual
                             # CENTRAL platform bot, never by tenant bots.
                             try:
-                                await stars_ui.send_platform_stars_invoice(
+                                html, rows = await stars_ui.build_platform_stars_checkout(
                                     bot, factory, payer_telegram_id=user_id,
-                                    invoice_id=invoice_id,
+                                    invoice_id=invoice_id, page_token=page_text,
                                 )
                             except Exception:
-                                await bot.send_message(user_id,tr(
-                                    "⚠️ ⭐ Оплата пока недоступна: "
-                                    "курс выплат или счёт требуют проверки.",
-                                    "⚠️ ⭐ Stars checkout is unavailable: "
-                                    "the payout rate or invoice needs review.",
-                                ))
+                                html = tr(
+                                    "⚠️ ⭐ Оплата счёта пока недоступна. "
+                                    "Проверьте выставленный счёт или обратитесь в поддержку.",
+                                    "⚠️ ⭐ Invoice payment is currently unavailable. "
+                                    "Check your issued invoice or contact support.",
+                                )
+                                rows = [[stars_ui.stars_payment_back(invoice_id, page_text)]]
+                            await _show_saas_payment_step(bot, query, html, rows)
                         else:
                             # Payer-only deep link keeps the same immutable
                             # invoice ID while opening @vimipay_bot privately.
