@@ -132,6 +132,7 @@ def create_platform_saas_stars_router(
         match = START_PATTERN.fullmatch(message.text)
         if match is None:
             return
+        invoice_id = None
         try:
             invoice_id = decode_uuid(match.group(1))
             html, rows = await build_platform_stars_checkout(
@@ -153,6 +154,10 @@ def create_platform_saas_stars_router(
                     "выставленный счёт или обратитесь в поддержку.",
                     "⚠️ ⭐ Invoice payment is currently unavailable. "
                     "Check your issued invoice or contact support.",
+                ),
+                reply_markup=(
+                    InlineKeyboardMarkup(inline_keyboard=[[stars_payment_back(invoice_id)]])
+                    if invoice_id is not None else None
                 ),
             )
 
