@@ -21,7 +21,7 @@ def handler(router, name, *, kind="message"):
 
 
 @pytest.mark.parametrize("language", ("ru", "en"))
-async def test_central_deep_link_sends_native_star_invoice(
+async def test_central_deep_link_shows_rich_star_checkout(
     monkeypatch, language,
 ):
     invoice = uuid4()
@@ -32,6 +32,7 @@ async def test_central_deep_link_sends_native_star_invoice(
         "usd_quote": "5.00000000", "usd_per_star": "0.01300000",
         "withdrawal_reserve_pct": "5.00",
         "payment_surcharge_pct": "5.00",
+        "bot_username": "vimi_test2bot",
     }
     create = AsyncMock(return_value=quote)
     monkeypatch.setattr(stars_ui, "create_platform_stars_order", create)
@@ -39,6 +40,8 @@ async def test_central_deep_link_sends_native_star_invoice(
     bot = MagicMock()
     bot.id = 998877
     bot.send_invoice = AsyncMock()
+    bot.create_invoice_link = AsyncMock(return_value="https://t.me/$test-invoice")
+    bot.send_message = AsyncMock()
     tg = 707070
     message = SimpleNamespace(
         chat=SimpleNamespace(type="private", id=tg),
@@ -52,7 +55,7 @@ async def test_central_deep_link_sends_native_star_invoice(
         _language.reset(locale)
     assert create.await_args.kwargs["invoice_id"] == invoice
     assert create.await_args.kwargs["central_bot_id"] == 998877
-    kwargs = bot.send_invoice.await_args.kwargs
+    kwargs = bot.create_invoice_link.await_args.kwargs
     assert kwargs["currency"] == "XTR"
     assert kwargs["payload"] == quote["payload"]
     assert kwargs["prices"][0].amount == 405
@@ -61,14 +64,31 @@ async def test_central_deep_link_sends_native_star_invoice(
         "ViMi Pay · Оплата счёта" if language == "ru" else "ViMi Pay · Invoice payment"
     )
     assert kwargs["description"] == (
-        "Оплата обслуживания вашего бота.\n\nК оплате: 405 ⭐" if language == "ru"
-        else "Payment for your bot service.\n\nTotal: 405 ⭐"
+        "Оплата счёта ViMi Pay.\n\nК оплате: 405 ⭐" if language == "ru"
+        else "ViMi Pay invoice payment.\n\nTotal: 405 ⭐"
     )
+    bot.send_invoice.assert_not_awaited()
+    create.assert_awaited_once()
+    bot.create_invoice_link.assert_awaited_once()
+    bot.send_message.assert_awaited_once()
+    html = bot.send_message.await_args.args[1]
+    assert "@vimi_test2bot" in html
+    assert "405 ⭐" in html
+    assert "@PremiumBot" in html
+    assert "20" in html
+    assert ("Как оплатить" if language == "ru" else "How to pay") in html
+    rows = bot.send_message.await_args.kwargs["reply_markup"].inline_keyboard
+    assert [len(row) for row in rows] == [1, 1, 1]
+    assert rows[0][0].url == "https://t.me/$test-invoice"
+    assert rows[0][0].style == "success"
+    assert rows[1][0].url == "https://t.me/PremiumBot"
+    assert rows[2][0].callback_data == "own:spm:" + encode_uuid(invoice) + ":RUB:0"
+
 
 
 
 @pytest.mark.parametrize("language", ("ru", "en"))
-async def test_central_owner_invoice_pay_opens_native_stars(
+async def test_central_owner_invoice_pay_shows_stars_checkout(
     monkeypatch, language,
 ):
     invoice = uuid4()
@@ -80,8 +100,8 @@ async def test_central_owner_invoice_pay_opens_native_stars(
         owner_ui, "saas_v2_invoice_balance",
         AsyncMock(return_value={"remaining_rub": "150.00"}),
     )
-    stars_send = AsyncMock()
-    monkeypatch.setattr(stars_ui, "send_platform_stars_invoice", stars_send)
+    stars_build = AsyncMock(return_value=("Stars checkout", []))
+    monkeypatch.setattr(stars_ui, "build_platform_stars_checkout", stars_build)
     router = owner_ui.create_owner_setup_router(
         MagicMock(), fixed_project_id=None,
     )
@@ -100,10 +120,11 @@ async def test_central_owner_invoice_pay_opens_native_stars(
         await handler(router, "owner_callback", kind="callback_query")(query, bot)
     finally:
         _language.reset(locale)
-    stars_send.assert_awaited_once()
-    assert stars_send.await_args.kwargs["invoice_id"] == invoice
-    assert stars_send.await_args.kwargs["payer_telegram_id"] == tg
-    bot.send_message.assert_not_awaited()
+    stars_build.assert_awaited_once()
+    assert stars_build.await_args.kwargs["invoice_id"] == invoice
+    assert stars_build.await_args.kwargs["payer_telegram_id"] == tg
+    assert stars_build.await_args.kwargs["page_token"] == "0"
+    bot.send_message.assert_awaited_once()
     query.answer.assert_awaited_once()
 
 
@@ -378,20 +399,23 @@ async def test_fractional_stars_invoice_displays_only_frozen_stars_amount(
     )
     bot = MagicMock()
     bot.id = 12345
-    bot.send_invoice = AsyncMock()
+    bot.create_invoice_link = AsyncMock(return_value="https://t.me/$test-invoice")
     loc = _language.set(language)
     try:
-        await stars_ui.send_platform_stars_invoice(
+        html, rows = await stars_ui.build_platform_stars_checkout(
             bot, MagicMock(), payer_telegram_id=787878, invoice_id=uuid4(),
         )
     finally:
         _language.reset(loc)
-    detail = bot.send_invoice.await_args.kwargs["description"]
+    detail = bot.create_invoice_link.await_args.kwargs["description"]
     assert detail == (
-        "Оплата обслуживания вашего бота.\n\nК оплате: 270 ⭐" if language == "ru"
-        else "Payment for your bot service.\n\nTotal: 270 ⭐"
+        "Оплата счёта ViMi Pay.\n\nК оплате: 270 ⭐" if language == "ru"
+        else "ViMi Pay invoice payment.\n\nTotal: 270 ⭐"
     )
-    assert bot.send_invoice.await_args.kwargs["prices"][0].amount == 270
+    assert bot.create_invoice_link.await_args.kwargs["prices"][0].amount == 270
+    assert "270 ⭐" in html
+    assert ("Счёт бота" if language == "ru" else "Bot invoice") in html
+    assert rows[0][0].url == "https://t.me/$test-invoice"
 
 
 @pytest.mark.parametrize("language", ("ru", "en"))
