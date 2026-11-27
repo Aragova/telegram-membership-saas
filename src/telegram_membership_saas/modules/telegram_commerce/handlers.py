@@ -854,7 +854,8 @@ def create_telegram_commerce_router(
             if payment_method_id.int == 0:
                 # Synthetic provider token zero is the native XTR rail,
                 # NEVER a PaymentMethod foreign key or a manual bank transfer.
-                if not _buyer_screen_callback(callback):
+                message = callback.message
+                if message is None or not _buyer_screen_callback(callback):
                     raise PermissionError("Open the bot's private chat")
                 async with system_project_session_scope(
                     session_factory, project_id,
@@ -908,7 +909,7 @@ def create_telegram_commerce_router(
                             "⚠️ Could not open the invoice. Go back and try again.",
                         ),
                         keyboard=InlineKeyboardMarkup(inline_keyboard=[[back]]),
-                        message_id=callback.message.message_id,
+                        message_id=message.message_id,
                     )
                     return
                 details = [
@@ -934,7 +935,7 @@ def create_telegram_commerce_router(
                     keyboard=InlineKeyboardMarkup(inline_keyboard=stars_checkout_rows(
                         amount=order.stars_amount, link=link, back=back,
                     )),
-                    message_id=callback.message.message_id,
+                    message_id=message.message_id,
                 )
                 return
             async with system_project_session_scope(session_factory, project_id) as session:
