@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from aiogram import Bot, F, Router
@@ -47,34 +47,13 @@ async def send_platform_stars_invoice(
         payer_telegram_id=payer_telegram_id, central_bot_id=bot.id,
     )
     amount = int(order["stars_amount"])
-    # Payout reserve is a deduction from the proceeds, not a flat
-    # percentage surcharge on the quoted USD obligation.
-    reserve = Decimal(str(order["withdrawal_reserve_pct"]))
-    usd_per_star = Decimal(str(order["usd_per_star"]))
-    # Never promise a net USD amount above the actual Stars proceeds after
-    # the frozen reserve; partial balances can have fractional-cent quotes.
-    net_usd = (Decimal(amount) * usd_per_star * (
-        Decimal("1") - reserve / Decimal("100")
-    )).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-    reserve_label = format(reserve.normalize(), "f")
-    surcharge = Decimal(str(order.get("payment_surcharge_pct", "5.00")))
-    surcharge_label = format(surcharge.normalize(), "f")
     await bot.send_invoice(
         chat_id=payer_telegram_id,
-        title=tr("ViMi Pay · обслуживание", "ViMi Pay · service"),
+        title=tr("ViMi Pay · Оплата счёта", "ViMi Pay · Invoice payment"),
         description=tr(
-            "ViMi Pay: к оплате {stars} ⭐. Надбавка за Stars {surcharge}%, "
-            "резерв вывода {reserve}%. Доход после резерва: от ${usd}. "
-            "Оплата погашает исходный счёт одного бота.",
-            "ViMi Pay: {stars} ⭐. Separate Stars surcharge {surcharge}%, "
-            "withdrawal reserve {reserve}%. At least ${usd} net. "
-            "Only this bot's original invoice is settled.",
-        ).format(
-            usd=format(net_usd, ".2f"),
-            reserve=reserve_label,
-            surcharge=surcharge_label,
-            stars=amount,
-        ),
+            "Оплата обслуживания вашего бота.\n\nК оплате: {stars} ⭐",
+            "Payment for your bot service.\n\nTotal: {stars} ⭐",
+        ).format(stars=amount),
         payload=order["payload"],
         currency="XTR",  # Telegram Bot API's Stars currency wire value.
         prices=[LabeledPrice(
