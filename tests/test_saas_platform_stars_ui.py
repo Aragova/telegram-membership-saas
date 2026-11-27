@@ -57,20 +57,13 @@ async def test_central_deep_link_sends_native_star_invoice(
     assert kwargs["payload"] == quote["payload"]
     assert kwargs["prices"][0].amount == 405
     assert "Telegram Stars" in kwargs["prices"][0].label
-    # Net payout quote and gross-up reserve must be clearly and accurately
-    # described, never as raw $5.00000000 or a misleading +5% surcharge.
-    detail = kwargs["description"]
-    assert "$5.00" in detail
-    assert "5%" in detail
-    assert ("Надбавка за Stars" if language == "ru" else "Stars surcharge") in detail
-    assert "405 ⭐" in detail
-    assert "$5.00000000" not in detail
-    assert "5.00%" not in detail
-    assert "+ 5%" not in detail
-    if language == "ru":
-        assert "резерв вывода" in detail
-    else:
-        assert "withdrawal reserve" in detail
+    assert kwargs["title"] == (
+        "ViMi Pay · Оплата счёта" if language == "ru" else "ViMi Pay · Invoice payment"
+    )
+    assert kwargs["description"] == (
+        "Оплата обслуживания вашего бота.\n\nК оплате: 405 ⭐" if language == "ru"
+        else "Payment for your bot service.\n\nTotal: 405 ⭐"
+    )
 
 
 
@@ -370,10 +363,10 @@ async def test_usd_stars_operator_command_rejects_stranger(monkeypatch):
 
 
 @pytest.mark.parametrize("language", ("ru", "en"))
-async def test_fractional_stars_invoice_never_overpromises_net_usd(
+async def test_fractional_stars_invoice_displays_only_frozen_stars_amount(
     monkeypatch, language,
 ):
-    """270 Stars guarantee $3.3345 net, not the rounded-up $3.34."""
+    """Payer sees the frozen Stars total, not internal fractional USD proceeds."""
     monkeypatch.setattr(
         stars_ui, "create_platform_stars_order",
         AsyncMock(return_value={
@@ -394,9 +387,11 @@ async def test_fractional_stars_invoice_never_overpromises_net_usd(
     finally:
         _language.reset(loc)
     detail = bot.send_invoice.await_args.kwargs["description"]
-    assert "$3.33" in detail
-    assert "$3.34" not in detail
-    assert "270 ⭐" in detail
+    assert detail == (
+        "Оплата обслуживания вашего бота.\n\nК оплате: 270 ⭐" if language == "ru"
+        else "Payment for your bot service.\n\nTotal: 270 ⭐"
+    )
+    assert bot.send_invoice.await_args.kwargs["prices"][0].amount == 270
 
 
 @pytest.mark.parametrize("language", ("ru", "en"))
