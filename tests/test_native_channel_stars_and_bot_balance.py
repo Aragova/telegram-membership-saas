@@ -47,9 +47,11 @@ def test_native_link_is_one_buyer_payment_button_not_a_bot_invoice():
     offers = build_buyer_offers(
         (option,), native_links={price_id: link},
     )
-    _, keyboard = offer_screen(offers, price_id=price_id)
+    screen, keyboard = offer_screen(offers, price_id=price_id)
+    assert "@PremiumBot" in screen
     buttons = [item for row in keyboard.inline_keyboard for item in row]
     assert sum(item.url == link for item in buttons) == 1
+    assert sum(item.url == "https://t.me/PremiumBot" for item in buttons) == 1
     assert not any((item.callback_data or "").startswith("buy:") for item in buttons)
 
     classic = build_buyer_offers((option,))

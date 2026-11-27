@@ -78,6 +78,11 @@ from telegram_membership_saas.modules.telegram_commerce.service import (
     decode_uuid,
     encode_uuid,
 )
+from telegram_membership_saas.stars_checkout_ui import (
+    buyer_stars_checkout_html,
+    send_stars_screen,
+    stars_checkout_rows,
+)
 
 log = logging.getLogger(__name__)
 ENTRY_SECONDS = 900
@@ -927,6 +932,7 @@ def create_file_sales_router(
                 await show_file_payment_options(
                     bot, factory=factory, project_id=project_id,
                     buyer_id=uid, product_id=decode_uuid(action.split(":")[1]),
+                    message_id=getattr(query.message, "message_id", None),
                 )
             elif action.startswith(("editname:", "editdescription:", "editprice:")):
                 if not admin:
@@ -996,7 +1002,15 @@ def create_file_sales_router(
                     title=product.name, assets=assets,
                 )
             elif action.startswith("buy:"):
-                product = decode_uuid(action.split(":", 1)[1])
+                _, product_code, *currency_parts = action.split(":")
+                if len(currency_parts) > 1:
+                    raise ValueError(tr("Неверный способ оплаты", "Invalid payment method"))
+                currency = currency_parts[0] if currency_parts else None
+                if currency is not None and (
+                    not currency.isascii() or not currency.isalnum() or len(currency) > 12
+                ):
+                    raise ValueError(tr("Неверная валюта", "Invalid currency"))
+                product = decode_uuid(product_code)
                 order = await create_stars_order(
                     factory, project_id=project_id,
                     bot_id=bot.id, buyer_id=uid, product_id=product,
@@ -1004,8 +1018,16 @@ def create_file_sales_router(
                 if order.paid:
                     await deliver_paid(bot, uid, order.id)
                 else:
-                    await bot.send_invoice(
-                        chat_id=uid, title=order.product_name[:32],
+                    back = InlineKeyboardButton(
+                        text=tr("⬅️ Назад", "⬅️ Back"),
+                        callback_data=(
+                            "fm:currency:" + product_code + ":" + currency
+                            if currency else "fs:pay:" + product_code
+                        ),
+                        style="primary",
+                    )
+                    link = await bot.create_invoice_link(
+                        title=order.product_name[:32],
                         description=tr(
                             "Цифровые файлы. Доступ после подтверждения Stars.",
                             "Digital files delivered after successful Stars payment.",
@@ -1015,6 +1037,22 @@ def create_file_sales_router(
                             LabeledPrice(label=order.product_name[:32],
                                          amount=order.amount),
                         ], provider_token="",
+                    )
+                    await send_stars_screen(
+                        bot, chat_id=uid,
+                        html=buyer_stars_checkout_html(
+                            title=tr("⭐ Оплата покупки", "⭐ Purchase payment"),
+                            details=[(tr("📦 Товар", "📦 Product"), order.product_name)],
+                            amount=order.amount,
+                            notice=tr(
+                                "Файлы будут доступны автоматически после оплаты.",
+                                "Files are available automatically after payment.",
+                            ),
+                        ),
+                        keyboard=_keyboard(stars_checkout_rows(
+                            amount=order.amount, link=link, back=back,
+                        )),
+                        message_id=getattr(query.message, "message_id", None),
                     )
             elif action == "mine" or action.startswith("mine:"):
                 raw = action.split(":", 1)[1] if ":" in action else "0"
