@@ -6090,7 +6090,11 @@ def create_owner_setup_router(
                                     bot, factory, payer_telegram_id=user_id,
                                     invoice_id=invoice_id, page_code=page_text,
                                 )
-                            except Exception:
+                            except Exception as exc:
+                                logging.getLogger(__name__).warning(
+                                    "Platform Stars checkout unavailable: %s",
+                                    type(exc).__name__,
+                                )
                                 html = tr(
                                     "⚠️ ⭐ Оплата счёта пока недоступна. "
                                     "Проверьте выставленный счёт или обратитесь в поддержку.",
